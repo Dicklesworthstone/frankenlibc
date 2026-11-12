@@ -108,6 +108,7 @@ static FORK_GENERATION: AtomicU32 = AtomicU32::new(0);
 /// taken over by the next locker instead.
 pub fn note_fork_child() {
     FORK_GENERATION.fetch_add(1, Ordering::AcqRel);
+    crate::fingerprint::recover_key_init_in_fork_child();
 }
 
 mod fork_mutex;
@@ -219,6 +220,7 @@ impl<T> NoPoisonRwLock<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn try_read(&self) -> Option<NoPoisonRwLockReadGuard<'_, T>> {
         match self.0.try_read() {
             Ok(guard) => Some(guard),
@@ -649,7 +651,7 @@ pub fn ln_1p_f64(x: f64) -> f64 {
         k += 1;
         scale_exp = k;
     }
-    let c = if (-1021..=1023).contains(&scale_exp) {
+    let c = if (-1021..=1022).contains(&scale_exp) {
         corr * f64::from_bits(((1023 - scale_exp) as u64) << 52) / m
     } else {
         corr / u

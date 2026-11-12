@@ -2538,14 +2538,14 @@ static TIME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TimeTls> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GMTIME_BUF: Box<std::cell::UnsafeCell<libc::tm>> =
-        Box::new(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
-    static LOCALTIME_BUF: Box<std::cell::UnsafeCell<libc::tm>> =
-        Box::new(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
-    static ASCTIME_BUF: Box<std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]>> =
-        Box::new(std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]));
-    static CTIME_BUF: Box<std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]>> =
-        Box::new(std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]));
+    static GMTIME_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<libc::tm>> =
+        const { crate::util::TlsHeapCell::new() };
+    static LOCALTIME_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<libc::tm>> =
+        const { crate::util::TlsHeapCell::new() };
+    static ASCTIME_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]>> =
+        const { crate::util::TlsHeapCell::new() };
+    static CTIME_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -2557,10 +2557,10 @@ fn with_gmtime_buf<R>(f: impl FnOnce(&mut libc::tm) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GMTIME_BUF.with(|cell| {
-            // SAFETY: The default path uses Rust thread-local storage, so this
+        GMTIME_BUF.with(|slot| {
+            // SAFETY: The default path uses per-thread storage, so this
             // mutable reference is scoped to the current thread's scratch slot.
-            f(unsafe { &mut *cell.get() })
+            slot.with_zeroed(None, |cell| f(unsafe { &mut *cell.get() }))
         })
     }
 }
@@ -2574,10 +2574,10 @@ fn with_localtime_buf<R>(f: impl FnOnce(&mut libc::tm) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        LOCALTIME_BUF.with(|cell| {
-            // SAFETY: The default path uses Rust thread-local storage, so this
+        LOCALTIME_BUF.with(|slot| {
+            // SAFETY: The default path uses per-thread storage, so this
             // mutable reference is scoped to the current thread's scratch slot.
-            f(unsafe { &mut *cell.get() })
+            slot.with_zeroed(None, |cell| f(unsafe { &mut *cell.get() }))
         })
     }
 }
@@ -2591,10 +2591,10 @@ fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        ASCTIME_BUF.with(|cell| {
-            // SAFETY: The default path uses Rust thread-local storage, so this
+        ASCTIME_BUF.with(|slot| {
+            // SAFETY: The default path uses per-thread storage, so this
             // mutable reference is scoped to the current thread's scratch slot.
-            f(unsafe { &mut *cell.get() })
+            slot.with_zeroed(None, |cell| f(unsafe { &mut *cell.get() }))
         })
     }
 }
@@ -2608,10 +2608,10 @@ fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        CTIME_BUF.with(|cell| {
-            // SAFETY: The default path uses Rust thread-local storage, so this
+        CTIME_BUF.with(|slot| {
+            // SAFETY: The default path uses per-thread storage, so this
             // mutable reference is scoped to the current thread's scratch slot.
-            f(unsafe { &mut *cell.get() })
+            slot.with_zeroed(None, |cell| f(unsafe { &mut *cell.get() }))
         })
     }
 }

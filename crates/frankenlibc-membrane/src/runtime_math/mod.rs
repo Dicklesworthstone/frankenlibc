@@ -483,6 +483,7 @@ fn emit_quarantine_depth_transition_log(
     to_depth: usize,
     contention: u32,
     adverse_ppm: u32,
+    escape_rate_ppm: u32,
     epochs: u64,
     total_hits: u64,
 ) {
@@ -496,7 +497,8 @@ fn emit_quarantine_depth_transition_log(
         &mut buf,
         "{{\"event\":\"quarantine_depth_transition\",\"seq\":{seq},\
 \"from_depth\":{from_depth},\"to_depth\":{to_depth},\"contention\":{contention},\
-\"adverse_ppm\":{adverse_ppm},\"epochs\":{epochs},\"total_hits\":{total_hits}}}"
+\"adverse_ppm\":{adverse_ppm},\"escape_rate_ppm\":{escape_rate_ppm},\
+\"epochs\":{epochs},\"total_hits\":{total_hits}}}"
     )
     .is_ok()
     {
@@ -4859,17 +4861,23 @@ impl RuntimeMathKernel {
         risk_bound_ppm: u32,
     ) {
         let prev_depth = current_depth();
-        // Capture contention peak BEFORE `record_free()` resets it on an epoch boundary.
+        // Capture contention peak BEFORE `record_weighted_free()` resets it on an epoch boundary.
         let peak_contention = crate::quarantine_controller::CONTENTION.current_peak();
-        let (updated, new_depth, epochs, total_hits) = {
+        // In `cfg(not(test))`, `runtime_policy::observe` forwards 1-in-64 non-adverse
+        // allocator events and 100% of adverse events; weight non-adverse samples by
+        // 64 so `QuarantineController`'s empirical escape-rate ratio remains unbiased.
+        let sample_weight = if cfg!(not(test)) && !adverse { 64 } else { 1 };
+        let (updated, new_depth, escape_rate_ppm, epochs, total_hits) = {
             let mut quarantine = self.quarantine.lock();
-            let updated = quarantine.record_free(estimated_cost_ns, adverse);
+            let updated =
+                quarantine.record_weighted_free(estimated_cost_ns, sample_weight, adverse);
             if updated {
                 publish_depth(&quarantine);
             }
             (
                 updated,
                 quarantine.depth(),
+                quarantine.estimated_escape_rate_ppm(),
                 quarantine.epochs(),
                 quarantine.total_hits(),
             )
@@ -4880,6 +4888,7 @@ impl RuntimeMathKernel {
                 new_depth,
                 peak_contention,
                 risk_bound_ppm,
+                escape_rate_ppm,
                 epochs,
                 total_hits,
             );

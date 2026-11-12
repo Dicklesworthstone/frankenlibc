@@ -613,8 +613,13 @@ struct RawClient {
 // belonging to a different slot; external C mutation has the usual CLIENT rules.
 unsafe impl Send for RawClient {}
 #[cfg(not(feature = "owned-tls-cache"))]
+fn init_raw_client_slot() -> std::cell::RefCell<Option<RawClient>> {
+    std::cell::RefCell::new(None)
+}
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RAW_CLIENT: std::cell::RefCell<Option<RawClient>> = const { std::cell::RefCell::new(None) };
+    static RAW_CLIENT: crate::util::TlsHeapCell<std::cell::RefCell<Option<RawClient>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 #[cfg(feature = "owned-tls-cache")]
 static RAW_CLIENT: crate::owned_tls_cache::OwnedTlsCache<Option<RawClient>> =
@@ -626,7 +631,7 @@ fn with_raw_client<R>(f: impl FnOnce(&mut Option<RawClient>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RAW_CLIENT.with(|slot| f(&mut slot.borrow_mut()))
+        RAW_CLIENT.with(|slot| slot.with_init(init_raw_client_slot, |c| f(&mut c.borrow_mut())))
     }
 }
 

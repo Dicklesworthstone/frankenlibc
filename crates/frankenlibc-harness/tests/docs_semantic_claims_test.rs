@@ -883,4 +883,22 @@ fn closure_gate_rejects_ephemeral_data_tmp_receipt_and_companion_gates_pass() {
         "expected ephemeral /data/tmp receipt to fail closed, got:\nstdout={stdout}\nstderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
+
+    // Verify undated "earlier " prose cannot smuggle stale smoke counts past multi_guide_consistency.
+    let deploy_src = std::fs::read_to_string(root.join("DEPLOYMENT.md")).unwrap();
+    let mutated_deploy =
+        format!("{deploy_src}\n\nNote: earlier smoke run observed 189 pass and 1 xfail.\n");
+    let temp_deploy = unique_temp_path("docs-semantic-undated-earlier.md");
+    std::fs::write(&temp_deploy, mutated_deploy).expect("write undated earlier deployment fixture");
+    let undated_out = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_DEPLOYMENT", &temp_deploy)]);
+    assert!(
+        !undated_out.status.success(),
+        "undated 'earlier ' line with stale smoke counts must fail multi_guide_consistency"
+    );
+    let undated_report = parse_stdout_report(&undated_out);
+    assert_eq!(
+        undated_report["checks"]["multi_guide_consistency"].as_str(),
+        Some("fail"),
+        "{undated_report}"
+    );
 }

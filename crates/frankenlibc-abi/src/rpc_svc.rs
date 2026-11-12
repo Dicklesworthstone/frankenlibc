@@ -342,8 +342,13 @@ fn lookup(x: *mut SvcXprt) -> Option<Arc<Transport>> {
 // Raw handles are caller-thread objects, never entries in a descriptor set.
 // Clone ownership out of TLS before any application callback runs.
 #[cfg(not(feature = "owned-tls-cache"))]
+fn init_raw_slot() -> std::cell::RefCell<Option<Arc<Transport>>> {
+    std::cell::RefCell::new(None)
+}
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RAW: std::cell::RefCell<Option<Arc<Transport>>> = const { std::cell::RefCell::new(None) };
+    static RAW: crate::util::TlsHeapCell<std::cell::RefCell<Option<Arc<Transport>>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 #[cfg(feature = "owned-tls-cache")]
 static RAW: crate::owned_tls_cache::OwnedTlsCache<Option<Arc<Transport>>> =
@@ -355,7 +360,7 @@ fn with_raw<R>(f: impl FnOnce(&mut Option<Arc<Transport>>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RAW.with(|slot| f(&mut slot.borrow_mut()))
+        RAW.with(|slot| slot.with_init(init_raw_slot, |cell| f(&mut cell.borrow_mut())))
     }
 }
 
@@ -478,24 +483,33 @@ const EMPTY_POLL: libc::pollfd = libc::pollfd {
     events: libc::POLLIN,
     revents: 0,
 };
-const ZERO_POLL: libc::pollfd = libc::pollfd {
-    fd: 0,
-    events: 0,
-    revents: 0,
-};
 struct PollSnapshot {
     entries: [libc::pollfd; LIMIT],
 }
 #[cfg(not(feature = "owned-tls-cache"))]
+unsafe fn clear_rpc_svc_pollfd_tls() {
+    unsafe {
+        super::rpc_svc_max_pollfd_ptr().cast::<c_int>().write(0);
+        super::rpc_svc_pollfd_ptr()
+            .cast::<*mut libc::pollfd>()
+            .write(ptr::null_mut());
+    }
+}
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static POLL_SNAPSHOT: Box<UnsafeCell<PollSnapshot>> =
-        Box::new(UnsafeCell::new(PollSnapshot { entries: [ZERO_POLL; LIMIT] }));
+    static POLL_SNAPSHOT: crate::util::TlsHeapCell<UnsafeCell<PollSnapshot>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 #[cfg(feature = "owned-tls-cache")]
 static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_snapshot);
 #[cfg(feature = "owned-tls-cache")]
 fn empty_snapshot() -> PollSnapshot {
+    const ZERO_POLL: libc::pollfd = libc::pollfd {
+        fd: 0,
+        events: 0,
+        revents: 0,
+    };
     PollSnapshot {
         entries: [ZERO_POLL; LIMIT],
     }
@@ -507,7 +521,11 @@ fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        POLL_SNAPSHOT.with(|s| f(unsafe { &mut *s.get() }))
+        POLL_SNAPSHOT.with(|slot| {
+            slot.with_zeroed(Some(clear_rpc_svc_pollfd_tls), |s| {
+                f(unsafe { &mut *s.get() })
+            })
+        })
     }
 }
 

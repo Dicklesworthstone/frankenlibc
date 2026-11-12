@@ -1070,6 +1070,14 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
     true
 }
 
+static NATIVE_POST_TEARDOWN_HOOK: std::sync::OnceLock<fn(i32)> = std::sync::OnceLock::new();
+
+/// Register an optional ABI-layer callback invoked after all POSIX key
+/// destructors have completed for a native registered thread (`tid`).
+pub fn install_native_thread_post_teardown_hook(hook: fn(i32)) {
+    let _ = NATIVE_POST_TEARDOWN_HOOK.set(hook);
+}
+
 /// Run the POSIX key destructors of the exiting thread `tid`: the hook for
 /// threads whose lifecycle belongs to the host libc, which never sees fl's key
 /// table (the native clone trampoline calls [`teardown_thread_tls`] itself).
@@ -1217,6 +1225,9 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
 
     if registered {
         table_remove(tid);
+        if let Some(hook) = NATIVE_POST_TEARDOWN_HOOK.get() {
+            hook(tid);
+        }
     } else {
         // Only unregistered threads own fallback storage. A native child must
         // not release its creator's high-key spill block on its way out.

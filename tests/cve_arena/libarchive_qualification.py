@@ -1696,6 +1696,8 @@ def supervisor_validate_and_publish(
 ) -> dict[str, Any]:
     if "/" in staged_filename or ".." in staged_filename or staged_filename.startswith("."):
         return {"published": False, "reason": "invalid_staged_filename"}
+    if "/" in published_filename or ".." in published_filename or published_filename.startswith("."):
+        return {"published": False, "reason": "invalid_published_filename"}
 
     dir_fd = os.open(staging_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -3001,7 +3003,7 @@ def run_qualification(args: argparse.Namespace) -> int:
 
     if args.demo:
         print_demo_summary(results_dir)
-    return 0
+    return 0 if conjunction_pass else 1
 
 
 def verify_bundle(args: argparse.Namespace) -> int:
@@ -3057,6 +3059,13 @@ def verify_bundle(args: argparse.Namespace) -> int:
                 print(json.dumps({"status": "invalid_bundle", "reason": f"machine_local_path_leaked:{rel}"}))
                 return 2
 
+    for item in all_entries:
+        if item.is_file() and item.name != "bundle_index.json":
+            rel_item = item.relative_to(bundle_root).as_posix()
+            if rel_item not in seen_paths:
+                print(json.dumps({"status": "invalid_bundle", "reason": f"unindexed_file:{rel_item}"}))
+                return 2
+
     identities = json.loads((bundle_root / "artifact_identities.json").read_text(encoding="utf-8"))
     if args.check_candidate_lib:
         live_so = pathlib.Path(args.check_candidate_lib).resolve()
@@ -3098,23 +3107,67 @@ def verify_bundle(args: argparse.Namespace) -> int:
         and not bool(rar_doc["arms"]["F"]["oracle"]["watchpoint_triggered"])
         and not bool(rar_doc["arms"]["F"]["synthetic_marker_disclosed"])
     )
+    benign_cells = benign_doc.get("cells", [])
+    benign_recheck = (
+        bool(benign_doc.get("all_passed"))
+        and bool(benign_cells)
+        and all(
+            bool(cell.get("arms"))
+            and all(
+                arm_rec.get("exit_code") == 0
+                and bool(arm_rec.get("publication", {}).get("published"))
+                and bool(arm_rec.get("passed"))
+                for arm_rec in cell["arms"].values()
+            )
+            for cell in benign_cells
+        )
+    )
+    s17_controls = s17_doc.get("controls", [])
+    s17_recheck = (
+        bool(s17_doc.get("all_passed"))
+        and len(s17_controls) >= 6
+        and int(s17_doc.get("published_files_after_failures", 1)) == 0
+        and all(bool(ctrl.get("passed")) for ctrl in s17_controls)
+    )
+    s23_cases = s23_doc.get("cases", [])
+    s23_recheck = (
+        bool(s23_doc.get("all_passed"))
+        and bool(s23_cases)
+        and all(
+            (
+                bool(c["arms"]["H"]["oracle"]["watchpoint_triggered"])
+                and bool(c["arms"]["S"]["oracle"]["watchpoint_triggered"])
+                and int(c["arms"]["F"]["oracle"]["armed_count"]) >= 1
+                and not bool(c["arms"]["F"]["oracle"]["watchpoint_triggered"])
+                and bool(c["arms"]["F"]["dimensions"]["qualified_card"])
+            )
+            if "arms" in c
+            else (
+                c.get("family") == "inlined_direct_write_non_coverage_boundary"
+                and bool(c.get("oracle", {}).get("watchpoint_triggered"))
+                and c.get("dimensions", {}).get("qualification") == "unsupported"
+                and not bool(c.get("dimensions", {}).get("qualified_card", True))
+            )
+            for c in s23_cases
+        )
+    )
     inlined_non_promo = any(
         c.get("family") == "inlined_direct_write_non_coverage_boundary"
         and bool(c.get("oracle", {}).get("watchpoint_triggered"))
         and c.get("dimensions", {}).get("qualification") == "unsupported"
-        for c in s23_doc.get("cases", [])
+        for c in s23_cases
     )
 
-    if not (zip_recheck and rar_recheck and benign_doc["all_passed"] and s17_doc["all_passed"] and s23_doc["all_passed"] and inlined_non_promo):
+    if not (zip_recheck and rar_recheck and benign_recheck and s17_recheck and s23_recheck and inlined_non_promo):
         print(
             json.dumps(
                 {
                     "status": "verification_failed",
                     "zip_recheck": zip_recheck,
                     "rar_recheck": rar_recheck,
-                    "benign_passed": benign_doc["all_passed"],
-                    "s17_passed": s17_doc["all_passed"],
-                    "s23_passed": s23_doc["all_passed"],
+                    "benign_passed": benign_recheck,
+                    "s17_passed": s17_recheck,
+                    "s23_passed": s23_recheck,
                     "inlined_non_promo": inlined_non_promo,
                 }
             )
@@ -3127,11 +3180,11 @@ def verify_bundle(args: argparse.Namespace) -> int:
         "verified_files": len(seen_paths),
         "zip_s09_s11_recomputed": zip_recheck,
         "rar_s14_recomputed": rar_recheck,
-        "benign_s10_passed": benign_doc["all_passed"],
+        "benign_s10_passed": benign_recheck,
         "performance_s15_within_budget": perf_doc["within_operator_budget"],
         "hardened_vs_stock_wall_ratio": perf_doc["hardened_vs_stock_ratio"],
-        "lifecycle_s17_passed": s17_doc["all_passed"],
-        "holdout_s23_passed": s23_doc["all_passed"],
+        "lifecycle_s17_passed": s17_recheck,
+        "holdout_s23_passed": s23_recheck,
         "inlined_bypass_marked_unsupported": inlined_non_promo,
     }
     print(json.dumps(out, indent=2, sort_keys=True))

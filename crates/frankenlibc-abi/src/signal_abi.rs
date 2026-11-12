@@ -385,7 +385,7 @@ impl SignalHandlerSlot {
     }
 }
 
-const DEFERRED_SIGINFO_SLOTS: usize = 2;
+const DEFERRED_SIGINFO_SLOTS: usize = 4;
 
 struct DeferredSiginfoSlot {
     signum: AtomicU8,
@@ -698,7 +698,11 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
         // thread stack; node/libuv 32-64 KiB stacks failed under preload —
         // bd-rc0923-epic-eeuy4f.9). Replay passes a fresh context instead.
         let _ = context;
-        pending.counts[signum as usize].fetch_add(1, Ordering::Relaxed);
+        let _ = pending.counts[signum as usize].try_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |cur| Some(cur.saturating_add(1)),
+        );
     });
     // After the count: a flush that sees this bit is guaranteed to see the
     // count; one that cleared the mask earlier leaves the bit for the next.

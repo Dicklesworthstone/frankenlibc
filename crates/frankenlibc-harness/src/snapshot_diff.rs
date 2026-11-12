@@ -284,9 +284,11 @@ fn truncate(s: &str, width: usize) -> String {
         return s.to_string();
     }
     if width <= 3 {
-        return s[..width].to_string();
+        let end = s.floor_char_boundary(width);
+        return s[..end].to_string();
     }
-    format!("{}...", &s[..(width - 3)])
+    let end = s.floor_char_boundary(width - 3);
+    format!("{}...", &s[..end])
 }
 
 #[cfg(feature = "frankentui-ui")]
@@ -303,7 +305,9 @@ pub fn render_ftui_buffer(report: &SnapshotDiffReport, width: u16) -> ftui_rende
     use ftui_widgets::borders::{BorderType, Borders};
     use ftui_widgets::table::{Row, Table};
 
-    let height = (report.rows.len() as u16).saturating_add(4);
+    let height = u16::try_from(report.rows.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(4);
     let mut pool = GraphemePool::new();
     let mut frame = Frame::new(width, height, &mut pool);
 
@@ -459,5 +463,16 @@ mod tests {
             .expect("key field should be present");
         assert_eq!(row.status, DiffStatus::Alert);
         assert_eq!(row.delta, Some(25_000.0));
+    }
+
+    #[test]
+    fn truncate_handles_multibyte_utf8_boundaries() {
+        let s = "αβγδε"; // each Greek letter is 2 UTF-8 bytes (10 bytes total)
+        assert_eq!(truncate(s, 10), "αβγδε");
+        assert_eq!(truncate(s, 3), "α");
+        assert_eq!(truncate(s, 2), "α");
+        assert_eq!(truncate(s, 1), "");
+        assert_eq!(truncate(s, 6), "α...");
+        assert_eq!(truncate(s, 7), "αβ...");
     }
 }

@@ -769,6 +769,9 @@ fn warm_tls_cache_detects_tail_and_header_corruption_e2e() {
     let heal_policy = global_healing_policy();
 
     // Case A: Warm TLS_CACHE + near-tail write catches 1-byte trailing canary smash immediately.
+    // Parallel tests in this binary call `free()` concurrently and can bump the global
+    // `SHARD_EPOCHS` between warming `TLS_CACHE` and probing it; retry warming until an
+    // uninterrupted warm-cache probe directly observes the corrupted canary.
     let ptr = pipeline.allocate(128).expect("allocate 128");
     let addr = ptr as usize;
     assert!(matches!(
@@ -776,36 +779,74 @@ fn warm_tls_cache_detects_tail_and_header_corruption_e2e() {
         ValidationOutcome::Validated(_) | ValidationOutcome::CachedValid(_)
     ));
 
-    if frankenlibc_membrane::config::safety_level().validation_enabled() {
-        assert_eq!(
-            pipeline.try_validate_cached_remaining(addr),
-            Some(Some(128))
-        );
-        let canary_fails_before = MembraneMetrics::get(&metrics.canary_failures);
+    let mode = frankenlibc_membrane::config::safety_level();
+    if mode.validation_enabled() {
+        let mut warmed = false;
+        for _ in 0..64 {
+            let _ = pipeline.validate(addr);
+            if pipeline.try_validate_cached_remaining(addr) == Some(Some(128)) {
+                warmed = true;
+                break;
+            }
+        }
+        assert!(warmed, "expected warm TLS_CACHE hit within 64 attempts");
+
         let clamps_before = heal_policy
             .size_clamps
             .load(std::sync::atomic::Ordering::Relaxed);
-        assert!(pipeline.inject_trailing_canary_corruption(addr, 128, 0xEE));
+        let mut observed_warm_canary_failure = false;
+        for _ in 0..64 {
+            let _ = pipeline.validate(addr);
+            let canary_fails_before = MembraneMetrics::get(&metrics.canary_failures);
+            assert!(pipeline.inject_trailing_canary_corruption(addr, 128, 0xEE));
 
-        // Near-tail write (`addr + 96`, remaining 32 <= 64) clamps to 0 immediately.
-        let clamped = pipeline.try_validate_cached_write_remaining(addr + 96, 8);
-        assert_eq!(
-            clamped,
-            Some(Some(0)),
-            "warm TLS near-tail write must clamp corrupted buffer to 0 bytes"
-        );
-        assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_fails_before);
+            // Near-tail write (`addr + 96`, remaining 32 <= 64) clamps to 0 in Hardened
+            // mode and misses cleanly (zero heals) in Strict mode so `validate()` surfaces
+            // `TemporalViolation`.
+            let clamped = pipeline.try_validate_cached_write_remaining(addr + 96, 8);
+            if MembraneMetrics::get(&metrics.canary_failures) > canary_fails_before {
+                observed_warm_canary_failure = true;
+                if mode.heals_enabled() {
+                    assert_eq!(
+                        clamped,
+                        Some(Some(0)),
+                        "hardened warm TLS near-tail write must clamp corrupted buffer to 0 bytes"
+                    );
+                    assert!(
+                        heal_policy
+                            .size_clamps
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            > clamps_before
+                    );
+                } else {
+                    assert_eq!(
+                        clamped, None,
+                        "strict warm TLS near-tail write must evict cache without recording heals"
+                    );
+                    assert_eq!(
+                        heal_policy
+                            .size_clamps
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        clamps_before
+                    );
+                }
+                assert_eq!(
+                    pipeline.try_validate_cached_remaining(addr),
+                    None,
+                    "corrupted allocation must be evicted from warm TLS_CACHE"
+                );
+                break;
+            }
+            // A parallel test bumped `SHARD_EPOCHS` before our probe; un-corrupt via XOR
+            // so `validate(addr)` can re-warm `TLS_CACHE` for the next attempt.
+            assert!(pipeline.inject_trailing_canary_corruption(addr, 128, 0xEE));
+        }
         assert!(
-            heal_policy
-                .size_clamps
-                .load(std::sync::atomic::Ordering::Relaxed)
-                > clamps_before
+            observed_warm_canary_failure,
+            "expected warm TLS near-tail write to directly catch corrupted canary"
         );
-        assert_eq!(
-            pipeline.try_validate_cached_remaining(addr),
-            None,
-            "corrupted allocation must be evicted from warm TLS_CACHE"
-        );
+    } else {
+        assert!(pipeline.inject_trailing_canary_corruption(addr, 128, 0xEE));
     }
     assert_eq!(pipeline.free(ptr), FreeResult::FreedWithCanaryCorruption);
 
@@ -813,23 +854,39 @@ fn warm_tls_cache_detects_tail_and_header_corruption_e2e() {
     let ptr_cadence = pipeline.allocate(256).expect("allocate 256");
     let addr_cadence = ptr_cadence as usize;
     let _ = pipeline.validate(addr_cadence);
-    assert!(pipeline.inject_trailing_canary_corruption(addr_cadence, 256, 0xAA));
-    if frankenlibc_membrane::config::safety_level().validation_enabled() {
-        let mut saw_clamp_zero = false;
-        for _ in 0..16 {
-            match pipeline.try_validate_cached_remaining(addr_cadence) {
-                Some(Some(0)) | None => {
-                    saw_clamp_zero = true;
-                    break;
+    if mode.validation_enabled() {
+        let mut observed_cadence_canary_failure = false;
+        for _ in 0..64 {
+            let _ = pipeline.validate(addr_cadence);
+            let canary_fails_before = MembraneMetrics::get(&metrics.canary_failures);
+            assert!(pipeline.inject_trailing_canary_corruption(addr_cadence, 256, 0xAA));
+            let mut saw_clamp_or_evict = false;
+            for _ in 0..16 {
+                match pipeline.try_validate_cached_remaining(addr_cadence) {
+                    Some(Some(0)) | None => {
+                        saw_clamp_or_evict = true;
+                        break;
+                    }
+                    Some(Some(256)) => {}
+                    other => panic!("unexpected warm-cache cadence result: {other:?}"),
                 }
-                Some(Some(256)) => {}
-                other => panic!("unexpected warm-cache cadence result: {other:?}"),
             }
+            assert!(
+                saw_clamp_or_evict,
+                "1-in-16 warm-TLS read cadence must detect or evict within 16 probes"
+            );
+            if MembraneMetrics::get(&metrics.canary_failures) > canary_fails_before {
+                observed_cadence_canary_failure = true;
+                break;
+            }
+            assert!(pipeline.inject_trailing_canary_corruption(addr_cadence, 256, 0xAA));
         }
         assert!(
-            saw_clamp_zero,
-            "1-in-16 warm-TLS read cadence must detect corrupted tail canary within 16 probes"
+            observed_cadence_canary_failure,
+            "expected 1-in-16 warm-TLS read cadence to directly catch corrupted canary"
         );
+    } else {
+        assert!(pipeline.inject_trailing_canary_corruption(addr_cadence, 256, 0xAA));
     }
     assert_eq!(
         pipeline.free(ptr_cadence),

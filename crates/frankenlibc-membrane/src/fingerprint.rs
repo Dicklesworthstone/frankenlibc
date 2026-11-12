@@ -185,7 +185,6 @@ fn splitmix64(seed: &mut u64) -> u64 {
 fn fill_os_csprng_bytes(buf: &mut [u8; 32]) -> bool {
     const GRND_NONBLOCK: usize = 0x0001;
     const EINTR_NEG: isize = -4;
-    const EAGAIN_NEG: isize = -11;
 
     #[inline(always)]
     #[allow(unsafe_code)]
@@ -229,20 +228,24 @@ fn fill_os_csprng_bytes(buf: &mut [u8; 32]) -> bool {
     }
 
     let mut filled = 0usize;
-    let mut flags = GRND_NONBLOCK;
     while filled < buf.len() {
         // SAFETY: `buf[filled..]` is valid writable stack memory for `buf.len() - filled` bytes.
-        let n =
-            unsafe { raw_sys_getrandom(buf.as_mut_ptr().add(filled), buf.len() - filled, flags) };
+        let n = unsafe {
+            raw_sys_getrandom(
+                buf.as_mut_ptr().add(filled),
+                buf.len() - filled,
+                GRND_NONBLOCK,
+            )
+        };
         if n > 0 {
             let step = (n as usize).min(buf.len() - filled);
             filled += step;
         } else if n == EINTR_NEG {
             continue;
-        } else if n == EAGAIN_NEG && flags != 0 {
-            // Early-boot CRNG pool not yet marked nonblocking; retry once blocking.
-            flags = 0;
         } else {
+            // Never retry without `GRND_NONBLOCK` (which could block early-boot PID-1
+            // processes before CRNG pool initialization); fall back to the non-blocking
+            // `splitmix64` entropy mix in `ensure_keys_initialized()`.
             return false;
         }
     }
@@ -265,20 +268,41 @@ pub fn keys_seeded_from_csprng() -> bool {
     KEY_SOURCE_CSPRNG.load(Ordering::Relaxed)
 }
 
-#[cfg(feature = "owned-tls-cache")]
+#[inline]
+fn recover_key_init_state(state: &AtomicU8) {
+    let _ = state.compare_exchange(
+        KEY_STATE_INIT,
+        KEY_STATE_UNINIT,
+        Ordering::AcqRel,
+        Ordering::Relaxed,
+    );
+}
+
+/// Reset an interrupted in-progress key initialization in a freshly forked child.
+///
+/// If another thread in the parent held `KEY_STATE_INIT` at the instant of `fork()`,
+/// that thread does not exist in the child and zero allocations could have completed
+/// key stamping yet (`init_keys` had not returned). Resetting `KEY_STATE_INIT ->
+/// KEY_STATE_UNINIT` prevents child spin-livelock while leaving `KEY_STATE_READY`
+/// keys untouched so parent-allocated blocks remain valid across `fork()`.
+pub(crate) fn recover_key_init_in_fork_child() {
+    recover_key_init_state(&KEY_INIT_STATE);
+}
+
+/// Allocation-free per-thread entropy probe.
+///
+/// Must NEVER call `std::thread::current()`, which lazily allocates `Arc<Thread>`
+/// via `malloc` on uninitialized C pthreads and would self-deadlock if invoked
+/// while the current thread owns `KEY_STATE_INIT`.
 fn current_thread_entropy() -> u64 {
     let stack_probe = 0u8;
     let stack_addr = &stack_probe as *const u8 as usize as u64;
-    u64::from(std::process::id()).rotate_left(23) ^ stack_addr.rotate_left(11)
-}
-
-#[cfg(not(feature = "owned-tls-cache"))]
-fn current_thread_entropy() -> u64 {
-    use std::hash::{Hash, Hasher};
-
-    let mut tid_hasher = std::collections::hash_map::DefaultHasher::new();
-    std::thread::current().id().hash(&mut tid_hasher);
-    tid_hasher.finish()
+    #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
+    let cycle_mix = unsafe { core::arch::x86_64::_rdtsc() };
+    #[cfg(not(target_arch = "x86_64"))]
+    let cycle_mix = 0x9E37_79B9_7F4A_7C15u64;
+    u64::from(std::process::id()).rotate_left(23) ^ stack_addr.rotate_left(11) ^ cycle_mix
 }
 
 #[cold]
@@ -877,6 +901,29 @@ mod tests {
             fp_b.to_bytes(),
             "Distinct fingerprints must produce distinct byte representations"
         );
+    }
+
+    #[test]
+    fn fork_recovery_resets_in_progress_key_init_without_disturbing_ready_keys() {
+        let interrupted = AtomicU8::new(KEY_STATE_INIT);
+        recover_key_init_state(&interrupted);
+        assert_eq!(interrupted.load(Ordering::Acquire), KEY_STATE_UNINIT);
+
+        let ready = AtomicU8::new(KEY_STATE_READY);
+        recover_key_init_state(&ready);
+        assert_eq!(ready.load(Ordering::Acquire), KEY_STATE_READY);
+
+        let uninit = AtomicU8::new(KEY_STATE_UNINIT);
+        recover_key_init_state(&uninit);
+        assert_eq!(uninit.load(Ordering::Acquire), KEY_STATE_UNINIT);
+
+        let fp_before = AllocationFingerprint::compute(0x4000, 64, 7);
+        let canary_before = fp_before.canary_for(0x4000);
+        crate::util::note_fork_child();
+        let fp_after = AllocationFingerprint::compute(0x4000, 64, 7);
+        let canary_after = fp_after.canary_for(0x4000);
+        assert_eq!(fp_before, fp_after);
+        assert_eq!(canary_before, canary_after);
     }
 
     // ═══════════════════════════════════════════════════════════════

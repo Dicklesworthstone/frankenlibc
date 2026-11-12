@@ -10,17 +10,14 @@ pub fn render_ftui_raw_diff(expected: &str, actual: &str) -> String {
 /// Render a text diff between expected and actual output.
 #[must_use]
 pub fn render_diff(expected: &str, actual: &str) -> String {
-    #[cfg(feature = "frankentui-ui")]
-    let ftui_raw = ftui_harness::diff_text(expected, actual);
-
-    #[cfg(feature = "frankentui-ui")]
-    if expected == actual && ftui_raw.is_empty() {
-        return String::from("[identical]");
-    }
-
     if expected == actual {
+        #[cfg(feature = "frankentui-ui")]
+        debug_assert!(ftui_harness::diff_text(expected, actual).is_empty());
         return String::from("[identical]");
     }
+
+    #[cfg(feature = "frankentui-ui")]
+    let _ftui_raw = ftui_harness::diff_text(expected, actual);
 
     let mut out = String::new();
     out.push_str("--- expected\n");
@@ -48,6 +45,16 @@ pub fn render_diff(expected: &str, actual: &str) -> String {
                 out.push_str(&format!("-{e}\n"));
                 out.push_str(&format!("+{a}\n"));
             }
+        }
+    }
+
+    if expected.ends_with('\n') != actual.ends_with('\n') {
+        let trailing_line = max_lines.max(1);
+        out.push_str(&format!("@@ line {trailing_line} (trailing newline) @@\n"));
+        if expected.ends_with('\n') {
+            out.push_str("+\\ No newline at end of file\n");
+        } else {
+            out.push_str("-\\ No newline at end of file\n");
         }
     }
     out
@@ -132,5 +139,18 @@ mod tests {
         let diff = render_diff(expected, actual);
         assert!(diff.contains("@@ line 2 @@"), "extra line not reported");
         assert!(diff.contains("+extra"), "extra line not shown");
+    }
+
+    #[test]
+    fn trailing_newline_mismatch_renders_explicit_difference() {
+        let missing_actual_nl = render_diff("alpha\n", "alpha");
+        assert_ne!(missing_actual_nl, "[identical]");
+        assert!(missing_actual_nl.contains("trailing newline"));
+        assert!(missing_actual_nl.contains("+\\ No newline at end of file"));
+
+        let missing_expected_nl = render_diff("alpha", "alpha\n");
+        assert_ne!(missing_expected_nl, "[identical]");
+        assert!(missing_expected_nl.contains("trailing newline"));
+        assert!(missing_expected_nl.contains("-\\ No newline at end of file"));
     }
 }

@@ -1823,6 +1823,35 @@ static NATIVE_STREAM_REGISTRY: Mutex<NativeStreamRegistry> =
 static STD_STREAMS_INSTALLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+pub(crate) struct StdStreamLocksForkGuard {
+    guards: [Option<crate::util::AbiReentrantMutexGuard<'static, RefCell<NativeFileLocked>>>; 3],
+}
+
+impl StdStreamLocksForkGuard {
+    pub(crate) unsafe fn adopt_in_fork_child(&mut self) {
+        for guard in self.guards.iter_mut().flatten() {
+            unsafe { guard.adopt_in_fork_child() };
+        }
+    }
+}
+
+/// Non-blocking acquisition of all three `STD_STREAM_LOCKS` across multi-threaded `fork()`.
+pub(crate) fn try_lock_std_stream_locks(
+    single_threaded: bool,
+) -> Result<StdStreamLocksForkGuard, ()> {
+    if single_threaded {
+        return Ok(StdStreamLocksForkGuard {
+            guards: [None, None, None],
+        });
+    }
+    let g0 = STD_STREAM_LOCKS[0].try_lock().ok_or(())?;
+    let g1 = STD_STREAM_LOCKS[1].try_lock().ok_or(())?;
+    let g2 = STD_STREAM_LOCKS[2].try_lock().ok_or(())?;
+    Ok(StdStreamLocksForkGuard {
+        guards: [Some(g0), Some(g1), Some(g2)],
+    })
+}
+
 /// Non-blocking lock of the stream registry, for `fork` preparation.
 pub(crate) fn try_lock_native_stream_registry()
 -> Option<std::sync::MutexGuard<'static, NativeStreamRegistry>> {
@@ -2873,7 +2902,22 @@ unsafe fn publish_native_file_list(head: *mut c_void) {
         if stdio_abi::stdio_symbols_are_interposed() {
             // Every new or removed head must reach an executable's COPY cell,
             // not only the initial standard-stream chain in the constructor.
-            _IO_list_all = head;
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            {
+                let slot: *mut *mut c_void;
+                core::arch::asm!(
+                    "mov {}, qword ptr [rip + _IO_list_all@GOTPCREL]",
+                    out(reg) slot,
+                    options(nostack, preserves_flags),
+                );
+                if !slot.is_null() {
+                    *slot = head;
+                }
+            }
+            #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+            {
+                _IO_list_all = head;
+            }
         }
     }
 }
@@ -3034,15 +3078,27 @@ pub fn visible_stdio_stream_ptr(fd: c_int) -> *mut c_void {
     if !resolved.is_null() {
         let header = resolved.cast::<GlibcIoFilePlus>();
         // SAFETY: `resolved` points to our owned or copy-relocated 224-byte
-        // `GlibcIoFilePlus`. Ensure `_lock` and `vtable` are populated even if a
-        // loader zero-initialized a copy cell prior to relocation.
+        // `GlibcIoFilePlus` (8-byte aligned). Populate `_lock` and `vtable`
+        // atomically so concurrent callers before `VISIBLE_STDIO_HANDLE_ADDR`
+        // publication never race on non-atomic pointer writes.
         unsafe {
-            if (*header)._io_file._lock.is_null() {
-                (*header)._io_file._lock = STD_STREAM_LOCKS[idx].opaque_ptr();
-            }
-            if (*header).vtable.is_null() {
-                (*header).vtable = &raw const NATIVE_IO_JUMP_T;
-            }
+            let lock_slot =
+                std::sync::atomic::AtomicPtr::from_ptr(&raw mut (*header)._io_file._lock);
+            let _ = lock_slot.compare_exchange(
+                ptr::null_mut(),
+                STD_STREAM_LOCKS[idx].opaque_ptr(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            let vtable_slot = std::sync::atomic::AtomicPtr::from_ptr(
+                (&raw mut (*header).vtable).cast::<*mut _IO_jump_t>(),
+            );
+            let _ = vtable_slot.compare_exchange(
+                ptr::null_mut(),
+                (&raw const NATIVE_IO_JUMP_T).cast_mut(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
         }
         VISIBLE_STDIO_HANDLE_ADDR[idx].store(resolved as usize, Ordering::Release);
     }

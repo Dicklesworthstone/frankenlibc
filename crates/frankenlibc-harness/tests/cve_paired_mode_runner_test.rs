@@ -559,4 +559,107 @@ fn sq_m0_hsfp_counterexamples_and_confinement_controls() {
         String::from_utf8_lossy(&py_out.stdout),
         String::from_utf8_lossy(&py_out.stderr)
     );
+
+    // Wave 7 regression controls on runner.sh:
+    // 1. Missing option argument (`--results-dir` without value) fails closed instead of shifting past $#.
+    let missing_arg_out = Command::new("bash")
+        .arg(&runner)
+        .arg("--results-dir")
+        .current_dir(&root)
+        .output()
+        .expect("runner missing-arg check should execute");
+    assert!(
+        !missing_arg_out.status.success(),
+        "--results-dir without value must fail closed"
+    );
+
+    // 2. Synthetic CVE execution under `--no-docker` populates `.result.json` `.hsfp` (no subshell loss)
+    //    AND exits non-zero (`1`) when verdict is UNSUPPORTED_PROVIDER / INVALID_ADMISSION.
+    let synth_dir = unique_temp_path("wave7_synth_cve", "dir");
+    let synth_res_dir = unique_temp_path("wave7_synth_res", "dir");
+    std::fs::create_dir_all(&synth_dir).expect("create synth cve dir");
+    let fake_release_dir = unique_temp_path("wave7_fake_release", "dir");
+    std::fs::create_dir_all(&fake_release_dir).expect("create fake release dir");
+    let fake_so = fake_release_dir.join("libfrankenlibc_abi.so");
+    std::fs::write(&fake_so, b"not-a-real-elf").expect("write fake so");
+    std::fs::write(
+        synth_dir.join("manifest.json"),
+        serde_json::json!({
+            "cve_id": "CVE-2099-0001",
+            "test_name": "synthetic_provider_reject",
+            "category": "synthetic",
+            "description": "synthetic check for .hsfp persistence and non-zero exit on UNSUPPORTED_PROVIDER",
+            "build_cmd": "true",
+            "run_cmd_stock": "exit 139",
+            "run_cmd_tsm": "exit 0",
+            "expected_tsm": { "exit_code": 0 }
+        })
+        .to_string(),
+    )
+    .expect("write synthetic manifest");
+    let synth_out = Command::new("bash")
+        .arg(&runner)
+        .arg("--no-docker")
+        .arg(format!("--results-dir={}", synth_res_dir.display()))
+        .arg(&synth_dir)
+        .current_dir(&root)
+        .env("FRANKENLIBC_LIB", &fake_so)
+        .output()
+        .expect("run synthetic CVE test");
+    assert_eq!(
+        synth_out.status.code(),
+        Some(1),
+        "UNSUPPORTED_PROVIDER must cause runner.sh to exit 1:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&synth_out.stdout),
+        String::from_utf8_lossy(&synth_out.stderr)
+    );
+    let synth_result =
+        load_json(&synth_res_dir.join("CVE_2099_0001_synthetic_provider_reject.result.json"));
+    assert_eq!(
+        synth_result["verdict"].as_str(),
+        Some("UNSUPPORTED_PROVIDER")
+    );
+    assert_eq!(
+        synth_result["hsfp"]["verdict"].as_str(),
+        Some("UNSUPPORTED_PROVIDER"),
+        ".result.json .hsfp must be populated (not lost to subshell): {synth_result}"
+    );
+
+    // 3. libarchive_qualification.py --verify rejects unindexed extra files in a bundle.
+    let bundle_src = root.join("tests/cve_arena/results/libarchive_qualification_v1");
+    assert!(
+        bundle_src.join("bundle_index.json").is_file(),
+        "expected committed libarchive_qualification_v1 bundle"
+    );
+    {
+        let bundle_copy = unique_temp_path("wave7_bundle_unindexed", "dir");
+        std::fs::create_dir_all(&bundle_copy).expect("create bundle copy");
+        for entry in std::fs::read_dir(&bundle_src).unwrap().flatten() {
+            if entry.path().is_file() {
+                std::fs::copy(entry.path(), bundle_copy.join(entry.file_name()))
+                    .expect("copy bundle file");
+            }
+        }
+        std::fs::write(bundle_copy.join("planted_unindexed.txt"), "unindexed")
+            .expect("write unindexed file");
+        let verify_out = Command::new("python3")
+            .arg(root.join("tests/cve_arena/libarchive_qualification.py"))
+            .arg("verify")
+            .arg("--bundle-root")
+            .arg(&bundle_copy)
+            .current_dir(&root)
+            .output()
+            .expect("run libarchive_qualification.py verify");
+        assert_eq!(verify_out.status.code(), Some(2));
+        let verify_json: serde_json::Value =
+            serde_json::from_slice(&verify_out.stdout).expect("parse verify json");
+        assert_eq!(verify_json["status"].as_str(), Some("invalid_bundle"));
+        assert!(
+            verify_json["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("unindexed_file:"),
+            "unexpected verify reason: {verify_json}"
+        );
+    }
 }

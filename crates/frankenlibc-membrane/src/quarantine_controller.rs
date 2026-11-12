@@ -170,6 +170,19 @@ impl QuarantineController {
     ///
     /// Returns `true` if an epoch boundary was crossed and the depth was updated.
     pub fn record_free(&mut self, latency_ns: u64, was_quarantine_hit: bool) -> bool {
+        self.record_weighted_free(latency_ns, 1, was_quarantine_hit)
+    }
+
+    /// Record a (possibly stride-sampled) allocator observation with explicit
+    /// inverse-sampling `weight` so 1-in-N non-adverse sampling does not bias
+    /// `hit_rate` upward by `N`x when 100% of adverse hits are reported.
+    pub fn record_weighted_free(
+        &mut self,
+        latency_ns: u64,
+        weight: u64,
+        was_quarantine_hit: bool,
+    ) -> bool {
+        let weight = weight.max(1);
         // Record latency
         self.latencies[self.latency_pos] = latency_ns;
         self.latency_pos = (self.latency_pos + 1) % LATENCY_WINDOW;
@@ -177,10 +190,10 @@ impl QuarantineController {
             self.latency_count += 1;
         }
 
-        self.frees_this_epoch += 1;
+        self.frees_this_epoch = self.frees_this_epoch.saturating_add(weight);
         if was_quarantine_hit {
-            self.hits_this_epoch += 1;
-            self.total_hits += 1;
+            self.hits_this_epoch = self.hits_this_epoch.saturating_add(1);
+            self.total_hits = self.total_hits.saturating_add(1);
         }
 
         // Check epoch boundary
@@ -264,18 +277,23 @@ impl QuarantineController {
         self.frees_this_epoch = 0;
     }
 
-    /// Compute the p99 latency from the observation window.
+    /// Compute the p99 latency from the observation window without heap allocation.
     fn compute_p99(&self) -> f64 {
         if self.latency_count < 2 {
             return 0.0;
         }
 
-        let n = self.latency_count;
-        let mut sorted: Vec<u64> = self.latencies[..n].to_vec();
-        sorted.sort_unstable();
+        let n = self.latency_count.min(LATENCY_WINDOW);
+        let mut sorted = self.latencies;
+        sorted[..n].sort_unstable();
 
         let p99_idx = crate::util::ceil_f64((n as f64) * 0.99) as usize;
         sorted[p99_idx.min(n - 1)] as f64
+    }
+
+    /// Returns the estimated UAF escape rate quantized to parts-per-million.
+    pub fn estimated_escape_rate_ppm(&self) -> u32 {
+        (self.estimated_escape_rate.clamp(0.0, 1.0) * 1_000_000.0) as u32
     }
 
     /// Returns the current dual variables for diagnostics.

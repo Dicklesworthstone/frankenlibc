@@ -699,20 +699,20 @@ static PROTOCOL_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Protocol
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static HOSTS_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
-        Box::new(RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)));
-    static SERVICES_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
-        Box::new(RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)));
-    static PROTOCOLS_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
-        Box::new(RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)));
-    static PROC_NET_ROUTE_TLS: Box<RefCell<BackendFileCache>> =
-        Box::new(RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)));
-    static PROC_NET_IF_INET6_TLS: Box<RefCell<BackendFileCache>> =
-        Box::new(RefCell::new(BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)));
-    static SERVICE_LOOKUP_TLS: Box<RefCell<ServiceLookupCache>> =
-        Box::new(RefCell::new(ServiceLookupCache::new()));
-    static PROTOCOL_LOOKUP_TLS: Box<RefCell<ProtocolLookupCache>> =
-        Box::new(RefCell::new(ProtocolLookupCache::new()));
+    static HOSTS_BACKEND_TLS: crate::util::TlsHeapCell<RefCell<BackendFileCache>> =
+        const { crate::util::TlsHeapCell::new() };
+    static SERVICES_BACKEND_TLS: crate::util::TlsHeapCell<RefCell<BackendFileCache>> =
+        const { crate::util::TlsHeapCell::new() };
+    static PROTOCOLS_BACKEND_TLS: crate::util::TlsHeapCell<RefCell<BackendFileCache>> =
+        const { crate::util::TlsHeapCell::new() };
+    static PROC_NET_ROUTE_TLS: crate::util::TlsHeapCell<RefCell<BackendFileCache>> =
+        const { crate::util::TlsHeapCell::new() };
+    static PROC_NET_IF_INET6_TLS: crate::util::TlsHeapCell<RefCell<BackendFileCache>> =
+        const { crate::util::TlsHeapCell::new() };
+    static SERVICE_LOOKUP_TLS: crate::util::TlsHeapCell<RefCell<ServiceLookupCache>> =
+        const { crate::util::TlsHeapCell::new() };
+    static PROTOCOL_LOOKUP_TLS: crate::util::TlsHeapCell<RefCell<ProtocolLookupCache>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
@@ -734,7 +734,12 @@ fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+        HOSTS_BACKEND_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)),
+                |cell| cell.borrow_mut().read_snapshot(),
+            )
+        })
     }
 }
 
@@ -750,7 +755,12 @@ pub(crate) fn with_hosts_backend_snapshot<R>(
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+        HOSTS_BACKEND_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)),
+                |cell| cell.borrow_mut().with_snapshot(callback),
+            )
+        })
     }
 }
 
@@ -888,7 +898,12 @@ fn read_services_backend() -> std::io::Result<Vec<u8>> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+        SERVICES_BACKEND_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)),
+                |cell| cell.borrow_mut().read_snapshot(),
+            )
+        })
     }
 }
 
@@ -899,7 +914,12 @@ fn with_services_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+        SERVICES_BACKEND_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)),
+                |cell| cell.borrow_mut().with_snapshot(callback),
+            )
+        })
     }
 }
 
@@ -910,9 +930,14 @@ fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SERVICE_LOOKUP_TLS.with(|cell| {
-            let mut cache = cell.borrow_mut();
-            callback(&mut cache)
+        SERVICE_LOOKUP_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(ServiceLookupCache::new()),
+                |cell| {
+                    let mut cache = cell.borrow_mut();
+                    callback(&mut cache)
+                },
+            )
         })
     }
 }
@@ -1112,7 +1137,12 @@ fn with_protocols_backend_snapshot<R>(
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        PROTOCOLS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+        PROTOCOLS_BACKEND_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)),
+                |cell| cell.borrow_mut().with_snapshot(callback),
+            )
+        })
     }
 }
 
@@ -1178,9 +1208,14 @@ fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        PROTOCOL_LOOKUP_TLS.with(|cell| {
-            let mut cache = cell.borrow_mut();
-            callback(&mut cache)
+        PROTOCOL_LOOKUP_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(ProtocolLookupCache::new()),
+                |cell| {
+                    let mut cache = cell.borrow_mut();
+                    callback(&mut cache)
+                },
+            )
         })
     }
 }
@@ -1200,12 +1235,32 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
     #[cfg(feature = "owned-tls-cache")]
     let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
-    let route = PROC_NET_ROUTE_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+    let route = PROC_NET_ROUTE_TLS.with(|slot| {
+        slot.with_init(
+            || {
+                RefCell::new(BackendFileCache::new(
+                    PROC_NET_ROUTE_PATH,
+                    PROC_NET_ROUTE_PATH_ENV,
+                ))
+            },
+            |cell| cell.borrow_mut().read_snapshot().ok(),
+        )
+    })?;
 
     #[cfg(feature = "owned-tls-cache")]
     let if_inet6 = PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
-    let if_inet6 = PROC_NET_IF_INET6_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+    let if_inet6 = PROC_NET_IF_INET6_TLS.with(|slot| {
+        slot.with_init(
+            || {
+                RefCell::new(BackendFileCache::new(
+                    PROC_NET_IF_INET6_PATH,
+                    PROC_NET_IF_INET6_PATH_ENV,
+                ))
+            },
+            |cell| cell.borrow_mut().read_snapshot().ok(),
+        )
+    })?;
 
     Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
         &route, &if_inet6,
@@ -2192,8 +2247,8 @@ static GETHOSTBYNAME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostentTls
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GETHOSTBYNAME_TLS: Box<RefCell<HostentTlsStorage>> =
-        Box::new(RefCell::new(HostentTlsStorage::new()));
+    static GETHOSTBYNAME_TLS: crate::util::TlsHeapCell<RefCell<HostentTlsStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
@@ -2204,9 +2259,14 @@ fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GETHOSTBYNAME_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
+        GETHOSTBYNAME_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(HostentTlsStorage::new()),
+                |cell| {
+                    let mut storage = cell.borrow_mut();
+                    callback(&mut storage)
+                },
+            )
         })
     }
 }
@@ -4697,10 +4757,10 @@ static SERVENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServentTlsStorag
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static SERVENT_TLS: Box<RefCell<ServentTlsStorage>> =
-        Box::new(RefCell::new(ServentTlsStorage::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static SERVENT_TLS: crate::util::TlsHeapCell<RefCell<ServentTlsStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R {
@@ -4711,9 +4771,14 @@ fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SERVENT_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
+        SERVENT_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(ServentTlsStorage::new()),
+                |cell| {
+                    let mut storage = cell.borrow_mut();
+                    callback(&mut storage)
+                },
+            )
         })
     }
 }
@@ -4829,10 +4894,10 @@ static PROTOENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoentTlsStor
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static PROTOENT_TLS: Box<RefCell<ProtoentTlsStorage>> =
-        Box::new(RefCell::new(ProtoentTlsStorage::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static PROTOENT_TLS: crate::util::TlsHeapCell<RefCell<ProtoentTlsStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> R {
@@ -4843,9 +4908,14 @@ fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        PROTOENT_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
+        PROTOENT_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(ProtoentTlsStorage::new()),
+                |cell| {
+                    let mut storage = cell.borrow_mut();
+                    callback(&mut storage)
+                },
+            )
         })
     }
 }
@@ -8531,10 +8601,10 @@ static HOSTALIAS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; HOSTA
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static HOSTALIAS_BUF: Box<RefCell<[u8; HOSTALIAS_BUF_LEN]>> =
-        Box::new(RefCell::new([0u8; HOSTALIAS_BUF_LEN]));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static HOSTALIAS_BUF: crate::util::TlsHeapCell<RefCell<[u8; HOSTALIAS_BUF_LEN]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R {
@@ -8544,7 +8614,12 @@ fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        HOSTALIAS_BUF.with(|cell| f(&mut cell.borrow_mut()))
+        HOSTALIAS_BUF.with(|slot| {
+            slot.with_init(
+                || RefCell::new([0u8; HOSTALIAS_BUF_LEN]),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -8686,8 +8761,8 @@ static LOC_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; LOC_NT
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static LOC_NTOA_BUF: Box<RefCell<[u8; LOC_NTOA_BUF_LEN]>> =
-        Box::new(RefCell::new([0u8; LOC_NTOA_BUF_LEN]));
+    static LOC_NTOA_BUF: crate::util::TlsHeapCell<RefCell<[u8; LOC_NTOA_BUF_LEN]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {
@@ -8697,7 +8772,12 @@ fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        LOC_NTOA_BUF.with(|cell| f(&mut cell.borrow_mut()))
+        LOC_NTOA_BUF.with(|slot| {
+            slot.with_init(
+                || RefCell::new([0u8; LOC_NTOA_BUF_LEN]),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 

@@ -2248,6 +2248,7 @@ unsafe fn native_pthread_create(
             size: stack_size,
         }
     };
+    crate::util::note_native_thread_created();
     let handle_ptr = match unsafe {
         core_create_thread_with_startup(
             start_routine as usize,
@@ -3105,26 +3106,38 @@ impl TppThreadState {
     }
 }
 
+fn init_robust_held_set() -> std::cell::RefCell<RobustHeldSet> {
+    std::cell::RefCell::new(RobustHeldSet::new())
+}
+
+fn init_thread_tpp_state() -> std::cell::Cell<TppThreadState> {
+    std::cell::Cell::new(TppThreadState::new())
+}
+
 std::thread_local! {
-    static ROBUST_HELD_SET: Box<std::cell::RefCell<RobustHeldSet>> =
-        Box::new(std::cell::RefCell::new(RobustHeldSet::new()));
-    static THREAD_TPP_STATE: Box<std::cell::Cell<TppThreadState>> =
-        Box::new(std::cell::Cell::new(TppThreadState::new()));
+    static ROBUST_HELD_SET: crate::util::TlsHeapCell<std::cell::RefCell<RobustHeldSet>> =
+        const { crate::util::TlsHeapCell::new() };
+    static THREAD_TPP_STATE: crate::util::TlsHeapCell<std::cell::Cell<TppThreadState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn remember_robust_mutex_held(tid: i32, mutex: *mut libc::pthread_mutex_t) {
-    let _ = ROBUST_HELD_SET.try_with(|cell| {
-        if let Ok(mut set) = cell.try_borrow_mut() {
-            set.insert(tid, mutex);
-        }
+    let _ = ROBUST_HELD_SET.try_with(|slot| {
+        let _ = slot.try_with_init(init_robust_held_set, None, |cell| {
+            if let Ok(mut set) = cell.try_borrow_mut() {
+                set.insert(tid, mutex);
+            }
+        });
     });
 }
 
 fn forget_robust_mutex_held(mutex: *mut libc::pthread_mutex_t) {
-    let _ = ROBUST_HELD_SET.try_with(|cell| {
-        if let Ok(mut set) = cell.try_borrow_mut() {
-            set.remove(mutex);
-        }
+    let _ = ROBUST_HELD_SET.try_with(|slot| {
+        let _ = slot.try_with_init(init_robust_held_set, None, |cell| {
+            if let Ok(mut set) = cell.try_borrow_mut() {
+                set.remove(mutex);
+            }
+        });
     });
 }
 
@@ -3137,53 +3150,56 @@ fn tpp_acquire_ceiling(tid: i32, ceiling: c_int) -> c_int {
         return libc::EINVAL;
     }
     THREAD_TPP_STATE
-        .try_with(|cell| {
-            let mut state = cell.get();
-            if state.priomax == 0 {
-                let policy = match raw_syscall::sys_sched_getscheduler(tid) {
-                    Ok(p) => p,
-                    Err(e) => return e,
-                };
-                let mut param = libc::sched_param { sched_priority: 0 };
-                if let Err(e) = unsafe {
-                    raw_syscall::sys_sched_getparam(
-                        tid,
-                        &mut param as *mut libc::sched_param as *mut u8,
-                    )
-                } {
-                    return e;
+        .try_with(|slot| {
+            slot.try_with_init(init_thread_tpp_state, None, |cell| {
+                let mut state = cell.get();
+                if state.priomax == 0 {
+                    let policy = match raw_syscall::sys_sched_getscheduler(tid) {
+                        Ok(p) => p,
+                        Err(e) => return e,
+                    };
+                    let mut param = libc::sched_param { sched_priority: 0 };
+                    if let Err(e) = unsafe {
+                        raw_syscall::sys_sched_getparam(
+                            tid,
+                            &mut param as *mut libc::sched_param as *mut u8,
+                        )
+                    } {
+                        return e;
+                    }
+                    state.base_policy = policy;
+                    state.base_prio = param.sched_priority;
                 }
-                state.base_policy = policy;
-                state.base_prio = param.sched_priority;
-            }
-            if state.base_prio > ceiling {
-                return libc::EINVAL;
-            }
-            let idx = (ceiling - 1) as usize;
-            if state.counts[idx] == u32::MAX {
-                return libc::EAGAIN;
-            }
-            let old_effective = state.priomax.max(state.base_prio);
-            let new_priomax = state.priomax.max(ceiling);
-            let new_effective = new_priomax.max(state.base_prio);
-            if new_effective > old_effective {
-                let param = libc::sched_param {
-                    sched_priority: new_effective,
-                };
-                if let Err(e) = unsafe {
-                    raw_syscall::sys_sched_setscheduler(
-                        tid,
-                        state.base_policy,
-                        &param as *const libc::sched_param as *const u8,
-                    )
-                } {
-                    return e;
+                if state.base_prio > ceiling {
+                    return libc::EINVAL;
                 }
-            }
-            state.counts[idx] += 1;
-            state.priomax = new_priomax;
-            cell.set(state);
-            0
+                let idx = (ceiling - 1) as usize;
+                if state.counts[idx] == u32::MAX {
+                    return libc::EAGAIN;
+                }
+                let old_effective = state.priomax.max(state.base_prio);
+                let new_priomax = state.priomax.max(ceiling);
+                let new_effective = new_priomax.max(state.base_prio);
+                if new_effective > old_effective {
+                    let param = libc::sched_param {
+                        sched_priority: new_effective,
+                    };
+                    if let Err(e) = unsafe {
+                        raw_syscall::sys_sched_setscheduler(
+                            tid,
+                            state.base_policy,
+                            &param as *const libc::sched_param as *const u8,
+                        )
+                    } {
+                        return e;
+                    }
+                }
+                state.counts[idx] += 1;
+                state.priomax = new_priomax;
+                cell.set(state);
+                0
+            })
+            .unwrap_or(libc::ENOMEM)
         })
         .unwrap_or(libc::EINVAL)
 }
@@ -3195,38 +3211,40 @@ fn tpp_release_ceiling(tid: i32, ceiling: c_int) {
     if !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&ceiling) {
         return;
     }
-    let _ = THREAD_TPP_STATE.try_with(|cell| {
-        let mut state = cell.get();
-        let idx = (ceiling - 1) as usize;
-        if state.counts[idx] == 0 {
-            return;
-        }
-        state.counts[idx] -= 1;
-        if state.counts[idx] == 0 && ceiling == state.priomax {
-            let old_effective = state.priomax.max(state.base_prio);
-            let mut next_max = 0;
-            for i in (0..idx).rev() {
-                if state.counts[i] > 0 {
-                    next_max = (i + 1) as c_int;
-                    break;
+    let _ = THREAD_TPP_STATE.try_with(|slot| {
+        let _ = slot.try_with_init(init_thread_tpp_state, None, |cell| {
+            let mut state = cell.get();
+            let idx = (ceiling - 1) as usize;
+            if state.counts[idx] == 0 {
+                return;
+            }
+            state.counts[idx] -= 1;
+            if state.counts[idx] == 0 && ceiling == state.priomax {
+                let old_effective = state.priomax.max(state.base_prio);
+                let mut next_max = 0;
+                for i in (0..idx).rev() {
+                    if state.counts[i] > 0 {
+                        next_max = (i + 1) as c_int;
+                        break;
+                    }
+                }
+                state.priomax = next_max;
+                let new_effective = state.priomax.max(state.base_prio);
+                if new_effective < old_effective {
+                    let param = libc::sched_param {
+                        sched_priority: new_effective,
+                    };
+                    let _ = unsafe {
+                        raw_syscall::sys_sched_setscheduler(
+                            tid,
+                            state.base_policy,
+                            &param as *const libc::sched_param as *const u8,
+                        )
+                    };
                 }
             }
-            state.priomax = next_max;
-            let new_effective = state.priomax.max(state.base_prio);
-            if new_effective < old_effective {
-                let param = libc::sched_param {
-                    sched_priority: new_effective,
-                };
-                let _ = unsafe {
-                    raw_syscall::sys_sched_setscheduler(
-                        tid,
-                        state.base_policy,
-                        &param as *const libc::sched_param as *const u8,
-                    )
-                };
-            }
-        }
-        cell.set(state);
+            cell.set(state);
+        });
     });
 }
 
@@ -5470,6 +5488,7 @@ fn ensure_host_thread_key_teardown() {
     if tid == frankenlibc_core::syscall::sys_getpid() {
         return;
     }
+    crate::util::mark_thread_has_pending_key_destructors();
     // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.
     unsafe {
         crate::startup_abi::__cxa_thread_atexit_impl(
@@ -5486,6 +5505,7 @@ unsafe extern "C" fn run_host_thread_key_destructors(_: *mut c_void) {
     frankenlibc_core::pthread::run_exiting_thread_key_destructors(
         frankenlibc_core::syscall::sys_gettid(),
     );
+    crate::util::finish_thread_key_destructors_and_reclaim_tls_heap();
 }
 
 // ===========================================================================
@@ -11079,6 +11099,8 @@ unsafe fn register_native_cleanup(buf: *mut c_void, deferred: bool) {
         // Moving to DEFERRED cannot act on a pending asynchronous request.
         unsafe { pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED_TYPE, &mut previous) };
         unsafe { private.add(1).write(previous as usize) };
+    } else {
+        unsafe { private.add(1).write(PTHREAD_CANCEL_DEFERRED_TYPE as usize) };
     }
 }
 
@@ -11135,6 +11157,7 @@ unsafe fn finish_native_thread_exit() -> ! {
     // handle. Its ordinary TLS fallback is private because managed children
     // keep all cleanup state in their own handles.
     frankenlibc_core::pthread::tls::run_exiting_thread_key_destructors(core_self_tid());
+    crate::util::reclaim_current_thread_tls_heap_cells();
     raw_syscall::sys_exit_thread(0);
 }
 

@@ -639,7 +639,15 @@ checks["forbidden_claim_patterns"] = "pass" if not forbidden_claims else "fail"
 # (a) Multi-occurrence & cross-guide smoke counts and support-taxonomy rollups
 def is_dated_historical_line(line_text):
     lowered_line = line_text.lower()
-    return any(tok in lowered_line for tok in ("historical", "superseded", "earlier ", "former "))
+    if "historical" in lowered_line or "superseded" in lowered_line:
+        return True
+    if "earlier " in lowered_line or "former " in lowered_line:
+        return bool(
+            re.search(r"\b202[0-9]-\d{2}-\d{2}\b", lowered_line)
+            or "commit " in lowered_line
+            or re.search(r"`[0-9a-f]{7,40}`", lowered_line)
+        )
+    return False
 
 multi_guide_ok = True
 stale_guide_tokens = [

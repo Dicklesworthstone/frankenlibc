@@ -628,7 +628,8 @@ impl GetenvHotCache {
         // array (checked first) and is not reallocated without an epoch bump;
         // `entry` is read only after the slot is seen to still hold it.
         unsafe {
-            if HOST_ENVIRON as usize != self.environ
+            if observed_external_environ().is_some()
+                || HOST_ENVIRON as usize != self.environ
                 || *(self.slot as *const *mut c_char) as usize != self.entry
             {
                 return None;
@@ -885,6 +886,22 @@ unsafe fn candidate_matches_name(
 unsafe extern "C" {
     #[link_name = "__environ"]
     static mut HOST_ENVIRON: *mut *mut c_char;
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        not(debug_assertions),
+        not(feature = "standalone")
+    ))]
+    #[link_name = "environ"]
+    static mut GOT_ENVIRON: *mut *mut c_char;
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        not(debug_assertions),
+        not(feature = "standalone")
+    ))]
+    #[link_name = "_environ"]
+    static mut GOT_UNDERSCORE_ENVIRON: *mut *mut c_char;
 }
 
 #[inline]
@@ -932,6 +949,7 @@ unsafe fn native_getenv_slot(name_ptr: *const u8, name_len: usize) -> GetenvFoun
     // SAFETY: HOST_ENVIRON is owned by libc; we only read pointers/bytes
     // and the array layout is stable while we hold the mutator lock.
     unsafe {
+        sync_external_environ();
         let not_found = GetenvFound {
             value: ptr::null_mut(),
             environ: HOST_ENVIRON,
@@ -1013,6 +1031,72 @@ unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> GetenvNamePro
 /// program's static array (host abort "realloc(): invalid pointer").
 static OWNED_ENVIRON: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static OWNED_ENVIRON_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static LAST_PUBLISHED_ENVIRON: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(usize::MAX);
+
+#[inline]
+unsafe fn observed_external_environ() -> Option<*mut *mut c_char> {
+    let last = LAST_PUBLISHED_ENVIRON.load(std::sync::atomic::Ordering::Acquire);
+    if last == usize::MAX {
+        #[cfg(all(
+            target_os = "linux",
+            target_arch = "x86_64",
+            not(debug_assertions),
+            not(feature = "standalone")
+        ))]
+        unsafe {
+            if HOST_ENVIRON.is_null() {
+                if !GOT_ENVIRON.is_null() {
+                    return Some(GOT_ENVIRON);
+                }
+                if !GOT_UNDERSCORE_ENVIRON.is_null() {
+                    return Some(GOT_UNDERSCORE_ENVIRON);
+                }
+            }
+        }
+        return None;
+    }
+    let host = unsafe { HOST_ENVIRON };
+    if host as usize != last {
+        return Some(host);
+    }
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        not(debug_assertions),
+        not(feature = "standalone")
+    ))]
+    unsafe {
+        let env_got = GOT_ENVIRON;
+        if env_got as usize != last {
+            return Some(env_got);
+        }
+        let under_got = GOT_UNDERSCORE_ENVIRON;
+        if under_got as usize != last {
+            return Some(under_got);
+        }
+    }
+    None
+}
+
+/// Synchronize `HOST_ENVIRON` and all exported `environ`/`_environ`/`__environ`
+/// GOT slots when user code (`environ = custom;`, e.g. via `-no-pie`
+/// `R_X86_64_COPY`) re-points any alias directly. Must be called under
+/// `environ_lock_guard()`.
+#[inline]
+unsafe fn sync_external_environ() {
+    if let Some(ext) = unsafe { observed_external_environ() } {
+        unsafe {
+            HOST_ENVIRON = ext;
+        }
+        publish_environ_aliases();
+        bump_environ_epoch();
+    } else if LAST_PUBLISHED_ENVIRON.load(std::sync::atomic::Ordering::Acquire) == usize::MAX
+        && !unsafe { HOST_ENVIRON.is_null() }
+    {
+        publish_environ_aliases();
+    }
+}
 
 /// Incremented after every successful environment mutation. The deployed
 /// single-threaded `getenv` cache uses this as its coherence fence.
@@ -1144,6 +1228,7 @@ pub(crate) fn with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> R
     let _lock = environ_lock_guard();
     // SAFETY: HOST_ENVIRON is the libc environ pointer; the lock guards the
     // array layout against concurrent realloc by setenv/unsetenv/clearenv.
+    unsafe { sync_external_environ() };
     let envp = unsafe { HOST_ENVIRON };
     f(envp)
 }
@@ -1190,6 +1275,7 @@ pub(crate) fn publish_startup_environ(published: *mut *mut c_char) {
 pub fn take_environ_ownership() {
     let _lock = environ_lock_guard();
     // SAFETY: we hold the environ lock.
+    unsafe { sync_external_environ() };
     let _ = unsafe { ensure_environ_owned() };
     publish_environ_aliases();
 }
@@ -1256,7 +1342,18 @@ pub(crate) fn publish_environ_aliases() {
         crate::glibc_internal_abi::environ = published;
         crate::glibc_internal_abi::_environ = published;
         crate::glibc_internal_abi::__environ = published;
+        #[cfg(all(
+            target_os = "linux",
+            target_arch = "x86_64",
+            not(debug_assertions),
+            not(feature = "standalone")
+        ))]
+        {
+            GOT_ENVIRON = published;
+            GOT_UNDERSCORE_ENVIRON = published;
+        }
     }
+    LAST_PUBLISHED_ENVIRON.store(published as usize, std::sync::atomic::Ordering::Release);
 }
 
 /// Native setenv: scan environ for NAME=, replace or append.
@@ -1269,10 +1366,12 @@ unsafe fn native_setenv(
     overwrite: c_int,
 ) -> c_int {
     if name.is_null() || value.is_null() || name_len == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     for i in 0..name_len {
         if unsafe { *name.add(i) } == b'=' as c_char {
+            unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         }
     }
@@ -1287,6 +1386,7 @@ unsafe fn native_setenv(
     };
 
     let _lock = environ_lock_guard();
+    unsafe { sync_external_environ() };
     let environ_owned = unsafe { ensure_environ_owned() };
 
     // Scan for existing entry first so overwrite==0 avoids malloc+free and
@@ -1315,7 +1415,7 @@ unsafe fn native_setenv(
         }
     }
 
-    if existing_idx.is_none() && !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
+    if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     }
@@ -1341,6 +1441,8 @@ unsafe fn native_setenv(
         unsafe {
             *HOST_ENVIRON.add(idx) = new_entry;
         }
+        publish_environ_aliases();
+        bump_environ_epoch();
         return 0;
     }
 
@@ -1397,25 +1499,68 @@ unsafe fn native_setenv(
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
     publish_environ_aliases();
+    bump_environ_epoch();
     0
 }
 
 /// Native unsetenv: scan and remove from environ.
 #[inline]
 unsafe fn native_unsetenv(name: *const c_char, name_len: usize) -> c_int {
+    if name.is_null() || name_len == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     let _lock = environ_lock_guard();
-    unsafe { remove_from_environ(name, name_len) }
+    unsafe { sync_external_environ() };
+    if unsafe { HOST_ENVIRON.is_null() } {
+        return 0;
+    }
+    let mut found = false;
+    unsafe {
+        let mut cursor = HOST_ENVIRON;
+        while !(*cursor).is_null() {
+            let entry = *cursor as *const u8;
+            let mut match_len = 0usize;
+            while match_len < name_len
+                && *entry.add(match_len) == *(name as *const u8).add(match_len)
+            {
+                match_len += 1;
+            }
+            if match_len == name_len && *entry.add(match_len) == b'=' {
+                found = true;
+                break;
+            }
+            cursor = cursor.add(1);
+        }
+    }
+    if !found {
+        return 0;
+    }
+    if !unsafe { ensure_environ_owned() } {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    }
+    let rc = unsafe { remove_from_environ(name, name_len) };
+    publish_environ_aliases();
+    bump_environ_epoch();
+    rc
 }
 
 /// Native putenv: store the string directly in environ (no copy).
 /// Unlike setenv, the string must remain valid for the lifetime of the process.
 unsafe fn native_putenv_impl(string: *mut c_char, name_len: usize) -> c_int {
     if string.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
 
     let _lock = environ_lock_guard();
+    unsafe { sync_external_environ() };
     let environ_owned = unsafe { ensure_environ_owned() };
+    if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    }
 
     // Scan for existing entry with same name
     let mut count = 0usize;
@@ -1432,6 +1577,8 @@ unsafe fn native_putenv_impl(string: *mut c_char, name_len: usize) -> c_int {
                 if match_len == name_len && *entry.add(match_len) == b'=' {
                     // Replace existing entry (putenv always overwrites)
                     *HOST_ENVIRON.add(count) = string;
+                    publish_environ_aliases();
+                    bump_environ_epoch();
                     return 0;
                 }
                 count += 1;
@@ -1440,10 +1587,6 @@ unsafe fn native_putenv_impl(string: *mut c_char, name_len: usize) -> c_int {
     }
 
     // Not found — append
-    if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
-        unsafe { set_abi_errno(libc::ENOMEM) };
-        return -1;
-    }
     let Some(needed_cap) = count.checked_add(2) else {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
@@ -1487,6 +1630,7 @@ unsafe fn native_putenv_impl(string: *mut c_char, name_len: usize) -> c_int {
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
     publish_environ_aliases();
+    bump_environ_epoch();
     0
 }
 
@@ -3068,9 +3212,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
         }
         let rc = unsafe { native_unsetenv(name, name_len) };
         if rc != 0 {
-            unsafe { set_abi_errno(libc::EINVAL) };
-        } else {
-            bump_environ_epoch();
+            unsafe { set_abi_errno_if_clear(libc::EINVAL) };
         }
         return rc;
     }
@@ -3108,9 +3250,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
     // SAFETY: validated NUL-terminated pointer.
     let rc = unsafe { native_unsetenv(name, name_len) };
     if rc != 0 {
-        unsafe { set_abi_errno(libc::EINVAL) };
-    } else {
-        bump_environ_epoch();
+        unsafe { set_abi_errno_if_clear(libc::EINVAL) };
     }
     let adverse = rc != 0;
     runtime_policy::observe(
@@ -4377,6 +4517,7 @@ pub unsafe extern "C" fn clearenv() -> c_int {
         // into (slot 0 set to NULL) while leaving environ non-NULL.
         // SAFETY: ENVIRON_LOCK is held; the aliases are republished together.
         unsafe {
+            sync_external_environ();
             if !HOST_ENVIRON.is_null() {
                 HOST_ENVIRON = ptr::null_mut();
                 cleared = true;
@@ -6253,7 +6394,8 @@ static VALID_SHELLS: &[&str] = &["/bin/sh", "/bin/csh"];
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static SHELL_IDX: Cell<usize> = const { Cell::new(0) };
-    static SHELL_CACHE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static SHELL_CACHE: crate::util::TlsHeapCell<RefCell<Vec<String>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_shell_state<R>(f: impl FnOnce(&Cell<usize>, &RefCell<Vec<String>>) -> R) -> R {
@@ -6263,7 +6405,12 @@ fn with_shell_state<R>(f: impl FnOnce(&Cell<usize>, &RefCell<Vec<String>>) -> R)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SHELL_CACHE.with(|cache| SHELL_IDX.with(|idx| f(idx, cache)))
+        SHELL_CACHE.with(|slot| {
+            slot.with_init(
+                || RefCell::new(Vec::new()),
+                |cache| SHELL_IDX.with(|idx| f(idx, cache)),
+            )
+        })
     }
 }
 
@@ -7283,10 +7430,14 @@ fn with_qecvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        thread_local! {
-            static BUF: Box<RefCell<[u8; 128]>> = Box::new(RefCell::new([0u8; 128]));
+        fn init_cvt_buf() -> RefCell<[u8; 128]> {
+            RefCell::new([0u8; 128])
         }
-        BUF.with(|b| f(b))
+        thread_local! {
+            static BUF: crate::util::TlsHeapCell<RefCell<[u8; 128]>> =
+                const { crate::util::TlsHeapCell::new() };
+        }
+        BUF.with(|b| b.with_init(init_cvt_buf, f))
     }
 }
 
@@ -7297,10 +7448,14 @@ fn with_qfcvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        thread_local! {
-            static BUF: Box<RefCell<[u8; 128]>> = Box::new(RefCell::new([0u8; 128]));
+        fn init_cvt_buf() -> RefCell<[u8; 128]> {
+            RefCell::new([0u8; 128])
         }
-        BUF.with(|b| f(b))
+        thread_local! {
+            static BUF: crate::util::TlsHeapCell<RefCell<[u8; 128]>> =
+                const { crate::util::TlsHeapCell::new() };
+        }
+        BUF.with(|b| b.with_init(init_cvt_buf, f))
     }
 }
 

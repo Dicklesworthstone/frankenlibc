@@ -34,6 +34,7 @@ const UA_FORCE_UNWIND: UnwindAction = 8;
 const UA_END_OF_STACK: UnwindAction = 16;
 const FRAME_REGISTRY_SLOTS: usize = 128;
 const MAX_BACKTRACE_FRAMES: usize = 64;
+const MAX_UNWIND_FRAMES: usize = 4096;
 const MAX_STACK_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REGISTERED_EH_FRAME_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REGISTERED_EH_FRAME_RECORDS: usize = 16 * 1024;
@@ -163,6 +164,7 @@ pub struct OwnedFdeRecord {
     code_alignment_factor: usize,
     data_alignment_factor: isize,
     return_address_register: usize,
+    pub signal_frame: bool,
     cie_cfi_start: usize,
     cie_cfi_end: usize,
     fde_cfi_start: usize,
@@ -176,6 +178,7 @@ struct OwnedCieRecord {
     data_alignment_factor: isize,
     return_address_register: usize,
     has_z_augmentation: bool,
+    signal_frame: bool,
     lsda_encoding: Option<u8>,
     personality: Option<usize>,
     fde_pointer_encoding: u8,
@@ -314,6 +317,7 @@ pub struct UnwindContext {
     data_rel_base: UnwindWord,
     general_registers: [UnwindWord; MAX_UNWIND_GR],
     physical_cursor: Option<X86PhysicalCursor>,
+    ip_before_insn: bool,
 }
 
 #[repr(C, align(16))]
@@ -406,24 +410,32 @@ extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
     // SAFETY: cursor_ptr points to the 64-byte stack-allocated X86PhysicalCursor
     // initialized by the naked trampoline above.
     let mut cursor = unsafe { *cursor_ptr };
+    let mut ip_before_insn = false;
     for frame_index in 0..MAX_BACKTRACE_FRAMES {
         if cursor.ip == 0 {
             break;
         }
-        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let lookup_ip = frame_lookup_ip_for_mode(cursor.ip, ip_before_insn);
         let mut context = match find_registered_fde_record_for_ip(lookup_ip) {
-            Ok(Some(record)) => {
-                context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record))
-            }
-            _ => context_for_cursor_record(cursor, frame_index, lookup_ip, None),
+            Ok(Some(record)) => context_for_cursor_record(
+                cursor,
+                ip_before_insn,
+                frame_index,
+                lookup_ip,
+                Some(&record),
+            ),
+            _ => context_for_cursor_record(cursor, ip_before_insn, frame_index, lookup_ip, None),
         };
         // SAFETY: context is a live stack-local UnwindContext for this callback.
         let reason = unsafe { trace_fn(&mut context, trace_argument) };
         if reason != URC_NO_REASON {
             return reason;
         }
-        match step_x86_64_cursor(cursor) {
-            Ok(Some(next)) => cursor = next,
+        match step_x86_64_cursor_with_mode(cursor, ip_before_insn) {
+            Ok(Some((next, next_ip_before))) => {
+                cursor = next;
+                ip_before_insn = next_ip_before;
+            }
             Ok(None) | Err(_) => break,
         }
     }
@@ -472,6 +484,7 @@ fn owned_backtrace_from_frame_pointer(
                 data_rel_base: 0,
                 general_registers: empty_general_registers(),
                 physical_cursor: None,
+                ip_before_insn: false,
             };
             // SAFETY: stack-local context remains valid for the trace callback.
             let reason = unsafe { trace_fn(&mut context, trace_argument) };
@@ -594,10 +607,16 @@ pub unsafe extern "C" fn _Unwind_GetIPInfo(
     ip_before_insn: *mut c_int,
 ) -> UnwindWord {
     if !ip_before_insn.is_null() {
+        let before = if ctx.is_null() {
+            0
+        } else {
+            // SAFETY: non-null ctx points to the active UnwindContext.
+            c_int::from(unsafe { (*ctx).ip_before_insn })
+        };
         // SAFETY: the caller provided the optional out-pointer defined by the
         // unwinder ABI; a non-null pointer is expected to reference writable
         // storage for one c_int.
-        unsafe { ip_before_insn.write(0) };
+        unsafe { ip_before_insn.write(before) };
     }
     // SAFETY: mirrors _Unwind_GetIP's opaque-context handling.
     unsafe { _Unwind_GetIP(ctx) }
@@ -939,8 +958,8 @@ extern "C-unwind" fn __frankenlibc_owned_resume_from_cursor(
         )
     };
 
-    match step_x86_64_cursor(resume_frame_cursor) {
-        Ok(Some(caller_cursor)) => {
+    match step_x86_64_cursor_with_mode(resume_frame_cursor, false) {
+        Ok(Some((caller_cursor, caller_ip_before_insn))) => {
             let result = if private_1 != 0 {
                 // SAFETY: `private_1` was populated with a validated `UnwindStopFn`
                 // pointer in `__frankenlibc_owned_forced_unwind_from_cursor`.
@@ -952,14 +971,20 @@ extern "C-unwind" fn __frankenlibc_owned_resume_from_cursor(
                     *mut UnwindContext,
                     *mut c_void,
                 ) -> UnwindReasonCode = unsafe { core::mem::transmute(private_1) };
-                owned_forced_unwind_from_cursor(
+                owned_forced_unwind_from_cursor_mode(
                     exception,
                     stop_fn,
                     private_2 as *mut c_void,
                     caller_cursor,
+                    caller_ip_before_insn,
                 )
             } else {
-                owned_phase2_cleanup_from_cursor(exception, private_2, caller_cursor)
+                owned_phase2_cleanup_from_cursor_mode(
+                    exception,
+                    private_2,
+                    caller_cursor,
+                    caller_ip_before_insn,
+                )
             };
             trace_owned_unwind(format_args!("resume unexpectedly returned code={result}"));
             std::process::abort()
@@ -1667,18 +1692,24 @@ fn owned_phase1_search_from_cursor(
         unsafe { (*exception).exception_class }
     };
 
-    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+    let mut ip_before_insn = false;
+    for frame_index in 0..MAX_UNWIND_FRAMES {
         if cursor.ip == 0 {
             break;
         }
-        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let lookup_ip = frame_lookup_ip_for_mode(cursor.ip, ip_before_insn);
         match find_registered_fde_record_for_ip(lookup_ip) {
             Ok(Some(record)) => {
                 if let Some(personality) = record.fde.personality
                     && !own_panic_abort_frame(lookup_ip)
                 {
-                    let mut context =
-                        context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record));
+                    let mut context = context_for_cursor_record(
+                        cursor,
+                        ip_before_insn,
+                        frame_index,
+                        lookup_ip,
+                        Some(&record),
+                    );
                     let code = call_personality(
                         personality,
                         UA_SEARCH_PHASE,
@@ -1690,7 +1721,7 @@ fn owned_phase1_search_from_cursor(
                         "phase1_frame",
                         frame_index,
                         cursor.ip,
-                        cursor.rsp,
+                        context.cfa,
                         code,
                     );
                     match code {
@@ -1698,7 +1729,7 @@ fn owned_phase1_search_from_cursor(
                             return OwnedPhase1CursorOutcome::HandlerFound {
                                 frame_index,
                                 ip: cursor.ip,
-                                handler_cfa: cursor.rsp,
+                                handler_cfa: context.cfa,
                             };
                         }
                         URC_CONTINUE_UNWIND | URC_NO_REASON => {}
@@ -1719,8 +1750,11 @@ fn owned_phase1_search_from_cursor(
                 };
             }
         }
-        match step_x86_64_cursor(cursor) {
-            Ok(Some(next)) => cursor = next,
+        match step_x86_64_cursor_with_mode(cursor, ip_before_insn) {
+            Ok(Some((next, next_ip_before))) => {
+                cursor = next;
+                ip_before_insn = next_ip_before;
+            }
             Ok(None) => break,
             Err(_) => {
                 return OwnedPhase1CursorOutcome::Fatal {
@@ -1737,7 +1771,16 @@ fn owned_phase1_search_from_cursor(
 fn owned_phase2_cleanup_from_cursor(
     exception: *mut UnwindException,
     handler_cfa: usize,
+    cursor: X86PhysicalCursor,
+) -> UnwindReasonCode {
+    owned_phase2_cleanup_from_cursor_mode(exception, handler_cfa, cursor, false)
+}
+
+fn owned_phase2_cleanup_from_cursor_mode(
+    exception: *mut UnwindException,
+    handler_cfa: usize,
     mut cursor: X86PhysicalCursor,
+    mut ip_before_insn: bool,
 ) -> UnwindReasonCode {
     let exception_class = if exception.is_null() {
         0
@@ -1746,23 +1789,28 @@ fn owned_phase2_cleanup_from_cursor(
         unsafe { (*exception).exception_class }
     };
 
-    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+    for frame_index in 0..MAX_UNWIND_FRAMES {
         if cursor.ip == 0 {
             break;
         }
-        let is_handler_frame = cursor.rsp == handler_cfa;
-        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let lookup_ip = frame_lookup_ip_for_mode(cursor.ip, ip_before_insn);
         let record = match find_registered_fde_record_for_ip(lookup_ip) {
             Ok(Some(record)) => Some(record),
             Ok(None) => None,
             Err(_) => return URC_FATAL_PHASE2_ERROR,
         };
+        let mut context = context_for_cursor_record(
+            cursor,
+            ip_before_insn,
+            frame_index,
+            lookup_ip,
+            record.as_ref(),
+        );
+        let is_handler_frame = context.cfa == handler_cfa;
         if let Some(record) = record
             && let Some(personality) = record.fde.personality
             && !own_panic_abort_frame(lookup_ip)
         {
-            let mut context =
-                context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record));
             let mut actions = UA_CLEANUP_PHASE;
             if is_handler_frame {
                 actions |= UA_HANDLER_FRAME;
@@ -1776,13 +1824,13 @@ fn owned_phase2_cleanup_from_cursor(
             );
             trace_owned_unwind(format_args!(
                 "phase2 frame_index={frame_index} cfa={:#x} target_cfa={handler_cfa:#x} ip={:#x} actions={actions:#x} code={code} ctx_ip={:#x} gr0={:#x} gr1={:#x}",
-                cursor.rsp,
+                context.cfa,
                 cursor.ip,
                 context.ip,
                 context.general_registers[0],
                 context.general_registers[1]
             ));
-            emit_owned_unwind_jsonl("phase2_frame", frame_index, cursor.ip, cursor.rsp, code);
+            emit_owned_unwind_jsonl("phase2_frame", frame_index, cursor.ip, context.cfa, code);
             match code {
                 URC_INSTALL_CONTEXT => {
                     let regs = match prepare_cursor_landing_pad_registers(
@@ -1824,8 +1872,11 @@ fn owned_phase2_cleanup_from_cursor(
             return URC_FATAL_PHASE2_ERROR;
         }
 
-        match step_x86_64_cursor(cursor) {
-            Ok(Some(next)) => cursor = next,
+        match step_x86_64_cursor_with_mode(cursor, ip_before_insn) {
+            Ok(Some((next, next_ip_before))) => {
+                cursor = next;
+                ip_before_insn = next_ip_before;
+            }
             Ok(None) | Err(_) => break,
         }
     }
@@ -1844,7 +1895,24 @@ fn owned_forced_unwind_from_cursor(
         *mut c_void,
     ) -> UnwindReasonCode,
     stop_parameter: *mut c_void,
+    cursor: X86PhysicalCursor,
+) -> UnwindReasonCode {
+    owned_forced_unwind_from_cursor_mode(exception, stop_fn, stop_parameter, cursor, false)
+}
+
+fn owned_forced_unwind_from_cursor_mode(
+    exception: *mut UnwindException,
+    stop_fn: unsafe extern "C-unwind" fn(
+        c_int,
+        UnwindAction,
+        UnwindExceptionClass,
+        *mut UnwindException,
+        *mut UnwindContext,
+        *mut c_void,
+    ) -> UnwindReasonCode,
+    stop_parameter: *mut c_void,
     mut cursor: X86PhysicalCursor,
+    mut ip_before_insn: bool,
 ) -> UnwindReasonCode {
     let exception_class = if exception.is_null() {
         0
@@ -1853,18 +1921,23 @@ fn owned_forced_unwind_from_cursor(
         unsafe { (*exception).exception_class }
     };
 
-    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+    for frame_index in 0..MAX_UNWIND_FRAMES {
         if cursor.ip == 0 {
             break;
         }
-        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let lookup_ip = frame_lookup_ip_for_mode(cursor.ip, ip_before_insn);
         let record = match find_registered_fde_record_for_ip(lookup_ip) {
             Ok(Some(record)) => Some(record),
             Ok(None) => None,
             Err(_) => return URC_FATAL_PHASE2_ERROR,
         };
-        let mut context =
-            context_for_cursor_record(cursor, frame_index, lookup_ip, record.as_ref());
+        let mut context = context_for_cursor_record(
+            cursor,
+            ip_before_insn,
+            frame_index,
+            lookup_ip,
+            record.as_ref(),
+        );
         let frame_cfa = context.cfa;
 
         // 1. Notify the forced-unwind stop callback BEFORE running this frame's
@@ -1905,7 +1978,13 @@ fn owned_forced_unwind_from_cursor(
             && let Some(personality) = record.fde.personality
             && !own_panic_abort_frame(lookup_ip)
         {
-            context = context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record));
+            context = context_for_cursor_record(
+                cursor,
+                ip_before_insn,
+                frame_index,
+                lookup_ip,
+                Some(&record),
+            );
             let pers_code = call_personality(
                 personality,
                 UA_FORCE_UNWIND | UA_CLEANUP_PHASE,
@@ -1953,8 +2032,11 @@ fn owned_forced_unwind_from_cursor(
             }
         }
 
-        match step_x86_64_cursor(cursor) {
-            Ok(Some(next)) => cursor = next,
+        match step_x86_64_cursor_with_mode(cursor, ip_before_insn) {
+            Ok(Some((next, next_ip_before))) => {
+                cursor = next;
+                ip_before_insn = next_ip_before;
+            }
             Ok(None) => {
                 let mut end_ctx = empty_context_at_end(cursor.rsp);
                 emit_owned_unwind_jsonl(
@@ -1984,26 +2066,31 @@ fn owned_forced_unwind_from_cursor(
         }
     }
 
-    let mut end_ctx = empty_context_at_end(cursor.rsp);
-    let end_code = unsafe {
-        stop_fn(
-            1,
-            UA_FORCE_UNWIND | UA_CLEANUP_PHASE | UA_END_OF_STACK,
-            exception_class,
-            exception,
-            &mut end_ctx,
-            stop_parameter,
-        )
-    };
-    if end_code == URC_NO_REASON {
-        URC_FATAL_PHASE2_ERROR
-    } else {
-        end_code
-    }
+    // Exhausting MAX_UNWIND_FRAMES without reaching end-of-stack is a runaway
+    // or cyclic unwind frame chain, not a true stack bottom.
+    URC_FATAL_PHASE2_ERROR
 }
 
 fn trace_owned_unwind(args: std::fmt::Arguments<'_>) {
-    if std::env::var_os("FRANKENLIBC_OWNED_UNWIND_TRACE").is_some() {
+    if crate::malloc_abi::in_allocator_reentry_context() {
+        return;
+    }
+    static ENABLED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    let state = match ENABLED.load(std::sync::atomic::Ordering::Acquire) {
+        1 => false,
+        2 => true,
+        _ => {
+            let active =
+                unsafe { crate::stdlib_abi::native_getenv(b"FRANKENLIBC_OWNED_UNWIND_TRACE") };
+            let enabled = !active.is_null();
+            ENABLED.store(
+                if enabled { 2 } else { 1 },
+                std::sync::atomic::Ordering::Release,
+            );
+            enabled
+        }
+    };
+    if state {
         let _ = writeln!(std::io::stderr(), "[owned-unwind] {args}");
     }
 }
@@ -2015,12 +2102,30 @@ fn emit_owned_unwind_jsonl(
     cfa: usize,
     code: UnwindReasonCode,
 ) {
-    let Some(path) = std::env::var_os("FRANKENLIBC_OWNED_UNWIND_JSONL") else {
-        return;
-    };
-    if path.is_empty() {
+    if crate::malloc_abi::in_allocator_reentry_context() {
         return;
     }
+    static DISABLED_FAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+    if DISABLED_FAST.load(std::sync::atomic::Ordering::Acquire) == 1 {
+        return;
+    }
+    if DISABLED_FAST.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        let raw = unsafe { crate::stdlib_abi::native_getenv(b"FRANKENLIBC_OWNED_UNWIND_JSONL") };
+        if raw.is_null() || unsafe { *raw == 0 } {
+            DISABLED_FAST.store(1, std::sync::atomic::Ordering::Release);
+            return;
+        }
+        DISABLED_FAST.store(2, std::sync::atomic::Ordering::Release);
+    }
+    static JSONL_PATH: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
+    let Some(path) = JSONL_PATH
+        .get_or_init(|| {
+            std::env::var_os("FRANKENLIBC_OWNED_UNWIND_JSONL").filter(|p| !p.is_empty())
+        })
+        .as_deref()
+    else {
+        return;
+    };
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -2034,17 +2139,28 @@ fn emit_owned_unwind_jsonl(
 }
 
 #[inline]
-fn frame_lookup_ip(return_address: usize) -> usize {
-    return_address.saturating_sub(1)
+fn frame_lookup_ip_for_mode(ip: usize, ip_before_insn: bool) -> usize {
+    if ip_before_insn {
+        ip
+    } else {
+        ip.saturating_sub(1)
+    }
 }
 
 fn step_x86_64_cursor(
     cursor: X86PhysicalCursor,
 ) -> Result<Option<X86PhysicalCursor>, OwnedUnwindDecodeError> {
+    Ok(step_x86_64_cursor_with_mode(cursor, false)?.map(|(next, _)| next))
+}
+
+fn step_x86_64_cursor_with_mode(
+    cursor: X86PhysicalCursor,
+    ip_before_insn: bool,
+) -> Result<Option<(X86PhysicalCursor, bool)>, OwnedUnwindDecodeError> {
     if cursor.ip == 0 || cursor.rsp == 0 {
         return Ok(None);
     }
-    let lookup_ip = frame_lookup_ip(cursor.ip);
+    let lookup_ip = frame_lookup_ip_for_mode(cursor.ip, ip_before_insn);
     if let Some(record) = find_registered_fde_record_for_ip(lookup_ip)? {
         let state = evaluate_cfi_state(&record.eh_frame, record.fde, lookup_ip)?;
         let Some(cfa_base) = cursor_read_dwarf_reg(&cursor, state.cfa_register) else {
@@ -2125,7 +2241,7 @@ fn step_x86_64_cursor(
         if next.rsp == cursor.rsp && next.ip == cursor.ip {
             return Ok(None);
         }
-        return Ok(Some(next));
+        return Ok(Some((next, record.fde.signal_frame)));
     }
 
     // Fallback for hand-written stubs without `.eh_frame`: step `%rbp` chain if valid.
@@ -2150,16 +2266,19 @@ fn step_x86_64_cursor(
     if next_ip == 0 || next_rsp <= cursor.rsp {
         return Ok(None);
     }
-    Ok(Some(X86PhysicalCursor {
-        ip: next_ip,
-        rsp: next_rsp,
-        rbp: next_rbp,
-        rbx: cursor.rbx,
-        r12: cursor.r12,
-        r13: cursor.r13,
-        r14: cursor.r14,
-        r15: cursor.r15,
-    }))
+    Ok(Some((
+        X86PhysicalCursor {
+            ip: next_ip,
+            rsp: next_rsp,
+            rbp: next_rbp,
+            rbx: cursor.rbx,
+            r12: cursor.r12,
+            r13: cursor.r13,
+            r14: cursor.r14,
+            r15: cursor.r15,
+        },
+        false,
+    )))
 }
 
 #[inline]
@@ -2197,8 +2316,10 @@ fn find_registered_fde_record_for_ip(
     // First search explicitly registered frames (__register_frame)
     let registry = *frame_registry();
     for slot in registry.iter().filter(|slot| slot.fde != 0) {
-        let eh_frame = copy_registered_eh_frame(slot.fde)?;
-        if let Some(fde) = find_fde_for_ip(&eh_frame, slot.fde, ip, true)? {
+        let Ok(eh_frame) = copy_registered_eh_frame(slot.fde) else {
+            continue;
+        };
+        if let Ok(Some(fde)) = find_fde_for_ip(&eh_frame, slot.fde, ip, true) {
             return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
         }
     }
@@ -2355,7 +2476,7 @@ fn search_eh_frame_hdr_for_ip(
         if adj_offset + 2 * entry_size > hdr.len() {
             continue;
         }
-        let (_, after_adj_initial) = read_encoded_pointer(
+        let Ok((_, after_adj_initial)) = read_encoded_pointer(
             hdr,
             adj_offset,
             range.eh_frame_hdr_start + adj_offset,
@@ -2363,8 +2484,10 @@ fn search_eh_frame_hdr_for_ip(
             true,
             0,
             range.eh_frame_hdr_start,
-        )?;
-        let (adj_fde_ptr, _) = read_encoded_pointer(
+        ) else {
+            continue;
+        };
+        let Ok((adj_fde_ptr, _)) = read_encoded_pointer(
             hdr,
             after_adj_initial,
             range.eh_frame_hdr_start + after_adj_initial,
@@ -2372,8 +2495,10 @@ fn search_eh_frame_hdr_for_ip(
             true,
             0,
             range.eh_frame_hdr_start,
-        )?;
-        if let Some(record) = decode_live_fde_at_address(range, adj_fde_ptr, ip)? {
+        ) else {
+            continue;
+        };
+        if let Ok(Some(record)) = decode_live_fde_at_address(range, adj_fde_ptr, ip) {
             return Ok(Some(record));
         }
     }
@@ -2468,7 +2593,15 @@ fn decode_live_fde_at_address(
     if !cie_rec.is_cie {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
-    let cie = parse_cie_record(cie_slice, cie_ptr, cie_rec, true)?;
+    let mut cie = parse_cie_record_with_bases(
+        cie_slice,
+        cie_ptr,
+        cie_rec,
+        true,
+        0,
+        range.eh_frame_hdr_start,
+    )?;
+    let _ = &mut cie;
 
     let fde_rec =
         next_eh_frame_record(fde_slice, 0)?.ok_or(OwnedUnwindDecodeError::MalformedRecord)?;
@@ -2552,11 +2685,13 @@ fn context_for_fde(ip: usize, frame_index: usize, fde: OwnedFdeRecord) -> Unwind
         data_rel_base: fde.data_rel_base,
         general_registers: empty_general_registers(),
         physical_cursor: None,
+        ip_before_insn: fde.signal_frame,
     }
 }
 
 fn context_for_cursor_record(
     cursor: X86PhysicalCursor,
+    ip_before_insn: bool,
     frame_index: usize,
     lookup_ip: usize,
     record: Option<&RegisteredFdeRecord>,
@@ -2592,6 +2727,7 @@ fn context_for_cursor_record(
         data_rel_base: fde.map(|f| f.data_rel_base).unwrap_or(0),
         general_registers,
         physical_cursor: Some(cursor),
+        ip_before_insn: ip_before_insn || fde.is_some_and(|f| f.signal_frame),
     }
 }
 
@@ -2608,6 +2744,7 @@ fn empty_context_at_end(last_stack_pointer: usize) -> UnwindContext {
         data_rel_base: 0,
         general_registers: empty_general_registers(),
         physical_cursor: None,
+        ip_before_insn: false,
     }
 }
 
@@ -2700,7 +2837,7 @@ fn prepare_x86_64_landing_pad_install(
             {
                 return Err(OwnedContextInstallError::MisalignedFramePointer);
             }
-            if context.stack_pointer >= context.frame_pointer {
+            if context.stack_pointer > context.frame_pointer {
                 return Err(OwnedContextInstallError::StackPointerEscapesHandlerFrame);
             }
             context.frame_pointer
@@ -2843,6 +2980,17 @@ fn parse_cie_record(
     record: EhFrameRecord,
     resolve_indirect: bool,
 ) -> Result<OwnedCieRecord, OwnedUnwindDecodeError> {
+    parse_cie_record_with_bases(eh_frame, section_addr, record, resolve_indirect, 0, 0)
+}
+
+fn parse_cie_record_with_bases(
+    eh_frame: &[u8],
+    section_addr: usize,
+    record: EhFrameRecord,
+    resolve_indirect: bool,
+    text_rel_base: usize,
+    data_rel_base: usize,
+) -> Result<OwnedCieRecord, OwnedUnwindDecodeError> {
     let (version, mut cursor) = read_u8(eh_frame, record.body)?;
     if !matches!(version, 1 | 3 | 4) {
         return Err(OwnedUnwindDecodeError::UnsupportedCieVersion(version));
@@ -2850,6 +2998,14 @@ fn parse_cie_record(
 
     let (augmentation, after_augmentation) = read_c_string(eh_frame, cursor, record.end)?;
     cursor = after_augmentation;
+    if version == 4 {
+        let (addr_size, after_addr_size) = read_u8(eh_frame, cursor)?;
+        let (seg_size, after_seg_size) = read_u8(eh_frame, after_addr_size)?;
+        if usize::from(addr_size) != core::mem::size_of::<usize>() || seg_size != 0 {
+            return Err(OwnedUnwindDecodeError::MalformedRecord);
+        }
+        cursor = after_seg_size;
+    }
     let (code_alignment_factor, after_code_alignment) = decode_uleb128(eh_frame, cursor)?;
     let (data_alignment_factor, after_data_alignment) =
         decode_sleb128(eh_frame, after_code_alignment)?;
@@ -2865,8 +3021,7 @@ fn parse_cie_record(
     let mut fde_pointer_encoding = DW_EH_PE_ABSPTR;
     let mut lsda_encoding = None;
     let mut personality = None;
-    let text_rel_base = 0usize;
-    let data_rel_base = 0usize;
+    let mut signal_frame = false;
     if augmentation.first() == Some(&b'z') {
         let (augmentation_data_len, augmentation_data) = decode_uleb128(eh_frame, cursor)?;
         let augmentation_end = augmentation_data
@@ -2905,7 +3060,9 @@ fn parse_cie_record(
                     fde_pointer_encoding = encoding;
                     augmentation_cursor = after_encoding;
                 }
-                b'S' => {}
+                b'S' => {
+                    signal_frame = true;
+                }
                 other => return Err(OwnedUnwindDecodeError::UnsupportedAugmentation(other)),
             }
         }
@@ -2927,6 +3084,7 @@ fn parse_cie_record(
         data_alignment_factor,
         return_address_register,
         has_z_augmentation: augmentation.first() == Some(&b'z'),
+        signal_frame,
         lsda_encoding,
         personality,
         fde_pointer_encoding,
@@ -3033,6 +3191,7 @@ fn parse_fde_record_with_cie(
         code_alignment_factor: cie.code_alignment_factor,
         data_alignment_factor: cie.data_alignment_factor,
         return_address_register: cie.return_address_register,
+        signal_frame: cie.signal_frame,
         cie_cfi_start: cie.cfi_start,
         cie_cfi_end: cie.cfi_end,
         fde_cfi_start,
@@ -3392,6 +3551,15 @@ fn apply_cfi_program(
                 cursor = next;
                 state.gnu_args_size = args_size;
             }
+            0x2f => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (offset, after_offset) = decode_uleb128(input, after_register)?;
+                cursor = after_offset;
+                let neg_offset = usize_to_isize(offset)?
+                    .checked_neg()
+                    .ok_or(OwnedUnwindDecodeError::Overflow)?;
+                set_register_signed_offset(state, register, neg_offset, fde.data_alignment_factor)?;
+            }
             other => return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(other)),
         }
     }
@@ -3544,15 +3712,6 @@ fn validate_cfi_program(
             0x0c | 0x14 | 0x2f => {
                 cursor = decode_uleb128(input, cursor)?.1;
                 cursor = decode_uleb128(input, cursor)?.1;
-            }
-            0x0f => {
-                let (len, after_len) = decode_uleb128(input, cursor)?;
-                cursor = skip_bytes(after_len, len, end)?;
-            }
-            0x10 | 0x16 => {
-                cursor = decode_uleb128(input, cursor)?.1;
-                let (len, after_len) = decode_uleb128(input, cursor)?;
-                cursor = skip_bytes(after_len, len, end)?;
             }
             0x11 | 0x12 | 0x15 => {
                 cursor = decode_uleb128(input, cursor)?.1;
@@ -3762,4 +3921,113 @@ fn current_stack_pointer() -> usize {
         core::arch::asm!("mov {}, sp", out(reg) stack_pointer, options(nomem, nostack, preserves_flags));
     }
     stack_pointer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_frame_pointer_accepts_leaf_frame_equal_to_stack_pointer() {
+        let sp = 0x7fff_0000_1000usize;
+        let limit = sp + 0x4000;
+        assert!(valid_frame_pointer(sp, sp, limit));
+        assert!(valid_frame_pointer(sp + 16, sp, limit));
+        assert!(!valid_frame_pointer(sp - 8, sp, limit));
+        assert!(!valid_frame_pointer(sp + 4, sp, limit));
+    }
+
+    #[test]
+    fn frame_lookup_ip_for_mode_preserves_signal_frame_exact_pc() {
+        assert_eq!(frame_lookup_ip_for_mode(0x401000, true), 0x401000);
+        assert_eq!(frame_lookup_ip_for_mode(0x401000, false), 0x400fff);
+        assert_eq!(frame_lookup_ip_for_mode(0, false), 0);
+    }
+
+    #[test]
+    fn parse_cie_v4_signal_frame_and_gnu_negative_offset_extended_cfi() {
+        // Build a synthetic .eh_frame containing a DWARF v4 CIE with "zRS" augmentation
+        // and an FDE exercising opcode 0x2f (DW_CFA_GNU_negative_offset_extended).
+        let mut eh = Vec::new();
+        // CIE body:
+        // version = 4, aug = "zRS\0", addr_size = 8, seg_size = 0,
+        // code_align = 1, data_align = -8 (0x78), ret_reg = 16,
+        // aug_len = 1, fde_enc = DW_EH_PE_UDATA8 (0x04),
+        // initial instructions: DW_CFA_DEF_CFA(7, 8) -> [0x0c, 7, 8]
+        let mut cie_payload = vec![
+            0,
+            0,
+            0,
+            0, // CIE ID = 0
+            4, // CIE version 4
+            b'z',
+            b'R',
+            b'S',
+            0, // augmentation "zRS"
+            core::mem::size_of::<usize>() as u8,
+            0,    // segment_selector_size = 0
+            1,    // code_alignment_factor = 1
+            0x78, // data_alignment_factor = -8 (sleb128)
+            16,   // return_address_register = 16
+            1,    // augmentation length = 1
+            DW_EH_PE_UDATA8,
+            DW_CFA_DEF_CFA,
+            7,
+            8,
+        ];
+        while !cie_payload.len().is_multiple_of(8) {
+            cie_payload.push(DW_CFA_NOP);
+        }
+        eh.extend_from_slice(&(cie_payload.len() as u32).to_le_bytes());
+        eh.extend_from_slice(&cie_payload);
+
+        let fde_offset = eh.len();
+        let cie_backptr = ((fde_offset + 4) as u32).to_le_bytes();
+        let mut fde_payload = Vec::new();
+        fde_payload.extend_from_slice(&cie_backptr);
+        fde_payload.extend_from_slice(&0x5000_0000u64.to_le_bytes()); // initial_location
+        fde_payload.extend_from_slice(&0x40u64.to_le_bytes()); // address_range
+        fde_payload.push(0); // augmentation data length = 0
+        // Opcode 0x2f: DW_CFA_GNU_negative_offset_extended(reg=6, offset=2)
+        // With data_alignment_factor = -8: neg_offset = -2, scaled = (-2) * (-8) = +16!
+        fde_payload.extend_from_slice(&[0x2f, 6, 2]);
+        while !fde_payload.len().is_multiple_of(8) {
+            fde_payload.push(DW_CFA_NOP);
+        }
+        eh.extend_from_slice(&(fde_payload.len() as u32).to_le_bytes());
+        eh.extend_from_slice(&fde_payload);
+        eh.extend_from_slice(&0u32.to_le_bytes()); // terminator
+
+        let records = decode_eh_frame_records(&eh, 0x1000_0000, false)
+            .expect("CIE v4 + zRS + 0x2f FDE should decode");
+        assert_eq!(records.len(), 1);
+        let fde = records[0];
+        assert!(fde.signal_frame, "zRS augmentation must mark signal_frame");
+        assert_eq!(fde.initial_location, 0x5000_0000);
+        assert_eq!(fde.address_range, 0x40);
+
+        let mut init_state = CfiEvaluationState::new(fde.initial_location);
+        execute_cfi_program(
+            &eh,
+            fde.cie_instructions_start,
+            fde.cie_instructions_end,
+            &fde,
+            None,
+            &mut init_state,
+            &CfiEvaluationState::new(fde.initial_location),
+        )
+        .expect("CIE program executes");
+        let mut row = init_state;
+        execute_cfi_program(
+            &eh,
+            fde.fde_instructions_start,
+            fde.fde_instructions_end,
+            &fde,
+            Some(0x5000_0010),
+            &mut row,
+            &init_state,
+        )
+        .expect("FDE program with 0x2f executes");
+        assert_eq!(row.register_rule(6), CfiRegisterRule::Offset(16));
+    }
 }

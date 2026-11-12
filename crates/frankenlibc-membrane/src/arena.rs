@@ -848,6 +848,46 @@ impl AllocationArena {
         expected_canary.verify(&actual)
     }
 
+    /// Verify both the 24-byte `AllocationFingerprint` header and the 8-byte
+    /// trailing `Canary` of a live base allocation while holding its shard lock.
+    ///
+    /// Used by in-place `realloc(ptr, smaller_size)` so an overflowed buffer
+    /// cannot evade trailing-canary retirement by shrinking in place.
+    #[must_use]
+    pub fn verify_live_canary(&self, user_base: usize) -> bool {
+        let shard_idx = self.shard_for(user_base);
+        let shard = self.shards[shard_idx].lock();
+        let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
+            return false;
+        };
+        let Some(slot) = shard.slots.get(slot_idx) else {
+            return false;
+        };
+        if slot.user_base != user_base || !slot.state.is_live() {
+            return false;
+        }
+        let Some(header_addr) = user_base.checked_sub(FINGERPRINT_SIZE) else {
+            return false;
+        };
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        // SAFETY: `slot` is live in `shard` (under lock) with prepended 24B fingerprint.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header_addr as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+        }
+        let header = AllocationFingerprint::from_bytes(&header_bytes);
+        if header.generation != slot.generation
+            || header.size != slot.user_size as u64
+            || !header.verify(user_base)
+        {
+            return false;
+        }
+        self.verify_canary_for_slot(slot)
+    }
+
     /// Re-verify both the 24-byte `AllocationFingerprint` header and the 8-byte
     /// trailing `Canary` of a warm `TLS_CACHE` entry while holding the owning
     /// shard lock so concurrent `free()` + quarantine drain cannot reclaim the

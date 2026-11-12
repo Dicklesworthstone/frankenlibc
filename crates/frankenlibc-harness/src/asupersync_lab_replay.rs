@@ -372,6 +372,12 @@ fn run_concrete_ebr_steps(
     for &(worker, ref op) in ordered_steps {
         virtual_clock_ticks = virtual_clock_ticks.saturating_add(1);
         executed_steps.push((worker, op.clone()));
+        if worker >= worker_count {
+            violation = Some(format!(
+                "ebr_invalid_worker_index(worker=W{worker},worker_count={worker_count},vt={virtual_clock_ticks})"
+            ));
+            break;
+        }
         match op {
             LabTaskOp::PinEpoch => {
                 if guards[worker].is_none() {
@@ -523,6 +529,19 @@ pub fn execute_seeded_lab_replay(
 
     let mut suite = SuiteResult::new(format!("asupersync-lab:{}", record.trace_class));
     if let Some(reason) = tool_unavailable_reason {
+        suite.results.push(SuiteTestResult {
+            test_id: format!(
+                "{}::seed={:#x}",
+                record.trace_class, record.virtual_time_seed
+            ),
+            test_name: record.trace_class.clone(),
+            category: TestCategory::Sync,
+            expected: "asupersync Lab replay tooling available and operational".to_string(),
+            result: TestResult::failed(reason.clone()),
+            events: Vec::new(),
+        });
+        suite.total = 1;
+        suite.failed = 1;
         return Ok(LabScheduleExecution {
             virtual_time_seed: record.virtual_time_seed,
             virtual_clock_ticks: 0,
@@ -844,5 +863,33 @@ mod tests {
         assert!(matches!(tool_unavail, ReplayOutcome::ToolFailure { .. }));
         assert!(matches!(code_fail, ReplayOutcome::CodeFailure { .. }));
         assert_ne!(tool_unavail, code_fail);
+    }
+
+    #[cfg(feature = "asupersync-tooling")]
+    #[test]
+    fn execute_seeded_lab_replay_records_failed_suite_on_tool_unavailable() {
+        let r = record();
+        let exec = execute_seeded_lab_replay(
+            &r,
+            &LabToolingMode::SimulatedUnavailable {
+                detail: "unit_test_unavailable".to_string(),
+            },
+            &[vec![LabTaskOp::PinEpoch, LabTaskOp::UnpinEpoch]],
+        )
+        .expect("replay should return structured ToolFailure");
+        assert!(matches!(exec.outcome, ReplayOutcome::ToolFailure { .. }));
+        assert_eq!(exec.suite.total, 1);
+        assert_eq!(exec.suite.failed, 1);
+        assert_eq!(exec.suite.passed, 0);
+        assert_eq!(exec.suite.results.len(), 1);
+        assert!(!exec.suite.results[0].result.passed);
+    }
+
+    #[cfg(feature = "asupersync-tooling")]
+    #[test]
+    fn concrete_ebr_steps_guard_out_of_bounds_worker_index() {
+        let res = run_concrete_ebr_steps(&[(5, LabTaskOp::PinEpoch)], 2);
+        let violation = res.violation.expect("out-of-bounds worker must violate");
+        assert!(violation.starts_with("ebr_invalid_worker_index(worker=W5,worker_count=2,"));
     }
 }

@@ -319,7 +319,8 @@ fn seeded_lab_replay_reports_tool_failure_distinctly_when_lab_adapter_unavailabl
         assert_eq!(exec.virtual_clock_ticks, 0);
         assert!(exec.schedule_trace.is_empty());
         assert!(exec.shrunk_witness_jsonl.is_none());
-        assert_eq!(exec.suite.failed, 0);
+        assert_eq!(exec.suite.passed, 0);
+        assert_eq!(exec.suite.failed, 1);
     }
 }
 

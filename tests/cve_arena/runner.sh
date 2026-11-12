@@ -154,7 +154,8 @@ parse_args() {
                 shift
                 ;;
             --category)
-                OPT_CATEGORY="${2:-}"
+                [[ $# -ge 2 && -n "${2:-}" ]] || log_fatal "Missing value for $1"
+                OPT_CATEGORY="$2"
                 shift 2
                 ;;
             --results-dir=*)
@@ -162,7 +163,8 @@ parse_args() {
                 shift
                 ;;
             --results-dir)
-                RESULTS_DIR="${2:-}"
+                [[ $# -ge 2 && -n "${2:-}" ]] || log_fatal "Missing value for $1"
+                RESULTS_DIR="$2"
                 shift 2
                 ;;
             --no-docker)
@@ -177,16 +179,27 @@ parse_args() {
                 OPT_TIMEOUT="${1#--timeout=}"
                 shift
                 ;;
+            --timeout)
+                [[ $# -ge 2 && -n "${2:-}" ]] || log_fatal "Missing value for $1"
+                OPT_TIMEOUT="$2"
+                shift 2
+                ;;
             --image=*)
                 OPT_IMAGE="${1#--image=}"
                 shift
+                ;;
+            --image)
+                [[ $# -ge 2 && -n "${2:-}" ]] || log_fatal "Missing value for $1"
+                OPT_IMAGE="$2"
+                shift 2
                 ;;
             --evaluate-hsfp=*)
                 OPT_EVALUATE_HSFP="${1#--evaluate-hsfp=}"
                 shift
                 ;;
             --evaluate-hsfp)
-                OPT_EVALUATE_HSFP="${2:-}"
+                [[ $# -ge 2 && -n "${2:-}" ]] || log_fatal "Missing value for $1"
+                OPT_EVALUATE_HSFP="$2"
                 shift 2
                 ;;
             --qualification-manifest=*)
@@ -194,7 +207,8 @@ parse_args() {
                 shift
                 ;;
             --qualification-manifest)
-                OPT_QUALIFICATION_MANIFEST="${2:-}"
+                [[ $# -ge 2 && -n "${2:-}" ]] || log_fatal "Missing value for $1"
+                OPT_QUALIFICATION_MANIFEST="$2"
                 shift 2
                 ;;
             --demo)
@@ -536,22 +550,60 @@ run_single_mode() {
         # ---------------------------------------------------------------
         log_info "  [${mode}] Running in Docker container..."
 
+        local abs_logs_dir
+        abs_logs_dir="$(cd "${logs_dir}" && pwd)"
+        local stage_work="${abs_logs_dir}/docker_stage_${stem}_${mode}_$$"
+        mkdir -p "${stage_work}"
+        cp -a "${test_dir}/." "${stage_work}/"
+        chmod -R u+rwX "${stage_work}" 2>/dev/null || true
+
+        # Build step inside container.
+        if [[ -n "${build_cmd}" && "${build_cmd}" != "null" ]]; then
+            local effective_build_cmd="${build_cmd}"
+            if [[ "${effective_build_cmd}" == cc\ * || "${effective_build_cmd}" == gcc\ * ]]; then
+                effective_build_cmd="${effective_build_cmd} -fno-builtin"
+            fi
+            log_info "  [${mode}] Building inside container: ${effective_build_cmd}"
+
+            local build_docker_args=(
+                docker run --rm
+                --network=none
+                --memory=256m
+                --cpus=1
+                -v "${stage_work}:/cve_arena/work"
+                -w /cve_arena/work
+                -e "CVE_BUILD_CMD=${effective_build_cmd}"
+                "${OPT_IMAGE}"
+                bash -c 'eval "${CVE_BUILD_CMD}"'
+            )
+            if ! "${build_docker_args[@]}" >"${stdout_file}" 2>"${stderr_file}"; then
+                log_error "  [${mode}] Build failed inside container."
+                echo '{"exit_code": 2, "signal": null, "stdout": "", "stderr": "BUILD FAILED", "duration_ms": 0, "exploitable": false, "provider_bound": false}'
+                return
+            fi
+        fi
+
         local docker_args=(
             docker run --rm
             --network=none
             --memory=256m
             --cpus=1
-            -v "${test_dir}:/cve_arena/test:ro"
+            -v "${stage_work}:/cve_arena/test"
+            -v "${abs_logs_dir}:/cve_arena/logs"
             -v "${SIGNAL_WRAPPER}:/cve_arena/signal_wrapper.sh:ro"
             -w /cve_arena/test
+            -e "CVE_MODE=${mode}"
+            -e "CVE_TIMEOUT=${OPT_TIMEOUT}"
+            -e "CVE_RUN_CMD=${run_cmd}"
+            -e "CVE_STEM=${stem}"
+            -e "FRANKENLIBC_CVE_MODE=${FRANKENLIBC_CVE_MODE:-hardened}"
         )
 
-        # In TSM mode, mount the FrankenLibC library and set environment.
+        # In TSM mode, mount the FrankenLibC library cleanly.
         if [[ "${mode}" == "tsm" && -n "${glibc_lib}" ]]; then
             docker_args+=(
                 -v "${glibc_lib}:/cve_arena/libfrankenlibc_abi.so:ro"
-                -e "LD_PRELOAD=/cve_arena/libfrankenlibc_abi.so"
-                -e "FRANKENLIBC_MODE=hardened"
+                -e "CVE_HAS_TSM_LIB=1"
             )
         fi
 
@@ -559,33 +611,22 @@ run_single_mode() {
             "${OPT_IMAGE}"
         )
 
-        # Build step inside container.
-        if [[ -n "${build_cmd}" && "${build_cmd}" != "null" ]]; then
-            log_info "  [${mode}] Building inside container: ${build_cmd}"
-
-            # Use a writable copy for building.
-            local build_docker_args=(
-                docker run --rm
-                --network=none
-                --memory=256m
-                --cpus=1
-                -v "${test_dir}:/cve_arena/test_src:ro"
-                -w /cve_arena/build
-                "${OPT_IMAGE}"
-                bash -c "cp -a /cve_arena/test_src/. . && ${build_cmd}"
-            )
-            if ! "${build_docker_args[@]}" >"${stdout_file}" 2>"${stderr_file}"; then
-                log_error "  [${mode}] Build failed inside container."
-                echo '{"exit_code": 2, "signal": null, "stdout": "", "stderr": "BUILD FAILED", "duration_ms": 0, "exploitable": false}'
-                return
-            fi
-        fi
-
-        # Run the test inside the container with the signal wrapper.
+        # Run the test inside the container with the signal wrapper and real LD_DEBUG binding capture.
         start_ns=$(date +%s%N)
         set +e
         "${docker_args[@]}" \
-            bash -c "timeout ${OPT_TIMEOUT} /cve_arena/signal_wrapper.sh '${run_cmd}' /tmp/signal_result; cat /tmp/signal_result 2>/dev/null" \
+            bash -c '
+                if [[ "${CVE_MODE}" == "tsm" && "${CVE_HAS_TSM_LIB:-0}" == "1" ]]; then
+                    export LD_PRELOAD="/cve_arena/libfrankenlibc_abi.so"
+                    export FRANKENLIBC_MODE="${FRANKENLIBC_CVE_MODE:-hardened}"
+                    export FRANKENLIBC_LOG="/cve_arena/logs/${CVE_STEM}_${CVE_MODE}.log"
+                    export FRANKENLIBC_LOG_FILE="/cve_arena/logs/${CVE_STEM}_${CVE_MODE}.log"
+                    export LD_DEBUG="bindings"
+                    export LD_DEBUG_OUTPUT="/cve_arena/logs/${CVE_STEM}_${CVE_MODE}.ld_bindings"
+                fi
+                timeout "${CVE_TIMEOUT}" /cve_arena/signal_wrapper.sh "${CVE_RUN_CMD}" /tmp/signal_result
+                cat /tmp/signal_result 2>/dev/null || true
+            ' \
             >"${stdout_file}" 2>"${stderr_file}"
         exit_code=$?
         set -e
@@ -651,8 +692,6 @@ run_single_mode() {
             if grep -qE "to .*libfrankenlibc_abi\.so" "${logs_dir}/${stem}_${mode}.ld_bindings"* 2>/dev/null; then
                 provider_bound="true"
             fi
-        elif [[ "${OPT_NO_DOCKER}" != "true" && -n "${glibc_lib}" ]]; then
-            provider_bound="true"
         fi
 
         cat <<EOFJSON
@@ -719,7 +758,7 @@ stock_stderr = str(data.get("stock_stderr") or "")
 tsm_stdout = str(data.get("tsm_stdout") or "")
 tsm_stderr = str(data.get("tsm_stderr") or "")
 healing_actions = list(data.get("healing_actions") or [])
-provider_bound = bool(data.get("provider_bound", True))
+provider_bound = bool(data.get("provider_bound", False))
 lib_sha256 = str(data.get("lib_sha256") or "")
 expected_lib_sha256 = str(data.get("expected_lib_sha256") or "")
 expected_stdout_sha256 = str(data.get("expected_stdout_sha256") or "")
@@ -831,7 +870,7 @@ compute_verdict() {
     local tsm_stdout="${4:-}"
     local tsm_healing="${5:-[]}"
     local expected_tsm_exit="${6:-0}"
-    local provider_bound="${7:-true}"
+    local provider_bound="${7:-false}"
     local scope_boundary="${8:-in_scope}"
     local stock_stderr="${9:-}"
     local tsm_stderr="${10:-}"
@@ -888,7 +927,8 @@ compute_verdict() {
         }')
     hsfp_json=$(compute_hsfp_json "${payload}")
     LAST_HSFP_JSON="${hsfp_json}"
-    echo "${hsfp_json}" | jq -r '.verdict'
+    LAST_VERDICT=$(echo "${hsfp_json}" | jq -r '.verdict')
+    echo "${LAST_VERDICT}"
 }
 
 # ---------------------------------------------------------------------------
@@ -961,7 +1001,7 @@ run_cve_test() {
     tsm_stdout=$(echo "${tsm_json}" | jq -r '.stdout // ""')
     tsm_stderr=$(echo "${tsm_json}" | jq -r '.stderr // ""')
     tsm_healing=$(echo "${tsm_json}" | jq -c '.healing_actions // []')
-    tsm_provider_bound=$(echo "${tsm_json}" | jq -r '.provider_bound // true')
+    tsm_provider_bound=$(echo "${tsm_json}" | jq -r 'if .provider_bound == null then false else .provider_bound end')
     tsm_lib_sha256=$(echo "${tsm_json}" | jq -r '.lib_sha256 // ""')
     log_info "  TSM exit code: ${tsm_exit} (healing=${tsm_healing}, provider_bound=${tsm_provider_bound})"
 
@@ -974,10 +1014,11 @@ run_cve_test() {
     forbidden_stdout_regex=$(jq -r '.qualification_protocol.output_validator.forbidden_stdout_regex // ""' < "${manifest}")
     harm_forbidden_regex=$(jq -r '.qualification_protocol.harm_oracle.forbidden_regex // ""' < "${manifest}")
 
-    # Compute conservative 4-axis (H, S, F, P) verdict.
+    # Compute conservative 4-axis (H, S, F, P) verdict in the parent shell (no subshell loss).
     local verdict hsfp_json
     LAST_HSFP_JSON=""
-    verdict=$(compute_verdict \
+    LAST_VERDICT=""
+    compute_verdict \
         "${stock_exit}" \
         "${tsm_exit}" \
         "${stock_stdout}" \
@@ -993,7 +1034,8 @@ run_cve_test() {
         "${expected_stdout_sha256}" \
         "${expected_stdout_regex}" \
         "${forbidden_stdout_regex}" \
-        "${harm_forbidden_regex}")
+        "${harm_forbidden_regex}" >/dev/null
+    verdict="${LAST_VERDICT}"
     hsfp_json="${LAST_HSFP_JSON}"
     if [[ -z "${hsfp_json}" ]]; then
         hsfp_json='{}'
@@ -1244,6 +1286,7 @@ main() {
                     DETECTED)   (( detected++ ))   || true ;;
                     REGRESSION) (( regression++ ))  || true ;;
                     BASELINE)   (( baseline++ ))   || true ;;
+                    INVALID_ADMISSION|UNSUPPORTED_PROVIDER) (( errors++ )) || true ;;
                 esac
             fi
         else

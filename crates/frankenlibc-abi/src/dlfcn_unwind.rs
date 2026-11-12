@@ -233,7 +233,13 @@ fn frame_encoding(encoding: u8) -> bool {
     // __register_frame supplies no external text/data bases. Absolute and
     // PC-relative pointers (including indirect personality/LSDA pointers)
     // are self-contained after the object's relocations have been applied.
-    matches!(encoding & 0x70, 0x00 | 0x10) && matches!(encoding & 0x0f, 0x00..=0x04 | 0x09..=0x0c)
+    // PC-relative pointers must use fixed-width encodings so synthesized
+    // streams can rebase them in place without shifting variable-width fields.
+    match encoding & 0x70 {
+        0x00 => matches!(encoding & 0x0f, 0x00..=0x04 | 0x09..=0x0c),
+        0x10 => matches!(encoding & 0x0f, 0x00 | 0x02..=0x04 | 0x0a..=0x0c),
+        _ => false,
+    }
 }
 
 fn cie_record(
@@ -434,21 +440,50 @@ fn synthesize_terminated_stream(
     let needed = plan.byte_len.checked_add(4)?;
     let mask = IMAGE_PAGE_SIZE - 1;
     let map_len = needed.checked_add(mask)? & !mask;
-    let hints = [
-        image_mapping.base.saturating_sub(map_len),
-        image_mapping
-            .base
-            .checked_add(image_mapping.len)
-            .unwrap_or(0),
-        0,
+    let image_end = image_mapping.base.saturating_add(image_mapping.len);
+    let near_strides = [
+        0usize,
+        16 * 1024,
+        64 * 1024,
+        256 * 1024,
+        1024 * 1024,
+        4 * 1024 * 1024,
+        16 * 1024 * 1024,
+        64 * 1024 * 1024,
+        256 * 1024 * 1024,
     ];
-    for hint in hints {
+    let mut candidates = [(0usize, false); 19];
+    let mut candidate_count = 0usize;
+    for stride in near_strides {
+        if let Some(below) = image_mapping
+            .base
+            .checked_sub(map_len.saturating_add(stride))
+            && below >= IMAGE_PAGE_SIZE
+        {
+            candidates[candidate_count] = (below & !mask, true);
+            candidate_count += 1;
+        }
+        if let Some(above) = image_end.checked_add(stride)
+            && above >= IMAGE_PAGE_SIZE
+        {
+            candidates[candidate_count] = ((above + mask) & !mask, true);
+            candidate_count += 1;
+        }
+    }
+    candidates[candidate_count] = (0, false);
+    candidate_count += 1;
+
+    for &(hint, fixed_noreplace) in &candidates[..candidate_count] {
+        let mut flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+        if fixed_noreplace {
+            flags |= libc::MAP_FIXED_NOREPLACE;
+        }
         let Ok(ptr) = (unsafe {
             raw_syscall::sys_mmap(
                 hint as *mut u8,
                 map_len,
                 libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                flags,
                 -1,
                 0,
             )

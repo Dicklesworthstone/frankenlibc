@@ -432,11 +432,11 @@ impl CachedCliffordCert {
 
 /// Process-shared 16-slot Clifford certificate memo table (0 bytes of `PT_TLS`
 /// and 0 heap allocations inside membrane validation). `certify_simd_string_operation`
-/// is a pure function of its determining inputs, so non-blocking `try_read` /
-/// `try_write` reuses certificates across worker threads while degrading cleanly
-/// to recomputation under contention.
-static CERT_CACHE: crate::util::NoPoisonRwLock<[CachedCliffordCert; CERT_CACHE_SLOTS]> =
-    crate::util::NoPoisonRwLock::new([CachedCliffordCert::EMPTY; CERT_CACHE_SLOTS]);
+/// is a pure function of its determining inputs, so fork-generation-safe
+/// non-blocking `try_lock` reuses certificates across worker threads while
+/// degrading cleanly to recomputation under contention or post-fork takeover.
+static CERT_CACHE: crate::util::NoPoisonMutex<[CachedCliffordCert; CERT_CACHE_SLOTS]> =
+    crate::util::NoPoisonMutex::new([CachedCliffordCert::EMPTY; CERT_CACHE_SLOTS]);
 
 /// FNV-1a over the exact inputs that determine the certificate.
 fn cert_cache_key(
@@ -507,7 +507,7 @@ pub fn certify_simd_string_operation(
         candidate_obs,
         overlap,
     );
-    if let Some(slots) = CERT_CACHE.try_read() {
+    if let Some(slots) = CERT_CACHE.try_lock() {
         let primary = slots[(cache_key as usize) % CERT_CACHE_SLOTS];
         let maybe_entry = if primary.present && primary.key == cache_key {
             Some(primary)
@@ -574,9 +574,9 @@ pub fn certify_simd_string_operation(
         rationale,
     };
 
-    // Publish for the next call in this regime. `try_write` rather than blocking:
+    // Publish for the next call in this regime. `try_lock` rather than blocking:
     // contention degrades to "recompute next time", never blocking on a hot membrane path.
-    if let Some(mut slots) = CERT_CACHE.try_write() {
+    if let Some(mut slots) = CERT_CACHE.try_lock() {
         let primary = (cache_key as usize) % CERT_CACHE_SLOTS;
         let index = if !slots[primary].present {
             primary
@@ -905,7 +905,7 @@ mod tests {
         // Short formatted bodies alternate with padded output in real snprintf
         // calls. Their f64 regime bits differ above the low bits of the hash.
         let lengths = [3, 5, 7, 8, 13, 400];
-        let reset = || CERT_CACHE.write().fill(CachedCliffordCert::EMPTY);
+        let reset = || CERT_CACHE.lock().fill(CachedCliffordCert::EMPTY);
         let certify = |len| {
             certify_simd_string_operation(
                 SimdStringOperation::Memcpy,
@@ -939,7 +939,7 @@ mod tests {
             let _ = certify(len);
         }
         {
-            let cache = CERT_CACHE.read();
+            let cache = CERT_CACHE.lock();
             let reference = SimdCliffordProfile::reference(SimdStringOperation::Memcpy);
             let candidate =
                 SimdCliffordProfile::candidate(SimdStringOperation::Memcpy, SimdIsa::Sse42);
@@ -974,7 +974,7 @@ mod tests {
     #[test]
     fn certificate_memo_distinguishes_overlap_contract() {
         for first_overlap in [false, true] {
-            CERT_CACHE.write().fill(CachedCliffordCert::EMPTY);
+            CERT_CACHE.lock().fill(CachedCliffordCert::EMPTY);
             for overlap in [first_overlap, !first_overlap] {
                 let cert = certify_simd_string_operation(
                     SimdStringOperation::Memcpy,

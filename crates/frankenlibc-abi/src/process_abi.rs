@@ -322,14 +322,15 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // pipeline and waited for ENVIRON_LOCK, a setenv thread held ENVIRON_LOCK
     // and waited for the pipeline (forkstress.c, hardened: hung within 20
     // forks; stacks captured 2026-09-28).
-    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
-    let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    // Guard carries the parent owner key across clone for adopt_in_fork_child.
+    let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     // `ready_pipeline`, not `try_global_pipeline`: only a pipeline that exists
     // has locks to hold across the fork, and building one here gave every
     // strict process that forks the whole hardened pipeline (8 MB bloom
     // filter, 16 arena shards) to lock and COW-fault on every later fork.
     let _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -342,6 +343,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         Ok(guard) => guard,
         Err(error) => {
             drop(malloc_guard);
+            drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
@@ -353,6 +355,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     };
 
     let pid = clone_for_fork(host_fork);
+    if pid == Ok(0) {
+        // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
+        unsafe { malloc_guard.adopt_in_fork_child() };
+    }
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -363,6 +369,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         Err(e) => {
             // Drop guards in failure path before returning so the parent
             // can resume normal env operations.
+            drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
@@ -380,10 +387,15 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // a new TID, so ownership must be handed to it first or the drop is a
     // silent no-op and the lock stays held forever (bd-rc0923-epic-eeuy4f.5).
     if pid == 0 {
-        // SAFETY: freshly forked child (single thread); parent_tid was read
-        // by the forking thread before the clone.
-        unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
+        if let Some(ref mut g) = _native_tls_heap_guard {
+            // SAFETY: freshly forked single-threaded child.
+            unsafe { g.adopt_in_fork_child() };
+        }
+        // SAFETY: freshly forked child (single thread); updates both lock and
+        // guard owner_tid so drop(_environ_guard) unlocks cleanly.
+        unsafe { _environ_guard.adopt_in_fork_child() };
     }
+    drop(_native_tls_heap_guard);
     drop(_pipeline_guard);
     drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.

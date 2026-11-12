@@ -506,7 +506,8 @@ static PWD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PwdStorage> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static PWD_TLS: Box<RefCell<PwdStorage>> = Box::new(RefCell::new(PwdStorage::new()));
+    static PWD_TLS: crate::util::TlsHeapCell<RefCell<PwdStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_pwd_storage<R>(callback: impl FnOnce(&mut PwdStorage) -> R) -> R {
@@ -516,9 +517,14 @@ fn with_pwd_storage<R>(callback: impl FnOnce(&mut PwdStorage) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        PWD_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
+        PWD_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(PwdStorage::new()),
+                |cell| {
+                    let mut storage = cell.borrow_mut();
+                    callback(&mut storage)
+                },
+            )
         })
     }
 }
@@ -678,14 +684,19 @@ thread_local! {
     /// Multi-source `getpwent` position, and an entry `getpwent_r` could not
     /// fit into the caller's buffer (returned again on the next call).
     static PW_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static PW_PENDING: Box<RefCell<Option<frankenlibc_core::pwd::Passwd>>> =
-        Box::new(RefCell::new(None));
+    static PW_PENDING: crate::util::TlsHeapCell<RefCell<Option<frankenlibc_core::pwd::Passwd>>> =
+        const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_pw_pending<R>(f: impl FnOnce(&RefCell<Option<frankenlibc_core::pwd::Passwd>>) -> R) -> R {
+    PW_PENDING.with(|slot| slot.with_init(|| RefCell::new(None), f))
 }
 
 /// Next entry of a multi-source enumeration: `Err(None)` at the end,
 /// `Err(Some(errno))` when a source failed and its action ends the walk.
 fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
-    if let Some(entry) = PW_PENDING.with(|p| p.borrow_mut().take()) {
+    if let Some(entry) = with_pw_pending(|p| p.borrow_mut().take()) {
         return Ok(entry);
     }
     loop {
@@ -719,7 +730,7 @@ fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
 
 fn reset_passwd_enumeration() {
     PW_ENT.with(|c| c.set(EntCursor::default()));
-    PW_PENDING.with(|p| *p.borrow_mut() = None);
+    with_pw_pending(|p| *p.borrow_mut() = None);
 }
 
 fn passwd_backend_io_error() -> Option<c_int> {
@@ -1193,7 +1204,7 @@ unsafe fn getpwent_r_impl(
                 };
                 if rc == libc::ERANGE {
                     // Hand the same entry back once the caller grows its buffer.
-                    PW_PENDING.with(|p| *p.borrow_mut() = Some(entry));
+                    with_pw_pending(|p| *p.borrow_mut() = Some(entry));
                 }
                 rc
             }
@@ -1320,8 +1331,8 @@ static SHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ShadowTlsStorage>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static SHADOW_TLS: Box<RefCell<ShadowTlsStorage>> =
-        Box::new(RefCell::new(ShadowTlsStorage::new()));
+    static SHADOW_TLS: crate::util::TlsHeapCell<RefCell<ShadowTlsStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_shadow_storage<R>(callback: impl FnOnce(&mut ShadowTlsStorage) -> R) -> R {
@@ -1331,9 +1342,14 @@ fn with_shadow_storage<R>(callback: impl FnOnce(&mut ShadowTlsStorage) -> R) -> 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SHADOW_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
+        SHADOW_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(ShadowTlsStorage::new()),
+                |cell| {
+                    let mut storage = cell.borrow_mut();
+                    callback(&mut storage)
+                },
+            )
         })
     }
 }
@@ -1627,15 +1643,23 @@ thread_local! {
     /// `getspent` position across the configured shadow sources, and an entry
     /// `getspent_r` could not fit into the caller's buffer.
     static SP_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static SP_PENDING: Box<RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>> =
-        Box::new(RefCell::new(None));
+    static SP_PENDING: crate::util::TlsHeapCell<
+        RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>,
+    > = const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_sp_pending<R>(
+    f: impl FnOnce(&RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>>) -> R,
+) -> R {
+    SP_PENDING.with(|slot| slot.with_init(|| RefCell::new(None), f))
 }
 
 /// Next shadow entry: `Err(None)` at the end, `Err(Some(errno))` when a
 /// source failed and its action ends the walk. An enumeration starts
 /// implicitly on the first call, as with glibc (no `setspent` required).
 fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Option<c_int>> {
-    if let Some(entry) = SP_PENDING.with(|p| p.borrow_mut().take()) {
+    if let Some(entry) = with_sp_pending(|p| p.borrow_mut().take()) {
         return Ok(entry);
     }
     loop {
@@ -1671,7 +1695,7 @@ fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Opt
 
 fn reset_shadow_enumeration() {
     SP_ENT.with(|c| c.set(EntCursor::default()));
-    SP_PENDING.with(|p| *p.borrow_mut() = None);
+    with_sp_pending(|p| *p.borrow_mut() = None);
 }
 
 /// `getspent` — read the next shadow entry.
@@ -1767,7 +1791,7 @@ unsafe fn getspent_r_impl(
             };
             if rc == libc::ERANGE {
                 // Hand the same entry back once the caller grows its buffer.
-                SP_PENDING.with(|p| *p.borrow_mut() = Some(entry));
+                with_sp_pending(|p| *p.borrow_mut() = Some(entry));
             } else if rc == 0 {
                 unsafe { *result = spbuf };
             }
@@ -1915,8 +1939,8 @@ static GSHADOW_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GshadowTlsStorag
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GSHADOW_TLS: Box<RefCell<GshadowTlsStorage>> =
-        Box::new(RefCell::new(GshadowTlsStorage::new()));
+    static GSHADOW_TLS: crate::util::TlsHeapCell<RefCell<GshadowTlsStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_gshadow_storage<R>(callback: impl FnOnce(&mut GshadowTlsStorage) -> R) -> R {
@@ -1926,7 +1950,12 @@ fn with_gshadow_storage<R>(callback: impl FnOnce(&mut GshadowTlsStorage) -> R) -
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GSHADOW_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+        GSHADOW_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(GshadowTlsStorage::new()),
+                |cell| callback(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 

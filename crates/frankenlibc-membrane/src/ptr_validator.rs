@@ -944,7 +944,7 @@ impl ValidationPipeline {
     /// constructing a 72-byte `ValidationOutcome` on the stack.
     #[inline(always)]
     pub fn try_validate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
-        self.try_validate_cached_remaining_const::<false>(addr, 0)
+        self.try_validate_cached_remaining_const::<false, false>(addr, 0, safety_level())
     }
 
     /// Resolve remaining bytes for a guarded write destination, re-verifying
@@ -956,16 +956,28 @@ impl ValidationPipeline {
         addr: usize,
         write_len: usize,
     ) -> Option<Option<usize>> {
-        self.try_validate_cached_remaining_const::<true>(addr, write_len)
+        self.try_validate_cached_remaining_const::<true, true>(addr, write_len, safety_level())
     }
 
+    /// Variant of [`Self::try_validate_cached_write_remaining`] for ABI callers
+    /// (`memset`, `strcpy`) that record their own symbol-attributed `HealingAction`
+    /// with the exact `requested` byte count, avoiding duplicate `size_clamps`.
     #[inline(always)]
-    fn try_validate_cached_remaining_const<const IS_WRITE: bool>(
+    pub fn try_validate_cached_write_remaining_unlogged(
         &self,
         addr: usize,
         write_len: usize,
     ) -> Option<Option<usize>> {
-        let mode = safety_level();
+        self.try_validate_cached_remaining_const::<true, false>(addr, write_len, safety_level())
+    }
+
+    #[inline(always)]
+    fn try_validate_cached_remaining_const<const IS_WRITE: bool, const EMIT_HEAL: bool>(
+        &self,
+        addr: usize,
+        write_len: usize,
+        mode: SafetyLevel,
+    ) -> Option<Option<usize>> {
         if addr == 0 || self.validation_logging_enabled() || !mode.validation_enabled() {
             return None;
         }
@@ -978,7 +990,17 @@ impl ValidationPipeline {
             )
         });
         if cached.is_corrupted() {
-            Self::record_warm_cache_corruption_heal(addr);
+            // `TLS_CACHE` already evicted the corrupted entry and bumped
+            // `canary_failures`/`fingerprint_failures`. Only clamp to `0` (and
+            // optionally emit a heal record) when healing is enabled; in Strict
+            // mode, miss cleanly so `validate()` surfaces `TemporalViolation`
+            // without recording any `HealingAction`.
+            if !mode.heals_enabled() {
+                return None;
+            }
+            if EMIT_HEAL {
+                Self::record_warm_cache_corruption_heal(addr);
+            }
             return Some(Some(0));
         }
         cached.decode()
@@ -993,7 +1015,7 @@ impl ValidationPipeline {
         lhs: usize,
         rhs: usize,
     ) -> (CachedRemaining, CachedRemaining) {
-        self.try_validate_cached_remaining_pair_const::<false>(lhs, rhs, 0)
+        self.try_validate_cached_remaining_pair_const::<false>(lhs, rhs, 0, safety_level())
     }
 
     /// Resolve remaining bytes for `(dst, src)` where `dst` is a guarded write
@@ -1006,7 +1028,7 @@ impl ValidationPipeline {
         src: usize,
         write_len: usize,
     ) -> (CachedRemaining, CachedRemaining) {
-        self.try_validate_cached_remaining_pair_const::<true>(dst, src, write_len)
+        self.try_validate_cached_remaining_pair_const::<true>(dst, src, write_len, safety_level())
     }
 
     #[inline(always)]
@@ -1015,8 +1037,8 @@ impl ValidationPipeline {
         lhs: usize,
         rhs: usize,
         write_len: usize,
+        mode: SafetyLevel,
     ) -> (CachedRemaining, CachedRemaining) {
-        let mode = safety_level();
         if self.validation_logging_enabled() || !mode.validation_enabled() {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
@@ -1031,12 +1053,18 @@ impl ValidationPipeline {
                 )
             });
         if l.is_corrupted() {
-            Self::record_warm_cache_corruption_heal(lhs);
-            l = CachedRemaining::clamped_zero();
+            l = if mode.heals_enabled() {
+                CachedRemaining::clamped_zero()
+            } else {
+                CachedRemaining::MISS
+            };
         }
         if r.is_corrupted() {
-            Self::record_warm_cache_corruption_heal(rhs);
-            r = CachedRemaining::clamped_zero();
+            r = if mode.heals_enabled() {
+                CachedRemaining::clamped_zero()
+            } else {
+                CachedRemaining::MISS
+            };
         }
         (l, r)
     }
@@ -3519,23 +3547,58 @@ mod tests {
         let canary_failures_before = MembraneMetrics::get(&metrics.canary_failures);
         let clamps_before = MembraneMetrics::get(&policy.size_clamps);
 
-        // Near-tail write (`32 <= 64`) on warm TLS cache must IMMEDIATELY clamp to 0,
-        // increment `canary_failures`, evict `TLS_CACHE`, and record a `ClampSize` heal.
+        // Strict mode must evict + increment `canary_failures` with ZERO healing records.
         assert_eq!(
-            pipeline.try_validate_cached_write_remaining(addr_tail, 8),
-            Some(Some(0))
+            pipeline.try_validate_cached_remaining_const::<true, true>(
+                addr_tail,
+                8,
+                SafetyLevel::Strict,
+            ),
+            None
         );
         assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_failures_before);
-        assert!(MembraneMetrics::get(&policy.size_clamps) > clamps_before);
+        assert_eq!(
+            MembraneMetrics::get(&policy.size_clamps),
+            clamps_before,
+            "Strict mode must never record ClampSize heals on warm-cache corruption"
+        );
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_tail), None);
+
+        // Hardened mode on a re-warmed intact->corrupted block must clamp to 0 and record a single heal.
+        assert_eq!(
+            pipeline.free(ptr_tail),
+            FreeResult::FreedWithCanaryCorruption
+        );
+        let ptr_tail_h = pipeline.allocate(32).expect("alloc 32 hardened");
+        let addr_tail_h = ptr_tail_h as usize;
+        assert!(matches!(
+            pipeline.validate(addr_tail_h),
+            ValidationOutcome::Validated(_)
+        ));
+        assert!(pipeline.inject_trailing_canary_corruption(addr_tail_h, 32, 0xCC));
+        let canary_h_before = MembraneMetrics::get(&metrics.canary_failures);
+        let clamps_h_before = MembraneMetrics::get(&policy.size_clamps);
+        assert_eq!(
+            pipeline.try_validate_cached_remaining_const::<true, true>(
+                addr_tail_h,
+                8,
+                SafetyLevel::Hardened,
+            ),
+            Some(Some(0))
+        );
+        assert!(MembraneMetrics::get(&metrics.canary_failures) > canary_h_before);
+        assert_eq!(
+            MembraneMetrics::get(&policy.size_clamps),
+            clamps_h_before + 1
+        );
         assert!(
             policy
                 .export_healing_log_jsonl()
                 .contains("\"symbol\":\"tls_cache_canary\"")
         );
-        // Subsequent cached probe misses because the corrupted entry was evicted.
-        assert_eq!(pipeline.try_validate_cached_remaining(addr_tail), None);
+        assert_eq!(pipeline.try_validate_cached_remaining(addr_tail_h), None);
         assert_eq!(
-            pipeline.free(ptr_tail),
+            pipeline.free(ptr_tail_h),
             FreeResult::FreedWithCanaryCorruption
         );
 
@@ -3560,11 +3623,15 @@ mod tests {
         let fp_failures_before = MembraneMetrics::get(&metrics.fingerprint_failures);
         let heals_before = MembraneMetrics::get(&policy.size_clamps);
         assert_eq!(
-            pipeline.try_validate_cached_write_remaining(addr_hdr, 8),
+            pipeline.try_validate_cached_remaining_const::<true, true>(
+                addr_hdr,
+                8,
+                SafetyLevel::Hardened,
+            ),
             Some(Some(0))
         );
         assert!(MembraneMetrics::get(&metrics.fingerprint_failures) > fp_failures_before);
-        assert!(MembraneMetrics::get(&policy.size_clamps) > heals_before);
+        assert_eq!(MembraneMetrics::get(&policy.size_clamps), heals_before + 1);
         assert_eq!(pipeline.try_validate_cached_remaining(addr_hdr), None);
 
         unsafe {

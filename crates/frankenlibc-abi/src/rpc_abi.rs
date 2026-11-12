@@ -2649,12 +2649,17 @@ pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
 static RPC_DIAGNOSTIC_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
     crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
 
+#[cfg(not(feature = "owned-tls-cache"))]
+fn init_rpc_diagnostic_buf() -> std::cell::UnsafeCell<Vec<u8>> {
+    std::cell::UnsafeCell::new(Vec::new())
+}
+
 // GNU client/creation diagnostics share one per-thread allocation. Build the
 // next message before replacing it, including when the prefix aliases it.
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RPC_DIAGNOSTIC_BUF: std::cell::UnsafeCell<Vec<u8>> =
-        const { std::cell::UnsafeCell::new(Vec::new()) };
+    static RPC_DIAGNOSTIC_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -2667,7 +2672,11 @@ fn with_rpc_diagnostic_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
     {
         // SAFETY: only this thread accesses the cell; callers replace the Vec
         // without invoking application callbacks while the borrow is held.
-        RPC_DIAGNOSTIC_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+        RPC_DIAGNOSTIC_BUF.with(|slot| {
+            slot.with_init(init_rpc_diagnostic_buf, |cell| {
+                f(unsafe { &mut *cell.get() })
+            })
+        })
     }
 }
 
@@ -2873,8 +2882,8 @@ fn empty_rpc_svc_fdset() -> RpcSvcFdSetBuf {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static RPC_SVC_FDSET_TLS: Box<std::cell::UnsafeCell<RpcSvcFdSetBuf>> =
-        Box::new(std::cell::UnsafeCell::new(RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])));
+    static RPC_SVC_FDSET_TLS: crate::util::TlsHeapCell<std::cell::UnsafeCell<RpcSvcFdSetBuf>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -2885,7 +2894,7 @@ fn rpc_svc_fdset_ptr() -> *mut c_void {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RPC_SVC_FDSET_TLS.with(|cell| cell.get().cast::<u8>().cast())
+        RPC_SVC_FDSET_TLS.with(|slot| slot.with_zeroed(None, |cell| cell.get().cast::<u8>().cast()))
     }
 }
 

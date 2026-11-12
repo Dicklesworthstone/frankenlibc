@@ -5475,10 +5475,12 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
                 return std::ptr::null_mut();
             }
             // A word read past a match could fault when the range crosses into a
-            // page the caller only covered with an overshooting `n`.
-            if (p as usize & (MEMCHR_PAGE - 1)) + n > MEMCHR_PAGE {
+            // page the caller only covered with an overshooting `n` (e.g. `SIZE_MAX`).
+            // Subtract from `MEMCHR_PAGE` so `n = usize::MAX` never wraps around.
+            let page_rem = MEMCHR_PAGE - (p as usize & (MEMCHR_PAGE - 1));
+            if n > page_rem {
                 return match unsafe { memchr_page_bounded(p, needle, n) } {
-                    Some(idx) => unsafe { (p as *mut u8).add(idx).cast() },
+                    Some(idx) => (p as *mut u8).wrapping_add(idx).cast(),
                     None => std::ptr::null_mut(),
                 };
             }
@@ -5514,14 +5516,16 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             return std::ptr::null_mut();
         }
         // One-page range (the common case): no later page to protect.
-        let found = if (s as usize & (MEMCHR_PAGE - 1)) + n <= MEMCHR_PAGE {
-            // SAFETY: memchr's contract: `n` readable bytes at `s`.
+        // Overflow-safe subtraction avoids `(s & 4095) + usize::MAX` wraparound!
+        let page_rem = MEMCHR_PAGE - (s as usize & (MEMCHR_PAGE - 1));
+        let found = if n <= page_rem {
+            // SAFETY: memchr's contract: `n` readable bytes at `s` (`n <= 4096`).
             unsafe { core_memchr(s.cast::<u8>(), needle, n) }
         } else {
             unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
         };
         return match found {
-            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
             None => std::ptr::null_mut(),
         };
     }
@@ -5578,17 +5582,17 @@ unsafe fn memchr_within_page_short(p: *const u8, needle: u8, seg: usize) -> Opti
         let splat = ONES.wrapping_mul(needle as u64);
         // SAFETY: `[0, 8)` and `[seg - 8, seg)` lie within `[0, seg)`.
         unsafe {
-            let x0 = std::ptr::read_unaligned(p.cast::<u64>()) ^ splat;
+            let x0 = u64::from_le(std::ptr::read_unaligned(p.cast::<u64>())) ^ splat;
             let mask0 = x0.wrapping_sub(ONES) & !x0 & HIGHS;
             if mask0 != 0 {
-                return Some((mask0.to_le().trailing_zeros() / 8) as usize);
+                return Some((mask0.trailing_zeros() / 8) as usize);
             }
             if seg > 8 {
                 let off = seg - 8;
-                let x1 = std::ptr::read_unaligned(p.add(off).cast::<u64>()) ^ splat;
+                let x1 = u64::from_le(std::ptr::read_unaligned(p.add(off).cast::<u64>())) ^ splat;
                 let mask1 = x1.wrapping_sub(ONES) & !x1 & HIGHS;
                 if mask1 != 0 {
-                    return Some(off + (mask1.to_le().trailing_zeros() / 8) as usize);
+                    return Some(off + (mask1.trailing_zeros() / 8) as usize);
                 }
             }
         }
@@ -5607,13 +5611,17 @@ unsafe fn memchr_within_page_short(p: *const u8, needle: u8, seg: usize) -> Opti
 
 #[inline]
 unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    // Cap `n` to the non-wrapping address span `[s, usize::MAX]` so `s + off`
+    // can never wrap around address `0` on `n = usize::MAX`.
+    let max_span = (usize::MAX - s as usize).saturating_add(1);
+    let n = n.min(max_span);
     let mut off = 0usize;
     while off < n {
         let addr = (s as usize).wrapping_add(off);
         let seg = (MEMCHR_PAGE - (addr & (MEMCHR_PAGE - 1))).min(n - off);
         // SAFETY: `[s + off, s + off + seg)` lies in one page, which holds an
         // unexamined byte the caller vouches for, so the whole page is mapped.
-        let p = unsafe { s.add(off) };
+        let p = s.wrapping_add(off);
         if seg < 32 {
             if let Some(idx) = unsafe { memchr_within_page_short(p, needle, seg) } {
                 return Some(off + idx);
@@ -5710,7 +5718,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         return unsafe {
             match memchr_page_bounded(s.cast::<u8>(), c as u8, n) {
-                Some(idx) => (s as *mut u8).add(idx).cast(),
+                Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
                 None => std::ptr::null_mut(),
             }
         };
@@ -5757,17 +5765,22 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
             );
         }
         return match found {
-            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
             None => std::ptr::null_mut(),
         };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("memchr");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+    // `memchr` stops inspecting bytes at the first match (C11 7.24.5.1), so callers
+    // legitimately pass sentinel bounds such as `SIZE_MAX` or `INT_MAX`. Bound the
+    // barrier/risk hint to the known allocation remainder (or one page for untracked
+    // pointers) while still clamping `scan_len` against `rem` below.
+    let decision_len = rem.map_or_else(|| n.min(MEMCHR_PAGE), |r| n.min(r));
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
-        n,
+        decision_len,
         false,
         bloom_negative,
         0,
@@ -5782,7 +5795,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(6, n),
+            runtime_policy::scaled_cost(6, decision_len),
             true,
         );
         return std::ptr::null_mut();
@@ -5807,7 +5820,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(6, n),
+            runtime_policy::scaled_cost(6, decision_len),
             true,
         );
         return std::ptr::null_mut();
@@ -5825,10 +5838,10 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
             runtime_policy::observe(
                 ApiFamily::StringMemory,
                 decision.profile,
-                runtime_policy::scaled_cost(6, scan_len),
+                runtime_policy::scaled_cost(6, idx.saturating_add(1)),
                 clamped,
             );
-            return (s as *mut u8).add(idx).cast();
+            return (s as *mut u8).wrapping_add(idx).cast();
         }
     }
     record_string_stage_outcome(
@@ -5955,7 +5968,7 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
             );
         }
         return match found {
-            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            Some(idx) => (s as *mut u8).wrapping_add(idx).cast(),
             None => std::ptr::null_mut(),
         };
     }
@@ -6342,15 +6355,16 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
         )
     {
         let mut scan_limit = n;
-        let mut adverse = false;
+        let mut clamped_by_rem = false;
         if mode.heals_enabled()
             && let Some(bound) = rem
             && bound < scan_limit
         {
             scan_limit = bound;
-            adverse = true;
+            clamped_by_rem = true;
         }
-        let len = unsafe { scan_c_string_nul_or_bound(s, scan_limit).0 };
+        let (len, terminated) = unsafe { scan_c_string_nul_or_bound(s, scan_limit) };
+        let adverse = clamped_by_rem && !terminated;
         if adverse {
             record_truncation("strnlen", n, scan_limit, s as usize);
             runtime_policy::observe(
@@ -6366,10 +6380,11 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     let _trace_scope = runtime_policy::entrypoint_scope("strnlen");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
 
+    let decision_len = rem.map_or_else(|| n.min(MEMCHR_PAGE), |r| n.min(r));
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
-        n,
+        decision_len,
         false,
         bloom_negative,
         0,
@@ -6387,13 +6402,13 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
     let mut scan_limit = n;
-    let mut adverse = false;
+    let mut clamped_by_rem = false;
     if repair
         && let Some(bound) = rem
         && bound < scan_limit
     {
         scan_limit = bound;
-        adverse = true;
+        clamped_by_rem = true;
     }
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
@@ -6402,8 +6417,9 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     // equals `len` in both branches. `scan_limit` is a ceiling even after the
     // membrane clamp — it can only shrink `n`, never certify readability — so
     // this needs the nul-or-bound contract, not `scan_c_string`'s.
-    let len = unsafe { scan_c_string_nul_or_bound(s, scan_limit).0 };
+    let (len, terminated) = unsafe { scan_c_string_nul_or_bound(s, scan_limit) };
     let span = len;
+    let adverse = clamped_by_rem && !terminated;
 
     if adverse {
         record_truncation("strnlen", n, scan_limit, s as usize);
@@ -6733,10 +6749,16 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
     let (aligned, recent_page, ordering) =
         stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
 
+    let decision_len = match (lhs_rem, rhs_rem) {
+        (Some(a), Some(b)) => a.min(b).min(n),
+        (Some(a), None) => a.min(n),
+        (None, Some(b)) => b.min(n),
+        (None, None) => n.min(MEMCHR_PAGE),
+    };
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
-        n,
+        decision_len,
         false,
         bloom_negative,
         0,
@@ -6890,7 +6912,7 @@ unsafe fn strcpy_core(
             let dst_bound = if repair
                 && let Some(limit) = dst_bound
                 && limit > 64
-                && requested >= limit
+                && limit.saturating_sub(requested) <= 64
             {
                 crate::malloc_abi::known_remaining_write_in_guarded_string(dst as usize, requested)
             } else {
@@ -6982,6 +7004,15 @@ unsafe fn strcpy_core(
     let (copied_len, adverse) = unsafe {
         let (src_len, src_terminated) = scan_c_string(src, src_bound);
         let requested = src_len.saturating_add(1);
+        let dst_bound = if repair
+            && let Some(limit) = dst_bound
+            && limit > 64
+            && limit.saturating_sub(requested) <= 64
+        {
+            crate::malloc_abi::known_remaining_write_in_guarded_string(dst as usize, requested)
+        } else {
+            dst_bound
+        };
         if repair {
             match dst_bound {
                 Some(0) => {
@@ -10634,9 +10665,14 @@ static STRERROR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> 
     crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 256]);
 
 #[cfg(not(feature = "owned-tls-cache"))]
+fn init_strerror_buf() -> std::cell::RefCell<[u8; 256]> {
+    std::cell::RefCell::new([0u8; 256])
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static STRERROR_BUF: Box<std::cell::RefCell<[u8; 256]>> =
-        Box::new(std::cell::RefCell::new([0u8; 256]));
+    static STRERROR_BUF: crate::util::TlsHeapCell<std::cell::RefCell<[u8; 256]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 pub(crate) fn rendered_strerror_message(errnum: c_int) -> (String, bool) {
@@ -10680,14 +10716,18 @@ pub unsafe extern "C" fn strerror(errnum: c_int) -> *mut c_char {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         STRERROR_BUF
-            .try_with(|buf_cell| {
-                let mut buf = buf_cell.borrow_mut();
-                let msg_bytes = msg.as_bytes();
-                let copy_len = msg_bytes.len().min(buf.len() - 1);
-                buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
-                buf[copy_len] = 0;
-                buf.as_ptr() as *mut c_char
+            .try_with(|slot| {
+                slot.try_with_init(init_strerror_buf, None, |buf_cell| {
+                    let mut buf = buf_cell.borrow_mut();
+                    let msg_bytes = msg.as_bytes();
+                    let copy_len = msg_bytes.len().min(buf.len() - 1);
+                    buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
+                    buf[copy_len] = 0;
+                    buf.as_ptr() as *mut c_char
+                })
             })
+            .ok()
+            .flatten()
             .unwrap_or(std::ptr::null_mut())
     }
 }
@@ -10697,9 +10737,14 @@ static STRSIGNAL_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> 
     crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 64]);
 
 #[cfg(not(feature = "owned-tls-cache"))]
+fn init_strsignal_buf() -> std::cell::RefCell<[u8; 64]> {
+    std::cell::RefCell::new([0u8; 64])
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static STRSIGNAL_BUF: Box<std::cell::RefCell<[u8; 64]>> =
-        Box::new(std::cell::RefCell::new([0u8; 64]));
+    static STRSIGNAL_BUF: crate::util::TlsHeapCell<std::cell::RefCell<[u8; 64]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_strsignal_buffer<R>(callback: impl FnOnce(&mut [u8; 64]) -> R) -> R {
@@ -10709,9 +10754,11 @@ fn with_strsignal_buffer<R>(callback: impl FnOnce(&mut [u8; 64]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        STRSIGNAL_BUF.with(|cell| {
-            let mut buf = cell.borrow_mut();
-            callback(&mut buf)
+        STRSIGNAL_BUF.with(|slot| {
+            slot.with_init(init_strsignal_buf, |cell| {
+                let mut buf = cell.borrow_mut();
+                callback(&mut buf)
+            })
         })
     }
 }
@@ -16189,19 +16236,19 @@ pub unsafe extern "C" fn strnstr(
         return std::ptr::null_mut();
     }
 
-    // SAFETY: per BSD strnstr contract, the caller guarantees haystack
-    // either contains a NUL within the first n bytes OR is valid for n
-    // bytes of read; the bound applies whichever happens first. The
-    // core `strnstr` walks a single pass that short-circuits on NUL and
-    // is itself bounded by `min(n, slice.len())`, so giving it a slice
-    // of length `n` lets the inner loop do the strnlen and the search
-    // together — what the bd-ef934 perf slice was about.
-    let hay_slice = unsafe { std::slice::from_raw_parts(haystack as *const u8, n) };
     let needle_len = unsafe { strlen(needle) };
+    if needle_len == 0 {
+        return haystack as *mut c_char;
+    }
+    // SAFETY: per BSD `strnstr`, `n` is a ceiling (`n` may exceed `strlen(haystack)`
+    // or equal `SIZE_MAX`). Bound `hay_len` via `strnlen` so `from_raw_parts` never
+    // spans past a NUL terminator, guard page, or `isize::MAX`.
+    let hay_len = unsafe { strnlen(haystack, n) };
+    let hay_slice = unsafe { std::slice::from_raw_parts(haystack as *const u8, hay_len) };
     // SAFETY: needle_len is the strlen we just measured.
     let needle_slice = unsafe { std::slice::from_raw_parts(needle as *const u8, needle_len) };
 
-    match frankenlibc_core::string::strnstr(hay_slice, needle_slice, n) {
+    match frankenlibc_core::string::strnstr(hay_slice, needle_slice, hay_len) {
         Some(off) => unsafe { haystack.add(off) as *mut c_char },
         None => std::ptr::null_mut(),
     }

@@ -395,6 +395,84 @@ class TestSecurityValidationIntegration(unittest.TestCase):
         self.assertEqual(report.healing_by_class["buffer_over_read"], 2)
         self.assertEqual(report.healing_by_class["buffer_overflow"], 2)
 
+    def test_aggregate_report_distinguishes_partial_vs_full_oracle_qualification(self) -> None:
+        """Aggregate report must be partially_oracle_qualified unless ALL CVE-bearing packages are oracle_qualified."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_dir = root / "logs"
+            log_dir.mkdir(parents=True)
+            db_path = root / "cve_database.json"
+            db_path.write_text(
+                json.dumps(
+                    {
+                        "packages": {
+                            "app-arch/libarchive": {
+                                "cves": [
+                                    {
+                                        "id": "CVE-2025-5915",
+                                        "class": "buffer_over_read",
+                                        "severity": "high",
+                                        "cvss": 7.5,
+                                        "description": "RAR over-read",
+                                        "expected_prevention": True,
+                                        "prevention_mechanism": "ClampSize",
+                                    }
+                                ]
+                            },
+                            "dev-libs/openssl": {
+                                "cves": [
+                                    {
+                                        "id": "CVE-2014-0160",
+                                        "class": "buffer_over_read",
+                                        "severity": "critical",
+                                        "cvss": 7.5,
+                                        "description": "Heartbleed",
+                                        "expected_prevention": True,
+                                        "prevention_mechanism": "ClampSize",
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            orig_analyze = SecurityAnalyzer.analyze_package
+
+            def mixed_analyze(self_inner: SecurityAnalyzer, pkg: str, actions: list[HealingAction], oracle_verdicts: dict[str, bool] | None = None):
+                verdicts = {"CVE-2025-5915": True} if pkg == "app-arch/libarchive" else None
+                return orig_analyze(self_inner, pkg, actions, oracle_verdicts=verdicts)
+
+            with patch.object(SecurityAnalyzer, "analyze_package", mixed_analyze):
+                mixed_report = generate_aggregate_report(
+                    log_dir,
+                    db_path,
+                    packages=["app-arch/libarchive", "dev-libs/openssl"],
+                )
+            self.assertEqual(mixed_report.qualification_status, "partially_oracle_qualified")
+            self.assertEqual(mixed_report.prevented_cves, 1)
+            self.assertEqual(mixed_report.total_cves, 2)
+
+            def full_analyze(self_inner: SecurityAnalyzer, pkg: str, actions: list[HealingAction], oracle_verdicts: dict[str, bool] | None = None):
+                verdicts = (
+                    {"CVE-2025-5915": True}
+                    if pkg == "app-arch/libarchive"
+                    else {"CVE-2014-0160": True}
+                )
+                return orig_analyze(self_inner, pkg, actions, oracle_verdicts=verdicts)
+
+            with patch.object(SecurityAnalyzer, "analyze_package", full_analyze):
+                full_report = generate_aggregate_report(
+                    log_dir,
+                    db_path,
+                    packages=["app-arch/libarchive", "dev-libs/openssl"],
+                )
+            self.assertEqual(full_report.qualification_status, "oracle_qualified")
+            self.assertEqual(full_report.prevented_cves, 2)
+
     def test_sq_m0_counterexamples_and_runner_hsfp_controls(self) -> None:
         """SQ M0 (S03, S05, S07, S12): adversarial negative controls on runner.sh and cve_arena_gate.sh."""
         import subprocess

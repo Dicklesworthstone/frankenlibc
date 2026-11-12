@@ -27,7 +27,7 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn find_warm_rch_release_abi_so(root: &Path) -> Option<PathBuf> {
+fn find_warm_rch_target_dir(root: &Path) -> Option<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in std::fs::read_dir(root).ok()?.flatten() {
         let name = entry.file_name();
@@ -40,7 +40,7 @@ fn find_warm_rch_release_abi_so(root: &Path) -> Option<PathBuf> {
         {
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
             if best.as_ref().is_none_or(|(prev, _)| mtime > *prev) {
-                best = Some((mtime, candidate));
+                best = Some((mtime, entry.path()));
             }
         }
     }
@@ -48,50 +48,40 @@ fn find_warm_rch_release_abi_so(root: &Path) -> Option<PathBuf> {
 }
 
 fn find_release_abi_so(root: &Path) -> PathBuf {
+    static BUILT_SO: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     if let Ok(explicit) = std::env::var("FRANKENLIBC_RELEASE_SO") {
         let p = PathBuf::from(explicit);
         if p.is_file() {
             return p;
         }
     }
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let p = PathBuf::from(target_dir).join("release/libfrankenlibc_abi.so");
-        if p.is_file() {
-            return p;
-        }
-    }
-    let default = root.join("target/release/libfrankenlibc_abi.so");
-    if default.is_file() {
-        return default;
-    }
-    if let Some(warm) = find_warm_rch_release_abi_so(root) {
-        return warm;
-    }
-    let status = Command::new("cargo")
-        .current_dir(root)
-        .args(["build", "-p", "frankenlibc-abi", "--release"])
-        .status()
-        .expect("spawn cargo build --release -p frankenlibc-abi");
-    assert!(
-        status.success(),
-        "cargo build --release -p frankenlibc-abi failed"
-    );
-    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
-        let p = PathBuf::from(target_dir).join("release/libfrankenlibc_abi.so");
-        if p.is_file() {
-            return p;
-        }
-    }
-    if default.is_file() {
-        return default;
-    }
-    if let Some(warm) = find_warm_rch_release_abi_so(root) {
-        return warm;
-    }
-    panic!(
-        "missing release libfrankenlibc_abi.so at {}",
-        default.display()
-    );
+    BUILT_SO
+        .get_or_init(|| {
+            let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .or_else(|| find_warm_rch_target_dir(root))
+                .unwrap_or_else(|| root.join("target"));
+            let status = Command::new("cargo")
+                .current_dir(root)
+                .arg("build")
+                .arg("--target-dir")
+                .arg(&target_dir)
+                .args(["-p", "frankenlibc-abi", "--release"])
+                .status()
+                .expect("spawn cargo build --release -p frankenlibc-abi");
+            assert!(
+                status.success(),
+                "cargo build --release -p frankenlibc-abi failed"
+            );
+            let so = target_dir.join("release/libfrankenlibc_abi.so");
+            assert!(
+                so.is_file(),
+                "missing release libfrankenlibc_abi.so at {}",
+                so.display()
+            );
+            so
+        })
+        .clone()
 }
 
 #[test]
@@ -843,4 +833,260 @@ int main(int argc, char **argv) {
             .any(|r| r["event"] == "forced_unwind_install_cleanup"),
         "expected forced_unwind_install_cleanup event in JSONL"
     );
+}
+
+#[test]
+fn wave7_tls_destructors_no_pie_environ_closed_fflush_and_memchr_usize_max_work() {
+    let root = workspace_root();
+    let so_path = find_release_abi_so(&root);
+    let out_dir = root.join("target/wave7_e2e_probes");
+    std::fs::create_dir_all(&out_dir).expect("create wave7_e2e_probes dir");
+
+    let c_src = out_dir.join("wave7_probe.c");
+    std::fs::write(
+        &c_src,
+        r#"#define _GNU_SOURCE 1
+#include <errno.h>
+#include <locale.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <dlfcn.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <wchar.h>
+
+extern char **environ;
+extern char **_environ;
+extern char **__environ;
+
+static pthread_key_t g_key_round1;
+static pthread_key_t g_key_round2;
+static volatile int g_dtor_ok = 0;
+
+static void key_dtor_round2(void *val) {
+    if ((uintptr_t)val != 0x22) return;
+    // Exercise ABI TLS buffers DURING late pthread_key_create destructor round!
+    const char *err = strerror(ENOENT);
+    if (err == NULL || strlen(err) == 0) return;
+
+    char fmt_buf[64];
+    int n = snprintf(fmt_buf, sizeof(fmt_buf), "dtor-%d", 42);
+    if (n != 7 || strcmp(fmt_buf, "dtor-42") != 0) return;
+
+    time_t epoch = 0;
+    struct tm *gmt = gmtime(&epoch);
+    if (gmt == NULL || gmt->tm_year != 70) return;
+
+    char mem_payload[] = "line-one\nline-two\n";
+    FILE *mfp = fmemopen(mem_payload, strlen(mem_payload), "r");
+    if (mfp == NULL) return;
+    char line[32] = {0};
+    if (fgets(line, sizeof(line), mfp) == NULL || strcmp(line, "line-one\n") != 0) {
+        fclose(mfp);
+        return;
+    }
+    fclose(mfp);
+
+    typedef struct pollfd *(*rpc_pollfd_fn)(void);
+    rpc_pollfd_fn get_pollfd = (rpc_pollfd_fn)dlsym(RTLD_DEFAULT, "__rpc_thread_svc_pollfd");
+    if (get_pollfd != NULL) {
+        struct pollfd *pfd = get_pollfd();
+        if (pfd == NULL) return;
+        pfd[0].events = POLLIN;
+    }
+
+    __sync_fetch_and_add(&g_dtor_ok, 1);
+}
+
+static void key_dtor_round1(void *val) {
+    if ((uintptr_t)val != 0x11) return;
+    // Re-arm round 2 key during round 1 destructor to test multi-round TLS survival!
+    if (pthread_setspecific(g_key_round2, (void *)(uintptr_t)0x22) != 0) return;
+    __sync_fetch_and_add(&g_dtor_ok, 10);
+}
+
+static void *tls_dtor_worker(void *arg) {
+    (void)arg;
+    // Pre-warm TLS cells on this worker before exit so destructors hit already-initialized cells
+    // AND also exercise post-exit reclamation.
+    (void)strerror(EINVAL);
+    time_t now = 12345;
+    (void)gmtime(&now);
+    if (pthread_setspecific(g_key_round1, (void *)(uintptr_t)0x11) != 0) {
+        return (void *)(uintptr_t)1;
+    }
+    return NULL;
+}
+
+int main(void) {
+    // 1. memchr / strnlen / strncmp / strnstr / wcsnlen / wmemchr with SIZE_MAX must not
+    //    panic, overflow, or be denied by barrier admissibility checks.
+    char hay[32] = "abcdefXghijk";
+    void *found = memchr(hay, 'X', (size_t)-1);
+    if (found != (void *)(hay + 6)) {
+        fprintf(stderr, "memchr SIZE_MAX failed: got %p expected %p\n", found, (void *)(hay + 6));
+        return 11;
+    }
+    if (strnlen(hay, (size_t)-1) != 12) {
+        fprintf(stderr, "strnlen SIZE_MAX failed\n");
+        return 110;
+    }
+    if (strncmp("abc", "abd", (size_t)-1) >= 0) {
+        fprintf(stderr, "strncmp SIZE_MAX failed\n");
+        return 111;
+    }
+    typedef char *(*strnstr_fn)(const char *, const char *, size_t);
+    strnstr_fn fl_strnstr = (strnstr_fn)dlsym(RTLD_DEFAULT, "strnstr");
+    if (fl_strnstr == NULL || fl_strnstr(hay, "Xgh", (size_t)-1) != hay + 6) {
+        fprintf(stderr, "strnstr SIZE_MAX failed\n");
+        return 112;
+    }
+    wchar_t whay[16] = L"abcdZefg";
+    if (wcsnlen(whay, (size_t)-1) != 8) {
+        fprintf(stderr, "wcsnlen SIZE_MAX failed\n");
+        return 113;
+    }
+    if (wmemchr(whay, L'Z', (size_t)-1) != whay + 4) {
+        fprintf(stderr, "wmemchr SIZE_MAX failed\n");
+        return 114;
+    }
+    const char *mode_env = getenv("FRANKENLIBC_MODE");
+    if (mode_env != NULL && strcmp(mode_env, "hardened") == 0) {
+        wchar_t *wdst = (wchar_t *)malloc(4 * sizeof(wchar_t));
+        if (wdst == NULL) return 115;
+        wchar_t *wend = wcpncpy(wdst, L"ab", 64);
+        if (wend != wdst + 2 || wdst[0] != L'a' || wdst[1] != L'b' || wdst[2] != 0 || wdst[3] != 0) {
+            fprintf(stderr, "hardened wcpncpy dst clamp failed\n");
+            free(wdst);
+            return 116;
+        }
+        free(wdst);
+    }
+
+    // 2. fclose(fp) followed by fflush(fp) on an owned stream must fail with EBADF.
+    FILE *tmp = tmpfile();
+    if (tmp == NULL) {
+        fprintf(stderr, "tmpfile failed\n");
+        return 12;
+    }
+    if (fputs("hello", tmp) < 0) return 13;
+    if (fclose(tmp) != 0) return 14;
+    errno = 0;
+    int fl_rc = fflush(tmp);
+    if (fl_rc != EOF || errno != EBADF) {
+        fprintf(stderr, "closed fflush expected EOF/EBADF, got rc=%d errno=%d\n", fl_rc, errno);
+        return 15;
+    }
+
+    // 3. -no-pie copy-relocated `environ = custom_env` synchronization + setenv/unsetenv/clearenv.
+    static char entry_a[] = "WAVE7_A=alpha";
+    static char entry_b[] = "WAVE7_B=beta";
+    char *custom_env[3];
+    custom_env[0] = entry_a;
+    custom_env[1] = entry_b;
+    custom_env[2] = NULL;
+    environ = custom_env;
+
+    const char *va = getenv("WAVE7_A");
+    if (va == NULL || strcmp(va, "alpha") != 0) {
+        fprintf(stderr, "getenv after environ=custom_env failed: %s\n", va ? va : "NULL");
+        return 21;
+    }
+    if (setenv("WAVE7_C", "gamma", 1) != 0) return 22;
+    if (environ == NULL || environ != _environ || environ != __environ) {
+        fprintf(stderr, "environ aliases desynchronized after setenv: %p / %p / %p\n",
+                (void *)environ, (void *)_environ, (void *)__environ);
+        return 23;
+    }
+    const char *vc = getenv("WAVE7_C");
+    if (vc == NULL || strcmp(vc, "gamma") != 0) return 24;
+    if (unsetenv("WAVE7_B") != 0) return 25;
+    if (getenv("WAVE7_B") != NULL) return 26;
+    if (clearenv() != 0) return 27;
+    if (environ != NULL || _environ != NULL || __environ != NULL || getenv("WAVE7_A") != NULL) {
+        fprintf(stderr, "clearenv failed: environ=%p _environ=%p __environ=%p\n",
+                (void *)environ, (void *)_environ, (void *)__environ);
+        return 28;
+    }
+    if (setenv("PATH", "/usr/bin:/bin", 1) != 0) return 29;
+
+    // 4. Main-thread per-thread locale must survive across pthread_create (incl. FRANKENLIBC_THREAD_NATIVE=1)
+    //    AND pthread_key_create destructors must safely use ABI TLS cells!
+    locale_t c_loc = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    if (c_loc == (locale_t)0) return 30;
+    if (uselocale(c_loc) == (locale_t)0) return 31;
+
+    if (pthread_key_create(&g_key_round1, key_dtor_round1) != 0) return 32;
+    if (pthread_key_create(&g_key_round2, key_dtor_round2) != 0) return 33;
+
+    pthread_t th;
+    if (pthread_create(&th, NULL, tls_dtor_worker, NULL) != 0) return 34;
+    void *ret = NULL;
+    if (pthread_join(th, &ret) != 0 || ret != NULL) return 35;
+
+    if (g_dtor_ok != 11) {
+        fprintf(stderr, "pthread_key_create destructors failed: g_dtor_ok=%d\n", g_dtor_ok);
+        return 36;
+    }
+    if (uselocale((locale_t)0) != c_loc) {
+        fprintf(stderr, "main-thread uselocale lost across pthread_create!\n");
+        return 37;
+    }
+    uselocale(LC_GLOBAL_LOCALE);
+    freelocale(c_loc);
+    pthread_key_delete(g_key_round1);
+    pthread_key_delete(g_key_round2);
+    return 0;
+}
+"#,
+    )
+    .expect("write wave7_probe.c");
+
+    let bin = out_dir.join("wave7_probe_no_pie");
+    let status = Command::new("cc")
+        .args([
+            "-O2",
+            "-U_FORTIFY_SOURCE",
+            "-D_FORTIFY_SOURCE=0",
+            "-fno-builtin",
+            "-fno-pie",
+            "-no-pie",
+            "-Wall",
+            "-Wextra",
+            "-Wno-use-after-free",
+            "-Werror",
+        ])
+        .arg(&c_src)
+        .arg("-ldl")
+        .arg("-lpthread")
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("compile wave7_probe.c");
+    assert!(status.success(), "cc wave7_probe.c failed");
+
+    for mode in ["strict", "hardened"] {
+        for native_threads in ["0", "1"] {
+            let mut cmd = Command::new(&bin);
+            cmd.env("LD_PRELOAD", &so_path)
+                .env("FRANKENLIBC_MODE", mode);
+            if native_threads == "1" {
+                cmd.env("FRANKENLIBC_THREAD_NATIVE", "1");
+            } else {
+                cmd.env_remove("FRANKENLIBC_THREAD_NATIVE");
+            }
+            let out = cmd.output().expect("execute wave7_probe_no_pie");
+            assert!(
+                out.status.success(),
+                "wave7_probe failed (mode={mode}, native={native_threads}, code={:?}):\nstdout={}\nstderr={}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
 }

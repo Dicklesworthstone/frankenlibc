@@ -290,26 +290,25 @@ impl<const WORDS: usize> DemandSlab<WORDS> {
         }
         .ok()? as usize;
         let aligned = (raw + segment_mapping::GRANULE - 1) & !(segment_mapping::GRANULE - 1);
+        if aligned > raw {
+            // SAFETY: trim unused head slack BEFORE publishing `aligned` so no
+            // concurrent `mprotect` on `[aligned, aligned + len)` races a VMA split.
+            let _ = unsafe { raw_syscall::sys_munmap(raw as *mut u8, aligned - raw) };
+        }
+        let end = aligned + self.len;
+        let raw_end = raw + reserve_len;
+        if raw_end > end {
+            // SAFETY: trim unused tail slack BEFORE publishing `aligned`.
+            let _ = unsafe { raw_syscall::sys_munmap(end as *mut u8, raw_end - end) };
+        }
         match self
             .base
             .compare_exchange(0, aligned, Ordering::AcqRel, Ordering::Acquire)
         {
-            Ok(_) => {
-                if aligned > raw {
-                    // SAFETY: trimming unused head slack outside `[aligned, aligned + len)`.
-                    let _ = unsafe { raw_syscall::sys_munmap(raw as *mut u8, aligned - raw) };
-                }
-                let end = aligned + self.len;
-                let raw_end = raw + reserve_len;
-                if raw_end > end {
-                    // SAFETY: trimming unused tail slack outside `[aligned, aligned + len)`.
-                    let _ = unsafe { raw_syscall::sys_munmap(end as *mut u8, raw_end - end) };
-                }
-                Some(aligned)
-            }
+            Ok(_) => Some(aligned),
             Err(winner) => {
-                // SAFETY: another thread published first; discard our private reservation.
-                let _ = unsafe { raw_syscall::sys_munmap(raw as *mut u8, reserve_len) };
+                // SAFETY: another thread published first; discard our trimmed reservation.
+                let _ = unsafe { raw_syscall::sys_munmap(aligned as *mut u8, self.len) };
                 Some(winner)
             }
         }
@@ -368,31 +367,25 @@ impl<const WORDS: usize> DemandSlab<WORDS> {
     }
 }
 
-const REENTRY_SLOTS_BYTES: usize =
-    ALLOCATOR_REENTRY_SLOT_COUNT * std::mem::size_of::<AllocatorReentrySlot>();
 const REENTRY_COMPACT_GRANULE_SLOTS: usize = 16;
+const REENTRY_SLAB_SLOT_COUNT: usize = ALLOCATOR_REENTRY_SLOT_COUNT - REENTRY_COMPACT_GRANULE_SLOTS;
+const REENTRY_SLOTS_BYTES: usize =
+    REENTRY_SLAB_SLOT_COUNT * std::mem::size_of::<AllocatorReentrySlot>();
 const _: () = assert!(
     REENTRY_COMPACT_GRANULE_SLOTS * std::mem::size_of::<AllocatorReentrySlot>()
         <= segment_mapping::GRANULE
 );
 
 /// Primary inline reentry slots (`16 * 3,808 B = 59.5 KiB` `.bss`, demand-paged at 4 KiB)
-/// so processes with <= 16 concurrent threads claim a slot with zero `mmap`/`mprotect` syscalls.
+/// so processes with <= 16 concurrent threads claim a slot with zero `mmap`/`mprotect`
+/// syscalls and zero dynamic-TLS (`__tls_get_addr`) relocations under `dlopen`.
 static PRIMARY_REENTRY_SLOTS: [AllocatorReentrySlot; REENTRY_COMPACT_GRANULE_SLOTS] =
     [const { AllocatorReentrySlot::new() }; REENTRY_COMPACT_GRANULE_SLOTS];
-static REENTRY_SLOTS_SLAB: DemandSlab<4> = DemandSlab::new(REENTRY_SLOTS_BYTES);
+static REENTRY_SLOTS_SLAB: DemandSlab<6> = DemandSlab::new(REENTRY_SLOTS_BYTES);
 /// Single static fallback slot used only if `REENTRY_SLOTS_SLAB` cannot map under
 /// extreme pre-existing `RLIMIT_AS` exhaustion.
 static BOOTSTRAP_REENTRY_SLOT: AllocatorReentrySlot = AllocatorReentrySlot::new();
 static BOOTSTRAP_SLOT_CLAIMED: AtomicBool = AtomicBool::new(false);
-
-/// Raw ELF TLS pointer (`-Cllvm-args=-enable-tlsdesc`, zero `Drop` glue) caching
-/// the current thread's claimed `AllocatorReentrySlot` address. Safe during
-/// pthread TLS destructor teardown because no `__cxa_thread_atexit_impl` hook is
-/// registered and the word lives directly in the TCB block.
-#[cfg(not(feature = "owned-tls-cache"))]
-#[thread_local]
-static TLS_REENTRY_SLOT_PTR: AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
 fn reentry_slot_if_ready(index: usize) -> Option<&'static AllocatorReentrySlot> {
@@ -402,7 +395,8 @@ fn reentry_slot_if_ready(index: usize) -> Option<&'static AllocatorReentrySlot> 
     if index >= ALLOCATOR_REENTRY_SLOT_COUNT {
         return None;
     }
-    let start = index * std::mem::size_of::<AllocatorReentrySlot>();
+    let slab_index = index - REENTRY_COMPACT_GRANULE_SLOTS;
+    let start = slab_index * std::mem::size_of::<AllocatorReentrySlot>();
     let end = start + std::mem::size_of::<AllocatorReentrySlot>();
     let base = REENTRY_SLOTS_SLAB.writable_base_if_ready(start, end)?;
     // SAFETY: `start..end` is verified writable and zero-initialized (`AllocatorReentrySlot::new()`).
@@ -417,7 +411,8 @@ fn ensure_reentry_slot(index: usize) -> Option<&'static AllocatorReentrySlot> {
     if index >= ALLOCATOR_REENTRY_SLOT_COUNT {
         return None;
     }
-    let start = index * std::mem::size_of::<AllocatorReentrySlot>();
+    let slab_index = index - REENTRY_COMPACT_GRANULE_SLOTS;
+    let start = slab_index * std::mem::size_of::<AllocatorReentrySlot>();
     let end = start + std::mem::size_of::<AllocatorReentrySlot>();
     let base = REENTRY_SLOTS_SLAB.ensure_writable(start, end)?;
     // SAFETY: `start..end` is promoted RW in our immortal demand-zero slab, and
@@ -440,7 +435,7 @@ fn reentry_slot_index(slot: &AllocatorReentrySlot) -> usize {
     if base == 0 {
         return ALLOCATOR_REENTRY_SLOT_COUNT;
     }
-    (slot_addr - base) / std::mem::size_of::<AllocatorReentrySlot>()
+    REENTRY_COMPACT_GRANULE_SLOTS + (slot_addr - base) / std::mem::size_of::<AllocatorReentrySlot>()
 }
 
 /// One bit per slot that has ever been claimed (by thread key or by tid); bits
@@ -578,7 +573,7 @@ fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentr
     for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
         let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
         let Some(slot) = ensure_reentry_slot(idx) else {
-            break;
+            continue;
         };
         match slot.tid.load(Ordering::Acquire) {
             KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => {
@@ -601,7 +596,7 @@ fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentr
     for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
         let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
         let Some(slot) = ensure_reentry_slot(idx) else {
-            break;
+            continue;
         };
         match slot.tid.load(Ordering::Acquire) {
             KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => {
@@ -725,7 +720,7 @@ fn allocator_reentry_slot_for_tid(
     for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
         let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
         let Some(slot) = ensure_reentry_slot(idx) else {
-            break;
+            continue;
         };
         let observed = slot.tid.load(Ordering::Acquire);
         if observed == tid {
@@ -755,7 +750,7 @@ fn allocator_reentry_slot_for_tid(
     for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
         let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
         let Some(slot) = ensure_reentry_slot(idx) else {
-            break;
+            continue;
         };
         let observed = slot.tid.load(Ordering::Acquire);
         if observed == tid {
@@ -807,22 +802,17 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
     let keyed = thread_key.is_some() && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
 
-    // Direct TLS-descriptor fast path: once a thread with a valid TCB (`%fs:0 != 0`)
-    // has claimed its slot, `TLS_REENTRY_SLOT_PTR` holds the static slot address
-    // directly (zero hash/index arithmetic and zero `Drop` glue during TLS teardown).
-    #[cfg(not(feature = "owned-tls-cache"))]
+    // Direct RIP-relative `.bss` probe of the primary 16-slot compact table:
+    // 0 dynamic-TLS (`__tls_get_addr`) relocations under `dlopen`, 0 `.tbss`
+    // bytes, safe before relocation and throughout pthread TLS teardown.
     if keyed && let Some(key) = thread_key {
-        let cached_ptr = TLS_REENTRY_SLOT_PTR.load(Ordering::Relaxed);
-        if cached_ptr != 0 {
-            // SAFETY: `TLS_REENTRY_SLOT_PTR` only ever stores static-lifetime
-            // `AllocatorReentrySlot` addresses from `REENTRY_SLOTS_SLAB` or
-            // `BOOTSTRAP_REENTRY_SLOT`.
-            let slot = unsafe { &*(cached_ptr as *const AllocatorReentrySlot) };
-            if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
-                && slot.thread_key.load(Ordering::Acquire) == key
-            {
-                return Some(slot);
-            }
+        let idx = ((key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 60)
+            & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+        let slot = &PRIMARY_REENTRY_SLOTS[idx];
+        if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+            && slot.thread_key.load(Ordering::Acquire) == key
+        {
+            return Some(slot);
         }
     }
 
@@ -850,10 +840,6 @@ fn current_allocator_reentry_slot_slow(
                 && (!MULTI_THREADED.load(Ordering::Relaxed)
                     || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
             {
-                #[cfg(not(feature = "owned-tls-cache"))]
-                if keyed {
-                    TLS_REENTRY_SLOT_PTR.store(slot as *const _ as usize, Ordering::Relaxed);
-                }
                 return Some(slot);
             }
         }
@@ -861,10 +847,7 @@ fn current_allocator_reentry_slot_slow(
 
     let slot = if let (true, Some(key)) = (keyed, thread_key) {
         note_thread_key(key);
-        let claimed = allocator_reentry_slot_for_key(key)?;
-        #[cfg(not(feature = "owned-tls-cache"))]
-        TLS_REENTRY_SLOT_PTR.store(claimed as *const _ as usize, Ordering::Relaxed);
-        claimed
+        allocator_reentry_slot_for_key(key)?
     } else {
         let tid = raw_syscall::sys_gettid();
         if tid <= 0 {
@@ -2349,13 +2332,28 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
                 slot.user_size.min(capacity),
             );
         }
+        let free_res = pipeline.free(ptr.cast());
         if !matches!(
-            pipeline.free(ptr.cast()),
+            free_res,
             FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
         ) {
             // SAFETY: only the unexposed replacement allocation is released.
             unsafe { native_libc_free(host) };
             return None;
+        }
+        if matches!(free_res, FreeResult::FreedWithCanaryCorruption)
+            && runtime_policy::mode().heals_enabled()
+        {
+            let _errno_guard = runtime_policy::ErrnoTransparencyGuard::capture();
+            global_healing_policy().record(
+                "allocator",
+                "realloc",
+                &HealingAction::ClampSize {
+                    requested: slot.user_size.max(1),
+                    clamped: 0,
+                },
+                RepairLogContext::new(0, Some(ptr as usize)),
+            );
         }
         return Some(host);
     }
@@ -2948,11 +2946,14 @@ pub unsafe fn malloc_bump_allocation_size_for_tests(ptr: *mut c_void) -> Option<
 #[inline]
 fn is_static_bump_ptr(ptr: *mut c_void) -> bool {
     let addr = ptr as usize;
+    if !addr.is_multiple_of(BUMP_ALIGN) {
+        return false;
+    }
     let early_base = EARLY_BUMP_HEAP.0.get() as usize;
     if addr >= early_base + BUMP_HEADER_SIZE && addr < early_base + EARLY_BUMP_SIZE {
-        // SAFETY: range check proves the header lies inside EARLY_BUMP_HEAP.
+        // SAFETY: range + alignment check proves the header lies inside EARLY_BUMP_HEAP.
         let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
-        return unsafe { header.read() == BUMP_MAGIC };
+        return unsafe { header.read_unaligned() == BUMP_MAGIC };
     }
     if let Some(slab_base) = BUMP_HEAP_SLAB.base_if_ready()
         && addr >= slab_base + BUMP_HEADER_SIZE
@@ -2965,7 +2966,7 @@ fn is_static_bump_ptr(ptr: *mut c_void) -> bool {
         {
             // SAFETY: `writable_base_if_ready` proves the header granule is promoted RW.
             let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
-            return unsafe { header.read() == BUMP_MAGIC };
+            return unsafe { header.read_unaligned() == BUMP_MAGIC };
         }
     }
     false
@@ -3544,7 +3545,7 @@ pub(crate) fn install_arena_block_allocator() {
     );
 }
 
-static HEADROOM_PREWARMED: AtomicBool = AtomicBool::new(false);
+static HEADROOM_PREWARMED: std::sync::Once = std::sync::Once::new();
 
 /// Reserve and immediately release a 96 KiB block in the host `main_arena`
 /// (`< M_MMAP_THRESHOLD = 128 KiB` and `< M_TRIM_THRESHOLD = 128 KiB`), pinned
@@ -3553,11 +3554,13 @@ static HEADROOM_PREWARMED: AtomicBool = AtomicBool::new(false);
 /// back via `systrim`. This keeps 96 KiB of mapped `sbrk` heap available for
 /// programs that immediately cap `RLIMIT_AS` or `RLIMIT_DATA` in `main`.
 ///
-/// Guarded by `HEADROOM_PREWARMED` so callers like gnulib's
-/// `get_rusage_as_via_setrlimit` (64 bisection `setrlimit` calls) do not leak
-/// 64 fencepost chunks. In hardened mode, also pre-initializes the global
-/// validation pipeline before the caller clamps `RLIMIT_AS`.
+/// Guarded by `HEADROOM_PREWARMED` (`Once` so concurrent `setrlimit` callers
+/// wait for prewarm completion without clobbering `errno`) so callers like
+/// gnulib's `get_rusage_as_via_setrlimit` (64 bisection `setrlimit` calls) do
+/// not leak 64 fencepost chunks. In hardened mode, also pre-initializes the
+/// global validation pipeline before the caller clamps `RLIMIT_AS`.
 pub(crate) fn prewarm_host_heap_headroom() {
+    let _errno_guard = runtime_policy::ErrnoTransparencyGuard::capture();
     let maybe_pipeline = if !strict_allocator_host_path_active()
         && !crate::membrane_state::pipeline_initialization_active()
     {
@@ -3565,33 +3568,33 @@ pub(crate) fn prewarm_host_heap_headroom() {
     } else {
         None
     };
-    if HEADROOM_PREWARMED.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    let _ = BUMP_HEAP_SLAB.ensure_writable(0, segment_mapping::GRANULE);
-    if let Some(pipeline) = maybe_pipeline {
-        // Hold the allocator reentry guard while reserving `shard.slots` Vec
-        // storage under each shard mutex so `Global::alloc` routes to the
-        // lock-free bump heap instead of re-entering `pipeline.arena`.
-        let _reentry = enter_allocator_reentry_guard();
-        pipeline.arena.prewarm_for_rlimit();
-    }
-    const HEADROOM_BYTES: usize = 96 * 1024;
-    // SAFETY: transient host allocations + immediate release below 16-byte
-    // fencepost chunks that remain live for process lifetime, keeping two
-    // 96 KiB free blocks in `main_arena` before `RLIMIT_AS`/`RLIMIT_DATA` clamps.
-    unsafe {
-        let ptr1 = native_libc_malloc(HEADROOM_BYTES);
-        let _fence1 = native_libc_malloc(16);
-        let ptr2 = native_libc_malloc(HEADROOM_BYTES);
-        let _fence2 = native_libc_malloc(16);
-        if !ptr1.is_null() {
-            native_libc_free(ptr1);
+    HEADROOM_PREWARMED.call_once(|| {
+        let _ = BUMP_HEAP_SLAB.ensure_writable(0, segment_mapping::GRANULE);
+        let _ = FALLBACK_TABLE_SLAB.ensure_base();
+        if let Some(pipeline) = maybe_pipeline {
+            // Hold the allocator reentry guard while reserving `shard.slots` Vec
+            // storage under each shard mutex so `Global::alloc` routes to the
+            // lock-free bump heap instead of re-entering `pipeline.arena`.
+            let _reentry = enter_allocator_reentry_guard();
+            pipeline.arena.prewarm_for_rlimit();
         }
-        if !ptr2.is_null() {
-            native_libc_free(ptr2);
+        const HEADROOM_BYTES: usize = 96 * 1024;
+        // SAFETY: transient host allocations + immediate release below 16-byte
+        // fencepost chunks that remain live for process lifetime, keeping two
+        // 96 KiB free blocks in `main_arena` before `RLIMIT_AS`/`RLIMIT_DATA` clamps.
+        unsafe {
+            let ptr1 = native_libc_malloc(HEADROOM_BYTES);
+            let _fence1 = native_libc_malloc(16);
+            let ptr2 = native_libc_malloc(HEADROOM_BYTES);
+            let _fence2 = native_libc_malloc(16);
+            if !ptr1.is_null() {
+                native_libc_free(ptr1);
+            }
+            if !ptr2.is_null() {
+                native_libc_free(ptr2);
+            }
         }
-    }
+    });
 }
 
 #[inline]
@@ -4077,11 +4080,14 @@ static GLOBAL_ALLOC_STATS: OnceLock<FlatCombiningStats> = OnceLock::new();
 /// are never nested elsewhere (a malloc inserts into the table, then records
 /// stats), so taking both here cannot deadlock.
 pub(crate) struct MallocForkGuard {
+    surviving_slot_addr: usize,
     stats: Option<&'static FlatCombiningStats>,
     _fallback_table: FallbackAllocTableGuard,
 }
 
 pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
+    let surviving_slot_addr =
+        current_allocator_reentry_slot().map_or(0, |s| s as *const AllocatorReentrySlot as usize);
     let fallback_table = lock_fallback_alloc_table();
     let stats = GLOBAL_ALLOC_STATS.get();
     if let Some(stats) = stats {
@@ -4094,8 +4100,45 @@ pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
         }
     }
     MallocForkGuard {
+        surviving_slot_addr,
         stats,
         _fallback_table: fallback_table,
+    }
+}
+
+impl MallocForkGuard {
+    /// Reset dead sibling threads' `AllocatorReentrySlot`s in a freshly forked
+    /// child so recycled glibc TCBs (`stack_cache`) never inherit torn magazine
+    /// pointers or stuck `allocator_depth` / `string_membrane_active` flags.
+    ///
+    /// # Safety
+    /// Must only be called in the single surviving thread of a freshly forked child.
+    pub(crate) unsafe fn adopt_in_fork_child(&self) {
+        let surviving = self.surviving_slot_addr;
+        let child_tid = raw_syscall::sys_gettid().max(1);
+        LAST_THREAD_CACHE.store(0, Ordering::Relaxed);
+        for_each_claimed_slot(|slot| {
+            let addr = slot as *const AllocatorReentrySlot as usize;
+            if addr == surviving {
+                if slot.tid.load(Ordering::Relaxed) > 0 {
+                    slot.tid.store(child_tid, Ordering::Release);
+                }
+            } else {
+                slot.native_guard_bits.store(0, Ordering::Relaxed);
+                slot.allocator_depth.store(0, Ordering::Relaxed);
+                slot.fallback_cache_index.store(0, Ordering::Relaxed);
+                slot.in_fallback_table.store(false, Ordering::Relaxed);
+                #[cfg(not(feature = "owned-tls-cache"))]
+                slot.string_membrane_active.store(false, Ordering::Relaxed);
+                slot.signal_handler_sp.store(0, Ordering::Relaxed);
+                // SAFETY: single-threaded fork child; dead sibling thread no longer exists.
+                unsafe {
+                    *slot.segment_local.get() = SegmentLocalState::new();
+                }
+                slot.thread_key.store(0, Ordering::Relaxed);
+                slot.tid.store(0, Ordering::Release);
+            }
+        });
     }
 }
 
@@ -6253,7 +6296,7 @@ pub(crate) fn known_remaining_write_in_guarded_string(
         && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
         && let Some(pipeline) = crate::membrane_state::ready_pipeline()
     {
-        return match pipeline.try_validate_cached_write_remaining(addr, write_len) {
+        return match pipeline.try_validate_cached_write_remaining_unlogged(addr, write_len) {
             Some(Some(rem)) => Some(rem),
             Some(None) => {
                 if non_arena_may_contain(addr) {
@@ -6805,6 +6848,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // ARENA blocks (the log ring's buffer, made by an earlier hardened
         // call) to host realloc/free -- "corrupted size vs. prev_size".
         drop(reentry_guard);
+        let _errno_guard = runtime_policy::ErrnoTransparencyGuard::capture();
         global_healing_policy().record(
             "allocator",
             "free",
@@ -7347,7 +7391,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     // caller's data. This also matches glibc, which shrinks realloc in place.
     // (In-place GROWTH into the block's size-class slack is bd-tkcv3c: it must
     // update the tracked size, so it needs a test-capable turn.)
-    if size <= old_size {
+    if size <= old_size && arena.verify_live_canary(old_addr) {
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,

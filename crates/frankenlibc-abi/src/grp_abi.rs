@@ -522,7 +522,8 @@ static GRP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GrpStorage> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static GRP_TLS: Box<RefCell<GrpStorage>> = Box::new(RefCell::new(GrpStorage::new()));
+    static GRP_TLS: crate::util::TlsHeapCell<RefCell<GrpStorage>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_grp_storage<R>(callback: impl FnOnce(&mut GrpStorage) -> R) -> R {
@@ -532,9 +533,14 @@ fn with_grp_storage<R>(callback: impl FnOnce(&mut GrpStorage) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GRP_TLS.with(|cell| {
-            let mut storage = cell.borrow_mut();
-            callback(&mut storage)
+        GRP_TLS.with(|slot| {
+            slot.with_init(
+                || RefCell::new(GrpStorage::new()),
+                |cell| {
+                    let mut storage = cell.borrow_mut();
+                    callback(&mut storage)
+                },
+            )
         })
     }
 }
@@ -682,14 +688,19 @@ thread_local! {
     /// Multi-source `getgrent` position, and an entry `getgrent_r` could not
     /// fit into the caller's buffer (returned again on the next call).
     static GR_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
-    static GR_PENDING: Box<RefCell<Option<frankenlibc_core::grp::Group>>> =
-        Box::new(RefCell::new(None));
+    static GR_PENDING: crate::util::TlsHeapCell<RefCell<Option<frankenlibc_core::grp::Group>>> =
+        const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_gr_pending<R>(f: impl FnOnce(&RefCell<Option<frankenlibc_core::grp::Group>>) -> R) -> R {
+    GR_PENDING.with(|slot| slot.with_init(|| RefCell::new(None), f))
 }
 
 /// Next entry of a multi-source enumeration: `Err(None)` at the end,
 /// `Err(Some(errno))` when a source failed and its action ends the walk.
 fn next_group_entry() -> Result<frankenlibc_core::grp::Group, Option<c_int>> {
-    if let Some(entry) = GR_PENDING.with(|p| p.borrow_mut().take()) {
+    if let Some(entry) = with_gr_pending(|p| p.borrow_mut().take()) {
         return Ok(entry);
     }
     loop {
@@ -722,7 +733,7 @@ fn next_group_entry() -> Result<frankenlibc_core::grp::Group, Option<c_int>> {
 
 fn reset_group_enumeration() {
     GR_ENT.with(|c| c.set(EntCursor::default()));
-    GR_PENDING.with(|p| *p.borrow_mut() = None);
+    with_gr_pending(|p| *p.borrow_mut() = None);
 }
 
 /// The files source's contribution to `user`'s supplementary groups: every
@@ -1363,7 +1374,7 @@ unsafe fn getgrent_r_impl(
                 };
                 if rc == libc::ERANGE {
                     // Hand the same entry back once the caller grows its buffer.
-                    GR_PENDING.with(|p| *p.borrow_mut() = Some(entry));
+                    with_gr_pending(|p| *p.borrow_mut() = Some(entry));
                 }
                 rc
             }

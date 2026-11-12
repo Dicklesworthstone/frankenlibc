@@ -1032,7 +1032,7 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
-        n * 4,
+        n.saturating_mul(4),
         true,
         known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
         0,
@@ -1608,12 +1608,21 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
 #[cold]
 #[inline(never)]
 unsafe fn wcsncmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int {
+    let lhs_rem_bytes = known_remaining(s1 as usize);
+    let rhs_rem_bytes = known_remaining(s2 as usize);
+    let req_bytes = n.saturating_mul(4);
+    let decision_bytes = match (lhs_rem_bytes, rhs_rem_bytes) {
+        (Some(a), Some(b)) => a.min(b).min(req_bytes),
+        (Some(a), None) => a.min(req_bytes),
+        (None, Some(b)) => b.min(req_bytes),
+        (None, None) => req_bytes.min(WIDE_SCAN_PAGE),
+    };
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
-        n * 4,
+        decision_bytes,
         false,
-        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        lhs_rem_bytes.is_none() && rhs_rem_bytes.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -2479,7 +2488,7 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
-        n * 4,
+        n.saturating_mul(4),
         true,
         known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
         0,
@@ -2488,7 +2497,7 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(7, n * 4),
+            runtime_policy::scaled_cost(7, n.saturating_mul(4)),
             true,
         );
         return std::ptr::null_mut();
@@ -2565,7 +2574,7 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
-        n * 4,
+        n.saturating_mul(4),
         true,
         known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
         0,
@@ -2574,7 +2583,7 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(8, n * 4),
+            runtime_policy::scaled_cost(8, n.saturating_mul(4)),
             true,
         );
         return std::ptr::null_mut();
@@ -2645,7 +2654,7 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
-        n * 4,
+        n.saturating_mul(4),
         true,
         known_remaining(dst as usize).is_none(),
         0,
@@ -2654,7 +2663,7 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(6, n * 4),
+            runtime_policy::scaled_cost(6, n.saturating_mul(4)),
             true,
         );
         return std::ptr::null_mut();
@@ -2734,7 +2743,7 @@ unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
-        n * 4,
+        n.saturating_mul(4),
         false,
         known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
         0,
@@ -2743,7 +2752,7 @@ unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(6, n * 4),
+            runtime_policy::scaled_cost(6, n.saturating_mul(4)),
             true,
         );
         return 0;
@@ -2795,6 +2804,32 @@ unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
 // wmemchr
 // ---------------------------------------------------------------------------
 
+#[inline(always)]
+unsafe fn wmemchr_page_bounded(s: *const u32, c: u32, bound: usize) -> Option<usize> {
+    if bound <= wide_elems_to_page_end(s) {
+        let slice = unsafe { std::slice::from_raw_parts(s, bound) };
+        return frankenlibc_core::string::wide::wmemchr(slice, c, bound);
+    }
+    unsafe { wmemchr_page_bounded_long(s, c, bound) }
+}
+
+#[inline(never)]
+unsafe fn wmemchr_page_bounded_long(s: *const u32, c: u32, bound: usize) -> Option<usize> {
+    const ELEM: usize = size_of::<u32>();
+    let mut done = 0usize;
+    while done < bound {
+        let here = s.wrapping_add(done);
+        let to_page_end = WIDE_SCAN_PAGE - (here as usize & (WIDE_SCAN_PAGE - 1));
+        let chunk = (bound - done).min((to_page_end / ELEM).max(1));
+        let slice = unsafe { std::slice::from_raw_parts(here, chunk) };
+        if let Some(idx) = frankenlibc_core::string::wide::wmemchr(slice, c, chunk) {
+            return Some(done + idx);
+        }
+        done += chunk;
+    }
+    None
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     if n == 0 || s.is_null() {
@@ -2803,15 +2838,11 @@ pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
     // (`repair` false → `scan_len == n`), so this is byte-identical to the strict
-    // full path (core wmemchr over exactly `n` elements); skips the decide +
-    // observe membrane tax (~9-10ns/call, see wcscmp).
+    // full path; skips the decide + observe membrane tax (~9-10ns/call, see wcscmp).
     if runtime_policy::strict_passthrough_active() {
-        return unsafe {
-            let slice = std::slice::from_raw_parts(s, n);
-            match frankenlibc_core::string::wide::wmemchr(slice, c, n) {
-                Some(i) => s.add(i) as *mut u32,
-                None => std::ptr::null_mut(),
-            }
+        return match unsafe { wmemchr_page_bounded(s, c, n) } {
+            Some(i) => s.wrapping_add(i) as *mut u32,
+            None => std::ptr::null_mut(),
         };
     }
 
@@ -2831,19 +2862,23 @@ pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
 #[cold]
 #[inline(never)]
 unsafe fn wmemchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
+    let rem_bytes = known_remaining(s as usize);
+    let req_bytes = n.saturating_mul(4);
+    let decision_bytes =
+        rem_bytes.map_or_else(|| req_bytes.min(WIDE_SCAN_PAGE), |b| req_bytes.min(b));
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
-        n * 4,
+        decision_bytes,
         false,
-        known_remaining(s as usize).is_none(),
+        rem_bytes.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(6, n * 4),
+            runtime_policy::scaled_cost(6, decision_bytes),
             true,
         );
         return std::ptr::null_mut();
@@ -2851,37 +2886,38 @@ unsafe fn wmemchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
     let mut scan_len = n;
-    let mut clamped = false;
+    let mut clamped_by_rem = false;
 
     if repair {
-        let s_rem = known_remaining(s as usize)
-            .map(bytes_to_wchars)
-            .unwrap_or(usize::MAX);
+        let s_rem = rem_bytes.map(bytes_to_wchars).unwrap_or(usize::MAX);
         if n > s_rem {
             scan_len = s_rem;
-            clamped = true;
-            record_truncation("wmemchr", n, s_rem, s as usize);
+            clamped_by_rem = true;
         }
     }
 
-    // Delegate to the SIMD core wmemchr (64-lane Simd<u32> panels + O(1) lane resolve)
-    // instead of a scalar `iter().position()` element loop — identical first-match
-    // semantics, but ~10x faster on a wide scan (matches the wmemcmp delegation above).
-    let result = unsafe {
-        let slice = std::slice::from_raw_parts(s, scan_len);
-        match frankenlibc_core::string::wide::wmemchr(slice, c, scan_len) {
-            Some(i) => s.add(i) as *mut u32,
-            None => std::ptr::null_mut(),
-        }
+    // Delegate to the page-bounded SIMD core wmemchr (64-lane Simd<u32> panels + O(1) lane resolve).
+    let found = if scan_len == 0 {
+        None
+    } else {
+        unsafe { wmemchr_page_bounded(s, c, scan_len) }
     };
+    let adverse = clamped_by_rem && found.is_none();
+    if adverse {
+        record_truncation("wmemchr", n, scan_len, s as usize);
+    }
+    let scanned_elems = found.map_or(scan_len, |i| i.saturating_add(1));
 
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
-        runtime_policy::scaled_cost(6, scan_len * 4),
-        clamped,
+        runtime_policy::scaled_cost(6, scanned_elems.saturating_mul(4)),
+        adverse,
     );
-    result
+    match found {
+        Some(i) => s.wrapping_add(i) as *mut u32,
+        None => std::ptr::null_mut(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4459,12 +4495,16 @@ pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usiz
 #[cold]
 #[inline(never)]
 unsafe fn wcsnlen_validating(s: *const libc::wchar_t, maxlen: usize) -> usize {
+    let rem_bytes = known_remaining(s as usize);
+    let req_bytes = maxlen.saturating_mul(4);
+    let decision_bytes =
+        rem_bytes.map_or_else(|| req_bytes.min(WIDE_SCAN_PAGE), |b| req_bytes.min(b));
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
-        maxlen.saturating_mul(4),
+        decision_bytes,
         false,
-        known_remaining(s as usize).is_none(),
+        rem_bytes.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -4473,12 +4513,13 @@ unsafe fn wcsnlen_validating(s: *const libc::wchar_t, maxlen: usize) -> usize {
     }
 
     let mut limit = maxlen;
+    let mut clamped_by_rem = false;
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(bytes) = known_remaining(s as usize)
+        && let Some(bytes) = rem_bytes
     {
         let bounded = bytes_to_wchars(bytes).min(maxlen);
         if bounded < maxlen {
-            record_truncation("wcsnlen", maxlen, bounded, s as usize);
+            clamped_by_rem = true;
         }
         limit = bounded;
     }
@@ -4487,11 +4528,15 @@ unsafe fn wcsnlen_validating(s: *const libc::wchar_t, maxlen: usize) -> usize {
     // only shrink `maxlen`, never certify that many elements are readable — so
     // this needs the nul-or-bound contract.
     let len = unsafe { wide_nul_or_bound(s as *const u32, limit) };
+    let adverse = clamped_by_rem && len == limit;
+    if adverse {
+        record_truncation("wcsnlen", maxlen, limit, s as usize);
+    }
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
         runtime_policy::scaled_cost(5, len.saturating_mul(4)),
-        false,
+        adverse,
     );
     len
 }
@@ -6385,7 +6430,7 @@ impl Drop for PooledWideFormat {
     fn drop(&mut self) {
         let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
-        WPRINTF_FORMAT_BUF.with(|slot| {
+        let _ = WPRINTF_FORMAT_BUF.try_with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.capacity() < buf.capacity() {
                 *slot = buf;
@@ -6438,7 +6483,9 @@ unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
 }
 
 unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
-    let mut buf = WPRINTF_FORMAT_BUF.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+    let mut buf = WPRINTF_FORMAT_BUF
+        .try_with(|slot| std::mem::take(&mut *slot.borrow_mut()))
+        .unwrap_or_default();
     unsafe { wide_to_narrow_into(wcs, &mut buf) };
     PooledWideFormat { buf }
 }
@@ -9239,7 +9286,7 @@ pub unsafe extern "C" fn wcpncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
-        n * 4,
+        n.saturating_mul(4),
         true,
         known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
         0,
@@ -9255,31 +9302,49 @@ pub unsafe extern "C" fn wcpncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     } else {
         None
     };
+    let dst_bound = if repair {
+        known_remaining(dst as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
 
-    // SAFETY: dst has room for n wchars; src is scanned with optional bound.
-    let (end_offset, adverse) = unsafe {
-        let (src_len, _src_terminated) = scan_w_string(src, src_bound);
-        let copy_len = src_len.min(n);
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds both src and dst.
+    let (end_offset, written_wchars, adverse) = unsafe {
+        let mut adverse = false;
+        let max_copy = if let Some(limit) = dst_bound.filter(|_| repair) {
+            if n > limit {
+                adverse = true;
+                record_truncation("wcpncpy", n, limit, dst as usize);
+            }
+            limit.min(n)
+        } else {
+            n
+        };
+        let (src_len, src_terminated) = scan_w_string(src, src_bound);
+        if repair && !src_terminated && src_bound.is_some_and(|b| b < max_copy) {
+            adverse = true;
+        }
+        let copy_len = src_len.min(max_copy);
 
         if copy_len > 0 {
             std::ptr::copy_nonoverlapping(src, dst, copy_len);
         }
 
-        // Pad remainder with NULs
-        if copy_len < n {
-            for i in copy_len..n {
+        // Pad remainder up to `max_copy` with NULs
+        if copy_len < max_copy {
+            for i in copy_len..max_copy {
                 *dst.add(i) = 0;
             }
-            (copy_len, false) // return pointer to first NUL
+            (copy_len, max_copy, adverse) // return pointer to first NUL
         } else {
-            (n, false) // src >= n, no NUL written, return dst+n
+            (max_copy, max_copy, adverse) // filled max_copy, return dst+max_copy
         }
     };
 
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
-        runtime_policy::scaled_cost(7, n * 4),
+        runtime_policy::scaled_cost(7, written_wchars.saturating_mul(4)),
         adverse,
     );
     unsafe { dst.add(end_offset) }
@@ -9465,12 +9530,21 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
         return r;
     }
 
+    let lhs_rem_bytes = known_remaining(s1 as usize);
+    let rhs_rem_bytes = known_remaining(s2 as usize);
+    let req_bytes = n.saturating_mul(4);
+    let decision_bytes = match (lhs_rem_bytes, rhs_rem_bytes) {
+        (Some(a), Some(b)) => a.min(b).min(req_bytes),
+        (Some(a), None) => a.min(req_bytes),
+        (None, Some(b)) => b.min(req_bytes),
+        (None, None) => req_bytes.min(WIDE_SCAN_PAGE),
+    };
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
-        n * 4,
+        decision_bytes,
         false,
-        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        lhs_rem_bytes.is_none() && rhs_rem_bytes.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -9549,7 +9623,7 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
-        n * 4,
+        n.saturating_mul(4),
         false,
         known_remaining(s as usize).is_none(),
         0,
@@ -9558,7 +9632,7 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
-            runtime_policy::scaled_cost(6, n * 4),
+            runtime_policy::scaled_cost(6, n.saturating_mul(4)),
             true,
         );
         return std::ptr::null_mut();
@@ -11179,8 +11253,8 @@ static FGETWLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<libc:
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static FGETWLN_BUFFER: std::cell::RefCell<Vec<libc::wchar_t>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    static FGETWLN_BUFFER: crate::util::TlsHeapCell<std::cell::RefCell<Vec<libc::wchar_t>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn fgetwln_read_into_buffer(
@@ -11224,9 +11298,14 @@ fn fgetwln_current_buffer(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> Option<(*mut libc::wchar_t, usize)> {
-    FGETWLN_BUFFER.with(|cell| {
-        let mut buf = cell.borrow_mut();
-        fgetwln_read_into_buffer(stream, &mut buf, caller)
+    FGETWLN_BUFFER.with(|slot| {
+        slot.with_init(
+            || std::cell::RefCell::new(Vec::new()),
+            |cell| {
+                let mut buf = cell.borrow_mut();
+                fgetwln_read_into_buffer(stream, &mut buf, caller)
+            },
+        )
     })
 }
 

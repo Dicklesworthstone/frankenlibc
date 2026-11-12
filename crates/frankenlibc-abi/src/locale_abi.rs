@@ -261,7 +261,7 @@ fn lc_all_report() -> *const c_char {
 /// cross-arm leakage it exists to prevent.
 #[doc(hidden)]
 pub fn locale_reset_active_charset_for_tests() {
-    THREAD_LOCALE.with(|selected| selected.set(None));
+    with_thread_locale(|selected| selected.set(None));
     // EVERY category, not just LC_CTYPE. A reset that left one category on
     // C.UTF-8 would make the next arm's `setlocale(LC_ALL, NULL)` return a
     // composite string, which is exactly the cross-arm leak this exists to stop.
@@ -2710,14 +2710,27 @@ std::thread_local! {
     // Copy the immutable view when selecting a handle. Locale-sensitive hot
     // paths need neither a registry lock nor a dereference of a caller handle.
     // None denotes the LIVE global locale, not a frozen copy of it.
-    static THREAD_LOCALE: Box<std::cell::Cell<Option<LocaleSelection>>> =
-        Box::new(std::cell::Cell::new(None));
+    static THREAD_LOCALE: crate::util::TlsHeapCell<std::cell::Cell<Option<LocaleSelection>>> =
+        const { crate::util::TlsHeapCell::new() };
     // 2-entry per-thread MRU cache of custom `locale_t` handles so repeated
     // `uselocale(loc)` / `*_l(..., loc)` calls resolve without taking the
     // process-wide `locale_objects().lock()` mutex (bd-rc0923-epic-eeuy4f.30).
     // Invalidated whenever `retire_locale` bumps `LOCALE_OBJECTS_EPOCH`.
-    static THREAD_HANDLE_CACHE: Box<std::cell::Cell<[Option<CachedLocaleHandle>; 2]>> =
-        Box::new(std::cell::Cell::new([None, None]));
+    static THREAD_HANDLE_CACHE: crate::util::TlsHeapCell<
+        std::cell::Cell<[Option<CachedLocaleHandle>; 2]>,
+    > = const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_thread_locale<R>(f: impl FnOnce(&std::cell::Cell<Option<LocaleSelection>>) -> R) -> R {
+    THREAD_LOCALE.with(|slot| slot.with_init(|| std::cell::Cell::new(None), f))
+}
+
+#[inline]
+fn with_thread_handle_cache<R>(
+    f: impl FnOnce(&std::cell::Cell<[Option<CachedLocaleHandle>; 2]>) -> R,
+) -> R {
+    THREAD_HANDLE_CACHE.with(|slot| slot.with_init(|| std::cell::Cell::new([None, None]), f))
 }
 
 #[inline]
@@ -2726,7 +2739,7 @@ fn thread_category(category: c_int) -> Option<Resolved> {
         return None;
     }
     let slot = locale_core::category_slot(category)?;
-    THREAD_LOCALE.with(|selected| selected.get().map(|view| view.categories[slot]))
+    with_thread_locale(|selected| selected.get().map(|view| view.categories[slot]))
 }
 
 /// Stable boxes are required: C callers retain addresses while the registry
@@ -2779,7 +2792,7 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
     }
     let key = handle as usize;
     let epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
-    if let Some(categories) = THREAD_HANDLE_CACHE.with(|cache| {
+    if let Some(categories) = with_thread_handle_cache(|cache| {
         let slots = cache.get();
         if let Some(entry) = slots[0]
             && entry.handle == key
@@ -2810,7 +2823,7 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
         (found, live_epoch)
     };
     if let Some(categories) = found {
-        THREAD_HANDLE_CACHE.with(|cache| {
+        with_thread_handle_cache(|cache| {
             let slots = cache.get();
             cache.set([
                 Some(CachedLocaleHandle {
@@ -3112,9 +3125,9 @@ pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
         unsafe { set_abi_errno(libc::EINVAL) };
         return f();
     };
-    let previous = THREAD_LOCALE.with(|selected| selected.replace(next));
+    let previous = with_thread_locale(|selected| selected.replace(next));
     let result = f();
-    THREAD_LOCALE.with(|selected| selected.set(previous));
+    with_thread_locale(|selected| selected.set(previous));
     result
 }
 
@@ -3122,7 +3135,7 @@ pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
 /// lookup, and an object selects an immutable view for this thread only.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
-    let previous = THREAD_LOCALE.with(|selected| {
+    let previous = with_thread_locale(|selected| {
         selected
             .get()
             .map_or(GLOBAL_LOCALE_HANDLE, |view| view.handle)
@@ -3131,7 +3144,7 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
         return previous;
     }
     if newloc == GLOBAL_LOCALE_HANDLE {
-        THREAD_LOCALE.with(|selected| selected.set(None));
+        with_thread_locale(|selected| selected.set(None));
         frankenlibc_core::stdio::printf::clear_thread_numeric();
         crate::ctype_abi::refresh_thread_ctype_slots();
         return previous;
@@ -3141,7 +3154,7 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
         return std::ptr::null_mut();
     };
     THREAD_LOCALE_EVER_USED.store(true, Ordering::Release);
-    THREAD_LOCALE.with(|selected| {
+    with_thread_locale(|selected| {
         selected.set(Some(LocaleSelection {
             handle: newloc,
             categories,
@@ -3780,23 +3793,30 @@ mod tests {
         assert_ne!(loc_b, c_locale_handle());
         assert_ne!(loc_b, locale_handle_for(Charset::Utf8));
 
-        // Populate both slots of the 2-entry TLS MRU cache.
-        let cats_a = categories_for_handle(loc_a).expect("loc_a should resolve");
-        let cats_b = categories_for_handle(loc_b).expect("loc_b should resolve");
-        assert_eq!(
-            resolved_charset(cats_a[locale_core::LC_CTYPE as usize]),
-            Charset::Utf8
-        );
-        assert_eq!(
-            resolved_charset(cats_b[locale_core::LC_NUMERIC as usize]),
-            Charset::Utf8
-        );
-
-        // Hold the non-reentrant registry mutex on the same thread while resolving
-        // both cached handles. If either call misses the TLS cache, locking
-        // `locale_objects()` on this thread would deadlock immediately.
+        // Populate both slots of the 2-entry TLS MRU cache and acquire the
+        // non-reentrant registry mutex without an intervening parallel-test
+        // `freelocale` bumping `LOCALE_OBJECTS_EPOCH`. Once `_held` is acquired,
+        // no concurrent thread can bump `LOCALE_OBJECTS_EPOCH`, so any TLS cache
+        // miss on `loc_a` or `loc_b` would deadlock immediately.
         {
-            let _held = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+            let _held = loop {
+                let epoch_start = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+                let cats_a = categories_for_handle(loc_a).expect("loc_a should resolve");
+                let cats_b = categories_for_handle(loc_b).expect("loc_b should resolve");
+                assert_eq!(
+                    resolved_charset(cats_a[locale_core::LC_CTYPE as usize]),
+                    Charset::Utf8
+                );
+                assert_eq!(
+                    resolved_charset(cats_b[locale_core::LC_NUMERIC as usize]),
+                    Charset::Utf8
+                );
+                let guard = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+                if LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire) == epoch_start {
+                    break guard;
+                }
+                drop(guard);
+            };
             let hit_b1 = categories_for_handle(loc_b).expect("loc_b should hit TLS cache");
             assert_eq!(
                 resolved_charset(hit_b1[locale_core::LC_NUMERIC as usize]),

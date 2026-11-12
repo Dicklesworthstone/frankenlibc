@@ -5498,8 +5498,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     // ENVIRON_LOCK before the pipeline, as in fork(): setenv holds it while
     // its hardened memcpy takes pipeline locks.
-    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
-    let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -5521,6 +5520,10 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
 
     // SAFETY: fork via raw syscall
     let pid = crate::process_abi::clone_for_fork(host_fork);
+    if pid == Ok(0) {
+        // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
+        unsafe { malloc_guard.adopt_in_fork_child() };
+    }
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -5540,9 +5543,9 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     };
 
     if pid == 0 {
-        // SAFETY: freshly forked child (single thread); parent_tid was read
-        // by the forking thread before the clone. See adopt_in_fork_child.
-        unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
+        // SAFETY: freshly forked child (single thread); updates both lock and
+        // guard owner_tid so drop(_environ_guard) unlocks cleanly.
+        unsafe { _environ_guard.adopt_in_fork_child() };
     }
     drop(_pipeline_guard);
     drop(_environ_guard);
@@ -9353,8 +9356,7 @@ pub unsafe extern "C" fn forkpty(
     // so any held environ lock from another parent thread becomes a stuck lock
     // in the child address space. Acquiring here forces serialization with any
     // in-flight setenv before the clone.
-    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
-    let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // Keep application handlers out of the clone-to-reopen interval, exactly
@@ -9375,6 +9377,10 @@ pub unsafe extern "C" fn forkpty(
     };
 
     let pid = crate::process_abi::clone_for_fork(host_fork);
+    if pid == Ok(0) {
+        // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
+        unsafe { malloc_guard.adopt_in_fork_child() };
+    }
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -9396,9 +9402,9 @@ pub unsafe extern "C" fn forkpty(
     };
 
     if pid == 0 {
-        // SAFETY: freshly forked child (single thread); parent_tid was read
-        // by the forking thread before the clone. See adopt_in_fork_child.
-        unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
+        // SAFETY: freshly forked child (single thread); updates both lock and
+        // guard owner_tid so drop(_environ_guard) unlocks cleanly.
+        unsafe { _environ_guard.adopt_in_fork_child() };
     }
     drop(_pipeline_guard);
     drop(_environ_guard);
@@ -9503,8 +9509,8 @@ fn empty_crypt_buf() -> [u8; 256] {
 // Thread-local buffer for crypt() result (POSIX allows static return).
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static CRYPT_BUF: Box<std::cell::RefCell<[u8; 256]>> =
-        Box::new(std::cell::RefCell::new([0u8; 256]));
+    static CRYPT_BUF: crate::util::TlsHeapCell<std::cell::RefCell<[u8; 256]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -9515,7 +9521,12 @@ fn with_crypt_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        CRYPT_BUF.with(|cell| f(&mut cell.borrow_mut()))
+        CRYPT_BUF.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new([0u8; 256]),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -10269,8 +10280,8 @@ static GENSALT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GENSALT_TLS: core::cell::RefCell<Vec<u8>> =
-        const { core::cell::RefCell::new(Vec::new()) };
+    static GENSALT_TLS: crate::util::TlsHeapCell<core::cell::RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -10281,7 +10292,12 @@ fn with_gensalt_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GENSALT_TLS.with(|cell| f(&mut cell.borrow_mut()))
+        GENSALT_TLS.with(|slot| {
+            slot.with_init(
+                || core::cell::RefCell::new(Vec::new()),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -10846,8 +10862,8 @@ static NIS_SPERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static NIS_SPERRNO_TLS: core::cell::RefCell<Vec<u8>> =
-        const { core::cell::RefCell::new(Vec::new()) };
+    static NIS_SPERRNO_TLS: crate::util::TlsHeapCell<core::cell::RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -10859,7 +10875,12 @@ fn with_nis_sperrno_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        NIS_SPERRNO_TLS.with(|cell| f(&mut cell.borrow_mut()))
+        NIS_SPERRNO_TLS.with(|slot| {
+            slot.with_init(
+                || core::cell::RefCell::new(Vec::new()),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -11049,12 +11070,12 @@ static NIS_NAME_OF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static NIS_DOMAIN_OF_TLS: core::cell::RefCell<Vec<u8>> =
-        const { core::cell::RefCell::new(Vec::new()) };
-    static NIS_LEAF_OF_TLS: core::cell::RefCell<Vec<u8>> =
-        const { core::cell::RefCell::new(Vec::new()) };
-    static NIS_NAME_OF_TLS: core::cell::RefCell<Vec<u8>> =
-        const { core::cell::RefCell::new(Vec::new()) };
+    static NIS_DOMAIN_OF_TLS: crate::util::TlsHeapCell<core::cell::RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
+    static NIS_LEAF_OF_TLS: crate::util::TlsHeapCell<core::cell::RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
+    static NIS_NAME_OF_TLS: crate::util::TlsHeapCell<core::cell::RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -11066,7 +11087,12 @@ fn with_nis_domain_of_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        NIS_DOMAIN_OF_TLS.with(|cell| f(&mut cell.borrow_mut()))
+        NIS_DOMAIN_OF_TLS.with(|slot| {
+            slot.with_init(
+                || core::cell::RefCell::new(Vec::new()),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -11079,7 +11105,12 @@ fn with_nis_leaf_of_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        NIS_LEAF_OF_TLS.with(|cell| f(&mut cell.borrow_mut()))
+        NIS_LEAF_OF_TLS.with(|slot| {
+            slot.with_init(
+                || core::cell::RefCell::new(Vec::new()),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -11092,7 +11123,12 @@ fn with_nis_name_of_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        NIS_NAME_OF_TLS.with(|cell| f(&mut cell.borrow_mut()))
+        NIS_NAME_OF_TLS.with(|slot| {
+            slot.with_init(
+                || core::cell::RefCell::new(Vec::new()),
+                |cell| f(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -14604,8 +14640,8 @@ static UTMP_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<UtmpState> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static UTMP_TLS: Box<std::cell::UnsafeCell<UtmpState>> =
-        Box::new(std::cell::UnsafeCell::new(UtmpState::new()));
+    static UTMP_TLS: crate::util::TlsHeapCell<std::cell::UnsafeCell<UtmpState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -14617,10 +14653,15 @@ fn with_utmp_state<R>(f: impl FnOnce(&mut UtmpState) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        UTMP_TLS.with(|cell| {
-            // SAFETY: UTMP_TLS is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            f(unsafe { &mut *cell.get() })
+        UTMP_TLS.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(UtmpState::new()),
+                |cell| {
+                    // SAFETY: UTMP_TLS is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    f(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -16956,6 +16997,7 @@ const GETMNTENT_BUFSIZE: usize = 4096;
 #[repr(align(8))]
 struct GetmntentBuf([u8; GETMNTENT_BUFSIZE]);
 
+#[cfg(feature = "owned-tls-cache")]
 const fn empty_getmntent_buf() -> GetmntentBuf {
     GetmntentBuf([0u8; GETMNTENT_BUFSIZE])
 }
@@ -16966,10 +17008,10 @@ static GETMNTENT_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetmntentB
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static GETMNTENT_BUF: Box<std::cell::UnsafeCell<GetmntentBuf>> =
-        Box::new(std::cell::UnsafeCell::new(empty_getmntent_buf()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static GETMNTENT_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<GetmntentBuf>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -16981,10 +17023,12 @@ fn with_getmntent_buf<R>(f: impl FnOnce(&mut [u8; GETMNTENT_BUFSIZE]) -> R) -> R
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GETMNTENT_BUF.with(|cell| {
-            // SAFETY: GETMNTENT_BUF is per-thread storage and this callback
-            // keeps the mutable reference scoped to the thread-local access.
-            f(unsafe { &mut (*cell.get()).0 })
+        GETMNTENT_BUF.with(|slot| {
+            slot.with_zeroed(None, |cell| {
+                // SAFETY: GETMNTENT_BUF is per-thread storage and this callback
+                // keeps the mutable reference scoped to the thread-local access.
+                f(unsafe { &mut (*cell.get()).0 })
+            })
         })
     }
 }
@@ -17843,8 +17887,8 @@ static GETPASS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[c_char; GET
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GETPASS_BUF: Box<std::cell::RefCell<[c_char; GETPASS_MAX]>> =
-        Box::new(std::cell::RefCell::new([0; GETPASS_MAX]));
+    static GETPASS_BUF: crate::util::TlsHeapCell<std::cell::RefCell<[c_char; GETPASS_MAX]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -17856,7 +17900,12 @@ fn with_getpass_buf<R>(callback: impl FnOnce(&mut [c_char; GETPASS_MAX]) -> R) -
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GETPASS_BUF.with(|cell| callback(&mut cell.borrow_mut()))
+        GETPASS_BUF.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new([0; GETPASS_MAX]),
+                |cell| callback(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -21161,12 +21210,17 @@ fn with_gethostbyname2_state<R>(callback: impl FnOnce(&mut GetHostByName2State) 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         thread_local! {
-            // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9).
-            static GETHOSTBYNAME2_TLS: Box<std::cell::RefCell<GetHostByName2State>> =
-                Box::new(std::cell::RefCell::new(new_gethostbyname2_state()));
+            // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9) without Box TLS Drop.
+            static GETHOSTBYNAME2_TLS: crate::util::TlsHeapCell<std::cell::RefCell<GetHostByName2State>> =
+                const { crate::util::TlsHeapCell::new() };
         }
 
-        GETHOSTBYNAME2_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+        GETHOSTBYNAME2_TLS.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new(new_gethostbyname2_state()),
+                |cell| callback(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -21255,10 +21309,10 @@ static SERV_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServIterState>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static SERV_ITER: Box<std::cell::UnsafeCell<ServIterState>> =
-        Box::new(std::cell::UnsafeCell::new(ServIterState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static SERV_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<ServIterState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -21270,10 +21324,15 @@ fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SERV_ITER.with(|cell| {
-            // SAFETY: SERV_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        SERV_ITER.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(ServIterState::new()),
+                |cell| {
+                    // SAFETY: SERV_ITER is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -21452,10 +21511,10 @@ static NET_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetIterState> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static NET_ITER: Box<std::cell::UnsafeCell<NetIterState>> =
-        Box::new(std::cell::UnsafeCell::new(NetIterState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static NET_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<NetIterState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -21467,10 +21526,15 @@ fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        NET_ITER.with(|cell| {
-            // SAFETY: NET_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        NET_ITER.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(NetIterState::new()),
+                |cell| {
+                    // SAFETY: NET_ITER is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -21672,10 +21736,10 @@ static PROTO_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoIterStat
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static PROTO_ITER: Box<std::cell::UnsafeCell<ProtoIterState>> =
-        Box::new(std::cell::UnsafeCell::new(ProtoIterState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static PROTO_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<ProtoIterState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -21687,10 +21751,15 @@ fn with_proto_iter_state<R>(callback: impl FnOnce(&mut ProtoIterState) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        PROTO_ITER.with(|cell| {
-            // SAFETY: PROTO_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        PROTO_ITER.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(ProtoIterState::new()),
+                |cell| {
+                    // SAFETY: PROTO_ITER is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -21896,10 +21965,10 @@ static HOST_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostIterState>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static HOST_ITER: Box<std::cell::UnsafeCell<HostIterState>> =
-        Box::new(std::cell::UnsafeCell::new(HostIterState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static HOST_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<HostIterState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -21911,10 +21980,15 @@ fn with_host_iter_state<R>(callback: impl FnOnce(&mut HostIterState) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        HOST_ITER.with(|cell| {
-            // SAFETY: HOST_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        HOST_ITER.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(HostIterState::new()),
+                |cell| {
+                    // SAFETY: HOST_ITER is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -23866,6 +23940,7 @@ pub unsafe extern "C" fn getutxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     }
 }
 
+#[cfg(feature = "owned-tls-cache")]
 const fn empty_utmpx_buf() -> libc::utmpx {
     // SAFETY: `libc::utmpx` is a C record type, and an all-zero value is the
     // empty scratch-buffer state used by the surrounding utmpx APIs.
@@ -23878,8 +23953,8 @@ static UTMPX_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::utmpx> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static UTMPX_BUF: Box<std::cell::UnsafeCell<libc::utmpx>> =
-        Box::new(std::cell::UnsafeCell::new(empty_utmpx_buf()));
+    static UTMPX_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<libc::utmpx>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -23891,10 +23966,12 @@ fn with_utmpx_buf<R>(f: impl FnOnce(&mut libc::utmpx) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        UTMPX_BUF.with(|buf| {
-            // SAFETY: UTMPX_BUF is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            f(unsafe { &mut *buf.get() })
+        UTMPX_BUF.with(|slot| {
+            slot.with_zeroed(None, |buf| {
+                // SAFETY: UTMPX_BUF is per-thread storage and this callback keeps
+                // the mutable reference scoped to the thread-local access.
+                f(unsafe { &mut *buf.get() })
+            })
         })
     }
 }
@@ -25183,10 +25260,10 @@ static ALIAS_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<AliasIterStat
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static ALIAS_ITER: Box<std::cell::UnsafeCell<AliasIterState>> =
-        Box::new(std::cell::UnsafeCell::new(AliasIterState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static ALIAS_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<AliasIterState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -25198,10 +25275,15 @@ fn with_alias_iter_state<R>(callback: impl FnOnce(&mut AliasIterState) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        ALIAS_ITER.with(|cell| {
-            // SAFETY: ALIAS_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        ALIAS_ITER.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(AliasIterState::new()),
+                |cell| {
+                    // SAFETY: ALIAS_ITER is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -25601,10 +25683,10 @@ static NETGROUP_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetgroupIt
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static NETGROUP_ITER: Box<std::cell::UnsafeCell<NetgroupIterState>> =
-        Box::new(std::cell::UnsafeCell::new(NetgroupIterState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static NETGROUP_ITER: crate::util::TlsHeapCell<std::cell::UnsafeCell<NetgroupIterState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -25616,10 +25698,15 @@ fn with_netgroup_iter_state<R>(callback: impl FnOnce(&mut NetgroupIterState) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        NETGROUP_ITER.with(|cell| {
-            // SAFETY: NETGROUP_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        NETGROUP_ITER.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(NetgroupIterState::new()),
+                |cell| {
+                    // SAFETY: NETGROUP_ITER is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -25932,7 +26019,11 @@ thread_local! {
 
 fn rpc_database_path() -> std::path::PathBuf {
     #[cfg(debug_assertions)]
-    if let Some(path) = RPC_TEST_PATH.with(|slot| slot.borrow().clone()) {
+    if let Some(path) = RPC_TEST_PATH
+        .try_with(|slot| slot.borrow().clone())
+        .ok()
+        .flatten()
+    {
         return path;
     }
     std::path::PathBuf::from("/etc/rpc")
@@ -25951,7 +26042,7 @@ pub fn with_rpc_database_for_tests<R>(path: &std::path::Path, callback: impl FnO
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .reset();
-            RPC_TEST_PATH.with(|slot| *slot.borrow_mut() = self.0.take());
+            let _ = RPC_TEST_PATH.try_with(|slot| *slot.borrow_mut() = self.0.take());
         }
     }
 
@@ -25994,8 +26085,8 @@ static RPC_ENTRY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcEntryState>
 thread_local! {
     // Keep the variable-sized answer outside static TLS so large databases
     // do not increase the minimum stack size of unrelated threads.
-    static RPC_ENTRY_TLS: Box<std::cell::RefCell<RpcEntryState>> =
-        Box::new(std::cell::RefCell::new(new_rpc_entry_state()));
+    static RPC_ENTRY_TLS: crate::util::TlsHeapCell<std::cell::RefCell<RpcEntryState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_rpc_entry_state<R>(callback: impl FnOnce(&mut RpcEntryState) -> R) -> R {
@@ -26006,7 +26097,12 @@ fn with_rpc_entry_state<R>(callback: impl FnOnce(&mut RpcEntryState) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RPC_ENTRY_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+        RPC_ENTRY_TLS.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new(new_rpc_entry_state()),
+                |cell| callback(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -26473,10 +26569,10 @@ static FGETSPENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Fgetspen
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static FGETSPENT_TLS: Box<std::cell::RefCell<FgetspentState>> =
-        Box::new(std::cell::RefCell::new(new_fgetspent_state()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static FGETSPENT_TLS: crate::util::TlsHeapCell<std::cell::RefCell<FgetspentState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R {
@@ -26487,7 +26583,12 @@ fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        FGETSPENT_TLS.with(|cell| callback(&mut cell.borrow_mut()))
+        FGETSPENT_TLS.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new(new_fgetspent_state()),
+                |cell| callback(&mut cell.borrow_mut()),
+            )
+        })
     }
 }
 
@@ -29614,10 +29715,10 @@ static FSTAB_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<FstabState> 
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static FSTAB_STATE: Box<std::cell::UnsafeCell<FstabState>> =
-        Box::new(std::cell::UnsafeCell::new(FstabState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static FSTAB_STATE: crate::util::TlsHeapCell<std::cell::UnsafeCell<FstabState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -29629,10 +29730,15 @@ fn with_fstab_state<R>(callback: impl FnOnce(&mut FstabState) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        FSTAB_STATE.with(|cell| {
-            // SAFETY: FSTAB_STATE is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        FSTAB_STATE.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(FstabState::new()),
+                |cell| {
+                    // SAFETY: FSTAB_STATE is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -29900,10 +30006,10 @@ static TTYENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TtyentState
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
-    static TTYENT_STATE: Box<std::cell::UnsafeCell<TtyentState>> =
-        Box::new(std::cell::UnsafeCell::new(TtyentState::new()));
+    // Heap-backed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL) without Box TLS Drop.
+    static TTYENT_STATE: crate::util::TlsHeapCell<std::cell::UnsafeCell<TtyentState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -29915,10 +30021,15 @@ fn with_ttyent_state<R>(callback: impl FnOnce(&mut TtyentState) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        TTYENT_STATE.with(|cell| {
-            // SAFETY: TTYENT_STATE is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        TTYENT_STATE.with(|slot| {
+            slot.with_init(
+                || std::cell::UnsafeCell::new(TtyentState::new()),
+                |cell| {
+                    // SAFETY: TTYENT_STATE is per-thread storage and this callback keeps
+                    // the mutable reference scoped to the thread-local access.
+                    callback(unsafe { &mut *cell.get() })
+                },
+            )
         })
     }
 }
@@ -30092,8 +30203,8 @@ static GETDATE_TM_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetdateTm> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GETDATE_TM: Box<std::cell::UnsafeCell<libc::tm>> =
-        Box::new(std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }));
+    static GETDATE_TM: crate::util::TlsHeapCell<std::cell::UnsafeCell<libc::tm>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -30105,10 +30216,12 @@ fn with_getdate_tm<R>(callback: impl FnOnce(&mut libc::tm) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        GETDATE_TM.with(|cell| {
-            // SAFETY: GETDATE_TM is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            callback(unsafe { &mut *cell.get() })
+        GETDATE_TM.with(|slot| {
+            slot.with_zeroed(None, |cell| {
+                // SAFETY: GETDATE_TM is per-thread storage and this callback keeps
+                // the mutable reference scoped to the thread-local access.
+                callback(unsafe { &mut *cell.get() })
+            })
         })
     }
 }

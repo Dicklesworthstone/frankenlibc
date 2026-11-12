@@ -1274,26 +1274,31 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
         return None;
     }
-    FAST_FIXED_MEM_READ_CACHE.with(|cache| {
+    if let Ok(Some(cursor)) = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
         if let Some((cached_id, cursor)) = cache.borrow().as_ref()
             && *cached_id == id
             && !cursor.closed.load(Ordering::Acquire)
         {
             return Some(Arc::clone(cursor));
         }
+        None
+    }) {
+        return Some(cursor);
+    }
 
-        let cursor = {
-            let map = fast_fixed_mem_reads()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            map.get(&id).cloned()
-        }?;
-        if cursor.closed.load(Ordering::Acquire) {
-            return None;
-        }
+    let cursor = {
+        let map = fast_fixed_mem_reads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.get(&id).cloned()
+    }?;
+    if cursor.closed.load(Ordering::Acquire) {
+        return None;
+    }
+    let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
         *cache.borrow_mut() = Some((id, Arc::clone(&cursor)));
-        Some(cursor)
-    })
+    });
+    Some(cursor)
 }
 
 thread_local! {
@@ -1315,20 +1320,23 @@ thread_local! {
 fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    FGETC_MEM_PTR_CACHE.with(|c| {
-        let cache = c.borrow();
-        let (cp, cg, cursor) = cache.as_ref()?;
-        if *cp != key || *cg != cur_gen {
-            return None;
-        }
-        cursor.read_byte().map(|b| b as c_int)
-    })
+    FGETC_MEM_PTR_CACHE
+        .try_with(|c| {
+            let cache = c.borrow();
+            let (cp, cg, cursor) = cache.as_ref()?;
+            if *cp != key || *cg != cur_gen {
+                return None;
+            }
+            cursor.read_byte().map(|b| b as c_int)
+        })
+        .ok()
+        .flatten()
 }
 
 /// Populate the pointer cache after a slow-path resolve confirms `stream` is a fixed-mem reader.
 fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>) {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    FGETC_MEM_PTR_CACHE.with(|c| {
+    let _ = FGETC_MEM_PTR_CACHE.try_with(|c| {
         *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
     });
 }
@@ -1340,14 +1348,17 @@ fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>
 fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    FGETC_MEM_PTR_CACHE.with(|c| {
-        let cache = c.borrow();
-        let (cp, cg, cursor) = cache.as_ref()?;
-        if *cp != key || *cg != cur_gen {
-            return None;
-        }
-        cursor.read_bytes(dst)
-    })
+    FGETC_MEM_PTR_CACHE
+        .try_with(|c| {
+            let cache = c.borrow();
+            let (cp, cg, cursor) = cache.as_ref()?;
+            if *cp != key || *cg != cur_gen {
+                return None;
+            }
+            cursor.read_bytes(dst)
+        })
+        .ok()
+        .flatten()
 }
 
 /// Pointer-keyed fmemopen line-read fast path — the `fgets` sibling of
@@ -1357,14 +1368,17 @@ fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Op
 fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    FGETC_MEM_PTR_CACHE.with(|c| {
-        let cache = c.borrow();
-        let (cp, cg, cursor) = cache.as_ref()?;
-        if *cp != key || *cg != cur_gen {
-            return None;
-        }
-        cursor.read_line(dst)
-    })
+    FGETC_MEM_PTR_CACHE
+        .try_with(|c| {
+            let cache = c.borrow();
+            let (cp, cg, cursor) = cache.as_ref()?;
+            if *cp != key || *cg != cur_gen {
+                return None;
+            }
+            cursor.read_line(dst)
+        })
+        .ok()
+        .flatten()
 }
 
 fn sync_fast_fixed_mem_read_to_stream(id: usize, stream: &mut StdioStream) -> bool {
@@ -2517,6 +2531,7 @@ fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamSta
 }
 
 pub(crate) struct StdioForkGuard {
+    _std_locks: crate::io_internal_abi::StdStreamLocksForkGuard,
     _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
     _streams: Option<parking_lot::MutexGuard<'static, StreamRegistry>>,
     _cookies:
@@ -2539,12 +2554,14 @@ impl StdioForkGuard {
     /// behind a fresh mutex; the old one is leaked and never touched again.
     pub(crate) fn release_in_child(self) {
         let StdioForkGuard {
+            mut _std_locks,
             _native,
             _streams,
             _cookies,
             _foreign,
             _host_streams,
         } = self;
+        unsafe { _std_locks.adopt_in_fork_child() };
         // SAFETY: the child is single-threaded and the old mutex (with the
         // value inside it) is never used again, so reading the value out is a
         // move, not a copy.
@@ -2607,8 +2624,11 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
                 if let Ok(cookies) = cookies
                     && let Ok(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
                     && let Ok(host_streams) = host_streams
+                    && let Ok(std_locks) =
+                        crate::io_internal_abi::try_lock_std_stream_locks(single_threaded)
                 {
                     return StdioForkGuard {
+                        _std_locks: std_locks,
                         _native: native,
                         _streams: streams,
                         _cookies: cookies,
@@ -2712,7 +2732,9 @@ fn is_fl_issued_stream_id(id: usize) -> bool {
     }
     // Glibc-layout FILE handles from fl's handle table (bd-rc0923-epic-eeuy4f.1)
     // live far above the legacy id window; open or closed, they are ours.
-    if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {
+    if io_internal_abi::is_native_handle_slot_address(id as *mut c_void)
+        || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(id as *mut c_void)
+    {
         return true;
     }
     let watermark = NEXT_STREAM_ID.load(std::sync::atomic::Ordering::Acquire);
@@ -2759,7 +2781,10 @@ pub(crate) fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
     // fflush(stdout), and host glibc aborted with "invalid stdio handle"
     // (coreutils close_stdout on a write error: `false --version > /dev/full`).
     let addr = stream as usize;
-    if addr != 0 && (0..3).any(|fd| io_internal_abi::native_stdio_slot_addr_lockfree(fd) == addr) {
+    if addr != 0
+        && (io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream)
+            || (0..3).any(|fd| io_internal_abi::native_stdio_slot_addr_lockfree(fd) == addr))
+    {
         return false;
     }
     !io_internal_abi::is_native_handle_slot_address(stream)
@@ -3636,9 +3661,11 @@ unsafe fn write_bytes_without_runtime_policy(
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
             return 0;
         }
         let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
             return 0;
         };
         let mut stream_obj = cell.lock();
@@ -3672,6 +3699,7 @@ unsafe fn write_bytes_without_runtime_policy(
             }
             return written.min(bytes.len());
         }
+        unsafe { set_abi_errno(errno::EBADF) };
         return 0;
     };
     let mut stream_guard = cell.lock();
@@ -3864,7 +3892,7 @@ thread_local! {
 struct RefillTmpGuard(Vec<u8>);
 impl Drop for RefillTmpGuard {
     fn drop(&mut self) {
-        REFILL_TMP.with(|c| c.set(std::mem::take(&mut self.0)));
+        let _ = REFILL_TMP.try_with(|c| c.set(std::mem::take(&mut self.0)));
     }
 }
 
@@ -3879,7 +3907,7 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
     // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
     // Vec. `sys_read_fd` overwrites the first `want` bytes, so no pre-zeroing is required for
     // correctness; `resize(want, 0)` only grows (a no-op once warmed to the common size).
-    let mut guard = RefillTmpGuard(REFILL_TMP.with(|c| c.take()));
+    let mut guard = RefillTmpGuard(REFILL_TMP.try_with(|c| c.take()).unwrap_or_default());
     let tmp = &mut guard.0;
     if tmp.len() < want {
         tmp.resize(want, 0);
@@ -4768,6 +4796,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 4, true);
         return libc::EOF;
     }
@@ -4837,6 +4866,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
     let id = canonical_stream_id(stream);
     if is_cookie_stream(id) {
         let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
             return libc::EOF;
         };
@@ -4873,6 +4903,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
         if ok { 0 } else { libc::EOF }
     } else {
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 4, true);
         libc::EOF
     }
@@ -5016,6 +5047,7 @@ pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usiz
             return rc;
         }
 
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     };
@@ -5202,6 +5234,7 @@ pub(crate) unsafe fn fputc_unlocked_for_caller(
             }
             return rc;
         }
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     };
@@ -5638,6 +5671,7 @@ pub(crate) unsafe fn fgets_unlocked_for_caller(
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return std::ptr::null_mut();
         }
@@ -5699,6 +5733,7 @@ pub(crate) unsafe fn fgets_unlocked_for_caller(
     }
 
     let Some(cell) = stream_cell(id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return std::ptr::null_mut();
     };
@@ -5902,6 +5937,7 @@ pub(crate) unsafe fn fputs_unlocked_for_caller(
             }
             return if rc == libc::EOF { libc::EOF } else { 0 };
         }
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;
     };
@@ -6139,7 +6175,11 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
     }
 
     if is_cookie_stream(id) {
-        if !stream_exists(id) || !orient_stream_byte_by_id(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        if !orient_stream_byte_by_id(id) {
             return 0;
         }
 
@@ -6204,6 +6244,7 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
     }
 
     let Some(cell) = stream_cell(id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
         return 0;
     };
     let mut s_guard = cell.lock();
@@ -6316,10 +6357,12 @@ pub(crate) unsafe fn fwrite_unlocked_for_caller(
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return 0;
         }
         let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return 0;
         };
@@ -6359,6 +6402,7 @@ pub(crate) unsafe fn fwrite_unlocked_for_caller(
             }
             return rc;
         }
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return 0;
     };
@@ -7021,13 +7065,25 @@ unsafe fn ferror_without_lock(stream: *mut c_void) -> c_int {
 /// test-fseterr). Callers adopt it into the stream state so it persists
 /// until clearerr, as in glibc.
 #[inline]
+fn resolve_header_flags_addr(stream: *mut c_void) -> usize {
+    let handle = stream as usize;
+    if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&handle) {
+        return io_internal_abi::visible_stdio_handle_addr_lockfree(handle - STDIN_SENTINEL);
+    }
+    if handle == 0 || (STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+        return 0;
+    }
+    handle
+}
+
+#[inline]
 fn header_err_seen(stream: *mut c_void) -> bool {
     use io_internal_abi::glibc_flag_bits::ERR_SEEN;
-    let handle = stream as usize;
-    if handle == 0 || (STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+    let handle = resolve_header_flags_addr(stream);
+    if handle == 0 {
         return false;
     }
-    // SAFETY: a non-sentinel FILE * is a live glibc-layout handle whose first
+    // SAFETY: resolved handle is a live glibc-layout handle whose first
     // field is the aligned `_flags` int (see mirror_stream_flags).
     let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
     word.load(Ordering::Relaxed) & ERR_SEEN != 0
@@ -7045,10 +7101,9 @@ pub(crate) unsafe fn set_stream_error(stream: *mut c_void) {
     if let Some(cell) = stream_cell(id) {
         cell.lock().set_error();
     }
-    let handle = stream as usize;
-    if handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&handle) {
-        // SAFETY: a non-sentinel FILE has the aligned glibc-compatible flags
-        // word, as in header_err_seen and clear_header_eof_err.
+    let handle = resolve_header_flags_addr(stream);
+    if handle != 0 {
+        // SAFETY: resolved handle has the aligned glibc-compatible flags word.
         let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
         word.fetch_or(ERR_SEEN, Ordering::Relaxed);
     }
@@ -7058,8 +7113,8 @@ pub(crate) unsafe fn set_stream_error(stream: *mut c_void) {
 #[inline]
 fn clear_header_eof_err(stream: *mut c_void) {
     use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
-    let handle = stream as usize;
-    if handle == 0 || (STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+    let handle = resolve_header_flags_addr(stream);
+    if handle == 0 {
         return;
     }
     // SAFETY: as in header_err_seen.
@@ -16517,10 +16572,16 @@ thread_local! {
 }
 
 struct GetdelimScratchGuard(Vec<u8>);
+impl GetdelimScratchGuard {
+    #[inline]
+    fn take() -> Self {
+        Self(GETDELIM_SCRATCH.try_with(|c| c.take()).unwrap_or_default())
+    }
+}
 impl Drop for GetdelimScratchGuard {
     fn drop(&mut self) {
         // Return the (grown) buffer to the thread-local so its capacity is reused next call.
-        GETDELIM_SCRATCH.with(|c| c.set(std::mem::take(&mut self.0)));
+        let _ = GETDELIM_SCRATCH.try_with(|c| c.set(std::mem::take(&mut self.0)));
     }
 }
 
@@ -16666,7 +16727,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     // skipping canonical_stream_id's native lock + registry_contains + registry().lock() +
     // decide/observe per line (getline is hot for file processing). Byte-identical.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
-        let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+        let mut scratch = GetdelimScratchGuard::take();
         let buf = &mut scratch.0;
         buf.clear();
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
@@ -16682,7 +16743,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     if let Some(cell) = stream_cell_cache_lookup(stream) {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+            let mut scratch = GetdelimScratchGuard::take();
             let buf = &mut scratch.0;
             buf.clear();
             // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
@@ -16754,7 +16815,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     }
 
     // Reuse the thread-local scratch (retains capacity) instead of a fresh per-call Vec.
-    let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+    let mut scratch = GetdelimScratchGuard::take();
     let buf = &mut scratch.0;
     buf.clear();
 
@@ -17014,8 +17075,8 @@ static TMPNAM_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static TMPNAM_BUF: Box<std::cell::UnsafeCell<[u8; 64]>> =
-        Box::new(std::cell::UnsafeCell::new([0u8; 64]));
+    static TMPNAM_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<[u8; 64]>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
@@ -17031,14 +17092,16 @@ fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        TMPNAM_BUF.with(|cell| {
-            let buf = cell.get();
-            // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
-            // is bounded by the fixed local formatter buffer.
-            unsafe {
-                std::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), total);
-                (*buf).as_ptr() as *mut c_char
-            }
+        TMPNAM_BUF.with(|slot| {
+            slot.with_zeroed(None, |cell| {
+                let buf = cell.get();
+                // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
+                // is bounded by the fixed local formatter buffer.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), total);
+                    (*buf).as_ptr() as *mut c_char
+                }
+            })
         })
     }
 }
@@ -19278,7 +19341,8 @@ static FGETLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static FGETLN_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static FGETLN_BUFFER: crate::util::TlsHeapCell<RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 fn fgetln_read_into_buffer(stream: *mut c_void, buf: &mut Vec<u8>) -> Option<(*mut c_char, usize)> {
@@ -19314,9 +19378,14 @@ fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
-    FGETLN_BUFFER.with(|cell| {
-        let mut buf = cell.borrow_mut();
-        fgetln_read_into_buffer(stream, &mut buf)
+    FGETLN_BUFFER.with(|slot| {
+        slot.with_init(
+            || RefCell::new(Vec::new()),
+            |cell| {
+                let mut buf = cell.borrow_mut();
+                fgetln_read_into_buffer(stream, &mut buf)
+            },
+        )
     })
 }
 

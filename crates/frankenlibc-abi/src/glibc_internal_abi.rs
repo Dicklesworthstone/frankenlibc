@@ -1436,8 +1436,8 @@ fn empty_res_state() -> ResStateBuf {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static RES_STATE: Box<std::cell::UnsafeCell<ResStateBuf>> =
-        Box::new(std::cell::UnsafeCell::new(ResStateBuf([0u8; 640])));
+    static RES_STATE: crate::util::TlsHeapCell<std::cell::UnsafeCell<ResStateBuf>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -1448,7 +1448,8 @@ fn res_state_ptr() -> *mut c_void {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RES_STATE.with(|state| state.get().cast::<u8>().cast::<c_void>())
+        RES_STATE
+            .with(|slot| slot.with_zeroed(None, |state| state.get().cast::<u8>().cast::<c_void>()))
     }
 }
 
@@ -7559,7 +7560,6 @@ pub unsafe extern "C" fn settimeofday(tv: *const c_void, tz: *const c_void) -> c
     }
 }
 // sgetspent: native — parse shadow password entry from string
-#[cfg(feature = "owned-tls-cache")]
 struct SgetspentState {
     buf: Vec<u8>,
     sp: libc::spwd,
@@ -7572,7 +7572,6 @@ unsafe impl Send for SgetspentState {}
 static SGETSPENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<SgetspentState> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_sgetspent_state);
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_sgetspent_state() -> SgetspentState {
     SgetspentState {
         buf: Vec::new(),
@@ -7582,9 +7581,8 @@ fn empty_sgetspent_state() -> SgetspentState {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static SGETSPENT_BUF: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
-    static SGETSPENT_SP: Box<std::cell::RefCell<libc::spwd>> =
-        Box::new(std::cell::RefCell::new(unsafe { std::mem::zeroed() }));
+    static SGETSPENT_TLS: crate::util::TlsHeapCell<std::cell::RefCell<SgetspentState>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 #[inline]
@@ -7595,12 +7593,15 @@ fn with_sgetspent_state<R>(callback: impl FnOnce(&mut Vec<u8>, &mut libc::spwd) 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SGETSPENT_BUF.with(|buf| {
-            let mut buf = buf.borrow_mut();
-            SGETSPENT_SP.with(|sp| {
-                let mut sp = sp.borrow_mut();
-                callback(&mut buf, &mut sp)
-            })
+        SGETSPENT_TLS.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new(empty_sgetspent_state()),
+                |cell| {
+                    let mut state = cell.borrow_mut();
+                    let SgetspentState { buf, sp } = &mut *state;
+                    callback(buf, sp)
+                },
+            )
         })
     }
 }
@@ -10390,8 +10391,8 @@ static DTV_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<DtvStorage> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static DTV_THREAD_LOCAL: std::cell::RefCell<Vec<*mut u8>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    static DTV_THREAD_LOCAL: crate::util::TlsHeapCell<std::cell::RefCell<Vec<*mut u8>>> =
+        const { crate::util::TlsHeapCell::new() };
 }
 
 /// Access the per-thread DTV.
@@ -10403,7 +10404,12 @@ fn with_dtv<R>(f: impl FnOnce(&mut Vec<*mut u8>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        DTV_THREAD_LOCAL.with(|dtv| f(&mut dtv.borrow_mut()))
+        DTV_THREAD_LOCAL.with(|slot| {
+            slot.with_init(
+                || std::cell::RefCell::new(Vec::new()),
+                |dtv| f(&mut dtv.borrow_mut()),
+            )
+        })
     }
 }
 

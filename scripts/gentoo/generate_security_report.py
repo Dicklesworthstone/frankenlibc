@@ -102,13 +102,21 @@ def generate_aggregate_report(
                     by_severity[cve.severity]["prevented"] += 1
                 by_severity[cve.severity]["total"] += 1
 
+    cve_bearing_packages = [pkg for pkg in package_reports if pkg.get("known_cves")]
+    all_cve_packages_oracle_qualified = bool(cve_bearing_packages) and all(
+        pkg.get("qualification_status") == "oracle_qualified"
+        for pkg in cve_bearing_packages
+    )
     any_oracle_qualified = any(
         pkg.get("qualification_status") in {"oracle_qualified", "partially_oracle_qualified"}
-        for pkg in package_reports
+        for pkg in cve_bearing_packages
     )
-    if total_cves > 0 and any_oracle_qualified:
+    if total_cves > 0 and all_cve_packages_oracle_qualified:
         prevention_rate = prevented_cves / total_cves
         qualification_status = "oracle_qualified"
+    elif total_cves > 0 and any_oracle_qualified:
+        prevention_rate = prevented_cves / total_cves
+        qualification_status = "partially_oracle_qualified"
     else:
         prevention_rate = 0.0
         qualification_status = "unqualified"
