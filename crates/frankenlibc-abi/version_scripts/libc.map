@@ -2631,9 +2631,11 @@ GLIBC_2.2.5 {
         _IO_sgetn;
         _IO_seekoff;
         _IO_seekpos;
-        /* _IO_2_1_{stdin,stdout,stderr}_ are now exported (bd-9chy.10).
-           They point to the same NativeFile storage as stdin/stdout/stderr.
-           With NativeFile managing the _IO_list chain (bd-9chy.50), these are safe. */
+        /* _IO_2_1_{stdin,stdout,stderr}_ are 224-byte _IO_FILE_plus objects
+           backed by FrankenLibC's native stdio stream table (bd-reality-202609-lx578q.6.4). */
+        _IO_2_1_stdin_;
+        _IO_2_1_stdout_;
+        _IO_2_1_stderr_;
 
         /* GNU old regex API */
         re_set_syntax;
@@ -4722,6 +4724,7 @@ GCC_3.0 {
     global:
         _Unwind_Backtrace;
         _Unwind_DeleteException;
+        _Unwind_ForcedUnwind;
         _Unwind_GetDataRelBase;
         _Unwind_GetGR;
         _Unwind_GetIP;
@@ -4740,6 +4743,7 @@ GCC_3.0 {
 
 GCC_3.3 {
     global:
+        _Unwind_GetCFA;
         _Unwind_Resume_or_Rethrow;
 } GCC_3.0;
 

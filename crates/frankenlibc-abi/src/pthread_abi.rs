@@ -7092,51 +7092,44 @@ unsafe fn cancellation_child_window(
 
 /// Sleep cancellation point. Capture the exported entry's caller before the
 /// shared window, including aliases and C11's different result convention.
+/// Returns `0` on success or a positive `errno` on failure.
 #[inline(always)]
-pub(crate) unsafe fn cancellation_point_nanosleep(
+pub(crate) unsafe extern "C-unwind" fn cancellation_point_nanosleep(
     request: *const u8,
     remaining: *mut u8,
-) -> Result<(), c_int> {
+) -> c_int {
     let caller = core::intrinsics::return_address() as usize;
     // Linux measures nanosleep against MONOTONIC, independently of wall-clock
     // adjustments. Keep the original syscall for hosted and unsupported paths.
     unsafe {
-        cancellation_sleep_window(caller, libc::CLOCK_MONOTONIC, 0, request, remaining, || {
-            raw_syscall::sys_nanosleep(request, remaining)
-        })
+        cancellation_sleep_window_raw(caller, false, libc::CLOCK_MONOTONIC, 0, request, remaining)
     }
 }
 
 /// Clock-selected sleep with native cancellation for the relative monotonic
 /// clocks and absolute CLOCK_MONOTONIC deadlines. Other clock/flag contracts
 /// retain the original syscall, including CPU clocks and settable deadlines.
+/// Returns `0` on success or a positive `errno` on failure.
 #[inline(always)]
-pub(crate) unsafe fn cancellation_point_clock_nanosleep(
+pub(crate) unsafe extern "C-unwind" fn cancellation_point_clock_nanosleep(
     clock: c_int,
     flags: c_int,
     request: *const u8,
     remaining: *mut u8,
-) -> Result<(), c_int> {
+) -> c_int {
     let caller = core::intrinsics::return_address() as usize;
-    unsafe {
-        cancellation_sleep_window(caller, clock, flags, request, remaining, || {
-            raw_syscall::sys_clock_nanosleep(clock, flags, request, remaining)
-        })
-    }
+    unsafe { cancellation_sleep_window_raw(caller, true, clock, flags, request, remaining) }
 }
 
-/// This frame owns no drop state. Hosted asynchronous cancellation must cross
-/// only the unchanged raw-syscall window; the native helper restores its signal
-/// mask before the cooperative cancellation check and remainder publication.
 #[inline(never)]
-unsafe fn cancellation_sleep_window(
+unsafe extern "C-unwind" fn native_cancellation_sleep_window(
     caller: usize,
     clock: c_int,
     flags: c_int,
     request: *const u8,
     remaining: *mut u8,
-    blocking_syscall: impl FnOnce() -> Result<(), c_int>,
-) -> Result<(), c_int> {
+    handled: *mut bool,
+) -> c_int {
     let absolute = flags == libc::TIMER_ABSTIME;
     let supported = (flags == 0 && matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC))
         || (absolute && clock == libc::CLOCK_MONOTONIC);
@@ -7168,30 +7161,93 @@ unsafe fn cancellation_sleep_window(
             unsafe { pthread_testcancel() };
         }
         match result {
-            Ok(cancel_poll::SleepResult::Complete) => return Ok(()),
+            Ok(cancel_poll::SleepResult::Complete) => {
+                unsafe { *handled = true };
+                return 0;
+            }
             Ok(cancel_poll::SleepResult::Interrupted(left)) => {
+                unsafe { *handled = true };
                 if !absolute && !remaining.is_null() {
                     // SAFETY: left is owned initialized storage. The copier
                     // checks the caller destination through the kernel and
                     // reports EFAULT only when an interruption needs output.
-                    unsafe {
+                    if let Err(err) = unsafe {
                         crate::io_abi::iov_snapshot::copy_user_bytes(
                             std::ptr::from_ref(&left).cast(),
                             remaining,
                             std::mem::size_of::<raw_syscall::Timespec>(),
-                        )?;
+                        )
+                    } {
+                        return err;
                     }
                 }
-                return Err(libc::EINTR);
+                return libc::EINTR;
             }
             Ok(cancel_poll::SleepResult::Unsupported) => {}
-            Err(error) => return Err(error),
+            Err(error) => {
+                unsafe { *handled = true };
+                return error;
+            }
         }
     }
-    // In particular, STICKY_TIMEOUTS prevents ppoll remainder writeback. The
-    // helper explicitly declines those relative sleeps instead of inventing a
-    // remainder after the signal handler has consumed additional wall time.
-    unsafe { cancellation_window(caller, blocking_syscall) }
+    unsafe { *handled = false };
+    0
+}
+
+/// This frame owns no drop state. Hosted asynchronous cancellation must cross
+/// only the unchanged raw-syscall window; the native helper restores its signal
+/// mask before the cooperative cancellation check and remainder publication.
+/// Declared `extern "C-unwind"` end-to-end so `-C panic=abort` builds never
+/// synthesize a `panic_cannot_unwind` guard around `pthread_testcancel` or
+/// `pthread_setcanceltype`.
+#[inline(always)]
+unsafe extern "C-unwind" fn cancellation_sleep_window_raw(
+    caller: usize,
+    is_clock_nanosleep: bool,
+    clock: c_int,
+    flags: c_int,
+    request: *const u8,
+    remaining: *mut u8,
+) -> c_int {
+    let mut handled = false;
+    let native_errno = unsafe {
+        native_cancellation_sleep_window(caller, clock, flags, request, remaining, &mut handled)
+    };
+    if handled {
+        return native_errno;
+    }
+    let invoke_sleep_syscall = || -> c_int {
+        let res = if is_clock_nanosleep {
+            unsafe { raw_syscall::sys_clock_nanosleep(clock, flags, request, remaining) }
+        } else {
+            unsafe { raw_syscall::sys_nanosleep(request, remaining) }
+        };
+        match res {
+            Ok(()) => 0,
+            Err(e) => e,
+        }
+    };
+    if caller == 0 {
+        return invoke_sleep_syscall();
+    }
+    if core_current_thread_handle().is_some() {
+        if !address_is_inside_this_object(caller) {
+            unsafe { pthread_testcancel() };
+        }
+        return invoke_sleep_syscall();
+    }
+    let set_type = cancellation_window_hook(caller);
+    let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;
+    if let Some(set) = set_type {
+        unsafe { set(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, &mut old_type) };
+    }
+    let ret = invoke_sleep_syscall();
+    if let Some(set) = set_type
+        && old_type != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE
+    {
+        unsafe { set(old_type, std::ptr::null_mut()) };
+    }
+    ret
 }
 
 /// Suspend until a signal is handled, including cancellation arriving after a
@@ -7856,7 +7912,7 @@ static OWN_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
 /// be read is cached as empty, so every caller then counts as outside (the
 /// behaviour before callers were told apart).
 #[inline(always)]
-fn address_is_inside_this_object(addr: usize) -> bool {
+pub(crate) fn address_is_inside_this_object(addr: usize) -> bool {
     let mut end = OWN_IMAGE_END.load(Ordering::Acquire);
     if end == 0 {
         end = record_own_image_range();
@@ -11082,12 +11138,13 @@ unsafe fn finish_native_thread_exit() -> ! {
     raw_syscall::sys_exit_thread(0);
 }
 
-// Native lifecycle owns the exception object and cleanup destination. The
-// normal hybrid artifact already links the platform unwind runtime, whose
-// public Itanium ABI supplies stack walking and language landing pads. The
-// experimental owned-unwind-stub artifact does not implement forced unwinding
-// yet; it retains only the explicit C cleanup-buffer path below.
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+// Native lifecycle owns the exception object and cleanup destination. In
+// standalone builds (and in interpose processes where no external unwinder is
+// resident), FrankenLibC drives forced unwinding directly through
+// `owned_unwind_abi` with zero `libgcc_s.so.1` dependency. When an external
+// Itanium unwinder (`libgcc_s.so.1` / `libunwind`) is already resident in an
+// interposed process, we pair its `_Unwind_ForcedUnwind` and `_Unwind_GetCFA`
+// so personalities bound to that unwinder receive its opaque `_Unwind_Context`.
 #[repr(C, align(16))]
 struct NativeUnwindException {
     exception_class: u64,
@@ -11095,31 +11152,102 @@ struct NativeUnwindException {
     private: [usize; 2],
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
-unsafe extern "C-unwind" {
-    fn _Unwind_ForcedUnwind(
-        exception: *mut NativeUnwindException,
-        stop: unsafe extern "C-unwind" fn(
-            c_int,
-            c_int,
-            u64,
-            *mut NativeUnwindException,
-            *mut c_void,
-            *mut c_void,
-        ) -> c_int,
-        argument: *mut c_void,
-    ) -> c_int;
-    fn _Unwind_GetCFA(context: *mut c_void) -> usize;
+const _: () = {
+    assert!(
+        core::mem::size_of::<NativeUnwindException>()
+            == core::mem::size_of::<crate::owned_unwind_abi::UnwindException>()
+    );
+    assert!(
+        core::mem::align_of::<NativeUnwindException>()
+            == core::mem::align_of::<crate::owned_unwind_abi::UnwindException>()
+    );
+};
+
+type ForcedUnwindStopRawFn = unsafe extern "C-unwind" fn(
+    c_int,
+    c_int,
+    u64,
+    *mut NativeUnwindException,
+    *mut c_void,
+    *mut c_void,
+) -> c_int;
+
+type ForcedUnwindRawFn = unsafe extern "C-unwind" fn(
+    *mut NativeUnwindException,
+    ForcedUnwindStopRawFn,
+    *mut c_void,
+) -> c_int;
+
+type GetCfaRawFn = unsafe extern "C" fn(*mut c_void) -> usize;
+
+unsafe extern "C" fn owned_get_cfa_bridge(context: *mut c_void) -> usize {
+    // SAFETY: context was created by `owned_unwind_abi` for this stop callback.
+    unsafe { crate::owned_unwind_abi::owned_get_cfa_raw(context) }
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+unsafe extern "C-unwind" fn owned_forced_unwind_bridge(
+    exception: *mut NativeUnwindException,
+    stop: ForcedUnwindStopRawFn,
+    argument: *mut c_void,
+) -> c_int {
+    type OwnedStopFnPtr = unsafe extern "C-unwind" fn(
+        c_int,
+        c_int,
+        u64,
+        *mut crate::owned_unwind_abi::UnwindException,
+        *mut crate::owned_unwind_abi::UnwindContext,
+        *mut c_void,
+    ) -> c_int;
+    // SAFETY: NativeUnwindException and owned_unwind_abi::UnwindException share
+    // identical #[repr(C, align(16))] Itanium _Unwind_Exception layout, and
+    // UnwindContext is passed opaquely as *mut c_void to `stop`.
+    let stop_typed: crate::owned_unwind_abi::UnwindStopFn =
+        Some(unsafe { core::mem::transmute::<ForcedUnwindStopRawFn, OwnedStopFnPtr>(stop) });
+    unsafe {
+        crate::owned_unwind_abi::owned_forced_unwind_entry(
+            exception.cast::<crate::owned_unwind_abi::UnwindException>(),
+            stop_typed,
+            argument,
+        )
+    }
+}
+
+#[inline]
+unsafe fn resolve_forced_unwind_pair() -> (ForcedUnwindRawFn, GetCfaRawFn) {
+    #[cfg(not(feature = "standalone"))]
+    {
+        // Probe only already-loaded objects via RTLD_NEXT; never dlopen libgcc_s.so.1.
+        let forced = unsafe {
+            crate::host_resolve::host_dlvsym_next_raw(
+                c"_Unwind_ForcedUnwind".as_ptr(),
+                c"GCC_3.0".as_ptr(),
+            )
+        };
+        let get_cfa = unsafe {
+            crate::host_resolve::host_dlvsym_next_raw(
+                c"_Unwind_GetCFA".as_ptr(),
+                c"GCC_3.3".as_ptr(),
+            )
+        };
+        if !forced.is_null() && !get_cfa.is_null() {
+            // SAFETY: both symbols resolved from the resident platform unwinder.
+            return unsafe {
+                (
+                    core::mem::transmute::<*mut c_void, ForcedUnwindRawFn>(forced),
+                    core::mem::transmute::<*mut c_void, GetCfaRawFn>(get_cfa),
+                )
+            };
+        }
+    }
+    (owned_forced_unwind_bridge, owned_get_cfa_bridge)
+}
+
 unsafe extern "C" fn native_unwind_cleanup(_reason: c_int, _exception: *mut NativeUnwindException) {
     // A language catch may observe cancellation only if it resumes unwinding.
     // Consuming the foreign exception would abandon the thread exit protocol.
     std::process::abort();
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe fn native_jump_buffer_stack_pointer(head: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
@@ -11141,14 +11269,13 @@ unsafe fn native_jump_buffer_stack_pointer(head: usize) -> usize {
     }
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe extern "C-unwind" fn native_unwind_stop(
     version: c_int,
     actions: c_int,
     _exception_class: u64,
     _exception: *mut NativeUnwindException,
     context: *mut c_void,
-    _argument: *mut c_void,
+    argument: *mut c_void,
 ) -> c_int {
     if version != 1 {
         return 2; // _URC_FATAL_PHASE2_ERROR
@@ -11156,8 +11283,14 @@ unsafe extern "C-unwind" fn native_unwind_stop(
     let at_end = actions & 16 != 0; // _UA_END_OF_STACK
     let cfa = if at_end {
         0
+    } else if !argument.is_null() {
+        // SAFETY: `continue_native_thread_exit` passes the matched `GetCfaRawFn`
+        // for the active unwinder via `argument`.
+        let get_cfa: GetCfaRawFn =
+            unsafe { core::mem::transmute::<*mut c_void, GetCfaRawFn>(argument) };
+        unsafe { get_cfa(context) }
     } else {
-        unsafe { _Unwind_GetCFA(context) }
+        unsafe { crate::owned_unwind_abi::owned_get_cfa_raw(context) }
     };
     loop {
         let head = native_cleanup_head();
@@ -11206,42 +11339,38 @@ unsafe extern "C-unwind" fn native_unwind_stop(
 
 /// Start (or restart after a plain C cleanup callback) a native forced unwind.
 /// The exception lives in owned thread storage, never in an unwound frame.
-unsafe fn continue_native_thread_exit() -> ! {
-    #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
-    {
-        let storage = if let Some(handle) = core_current_thread_handle() {
-            // SAFETY: only this native thread accesses its exception header.
-            unsafe {
-                (*handle)
-                    .unwind_exception
-                    .get()
-                    .cast::<NativeUnwindException>()
-            }
-        } else {
-            // The cache keeps its cell address stable; release its borrow
-            // before entering any unwinder, personality, or application code.
-            with_pthread_tls(|tls| {
-                std::ptr::from_mut(&mut tls.native_unwind_exception).cast::<NativeUnwindException>()
-            })
-        };
-        // SAFETY: both storage variants have 16-byte alignment and 32 bytes.
-        // A restarted chain has abandoned the previous cursor via longjmp.
+/// Declared `extern "C-unwind"` so `-C panic=abort` builds do not emit a
+/// `panic_cannot_unwind` terminate guard around `forced_unwind`.
+unsafe extern "C-unwind" fn continue_native_thread_exit() -> ! {
+    let storage = if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: only this native thread accesses its exception header.
         unsafe {
-            storage.write(NativeUnwindException {
-                exception_class: u64::from_be_bytes(*b"FRNKCAN\0"),
-                cleanup: native_unwind_cleanup,
-                private: [0; 2],
-            });
-            _Unwind_ForcedUnwind(storage, native_unwind_stop, std::ptr::null_mut());
+            (*handle)
+                .unwind_exception
+                .get()
+                .cast::<NativeUnwindException>()
         }
-        // Returning means malformed unwind data or a violated unwind contract;
-        // never silently skip the remaining cleanup and report successful exit.
-        std::process::abort();
-    }
-    #[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+    } else {
+        // The cache keeps its cell address stable; release its borrow
+        // before entering any unwinder, personality, or application code.
+        with_pthread_tls(|tls| {
+            std::ptr::from_mut(&mut tls.native_unwind_exception).cast::<NativeUnwindException>()
+        })
+    };
+    let (forced_unwind, get_cfa) = unsafe { resolve_forced_unwind_pair() };
+    // SAFETY: both storage variants have 16-byte alignment and 32 bytes.
+    // A restarted chain has abandoned the previous cursor via longjmp.
     unsafe {
-        transfer_native_cleanup()
+        storage.write(NativeUnwindException {
+            exception_class: u64::from_be_bytes(*b"FRNKCAN\0"),
+            cleanup: native_unwind_cleanup,
+            private: [0; 2],
+        });
+        forced_unwind(storage, native_unwind_stop, get_cfa as usize as *mut c_void);
     }
+    // Returning means malformed unwind data or a violated unwind contract;
+    // never silently skip the remaining cleanup and report successful exit.
+    std::process::abort();
 }
 
 /// `__pthread_register_cancel` — C `pthread_cleanup_push` (built without

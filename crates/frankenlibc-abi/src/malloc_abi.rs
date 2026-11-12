@@ -2758,9 +2758,7 @@ fn bump_mmap_record(ptr: *mut c_void) -> Option<BumpMmapRecord> {
     let start = bump_mmap_record_start(key);
     for probe in 0..BUMP_MMAP_RECORD_SLOTS {
         let index = (start + probe) & BUMP_MMAP_RECORD_MASK;
-        let Some(slot) = bump_mmap_slot_if_ready(index) else {
-            return None;
-        };
+        let slot = bump_mmap_slot_if_ready(index)?;
         let observed = slot.key.load(Ordering::Acquire);
         if observed == key {
             return Some(BumpMmapRecord {
@@ -5005,9 +5003,7 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let Some(entry) = fallback_slot_if_ready(idx) else {
-            return None;
-        };
+        let entry = fallback_slot_if_ready(idx)?;
         let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
             let size = entry.size.load(Ordering::Relaxed);
@@ -5082,9 +5078,7 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let Some(entry) = fallback_slot_if_ready(idx) else {
-            return None;
-        };
+        let entry = fallback_slot_if_ready(idx)?;
         let slot = entry.ptr.load(Ordering::Relaxed);
         if slot == key {
             let size = entry.size.load(Ordering::Relaxed);
@@ -5445,9 +5439,7 @@ fn fallback_remaining_probe(addr: usize) -> Option<usize> {
     let start = fallback_start_index(addr);
     for i in 0..64 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let Some(entry) = fallback_slot_if_ready(idx) else {
-            return None;
-        };
+        let entry = fallback_slot_if_ready(idx)?;
         let base = entry.ptr.load(Ordering::Relaxed);
         if base == FALLBACK_SLOT_EMPTY {
             // No more entries in this probe sequence

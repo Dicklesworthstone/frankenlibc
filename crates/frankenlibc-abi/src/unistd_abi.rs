@@ -2747,8 +2747,8 @@ pub unsafe extern "C-unwind" fn sleep(seconds: u32) -> u32 {
             (&mut rem) as *mut _ as *mut u8,
         )
     } {
-        Ok(()) => 0,
-        Err(e) => {
+        0 => 0,
+        e => {
             unsafe { set_abi_errno(e) };
             if e == errno::EINTR {
                 // GNU sleep returns the whole unslept seconds, discarding
@@ -2774,8 +2774,8 @@ pub unsafe extern "C-unwind" fn usleep(usec: u32) -> c_int {
             std::ptr::null_mut(),
         )
     } {
-        Ok(()) => 0,
-        Err(e) => {
+        0 => 0,
+        e => {
             unsafe { set_abi_errno(e) };
             -1
         }
@@ -17360,9 +17360,7 @@ fn account_stream_error(error: c_int) -> c_int {
 /// # Safety
 /// The caller keeps the FILE live and owns its automatic or caller-managed lock.
 unsafe fn retry_account_stream_line(stream: *mut c_void, position: i64) -> c_int {
-    if position < 0
-        || unsafe { crate::stdio_abi::fseeko(stream, position, libc::SEEK_SET) } != 0
-    {
+    if position < 0 || unsafe { crate::stdio_abi::fseeko(stream, position, libc::SEEK_SET) } != 0 {
         // SAFETY: the enclosing operation owns this live stream. A consumed
         // record that cannot be retried is a stream error, including on pipes.
         unsafe { crate::stdio_abi::set_stream_error(stream) };
@@ -17397,12 +17395,7 @@ unsafe fn read_account_stream_record<T>(
         // when that fragment happens to end at a newline.
         unsafe { *buffer.add(capacity - 1) = -1_i8 as c_char };
         let line = unsafe {
-            crate::stdio_abi::fgets_unlocked_for_caller(
-                buffer,
-                capacity as c_int,
-                stream,
-                caller,
-            )
+            crate::stdio_abi::fgets_unlocked_for_caller(buffer, capacity as c_int, stream, caller)
         };
         if line.is_null() {
             let read_errno = current_abi_errno();
@@ -17475,13 +17468,7 @@ unsafe fn read_growing_account_stream_record<T>(
             .map_err(|_| account_stream_error(libc::ENOMEM))?;
         buffer.resize(capacity, 0);
         match unsafe {
-            read_account_stream_record(
-                stream,
-                buffer.as_mut_ptr().cast(),
-                capacity,
-                parse,
-                caller,
-            )
+            read_account_stream_record(stream, buffer.as_mut_ptr().cast(), capacity, parse, caller)
         } {
             Err(libc::ERANGE) => {
                 capacity = capacity

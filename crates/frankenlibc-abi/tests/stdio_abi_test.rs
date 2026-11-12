@@ -13,6 +13,10 @@ use std::thread;
 use std::time::Duration;
 
 use frankenlibc_abi::io_internal_abi::{
+    _IO_2_1_stderr_, _IO_2_1_stdin_, _IO_2_1_stdout_, _IO_feof, _IO_ferror, _IO_getc, _IO_putc,
+    GLIBC_234_IO_FILE_PLUS_SIZE, GlibcIoFilePlus, visible_stdio_stream_ptr,
+};
+use frankenlibc_abi::io_internal_abi::{
     _IO_fclose, _IO_fdopen, _IO_fflush, _IO_fgetpos, _IO_fgetpos64, _IO_fgets, _IO_file_close,
     _IO_file_close_it, _IO_file_overflow, _IO_file_read, _IO_file_seek, _IO_file_seekoff,
     _IO_file_setbuf, _IO_file_stat, _IO_file_sync, _IO_file_underflow, _IO_file_write,
@@ -21,7 +25,6 @@ use frankenlibc_abi::io_internal_abi::{
     _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf, native_stdio_stream_ptr,
     verify_native_file,
 };
-use frankenlibc_abi::io_internal_abi::{_IO_feof, _IO_ferror, _IO_getc, _IO_putc};
 use frankenlibc_abi::stdio_abi::{
     __getline,
     __isoc99_fscanf,
@@ -35,9 +38,6 @@ use frankenlibc_abi::stdio_abi::{
     _IO_seekpos,
     _IO_sgetn,
     CookieIoFuncs,
-    IO_2_1_STDERR,
-    IO_2_1_STDIN,
-    IO_2_1_STDOUT,
     asprintf,
     clearerr,
     clearerr_unlocked,
@@ -1381,29 +1381,44 @@ fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
 fn io_2_1_aliases_resolve_to_native_stdio_storage() {
     init_host_stdio_streams_for_tests();
 
-    let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
-    let stdout_ptr = native_stdio_stream_ptr(libc::STDOUT_FILENO);
-    let stderr_ptr = native_stdio_stream_ptr(libc::STDERR_FILENO);
+    assert_eq!(
+        std::mem::size_of::<GlibcIoFilePlus>(),
+        GLIBC_234_IO_FILE_PLUS_SIZE
+    );
+    assert_eq!(GLIBC_234_IO_FILE_PLUS_SIZE, 224);
+
+    let stdin_slot = native_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_slot = native_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_slot = native_stdio_stream_ptr(libc::STDERR_FILENO);
+    let stdin_vis = visible_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_vis = visible_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_vis = visible_stdio_stream_ptr(libc::STDERR_FILENO);
     let stdin_global = unsafe { std::ptr::addr_of_mut!(stdin).read() };
     let stdout_global = unsafe { std::ptr::addr_of_mut!(stdout).read() };
     let stderr_global = unsafe { std::ptr::addr_of_mut!(stderr).read() };
-    let io_stdin = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDIN).read() };
-    let io_stdout = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDOUT).read() };
-    let io_stderr = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDERR).read() };
+    let io_stdin = (&raw mut _IO_2_1_stdin_).cast::<std::ffi::c_void>();
+    let io_stdout = (&raw mut _IO_2_1_stdout_).cast::<std::ffi::c_void>();
+    let io_stderr = (&raw mut _IO_2_1_stderr_).cast::<std::ffi::c_void>();
 
-    assert_eq!(stdin_global, stdin_ptr);
-    assert_eq!(stdout_global, stdout_ptr);
-    assert_eq!(stderr_global, stderr_ptr);
-    assert_eq!(io_stdin, stdin_ptr);
-    assert_eq!(io_stdout, stdout_ptr);
-    assert_eq!(io_stderr, stderr_ptr);
+    assert_eq!(stdin_global, stdin_vis);
+    assert_eq!(stdout_global, stdout_vis);
+    assert_eq!(stderr_global, stderr_vis);
+    assert_eq!(io_stdin, stdin_vis);
+    assert_eq!(io_stdout, stdout_vis);
+    assert_eq!(io_stderr, stderr_vis);
     assert_eq!(io_stdin, stdin_global);
     assert_eq!(io_stdout, stdout_global);
     assert_eq!(io_stderr, stderr_global);
 
-    assert_eq!(verify_native_file(stdin_ptr), Some(0));
-    assert_eq!(verify_native_file(stdout_ptr), Some(1));
-    assert_eq!(verify_native_file(stderr_ptr), Some(2));
+    assert_eq!(verify_native_file(io_stdin), Some(0));
+    assert_eq!(verify_native_file(io_stdout), Some(1));
+    assert_eq!(verify_native_file(io_stderr), Some(2));
+    assert_eq!(verify_native_file(stdin_slot), Some(0));
+    assert_eq!(verify_native_file(stdout_slot), Some(1));
+    assert_eq!(verify_native_file(stderr_slot), Some(2));
+    assert_eq!(unsafe { fileno(io_stdin) }, libc::STDIN_FILENO);
+    assert_eq!(unsafe { fileno(io_stdout) }, libc::STDOUT_FILENO);
+    assert_eq!(unsafe { fileno(io_stderr) }, libc::STDERR_FILENO);
 }
 
 #[test]

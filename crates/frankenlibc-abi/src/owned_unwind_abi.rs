@@ -8,9 +8,10 @@
 //! landing-pad transfer path that validates the physical frame cursor before
 //! installing the requested IP/register state.
 
-#![allow(non_snake_case)]
+#![allow(non_snake_case, dead_code)]
 
 use std::ffi::{c_int, c_void};
+use std::io::Write as _;
 use std::sync::{Mutex, MutexGuard};
 
 type UnwindReasonCode = c_int;
@@ -21,6 +22,7 @@ type UnwindWord = usize;
 const URC_NO_REASON: UnwindReasonCode = 0;
 const URC_FATAL_PHASE2_ERROR: UnwindReasonCode = 2;
 const URC_FATAL_PHASE1_ERROR: UnwindReasonCode = 3;
+const URC_NORMAL_STOP: UnwindReasonCode = 4;
 const URC_END_OF_STACK: UnwindReasonCode = 5;
 const URC_HANDLER_FOUND: UnwindReasonCode = 6;
 const URC_INSTALL_CONTEXT: UnwindReasonCode = 7;
@@ -28,6 +30,8 @@ const URC_CONTINUE_UNWIND: UnwindReasonCode = 8;
 const UA_SEARCH_PHASE: UnwindAction = 1;
 const UA_CLEANUP_PHASE: UnwindAction = 2;
 const UA_HANDLER_FRAME: UnwindAction = 4;
+const UA_FORCE_UNWIND: UnwindAction = 8;
+const UA_END_OF_STACK: UnwindAction = 16;
 const FRAME_REGISTRY_SLOTS: usize = 128;
 const MAX_BACKTRACE_FRAMES: usize = 64;
 const MAX_STACK_SCAN_BYTES: usize = 8 * 1024 * 1024;
@@ -75,8 +79,13 @@ const DW_CFA_DEF_CFA_OFFSET_SF: u8 = 0x13;
 const DW_CFA_VAL_OFFSET: u8 = 0x14;
 const DW_CFA_VAL_OFFSET_SF: u8 = 0x15;
 const DW_CFA_VAL_EXPRESSION: u8 = 0x16;
+const X86_64_DWARF_RBX: usize = 3;
 const X86_64_DWARF_RBP: usize = 6;
 const X86_64_DWARF_RSP: usize = 7;
+const X86_64_DWARF_R12: usize = 12;
+const X86_64_DWARF_R13: usize = 13;
+const X86_64_DWARF_R14: usize = 14;
+const X86_64_DWARF_R15: usize = 15;
 const X86_64_DWARF_RIP: usize = 16;
 const MAX_TRACKED_DWARF_REGISTERS: usize = 32;
 const UNSET_DWARF_REGISTER: usize = usize::MAX;
@@ -88,6 +97,45 @@ type UnwindPersonalityFn = unsafe extern "C" fn(
     exception_object: *mut UnwindException,
     context: *mut UnwindContext,
 ) -> UnwindReasonCode;
+
+pub type UnwindStopFn = Option<
+    unsafe extern "C-unwind" fn(
+        version: c_int,
+        actions: UnwindAction,
+        exception_class: UnwindExceptionClass,
+        exception_object: *mut UnwindException,
+        context: *mut UnwindContext,
+        stop_parameter: *mut c_void,
+    ) -> UnwindReasonCode,
+>;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct X86PhysicalCursor {
+    pub ip: usize,
+    pub rsp: usize,
+    pub rbp: usize,
+    pub rbx: usize,
+    pub r12: usize,
+    pub r13: usize,
+    pub r14: usize,
+    pub r15: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct X86LandingPadRegisters {
+    ip: usize,
+    rsp: usize,
+    rbp: usize,
+    rbx: usize,
+    r12: usize,
+    r13: usize,
+    r14: usize,
+    r15: usize,
+    rax: usize,
+    rdx: usize,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OwnedUnwindDecodeError {
@@ -154,6 +202,7 @@ enum CfiRegisterRule {
     SameValue,
     Offset(isize),
     ValOffset(isize),
+    Register(usize),
 }
 
 #[derive(Clone, Copy)]
@@ -161,6 +210,7 @@ struct CfiEvaluationState {
     pc: usize,
     cfa_register: usize,
     cfa_offset: isize,
+    gnu_args_size: usize,
     register_rules: [CfiRegisterRule; MAX_TRACKED_DWARF_REGISTERS],
 }
 
@@ -257,11 +307,13 @@ pub struct UnwindContext {
     frame_index: usize,
     frame_pointer: UnwindWord,
     stack_pointer: UnwindWord,
+    cfa: UnwindWord,
     language_specific_data: UnwindWord,
     region_start: UnwindWord,
     text_rel_base: UnwindWord,
     data_rel_base: UnwindWord,
     general_registers: [UnwindWord; MAX_UNWIND_GR],
+    physical_cursor: Option<X86PhysicalCursor>,
 }
 
 #[repr(C, align(16))]
@@ -285,17 +337,108 @@ struct FrameRegistration {
 static FRAME_REGISTRY: Mutex<[FrameRegistration; FRAME_REGISTRY_SLOTS]> =
     Mutex::new([FrameRegistration { fde: 0, object: 0 }; FRAME_REGISTRY_SLOTS]);
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C" fn _Unwind_Backtrace(
+    _trace: UnwindTraceFn,
+    _trace_argument: *mut c_void,
+) -> UnwindReasonCode {
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rdx, rsp",
+        "call {helper}",
+        "add rsp, 72",
+        "ret",
+        helper = sym __frankenlibc_owned_backtrace_from_cursor,
+    );
+}
+
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_Backtrace(
     trace: UnwindTraceFn,
     trace_argument: *mut c_void,
 ) -> UnwindReasonCode {
+    owned_backtrace_from_frame_pointer(
+        trace,
+        trace_argument,
+        current_frame_pointer(),
+        current_stack_pointer(),
+    )
+}
+
+extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
+    trace: UnwindTraceFn,
+    trace_argument: *mut c_void,
+    cursor_ptr: *const X86PhysicalCursor,
+) -> UnwindReasonCode {
     let Some(trace_fn) = trace else {
         return URC_END_OF_STACK;
     };
+    if cursor_ptr.is_null() {
+        return URC_END_OF_STACK;
+    }
+    // SAFETY: cursor_ptr points to the 64-byte stack-allocated X86PhysicalCursor
+    // initialized by the naked trampoline above.
+    let mut cursor = unsafe { *cursor_ptr };
+    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+        if cursor.ip == 0 {
+            break;
+        }
+        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let mut context = match find_registered_fde_record_for_ip(lookup_ip) {
+            Ok(Some(record)) => {
+                context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record))
+            }
+            _ => context_for_cursor_record(cursor, frame_index, lookup_ip, None),
+        };
+        // SAFETY: context is a live stack-local UnwindContext for this callback.
+        let reason = unsafe { trace_fn(&mut context, trace_argument) };
+        if reason != URC_NO_REASON {
+            return reason;
+        }
+        match step_x86_64_cursor(cursor) {
+            Ok(Some(next)) => cursor = next,
+            Ok(None) | Err(_) => break,
+        }
+    }
+    URC_END_OF_STACK
+}
 
-    let mut frame_pointer = current_frame_pointer();
-    let stack_pointer = current_stack_pointer();
+fn owned_backtrace_from_frame_pointer(
+    trace: UnwindTraceFn,
+    trace_argument: *mut c_void,
+    mut frame_pointer: usize,
+    stack_pointer: usize,
+) -> UnwindReasonCode {
+    let Some(trace_fn) = trace else {
+        return URC_END_OF_STACK;
+    };
     let Some(stack_limit) = stack_pointer.checked_add(MAX_STACK_SCAN_BYTES) else {
         return URC_END_OF_STACK;
     };
@@ -316,20 +459,21 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
         };
 
         if instruction_pointer != 0 {
+            let cfa = frame_pointer.saturating_add(2 * core::mem::size_of::<usize>());
             let mut context = UnwindContext {
                 ip: instruction_pointer,
                 frame_index,
                 frame_pointer,
                 stack_pointer,
+                cfa,
                 language_specific_data: 0,
                 region_start: 0,
                 text_rel_base: 0,
                 data_rel_base: 0,
                 general_registers: empty_general_registers(),
+                physical_cursor: None,
             };
-            // SAFETY: the callback receives a pointer to a stack-local context
-            // that remains alive for the duration of the call. The callback
-            // contract is the platform unwinder ABI.
+            // SAFETY: stack-local context remains valid for the trace callback.
             let reason = unsafe { trace_fn(&mut context, trace_argument) };
             if reason != URC_NO_REASON {
                 return reason;
@@ -348,6 +492,11 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
     URC_END_OF_STACK
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_DeleteException(exception: *mut UnwindException) {
     if exception.is_null() {
@@ -364,6 +513,33 @@ pub unsafe extern "C" fn _Unwind_DeleteException(exception: *mut UnwindException
     unsafe { cleanup(1, exception) };
 }
 
+#[inline]
+pub(crate) unsafe fn owned_get_cfa_raw(ctx: *mut c_void) -> UnwindWord {
+    if ctx.is_null() {
+        return 0;
+    }
+    // SAFETY: non-null contexts are owned by this module during unwind stop or
+    // personality callbacks. `cfa` holds the frame's DWARF Canonical Frame
+    // Address matching libgcc's `_Unwind_GetCFA(context)` (`context->cfa`).
+    unsafe { (*(ctx.cast::<UnwindContext>())).cfa }
+}
+
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _Unwind_GetCFA(ctx: *mut UnwindContext) -> UnwindWord {
+    // SAFETY: delegates to null-checked owned_get_cfa_raw.
+    unsafe { owned_get_cfa_raw(ctx.cast()) }
+}
+
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetDataRelBase(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
@@ -374,6 +550,11 @@ pub unsafe extern "C" fn _Unwind_GetDataRelBase(ctx: *mut UnwindContext) -> Unwi
     unsafe { (*ctx).data_rel_base }
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetGR(ctx: *mut UnwindContext, index: c_int) -> UnwindWord {
     let Ok(index) = usize::try_from(index) else {
@@ -387,6 +568,11 @@ pub unsafe extern "C" fn _Unwind_GetGR(ctx: *mut UnwindContext, index: c_int) ->
     unsafe { (*ctx).general_registers[index] }
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetIP(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
@@ -397,6 +583,11 @@ pub unsafe extern "C" fn _Unwind_GetIP(ctx: *mut UnwindContext) -> UnwindWord {
     unsafe { (*ctx).ip }
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetIPInfo(
     ctx: *mut UnwindContext,
@@ -412,6 +603,11 @@ pub unsafe extern "C" fn _Unwind_GetIPInfo(
     unsafe { _Unwind_GetIP(ctx) }
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetLanguageSpecificData(ctx: *mut UnwindContext) -> *mut c_void {
     if ctx.is_null() {
@@ -421,6 +617,11 @@ pub unsafe extern "C" fn _Unwind_GetLanguageSpecificData(ctx: *mut UnwindContext
     unsafe { (*ctx).language_specific_data as *mut c_void }
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetRegionStart(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
@@ -430,6 +631,11 @@ pub unsafe extern "C" fn _Unwind_GetRegionStart(ctx: *mut UnwindContext) -> Unwi
     unsafe { (*ctx).region_start }
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_GetTextRelBase(ctx: *mut UnwindContext) -> UnwindWord {
     if ctx.is_null() {
@@ -439,148 +645,426 @@ pub unsafe extern "C" fn _Unwind_GetTextRelBase(ctx: *mut UnwindContext) -> Unwi
     unsafe { (*ctx).text_rel_base }
 }
 
-#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
-core::arch::global_asm!(
-    ".global _Unwind_RaiseException",
-    ".type _Unwind_RaiseException, @function",
-    "_Unwind_RaiseException:",
-    "  push rbp",
-    "  mov rbp, rsp",
-    "  mov rsi, rbp",
-    "  mov rdx, rsp",
-    "  call __frankenlibc_owned_raise_exception_from_frame",
-    "  pop rbp",
-    "  ret",
-    ".size _Unwind_RaiseException, . - _Unwind_RaiseException",
-);
-
-#[cfg(any(debug_assertions, not(target_arch = "x86_64")))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
 #[cfg_attr(
-    all(not(debug_assertions), not(target_arch = "x86_64")),
+    all(debug_assertions, feature = "owned-unwind-stub"),
     unsafe(no_mangle)
 )]
-pub unsafe extern "C" fn _Unwind_RaiseException(
-    exception: *mut UnwindException,
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C-unwind" fn _Unwind_RaiseException(
+    _exception: *mut UnwindException,
 ) -> UnwindReasonCode {
-    owned_raise_exception_from_frame(exception, current_frame_pointer(), current_stack_pointer())
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rsi, rsp",
+        "call {helper}",
+        "add rsp, 72",
+        "ret",
+        helper = sym __frankenlibc_owned_raise_exception_from_cursor,
+    );
 }
 
-#[cfg_attr(all(not(debug_assertions), target_arch = "x86_64"), unsafe(no_mangle))]
-extern "C" fn __frankenlibc_owned_raise_exception_from_frame(
-    exception: *mut UnwindException,
-    frame_pointer: usize,
-    stack_pointer: usize,
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn _Unwind_RaiseException(
+    _exception: *mut UnwindException,
 ) -> UnwindReasonCode {
-    owned_raise_exception_from_frame(exception, frame_pointer, stack_pointer)
+    URC_END_OF_STACK
 }
 
-fn owned_raise_exception_from_frame(
+extern "C-unwind" fn __frankenlibc_owned_raise_exception_from_cursor(
     exception: *mut UnwindException,
-    frame_pointer: usize,
-    stack_pointer: usize,
+    cursor_ptr: *const X86PhysicalCursor,
+) -> UnwindReasonCode {
+    if cursor_ptr.is_null() {
+        return URC_FATAL_PHASE1_ERROR;
+    }
+    // SAFETY: cursor_ptr points to the stack-allocated X86PhysicalCursor in the naked stub.
+    let cursor = unsafe { *cursor_ptr };
+    owned_raise_exception_from_cursor(exception, cursor)
+}
+
+fn owned_raise_exception_from_cursor(
+    exception: *mut UnwindException,
+    cursor: X86PhysicalCursor,
 ) -> UnwindReasonCode {
     trace_owned_unwind(format_args!(
-        "raise exception={exception:p} fp={frame_pointer:#x} sp={stack_pointer:#x}"
+        "raise exception={exception:p} ip={:#x} rsp={:#x} rbp={:#x}",
+        cursor.ip, cursor.rsp, cursor.rbp
     ));
-    match owned_phase1_search_current_stack(exception, frame_pointer, stack_pointer) {
-        OwnedPhase1SearchOutcome::HandlerFound {
-            frame_index, ip, ..
+    emit_owned_unwind_jsonl("raise_enter", 0, cursor.ip, cursor.rsp, 0);
+    match owned_phase1_search_from_cursor(exception, cursor) {
+        OwnedPhase1CursorOutcome::HandlerFound {
+            frame_index,
+            ip,
+            handler_cfa,
         } => {
             trace_owned_unwind(format_args!(
-                "phase1 handler frame_index={frame_index} ip={ip:#x}"
+                "phase1 handler frame_index={frame_index} ip={ip:#x} cfa={handler_cfa:#x}"
             ));
             if !exception.is_null() {
-                // SAFETY: the exception header is supplied by the language
-                // runtime. private_1/private_2 are reserved for the unwinder.
+                // SAFETY: private_1 == 0 marks normal exception unwinding;
+                // private_2 records the target handler frame's canonical stack pointer.
                 unsafe {
                     (*exception).private_1 = 0;
-                    (*exception).private_2 = ip;
+                    (*exception).private_2 = handler_cfa;
                 }
             }
-            owned_phase2_cleanup_current_stack(
-                exception,
-                frame_index,
-                ip,
-                frame_pointer,
-                stack_pointer,
-            )
+            owned_phase2_cleanup_from_cursor(exception, handler_cfa, cursor)
         }
-        OwnedPhase1SearchOutcome::NoHandler => {
+        OwnedPhase1CursorOutcome::NoHandler => {
             trace_owned_unwind(format_args!("phase1 no handler"));
+            emit_owned_unwind_jsonl(
+                "raise_no_handler",
+                0,
+                cursor.ip,
+                cursor.rsp,
+                URC_END_OF_STACK,
+            );
             URC_END_OF_STACK
         }
-        OwnedPhase1SearchOutcome::Fatal { frame_index, code } => {
+        OwnedPhase1CursorOutcome::Fatal { frame_index, code } => {
             trace_owned_unwind(format_args!(
                 "phase1 fatal frame_index={frame_index} code={code}"
             ));
+            emit_owned_unwind_jsonl("raise_fatal", frame_index, cursor.ip, cursor.rsp, code);
             code
         }
     }
 }
 
-#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
-core::arch::global_asm!(
-    ".global _Unwind_Resume",
-    ".type _Unwind_Resume, @function",
-    "_Unwind_Resume:",
-    "  push rbp",
-    "  mov rbp, rsp",
-    "  mov rsi, rbp",
-    "  mov rdx, rsp",
-    "  call __frankenlibc_owned_resume_from_frame",
-    "  pop rbp",
-    "  ret",
-    ".size _Unwind_Resume, . - _Unwind_Resume",
-);
-
-#[cfg(any(debug_assertions, not(target_arch = "x86_64")))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
 #[cfg_attr(
-    all(not(debug_assertions), not(target_arch = "x86_64")),
+    all(debug_assertions, feature = "owned-unwind-stub"),
     unsafe(no_mangle)
 )]
-pub unsafe extern "C" fn _Unwind_Resume(exception: *mut UnwindException) {
-    owned_resume_from_frame(exception, current_frame_pointer(), current_stack_pointer())
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C-unwind" fn _Unwind_ForcedUnwind(
+    _exception: *mut UnwindException,
+    _stop: UnwindStopFn,
+    _stop_parameter: *mut c_void,
+) -> UnwindReasonCode {
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rcx, rsp",
+        "call {helper}",
+        "add rsp, 72",
+        "ret",
+        helper = sym __frankenlibc_owned_forced_unwind_from_cursor,
+    );
 }
 
-#[cfg_attr(all(not(debug_assertions), target_arch = "x86_64"), unsafe(no_mangle))]
-extern "C" fn __frankenlibc_owned_resume_from_frame(
-    exception: *mut UnwindException,
-    frame_pointer: usize,
-    stack_pointer: usize,
-) {
-    owned_resume_from_frame(exception, frame_pointer, stack_pointer)
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn _Unwind_ForcedUnwind(
+    _exception: *mut UnwindException,
+    _stop: UnwindStopFn,
+    _stop_parameter: *mut c_void,
+) -> UnwindReasonCode {
+    URC_FATAL_PHASE2_ERROR
 }
 
-fn owned_resume_from_frame(
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub(crate) unsafe extern "C-unwind" fn owned_forced_unwind_entry(
+    _exception: *mut UnwindException,
+    _stop: UnwindStopFn,
+    _stop_parameter: *mut c_void,
+) -> UnwindReasonCode {
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rcx, rsp",
+        "call {helper}",
+        "add rsp, 72",
+        "ret",
+        helper = sym __frankenlibc_owned_forced_unwind_from_cursor,
+    );
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) unsafe extern "C-unwind" fn owned_forced_unwind_entry(
+    _exception: *mut UnwindException,
+    _stop: UnwindStopFn,
+    _stop_parameter: *mut c_void,
+) -> UnwindReasonCode {
+    URC_FATAL_PHASE2_ERROR
+}
+
+extern "C-unwind" fn __frankenlibc_owned_forced_unwind_from_cursor(
     exception: *mut UnwindException,
-    frame_pointer: usize,
-    stack_pointer: usize,
-) -> ! {
-    trace_owned_unwind(format_args!(
-        "resume exception={exception:p} fp={frame_pointer:#x} sp={stack_pointer:#x}"
-    ));
+    stop: UnwindStopFn,
+    stop_parameter: *mut c_void,
+    cursor_ptr: *const X86PhysicalCursor,
+) -> UnwindReasonCode {
+    if exception.is_null() || cursor_ptr.is_null() {
+        return URC_FATAL_PHASE2_ERROR;
+    }
+    let Some(stop_fn) = stop else {
+        return URC_FATAL_PHASE2_ERROR;
+    };
+    // SAFETY: cursor_ptr points to the stack-allocated X86PhysicalCursor in the naked stub,
+    // and exception points to caller-owned 32-byte unwind header storage.
+    let cursor = unsafe { *cursor_ptr };
+    unsafe {
+        (*exception).private_1 = stop_fn as usize;
+        (*exception).private_2 = stop_parameter as usize;
+    }
+    emit_owned_unwind_jsonl("forced_unwind_enter", 0, cursor.ip, cursor.rsp, 0);
+    owned_forced_unwind_from_cursor(exception, stop_fn, stop_parameter, cursor)
+}
 
-    // _Unwind_Resume continues phase-2 cleanup from the current cleanup handler.
-    // The handler was found during phase-1, and private_1 may store the handler
-    // frame index. We re-raise from the current frame which will skip already-
-    // cleaned frames and eventually reach the handler.
-    let result = owned_raise_exception_from_frame(exception, frame_pointer, stack_pointer);
+#[cfg(all(
+    target_arch = "x86_64",
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C-unwind" fn _Unwind_Resume(_exception: *mut UnwindException) -> ! {
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rsi, rsp",
+        "call {helper}",
+        "ud2",
+        helper = sym __frankenlibc_owned_resume_from_cursor,
+    );
+}
 
-    // _Unwind_Resume should never return. If we get here, something went wrong.
-    trace_owned_unwind(format_args!("resume unexpectedly returned code={result}"));
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn _Unwind_Resume(_exception: *mut UnwindException) -> ! {
     std::process::abort()
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _Unwind_Resume_or_Rethrow(
+extern "C-unwind" fn __frankenlibc_owned_resume_from_cursor(
     exception: *mut UnwindException,
-) -> UnwindReasonCode {
-    // SAFETY: this symbol is the Itanium ABI rethrow edge. The current owned
-    // lane treats it as a fresh raise over the current stack so it either
-    // installs a validated handler context or returns a fatal/no-handler code.
-    owned_raise_exception_from_frame(exception, current_frame_pointer(), current_stack_pointer())
+    cursor_ptr: *const X86PhysicalCursor,
+) -> ! {
+    if exception.is_null() || cursor_ptr.is_null() {
+        std::process::abort();
+    }
+    // SAFETY: cursor_ptr points to the naked trampoline's X86PhysicalCursor, which
+    // describes the cleanup landing pad frame that just finished running and called
+    // `_Unwind_Resume`. Step ONE frame outward into its caller before continuing.
+    let resume_frame_cursor = unsafe { *cursor_ptr };
+    trace_owned_unwind(format_args!(
+        "resume exception={exception:p} from_ip={:#x} from_rsp={:#x}",
+        resume_frame_cursor.ip, resume_frame_cursor.rsp
+    ));
+    emit_owned_unwind_jsonl(
+        "resume_enter",
+        0,
+        resume_frame_cursor.ip,
+        resume_frame_cursor.rsp,
+        0,
+    );
+
+    let (private_1, private_2, exception_class) = unsafe {
+        (
+            (*exception).private_1,
+            (*exception).private_2,
+            (*exception).exception_class,
+        )
+    };
+
+    match step_x86_64_cursor(resume_frame_cursor) {
+        Ok(Some(caller_cursor)) => {
+            let result = if private_1 != 0 {
+                // SAFETY: `private_1` was populated with a validated `UnwindStopFn`
+                // pointer in `__frankenlibc_owned_forced_unwind_from_cursor`.
+                let stop_fn: unsafe extern "C-unwind" fn(
+                    c_int,
+                    UnwindAction,
+                    UnwindExceptionClass,
+                    *mut UnwindException,
+                    *mut UnwindContext,
+                    *mut c_void,
+                ) -> UnwindReasonCode = unsafe { core::mem::transmute(private_1) };
+                owned_forced_unwind_from_cursor(
+                    exception,
+                    stop_fn,
+                    private_2 as *mut c_void,
+                    caller_cursor,
+                )
+            } else {
+                owned_phase2_cleanup_from_cursor(exception, private_2, caller_cursor)
+            };
+            trace_owned_unwind(format_args!("resume unexpectedly returned code={result}"));
+            std::process::abort()
+        }
+        Ok(None) if private_1 != 0 => {
+            // Cleanup ran on the outermost stack frame; notify the forced-unwind
+            // stop function with UA_END_OF_STACK so thread teardown completes.
+            let stop_fn: unsafe extern "C-unwind" fn(
+                c_int,
+                UnwindAction,
+                UnwindExceptionClass,
+                *mut UnwindException,
+                *mut UnwindContext,
+                *mut c_void,
+            ) -> UnwindReasonCode = unsafe { core::mem::transmute(private_1) };
+            let mut end_ctx = empty_context_at_end(resume_frame_cursor.rsp);
+            let _ = unsafe {
+                stop_fn(
+                    1,
+                    UA_FORCE_UNWIND | UA_CLEANUP_PHASE | UA_END_OF_STACK,
+                    exception_class,
+                    exception,
+                    &mut end_ctx,
+                    private_2 as *mut c_void,
+                )
+            };
+            std::process::abort()
+        }
+        Ok(None) | Err(_) => {
+            trace_owned_unwind(format_args!("resume failed to step caller cursor"));
+            std::process::abort()
+        }
+    }
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[unsafe(naked)]
+pub unsafe extern "C-unwind" fn _Unwind_Resume_or_Rethrow(
+    _exception: *mut UnwindException,
+) -> UnwindReasonCode {
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rsi, rsp",
+        "call {helper}",
+        "add rsp, 72",
+        "ret",
+        helper = sym __frankenlibc_owned_resume_or_rethrow_from_cursor,
+    );
+}
+
+#[cfg(all(
+    not(target_arch = "x86_64"),
+    any(debug_assertions, feature = "owned-unwind-stub")
+))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn _Unwind_Resume_or_Rethrow(
+    _exception: *mut UnwindException,
+) -> UnwindReasonCode {
+    URC_END_OF_STACK
+}
+
+extern "C-unwind" fn __frankenlibc_owned_resume_or_rethrow_from_cursor(
+    exception: *mut UnwindException,
+    cursor_ptr: *const X86PhysicalCursor,
+) -> UnwindReasonCode {
+    if exception.is_null() || cursor_ptr.is_null() {
+        return URC_FATAL_PHASE1_ERROR;
+    }
+    let private_1 = unsafe { (*exception).private_1 };
+    if private_1 != 0 {
+        // Itanium ABI §1.6.3: for forced unwinding, `_Unwind_Resume_or_Rethrow`
+        // behaves identically to `_Unwind_Resume`.
+        __frankenlibc_owned_resume_from_cursor(exception, cursor_ptr);
+    }
+    let cursor = unsafe { *cursor_ptr };
+    owned_raise_exception_from_cursor(exception, cursor)
+}
+
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_SetGR(
     ctx: *mut UnwindContext,
@@ -593,12 +1077,15 @@ pub unsafe extern "C" fn _Unwind_SetGR(
     if ctx.is_null() || index >= MAX_UNWIND_GR {
         return;
     }
-    // SAFETY: non-null contexts are stack-local owned cursors during this
-    // phase-2 experiment. Mutating them records intent only; no CPU context is
-    // installed by this symbol.
+    // SAFETY: non-null contexts are stack-local owned cursors during phase-2.
     unsafe { (*ctx).general_registers[index] = new_value };
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _Unwind_SetIP(ctx: *mut UnwindContext, new_value: UnwindWord) {
     if ctx.is_null() {
@@ -608,27 +1095,77 @@ pub unsafe extern "C" fn _Unwind_SetIP(ctx: *mut UnwindContext, new_value: Unwin
     unsafe { (*ctx).ip = new_value };
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __register_frame(fde: *mut c_void) {
     register_frame(fde as usize, 0);
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __register_frame_info(fde: *mut c_void, object: *mut c_void) {
     register_frame(fde as usize, object as usize);
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __deregister_frame(fde: *mut c_void) {
     deregister_frame(fde as usize);
 }
 
+#[cfg(any(debug_assertions, feature = "owned-unwind-stub"))]
+#[cfg_attr(
+    all(debug_assertions, feature = "owned-unwind-stub"),
+    unsafe(no_mangle)
+)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __deregister_frame_info(fde: *mut c_void) -> *mut c_void {
     deregister_frame(fde as usize)
         .map(|object| object as *mut c_void)
         .unwrap_or(core::ptr::null_mut())
 }
+
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone"),
+    feature = "owned-unwind-stub"
+))]
+core::arch::global_asm!(
+    ".symver _Unwind_DeleteException, _Unwind_DeleteException@@GCC_3.0, remove",
+    ".symver _Unwind_ForcedUnwind, _Unwind_ForcedUnwind@@GCC_3.0, remove",
+    ".symver _Unwind_GetDataRelBase, _Unwind_GetDataRelBase@@GCC_3.0, remove",
+    ".symver _Unwind_GetGR, _Unwind_GetGR@@GCC_3.0, remove",
+    ".symver _Unwind_GetIP, _Unwind_GetIP@@GCC_3.0, remove",
+    ".symver _Unwind_GetLanguageSpecificData, _Unwind_GetLanguageSpecificData@@GCC_3.0, remove",
+    ".symver _Unwind_GetRegionStart, _Unwind_GetRegionStart@@GCC_3.0, remove",
+    ".symver _Unwind_GetTextRelBase, _Unwind_GetTextRelBase@@GCC_3.0, remove",
+    ".symver _Unwind_RaiseException, _Unwind_RaiseException@@GCC_3.0, remove",
+    ".symver _Unwind_Resume, _Unwind_Resume@@GCC_3.0, remove",
+    ".symver _Unwind_SetGR, _Unwind_SetGR@@GCC_3.0, remove",
+    ".symver _Unwind_SetIP, _Unwind_SetIP@@GCC_3.0, remove",
+    ".symver __register_frame, __register_frame@@GCC_3.0, remove",
+    ".symver __register_frame_info, __register_frame_info@@GCC_3.0, remove",
+    ".symver __deregister_frame, __deregister_frame@@GCC_3.0, remove",
+    ".symver __deregister_frame_info, __deregister_frame_info@@GCC_3.0, remove",
+    ".symver _Unwind_Backtrace, _Unwind_Backtrace@@GCC_3.3, remove",
+    ".symver _Unwind_GetCFA, _Unwind_GetCFA@@GCC_3.3, remove",
+    ".symver _Unwind_Resume_or_Rethrow, _Unwind_Resume_or_Rethrow@@GCC_3.3, remove",
+    ".symver _Unwind_GetIPInfo, _Unwind_GetIPInfo@@GCC_4.2.0, remove",
+);
 
 #[doc(hidden)]
 pub fn owned_frame_is_registered_for_tests(fde: *const c_void) -> bool {
@@ -1092,134 +1629,407 @@ fn phase2_cleanup_ip(
     }
 }
 
-fn owned_phase2_cleanup_current_stack(
-    exception: *mut UnwindException,
-    handler_frame_index: usize,
-    handler_ip: usize,
-    mut frame_pointer: usize,
-    stack_pointer: usize,
-) -> UnwindReasonCode {
-    let Some(stack_limit) = stack_pointer.checked_add(MAX_STACK_SCAN_BYTES) else {
-        return URC_FATAL_PHASE2_ERROR;
-    };
+#[derive(Clone, Copy, Debug)]
+enum OwnedPhase1CursorOutcome {
+    HandlerFound {
+        frame_index: usize,
+        ip: usize,
+        handler_cfa: usize,
+    },
+    NoHandler,
+    Fatal {
+        frame_index: usize,
+        code: UnwindReasonCode,
+    },
+}
 
+/// Under `-C panic=abort` (`CARGO_PROFILE_RELEASE_PANIC=abort`), `rustc` emits
+/// zero `Drop` cleanup landing pads inside `libfrankenlibc_abi.so` and instead
+/// attaches `rust_eh_personality` `panic_cannot_unwind` terminate pads around
+/// `extern "C-unwind"` call boundaries (`continue_native_thread_exit`,
+/// `pthread_exit`, cancellation sleep helpers, `thread_trampoline`, `qsort`).
+/// Treating own-image personalities in `panic = "abort"` builds as unwind-transparent
+/// preserves stop callbacks and outer C/C++/Rust application landing pads without
+/// requiring `libgcc_s.so.1`.
+#[inline]
+fn own_panic_abort_frame(lookup_ip: usize) -> bool {
+    cfg!(panic = "abort") && crate::pthread_abi::address_is_inside_this_object(lookup_ip)
+}
+
+fn owned_phase1_search_from_cursor(
+    exception: *mut UnwindException,
+    mut cursor: X86PhysicalCursor,
+) -> OwnedPhase1CursorOutcome {
     let exception_class = if exception.is_null() {
         0
     } else {
-        // SAFETY: non-null exception pointers are supplied by the language
-        // runtime following the unwind ABI header layout.
+        // SAFETY: non-null exception pointers are supplied by the language runtime.
         unsafe { (*exception).exception_class }
     };
 
-    let mut frame_index = 0usize;
-    let mut previous_frame_pointer = None;
-    while frame_index < MAX_BACKTRACE_FRAMES
-        && valid_frame_pointer(frame_pointer, stack_pointer, stack_limit)
-    {
-        let Some(next_frame) = read_word(frame_pointer) else {
+    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+        if cursor.ip == 0 {
             break;
-        };
-        let Some(return_address_slot) = frame_pointer.checked_add(core::mem::size_of::<usize>())
-        else {
-            break;
-        };
-        let Some(instruction_pointer) = read_word(return_address_slot) else {
-            break;
-        };
-
-        if instruction_pointer != 0 {
-            let effective_ip = if frame_index == handler_frame_index {
-                handler_ip
-            } else {
-                instruction_pointer
-            };
-            let lookup_ip = frame_lookup_ip(effective_ip);
-            let record = match find_registered_fde_record_for_ip(lookup_ip) {
-                Ok(Some(record)) => Some(record),
-                Ok(None) => None,
-                Err(_) => return URC_FATAL_PHASE2_ERROR,
-            };
-            if let Some(record) = record
-                && let Some(personality) = record.fde.personality
-            {
-                let physical_stack_pointer = previous_frame_pointer
-                    .and_then(|fp: usize| fp.checked_add(2 * core::mem::size_of::<usize>()))
-                    .unwrap_or(stack_pointer);
-                let mut context = context_for_physical_fde(
-                    effective_ip,
-                    frame_index,
-                    record.fde,
-                    frame_pointer,
-                    physical_stack_pointer,
-                );
-                let mut actions = UA_CLEANUP_PHASE;
-                if frame_index == handler_frame_index {
-                    actions |= UA_HANDLER_FRAME;
-                }
-                let code = call_personality(
-                    personality,
-                    actions,
-                    exception_class,
-                    exception,
-                    &mut context,
-                );
-                trace_owned_unwind(format_args!(
-                    "phase2 frame_index={frame_index} target={handler_frame_index} ip={effective_ip:#x} raw_ip={instruction_pointer:#x} actions={actions:#x} code={code} ctx_ip={:#x} gr0={:#x} gr1={:#x}",
-                    context.ip, context.general_registers[0], context.general_registers[1]
-                ));
-                match code {
-                    URC_INSTALL_CONTEXT if frame_index == handler_frame_index => {
-                        let install = match prepare_landing_pad_install(
-                            &context,
-                            &record.eh_frame,
-                            record.fde,
-                            lookup_ip,
-                        ) {
-                            Ok(install) => install,
-                            Err(err) => {
-                                trace_owned_unwind(format_args!("phase2 install error {err:?}"));
-                                return URC_FATAL_PHASE2_ERROR;
-                            }
-                        };
-                        trace_owned_unwind(format_args!(
-                            "phase2 install ip={:#x} fp={:#x} sp={:#x} gr0={:#x} gr1={:#x}",
-                            install.ip,
-                            install.frame_pointer,
-                            install.stack_pointer,
-                            install.general_register_0,
-                            install.general_register_1
-                        ));
-                        // SAFETY: prepare_landing_pad_install validated the
-                        // physical stack/frame cursor and landing-pad IP for
-                        // this architecture-specific non-returning transfer.
-                        unsafe { install_landing_pad_context(install) };
+        }
+        let lookup_ip = frame_lookup_ip(cursor.ip);
+        match find_registered_fde_record_for_ip(lookup_ip) {
+            Ok(Some(record)) => {
+                if let Some(personality) = record.fde.personality
+                    && !own_panic_abort_frame(lookup_ip)
+                {
+                    let mut context =
+                        context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record));
+                    let code = call_personality(
+                        personality,
+                        UA_SEARCH_PHASE,
+                        exception_class,
+                        exception,
+                        &mut context,
+                    );
+                    emit_owned_unwind_jsonl(
+                        "phase1_frame",
+                        frame_index,
+                        cursor.ip,
+                        cursor.rsp,
+                        code,
+                    );
+                    match code {
+                        URC_HANDLER_FOUND => {
+                            return OwnedPhase1CursorOutcome::HandlerFound {
+                                frame_index,
+                                ip: cursor.ip,
+                                handler_cfa: cursor.rsp,
+                            };
+                        }
+                        URC_CONTINUE_UNWIND | URC_NO_REASON => {}
+                        other => {
+                            return OwnedPhase1CursorOutcome::Fatal {
+                                frame_index,
+                                code: other,
+                            };
+                        }
                     }
-                    URC_INSTALL_CONTEXT => return URC_FATAL_PHASE2_ERROR,
-                    URC_CONTINUE_UNWIND | URC_NO_REASON => {}
-                    other => return other,
                 }
             }
-            if frame_index == handler_frame_index {
-                break;
+            Ok(None) => {}
+            Err(_) => {
+                return OwnedPhase1CursorOutcome::Fatal {
+                    frame_index,
+                    code: URC_FATAL_PHASE1_ERROR,
+                };
             }
-            frame_index += 1;
         }
+        match step_x86_64_cursor(cursor) {
+            Ok(Some(next)) => cursor = next,
+            Ok(None) => break,
+            Err(_) => {
+                return OwnedPhase1CursorOutcome::Fatal {
+                    frame_index,
+                    code: URC_FATAL_PHASE1_ERROR,
+                };
+            }
+        }
+    }
 
-        if next_frame <= frame_pointer
-            || !valid_frame_pointer(next_frame, stack_pointer, stack_limit)
-        {
+    OwnedPhase1CursorOutcome::NoHandler
+}
+
+fn owned_phase2_cleanup_from_cursor(
+    exception: *mut UnwindException,
+    handler_cfa: usize,
+    mut cursor: X86PhysicalCursor,
+) -> UnwindReasonCode {
+    let exception_class = if exception.is_null() {
+        0
+    } else {
+        // SAFETY: non-null exception pointers are supplied by the language runtime.
+        unsafe { (*exception).exception_class }
+    };
+
+    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+        if cursor.ip == 0 {
             break;
         }
-        previous_frame_pointer = Some(frame_pointer);
-        frame_pointer = next_frame;
+        let is_handler_frame = cursor.rsp == handler_cfa;
+        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let record = match find_registered_fde_record_for_ip(lookup_ip) {
+            Ok(Some(record)) => Some(record),
+            Ok(None) => None,
+            Err(_) => return URC_FATAL_PHASE2_ERROR,
+        };
+        if let Some(record) = record
+            && let Some(personality) = record.fde.personality
+            && !own_panic_abort_frame(lookup_ip)
+        {
+            let mut context =
+                context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record));
+            let mut actions = UA_CLEANUP_PHASE;
+            if is_handler_frame {
+                actions |= UA_HANDLER_FRAME;
+            }
+            let code = call_personality(
+                personality,
+                actions,
+                exception_class,
+                exception,
+                &mut context,
+            );
+            trace_owned_unwind(format_args!(
+                "phase2 frame_index={frame_index} cfa={:#x} target_cfa={handler_cfa:#x} ip={:#x} actions={actions:#x} code={code} ctx_ip={:#x} gr0={:#x} gr1={:#x}",
+                cursor.rsp,
+                cursor.ip,
+                context.ip,
+                context.general_registers[0],
+                context.general_registers[1]
+            ));
+            emit_owned_unwind_jsonl("phase2_frame", frame_index, cursor.ip, cursor.rsp, code);
+            match code {
+                URC_INSTALL_CONTEXT => {
+                    let regs = match prepare_cursor_landing_pad_registers(
+                        &context,
+                        &record.eh_frame,
+                        record.fde,
+                        lookup_ip,
+                    ) {
+                        Ok(regs) => regs,
+                        Err(err) => {
+                            trace_owned_unwind(format_args!("phase2 install error {err:?}"));
+                            return URC_FATAL_PHASE2_ERROR;
+                        }
+                    };
+                    emit_owned_unwind_jsonl(
+                        if is_handler_frame {
+                            "phase2_install_handler"
+                        } else {
+                            "phase2_install_cleanup"
+                        },
+                        frame_index,
+                        regs.ip,
+                        regs.rsp,
+                        URC_INSTALL_CONTEXT,
+                    );
+                    // SAFETY: `prepare_cursor_landing_pad_registers` validated the
+                    // landing pad IP, DWARF CFA row, stack alignment, and restored
+                    // callee-saved register cursor for this frame.
+                    unsafe { install_landing_pad_registers(regs) };
+                }
+                URC_CONTINUE_UNWIND | URC_NO_REASON => {
+                    if is_handler_frame {
+                        return URC_FATAL_PHASE2_ERROR;
+                    }
+                }
+                other => return other,
+            }
+        } else if is_handler_frame {
+            return URC_FATAL_PHASE2_ERROR;
+        }
+
+        match step_x86_64_cursor(cursor) {
+            Ok(Some(next)) => cursor = next,
+            Ok(None) | Err(_) => break,
+        }
     }
 
     URC_FATAL_PHASE2_ERROR
 }
 
+fn owned_forced_unwind_from_cursor(
+    exception: *mut UnwindException,
+    stop_fn: unsafe extern "C-unwind" fn(
+        c_int,
+        UnwindAction,
+        UnwindExceptionClass,
+        *mut UnwindException,
+        *mut UnwindContext,
+        *mut c_void,
+    ) -> UnwindReasonCode,
+    stop_parameter: *mut c_void,
+    mut cursor: X86PhysicalCursor,
+) -> UnwindReasonCode {
+    let exception_class = if exception.is_null() {
+        0
+    } else {
+        // SAFETY: caller validated non-null exception pointer.
+        unsafe { (*exception).exception_class }
+    };
+
+    for frame_index in 0..MAX_BACKTRACE_FRAMES {
+        if cursor.ip == 0 {
+            break;
+        }
+        let lookup_ip = frame_lookup_ip(cursor.ip);
+        let record = match find_registered_fde_record_for_ip(lookup_ip) {
+            Ok(Some(record)) => Some(record),
+            Ok(None) => None,
+            Err(_) => return URC_FATAL_PHASE2_ERROR,
+        };
+        let mut context =
+            context_for_cursor_record(cursor, frame_index, lookup_ip, record.as_ref());
+        let frame_cfa = context.cfa;
+
+        // 1. Notify the forced-unwind stop callback BEFORE running this frame's
+        // language personality so C cleanup buffers registered inside or deeper
+        // than this frame run in exact LIFO stack-address order.
+        let stop_actions = UA_FORCE_UNWIND | UA_CLEANUP_PHASE;
+        // SAFETY: context is stack-local for this callback and stop_fn follows
+        // the Itanium C++ ABI `_Unwind_Stop_Fn` contract.
+        let stop_code = unsafe {
+            stop_fn(
+                1,
+                stop_actions,
+                exception_class,
+                exception,
+                &mut context,
+                stop_parameter,
+            )
+        };
+        trace_owned_unwind(format_args!(
+            "forced stop frame_index={frame_index} ip={:#x} cfa={frame_cfa:#x} stop_code={stop_code}",
+            cursor.ip
+        ));
+        emit_owned_unwind_jsonl(
+            "forced_unwind_stop",
+            frame_index,
+            cursor.ip,
+            frame_cfa,
+            stop_code,
+        );
+        match stop_code {
+            URC_NO_REASON => {}
+            URC_NORMAL_STOP => return URC_NORMAL_STOP,
+            other => return other,
+        }
+
+        // 2. Run this frame's language personality in forced-unwind cleanup mode.
+        if let Some(record) = record
+            && let Some(personality) = record.fde.personality
+            && !own_panic_abort_frame(lookup_ip)
+        {
+            context = context_for_cursor_record(cursor, frame_index, lookup_ip, Some(&record));
+            let pers_code = call_personality(
+                personality,
+                UA_FORCE_UNWIND | UA_CLEANUP_PHASE,
+                exception_class,
+                exception,
+                &mut context,
+            );
+            trace_owned_unwind(format_args!(
+                "forced personality frame_index={frame_index} ip={:#x} cfa={frame_cfa:#x} pers_code={pers_code} lpad={:#x}",
+                cursor.ip, context.ip
+            ));
+            emit_owned_unwind_jsonl(
+                "forced_unwind_personality",
+                frame_index,
+                cursor.ip,
+                frame_cfa,
+                pers_code,
+            );
+            match pers_code {
+                URC_INSTALL_CONTEXT => {
+                    let regs = match prepare_cursor_landing_pad_registers(
+                        &context,
+                        &record.eh_frame,
+                        record.fde,
+                        lookup_ip,
+                    ) {
+                        Ok(regs) => regs,
+                        Err(err) => {
+                            trace_owned_unwind(format_args!("forced install error {err:?}"));
+                            return URC_FATAL_PHASE2_ERROR;
+                        }
+                    };
+                    emit_owned_unwind_jsonl(
+                        "forced_unwind_install_cleanup",
+                        frame_index,
+                        regs.ip,
+                        regs.rsp,
+                        URC_INSTALL_CONTEXT,
+                    );
+                    // SAFETY: landing pad and physical cursor validated above.
+                    unsafe { install_landing_pad_registers(regs) };
+                }
+                URC_CONTINUE_UNWIND | URC_NO_REASON => {}
+                _ => return URC_FATAL_PHASE2_ERROR,
+            }
+        }
+
+        match step_x86_64_cursor(cursor) {
+            Ok(Some(next)) => cursor = next,
+            Ok(None) => {
+                let mut end_ctx = empty_context_at_end(cursor.rsp);
+                emit_owned_unwind_jsonl(
+                    "forced_end_of_stack",
+                    frame_index + 1,
+                    0,
+                    cursor.rsp,
+                    UA_END_OF_STACK,
+                );
+                let end_code = unsafe {
+                    stop_fn(
+                        1,
+                        UA_FORCE_UNWIND | UA_CLEANUP_PHASE | UA_END_OF_STACK,
+                        exception_class,
+                        exception,
+                        &mut end_ctx,
+                        stop_parameter,
+                    )
+                };
+                return if end_code == URC_NO_REASON {
+                    URC_FATAL_PHASE2_ERROR
+                } else {
+                    end_code
+                };
+            }
+            Err(_) => return URC_FATAL_PHASE2_ERROR,
+        }
+    }
+
+    let mut end_ctx = empty_context_at_end(cursor.rsp);
+    let end_code = unsafe {
+        stop_fn(
+            1,
+            UA_FORCE_UNWIND | UA_CLEANUP_PHASE | UA_END_OF_STACK,
+            exception_class,
+            exception,
+            &mut end_ctx,
+            stop_parameter,
+        )
+    };
+    if end_code == URC_NO_REASON {
+        URC_FATAL_PHASE2_ERROR
+    } else {
+        end_code
+    }
+}
+
 fn trace_owned_unwind(args: std::fmt::Arguments<'_>) {
     if std::env::var_os("FRANKENLIBC_OWNED_UNWIND_TRACE").is_some() {
-        eprintln!("[owned-unwind] {args}");
+        let _ = writeln!(std::io::stderr(), "[owned-unwind] {args}");
+    }
+}
+
+fn emit_owned_unwind_jsonl(
+    event: &str,
+    frame_index: usize,
+    ip: usize,
+    cfa: usize,
+    code: UnwindReasonCode,
+) {
+    let Some(path) = std::env::var_os("FRANKENLIBC_OWNED_UNWIND_JSONL") else {
+        return;
+    };
+    if path.is_empty() {
+        return;
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(
+            file,
+            "{{\"schema_version\":\"frankenlibc.owned_unwind.v1\",\"event\":\"{event}\",\"frame_index\":{frame_index},\"ip\":\"{ip:#x}\",\"cfa\":\"{cfa:#x}\",\"code\":{code}}}"
+        );
     }
 }
 
@@ -1228,94 +2038,152 @@ fn frame_lookup_ip(return_address: usize) -> usize {
     return_address.saturating_sub(1)
 }
 
-fn owned_phase1_search_current_stack(
-    exception: *mut UnwindException,
-    mut frame_pointer: usize,
-    stack_pointer: usize,
-) -> OwnedPhase1SearchOutcome {
-    let Some(stack_limit) = stack_pointer.checked_add(MAX_STACK_SCAN_BYTES) else {
-        return OwnedPhase1SearchOutcome::NoHandler;
-    };
+fn step_x86_64_cursor(
+    cursor: X86PhysicalCursor,
+) -> Result<Option<X86PhysicalCursor>, OwnedUnwindDecodeError> {
+    if cursor.ip == 0 || cursor.rsp == 0 {
+        return Ok(None);
+    }
+    let lookup_ip = frame_lookup_ip(cursor.ip);
+    if let Some(record) = find_registered_fde_record_for_ip(lookup_ip)? {
+        let state = evaluate_cfi_state(&record.eh_frame, record.fde, lookup_ip)?;
+        let Some(cfa_base) = cursor_read_dwarf_reg(&cursor, state.cfa_register) else {
+            return Err(OwnedUnwindDecodeError::MalformedRecord);
+        };
+        let Some(cfa) = checked_add_signed_usize_any(cfa_base, state.cfa_offset) else {
+            return Err(OwnedUnwindDecodeError::Overflow);
+        };
 
-    let mut frame_index = 0usize;
-    while frame_index < MAX_BACKTRACE_FRAMES
-        && valid_frame_pointer(frame_pointer, stack_pointer, stack_limit)
-    {
-        let Some(next_frame) = read_word(frame_pointer) else {
-            break;
-        };
-        let Some(return_address_slot) = frame_pointer.checked_add(core::mem::size_of::<usize>())
-        else {
-            break;
-        };
-        let Some(instruction_pointer) = read_word(return_address_slot) else {
-            break;
-        };
-        if instruction_pointer != 0 {
-            let lookup_ip = frame_lookup_ip(instruction_pointer);
-            match find_registered_fde_record_for_ip(lookup_ip) {
-                Ok(Some(record)) => {
-                    if let Some(personality) = record.fde.personality {
-                        let mut context = context_for_physical_fde(
-                            instruction_pointer,
-                            frame_index,
-                            record.fde,
-                            frame_pointer,
-                            stack_pointer,
-                        );
-                        let exception_class = if exception.is_null() {
-                            0
-                        } else {
-                            // SAFETY: non-null exception pointers are supplied by
-                            // the language runtime following the unwind ABI header.
-                            unsafe { (*exception).exception_class }
-                        };
-                        let code = call_personality(
-                            personality,
-                            UA_SEARCH_PHASE,
-                            exception_class,
-                            exception,
-                            &mut context,
-                        );
-                        match code {
-                            URC_HANDLER_FOUND => {
-                                return OwnedPhase1SearchOutcome::HandlerFound {
-                                    frame_index,
-                                    ip: instruction_pointer,
-                                    region_start: context.region_start,
-                                    language_specific_data: context.language_specific_data,
-                                };
-                            }
-                            URC_CONTINUE_UNWIND | URC_NO_REASON => {}
-                            other => {
-                                return OwnedPhase1SearchOutcome::Fatal {
-                                    frame_index,
-                                    code: other,
-                                };
-                            }
-                        }
-                    }
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    return OwnedPhase1SearchOutcome::Fatal {
-                        frame_index,
-                        code: URC_FATAL_PHASE1_ERROR,
-                    };
+        let ra_rule = state.register_rule(record.fde.return_address_register);
+        let next_ip = match ra_rule {
+            CfiRegisterRule::Undefined | CfiRegisterRule::SameValue => return Ok(None),
+            CfiRegisterRule::Offset(off) => {
+                let addr = checked_add_signed_usize_any(cfa, off)
+                    .ok_or(OwnedUnwindDecodeError::Overflow)?;
+                match read_word(addr) {
+                    Some(0) | None => return Ok(None),
+                    Some(ip) => ip,
                 }
             }
-            frame_index += 1;
-        }
+            CfiRegisterRule::ValOffset(off) => {
+                let ip = checked_add_signed_usize_any(cfa, off)
+                    .ok_or(OwnedUnwindDecodeError::Overflow)?;
+                if ip == 0 {
+                    return Ok(None);
+                }
+                ip
+            }
+            CfiRegisterRule::Register(reg) => match cursor_read_dwarf_reg(&cursor, reg) {
+                Some(0) | None => return Ok(None),
+                Some(ip) => ip,
+            },
+        };
 
-        if next_frame <= frame_pointer
-            || !valid_frame_pointer(next_frame, stack_pointer, stack_limit)
-        {
-            break;
+        let next_rsp = match state.register_rule(X86_64_DWARF_RSP) {
+            CfiRegisterRule::Undefined => cfa,
+            CfiRegisterRule::SameValue => cursor.rsp,
+            CfiRegisterRule::Offset(off) => {
+                let addr = checked_add_signed_usize_any(cfa, off)
+                    .ok_or(OwnedUnwindDecodeError::Overflow)?;
+                read_word(addr).ok_or(OwnedUnwindDecodeError::MalformedRecord)?
+            }
+            CfiRegisterRule::ValOffset(off) => {
+                checked_add_signed_usize_any(cfa, off).ok_or(OwnedUnwindDecodeError::Overflow)?
+            }
+            CfiRegisterRule::Register(reg) => cursor_read_dwarf_reg(&cursor, reg)
+                .ok_or(OwnedUnwindDecodeError::MalformedRecord)?,
+        };
+
+        let next_cursor_reg = |reg: usize,
+                               current: usize|
+         -> Result<usize, OwnedUnwindDecodeError> {
+            match state.register_rule(reg) {
+                CfiRegisterRule::Undefined | CfiRegisterRule::SameValue => Ok(current),
+                CfiRegisterRule::Offset(off) => {
+                    let addr = checked_add_signed_usize_any(cfa, off)
+                        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+                    read_word(addr).ok_or(OwnedUnwindDecodeError::MalformedRecord)
+                }
+                CfiRegisterRule::ValOffset(off) => {
+                    checked_add_signed_usize_any(cfa, off).ok_or(OwnedUnwindDecodeError::Overflow)
+                }
+                CfiRegisterRule::Register(other_reg) => cursor_read_dwarf_reg(&cursor, other_reg)
+                    .ok_or(OwnedUnwindDecodeError::MalformedRecord),
+            }
+        };
+
+        let next = X86PhysicalCursor {
+            ip: next_ip,
+            rsp: next_rsp,
+            rbp: next_cursor_reg(X86_64_DWARF_RBP, cursor.rbp)?,
+            rbx: next_cursor_reg(X86_64_DWARF_RBX, cursor.rbx)?,
+            r12: next_cursor_reg(X86_64_DWARF_R12, cursor.r12)?,
+            r13: next_cursor_reg(X86_64_DWARF_R13, cursor.r13)?,
+            r14: next_cursor_reg(X86_64_DWARF_R14, cursor.r14)?,
+            r15: next_cursor_reg(X86_64_DWARF_R15, cursor.r15)?,
+        };
+        if next.rsp == cursor.rsp && next.ip == cursor.ip {
+            return Ok(None);
         }
-        frame_pointer = next_frame;
+        return Ok(Some(next));
     }
 
-    OwnedPhase1SearchOutcome::NoHandler
+    // Fallback for hand-written stubs without `.eh_frame`: step `%rbp` chain if valid.
+    let Some(stack_limit) = cursor.rsp.checked_add(MAX_STACK_SCAN_BYTES) else {
+        return Ok(None);
+    };
+    if !valid_frame_pointer(cursor.rbp, cursor.rsp, stack_limit) {
+        return Ok(None);
+    }
+    let Some(next_rbp) = read_word(cursor.rbp) else {
+        return Ok(None);
+    };
+    let Some(ra_slot) = cursor.rbp.checked_add(core::mem::size_of::<usize>()) else {
+        return Ok(None);
+    };
+    let Some(next_ip) = read_word(ra_slot) else {
+        return Ok(None);
+    };
+    let Some(next_rsp) = cursor.rbp.checked_add(2 * core::mem::size_of::<usize>()) else {
+        return Ok(None);
+    };
+    if next_ip == 0 || next_rsp <= cursor.rsp {
+        return Ok(None);
+    }
+    Ok(Some(X86PhysicalCursor {
+        ip: next_ip,
+        rsp: next_rsp,
+        rbp: next_rbp,
+        rbx: cursor.rbx,
+        r12: cursor.r12,
+        r13: cursor.r13,
+        r14: cursor.r14,
+        r15: cursor.r15,
+    }))
+}
+
+#[inline]
+fn cursor_read_dwarf_reg(cursor: &X86PhysicalCursor, register: usize) -> Option<usize> {
+    match register {
+        X86_64_DWARF_RBX => Some(cursor.rbx),
+        X86_64_DWARF_RBP => Some(cursor.rbp),
+        X86_64_DWARF_RSP => Some(cursor.rsp),
+        X86_64_DWARF_R12 => Some(cursor.r12),
+        X86_64_DWARF_R13 => Some(cursor.r13),
+        X86_64_DWARF_R14 => Some(cursor.r14),
+        X86_64_DWARF_R15 => Some(cursor.r15),
+        X86_64_DWARF_RIP => Some(cursor.ip),
+        _ => None,
+    }
+}
+
+#[inline]
+fn checked_add_signed_usize_any(base: usize, offset: isize) -> Option<usize> {
+    if offset >= 0 {
+        base.checked_add(offset as usize)
+    } else {
+        base.checked_sub(offset.unsigned_abs())
+    }
 }
 
 struct RegisteredFdeRecord {
@@ -1470,16 +2338,14 @@ fn search_eh_frame_hdr_for_ip(
         range.eh_frame_hdr_start,
     )?;
 
-    // Read the FDE and verify IP is within range
-    let eh_frame = copy_eh_frame_from_address(eh_frame_ptr, fde_ptr)?;
-    if let Some(fde) = find_fde_for_ip(&eh_frame, eh_frame_ptr, ip, true)?
-        && ip >= fde.pc_begin
-        && ip < fde.pc_end
-    {
-        return Ok(Some(RegisteredFdeRecord { fde, eh_frame }));
+    let _ = eh_frame_ptr;
+
+    // Decode the exact CIE + FDE pair in O(1) without copying the full .eh_frame section.
+    if let Some(record) = decode_live_fde_at_address(range, fde_ptr, ip)? {
+        return Ok(Some(record));
     }
 
-    // If exact match failed, linear scan nearby entries
+    // If exact match failed (e.g. overlapping/adjacent FDE range), probe nearby table entries.
     for delta in [-1i32, 1, -2, 2] {
         let adj_index = entry_index as i32 + delta;
         if adj_index < 0 || adj_index as usize >= fde_count {
@@ -1507,15 +2373,8 @@ fn search_eh_frame_hdr_for_ip(
             0,
             range.eh_frame_hdr_start,
         )?;
-        let adj_eh_frame = copy_eh_frame_from_address(eh_frame_ptr, adj_fde_ptr)?;
-        if let Some(fde) = find_fde_for_ip(&adj_eh_frame, eh_frame_ptr, ip, true)?
-            && ip >= fde.pc_begin
-            && ip < fde.pc_end
-        {
-            return Ok(Some(RegisteredFdeRecord {
-                fde,
-                eh_frame: adj_eh_frame,
-            }));
+        if let Some(record) = decode_live_fde_at_address(range, adj_fde_ptr, ip)? {
+            return Ok(Some(record));
         }
     }
 
@@ -1532,47 +2391,111 @@ fn encoded_pointer_size(base_enc: u8) -> Result<usize, OwnedUnwindDecodeError> {
     }
 }
 
-fn copy_eh_frame_from_address(
-    eh_frame_base: usize,
+fn decode_live_fde_at_address(
+    range: &OwnedLoadedEhFrameRange,
     fde_ptr: usize,
-) -> Result<Vec<u8>, OwnedUnwindDecodeError> {
-    // Find the CIE that this FDE references, then copy enough .eh_frame data
-    // to include the CIE and FDE.
-    if fde_ptr == 0 || eh_frame_base == 0 {
+    ip: usize,
+) -> Result<Option<RegisteredFdeRecord>, OwnedUnwindDecodeError> {
+    if fde_ptr < range.load_start
+        || fde_ptr
+            .checked_add(8)
+            .is_none_or(|end| end > range.load_end)
+    {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
 
-    // Read FDE length to find its extent
+    // SAFETY: fde_ptr..fde_ptr+8 lies inside the loaded PT_LOAD span for this object.
     let fde_length = unsafe { core::ptr::read_unaligned(fde_ptr as *const u32) };
     if fde_length == 0 || fde_length == u32::MAX {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
+    let fde_total = 4usize
+        .checked_add(fde_length as usize)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    if fde_total > MAX_REGISTERED_EH_FRAME_BYTES {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
     let fde_end = fde_ptr
-        .checked_add(4)
-        .and_then(|v| v.checked_add(fde_length as usize))
+        .checked_add(fde_total)
         .ok_or(OwnedUnwindDecodeError::Overflow)?;
-
-    // Read CIE pointer from FDE to find CIE location
-    let cie_ptr_offset = unsafe { core::ptr::read_unaligned((fde_ptr + 4) as *const u32) };
-    if cie_ptr_offset == 0 {
-        return Err(OwnedUnwindDecodeError::MalformedRecord);
-    }
-    let cie_ptr = (fde_ptr + 4)
-        .checked_sub(cie_ptr_offset as usize)
-        .ok_or(OwnedUnwindDecodeError::Overflow)?;
-
-    // Copy from CIE start to FDE end
-    let copy_start = cie_ptr.min(eh_frame_base);
-    let copy_len = fde_end
-        .checked_sub(copy_start)
-        .ok_or(OwnedUnwindDecodeError::Overflow)?;
-    if copy_len > MAX_REGISTERED_EH_FRAME_BYTES {
-        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    if fde_end > range.load_end {
+        return Err(OwnedUnwindDecodeError::Truncated);
     }
 
-    // SAFETY: these addresses come from dl_iterate_phdr and are within mapped memory.
-    let bytes = unsafe { core::slice::from_raw_parts(copy_start as *const u8, copy_len) };
-    Ok(bytes.to_vec())
+    let cie_delta = unsafe { core::ptr::read_unaligned((fde_ptr + 4) as *const i32) };
+    if cie_delta == 0 {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let cie_ptr_signed = ((fde_ptr + 4) as isize)
+        .checked_sub(cie_delta as isize)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    if cie_ptr_signed <= 0 {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let cie_ptr = cie_ptr_signed as usize;
+    if cie_ptr < range.load_start
+        || cie_ptr
+            .checked_add(8)
+            .is_none_or(|end| end > range.load_end)
+    {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+
+    // SAFETY: cie_ptr..cie_ptr+8 lies inside the loaded PT_LOAD span for this object.
+    let cie_length = unsafe { core::ptr::read_unaligned(cie_ptr as *const u32) };
+    if cie_length == 0 || cie_length == u32::MAX {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let cie_total = 4usize
+        .checked_add(cie_length as usize)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    if cie_total > MAX_REGISTERED_EH_FRAME_BYTES {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let cie_end = cie_ptr
+        .checked_add(cie_total)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    if cie_end > range.load_end {
+        return Err(OwnedUnwindDecodeError::Truncated);
+    }
+
+    // SAFETY: both CIE and FDE slices have been verified within range.load_start..range.load_end.
+    let cie_slice = unsafe { core::slice::from_raw_parts(cie_ptr as *const u8, cie_total) };
+    let fde_slice = unsafe { core::slice::from_raw_parts(fde_ptr as *const u8, fde_total) };
+
+    let cie_rec =
+        next_eh_frame_record(cie_slice, 0)?.ok_or(OwnedUnwindDecodeError::MalformedRecord)?;
+    if !cie_rec.is_cie {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let cie = parse_cie_record(cie_slice, cie_ptr, cie_rec, true)?;
+
+    let fde_rec =
+        next_eh_frame_record(fde_slice, 0)?.ok_or(OwnedUnwindDecodeError::MalformedRecord)?;
+    if fde_rec.is_cie {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
+    }
+    let mut fde = parse_fde_record_with_cie(fde_slice, fde_ptr, fde_rec, &cie, 0, true)?;
+    if ip < fde.pc_begin || ip >= fde.pc_end {
+        return Ok(None);
+    }
+
+    let mut compact = Vec::with_capacity(cie_total + fde_total);
+    compact.extend_from_slice(cie_slice);
+    compact.extend_from_slice(fde_slice);
+    fde.fde_cfi_start = fde
+        .fde_cfi_start
+        .checked_add(cie_total)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    fde.fde_cfi_end = fde
+        .fde_cfi_end
+        .checked_add(cie_total)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    validate_fde_cfi_program(&compact, fde)?;
+    Ok(Some(RegisteredFdeRecord {
+        fde,
+        eh_frame: compact,
+    }))
 }
 
 fn copy_registered_eh_frame(fde: usize) -> Result<Vec<u8>, OwnedUnwindDecodeError> {
@@ -1622,25 +2545,70 @@ fn context_for_fde(ip: usize, frame_index: usize, fde: OwnedFdeRecord) -> Unwind
         frame_index,
         frame_pointer: 0,
         stack_pointer: 0,
+        cfa: 0,
         language_specific_data: fde.language_specific_data.unwrap_or(0),
         region_start: fde.pc_begin,
         text_rel_base: fde.text_rel_base,
         data_rel_base: fde.data_rel_base,
         general_registers: empty_general_registers(),
+        physical_cursor: None,
     }
 }
 
-fn context_for_physical_fde(
-    ip: usize,
+fn context_for_cursor_record(
+    cursor: X86PhysicalCursor,
     frame_index: usize,
-    fde: OwnedFdeRecord,
-    frame_pointer: usize,
-    stack_pointer: usize,
+    lookup_ip: usize,
+    record: Option<&RegisteredFdeRecord>,
 ) -> UnwindContext {
-    let mut context = context_for_fde(ip, frame_index, fde);
-    context.frame_pointer = frame_pointer;
-    context.stack_pointer = stack_pointer;
-    context
+    let mut general_registers = empty_general_registers();
+    general_registers[X86_64_DWARF_RBX] = cursor.rbx;
+    general_registers[X86_64_DWARF_RBP] = cursor.rbp;
+    general_registers[X86_64_DWARF_RSP] = cursor.rsp;
+    general_registers[X86_64_DWARF_R12] = cursor.r12;
+    general_registers[X86_64_DWARF_R13] = cursor.r13;
+    general_registers[X86_64_DWARF_R14] = cursor.r14;
+    general_registers[X86_64_DWARF_R15] = cursor.r15;
+    general_registers[X86_64_DWARF_RIP] = cursor.ip;
+
+    let fde = record.map(|r| r.fde);
+    let cfa = record
+        .and_then(|rec| {
+            let state = evaluate_cfi_state(&rec.eh_frame, rec.fde, lookup_ip).ok()?;
+            let base = cursor_read_dwarf_reg(&cursor, state.cfa_register)?;
+            checked_add_signed_usize_any(base, state.cfa_offset)
+        })
+        .unwrap_or(cursor.rsp);
+
+    UnwindContext {
+        ip: cursor.ip,
+        frame_index,
+        frame_pointer: cursor.rbp,
+        stack_pointer: cursor.rsp,
+        cfa,
+        language_specific_data: fde.and_then(|f| f.language_specific_data).unwrap_or(0),
+        region_start: fde.map(|f| f.pc_begin).unwrap_or(0),
+        text_rel_base: fde.map(|f| f.text_rel_base).unwrap_or(0),
+        data_rel_base: fde.map(|f| f.data_rel_base).unwrap_or(0),
+        general_registers,
+        physical_cursor: Some(cursor),
+    }
+}
+
+fn empty_context_at_end(last_stack_pointer: usize) -> UnwindContext {
+    UnwindContext {
+        ip: 0,
+        frame_index: 0,
+        frame_pointer: 0,
+        stack_pointer: last_stack_pointer,
+        cfa: last_stack_pointer,
+        language_specific_data: 0,
+        region_start: 0,
+        text_rel_base: 0,
+        data_rel_base: 0,
+        general_registers: empty_general_registers(),
+        physical_cursor: None,
+    }
 }
 
 fn prepare_landing_pad_install(
@@ -1657,9 +2625,46 @@ fn prepare_landing_pad_install(
 
     #[cfg(target_arch = "x86_64")]
     {
-        let row = evaluate_cfi_row(eh_frame, fde, call_site_ip)
+        let state = evaluate_cfi_state(eh_frame, fde, call_site_ip)
             .map_err(OwnedContextInstallError::Decode)?;
-        prepare_x86_64_landing_pad_install(context, row)
+        let row = cfi_row_from_state(&state, fde, call_site_ip);
+        prepare_x86_64_landing_pad_install(context, row, state.gnu_args_size)
+    }
+}
+
+fn prepare_cursor_landing_pad_registers(
+    context: &UnwindContext,
+    eh_frame: &[u8],
+    fde: OwnedFdeRecord,
+    call_site_ip: usize,
+) -> Result<X86LandingPadRegisters, OwnedContextInstallError> {
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (context, eh_frame, fde, call_site_ip);
+        return Err(OwnedContextInstallError::UnsupportedArchitecture);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let state = evaluate_cfi_state(eh_frame, fde, call_site_ip)
+            .map_err(OwnedContextInstallError::Decode)?;
+        let row = cfi_row_from_state(&state, fde, call_site_ip);
+        let install = prepare_x86_64_landing_pad_install(context, row, state.gnu_args_size)?;
+        let cursor = context
+            .physical_cursor
+            .ok_or(OwnedContextInstallError::MissingPhysicalCursor)?;
+        Ok(X86LandingPadRegisters {
+            ip: install.ip,
+            rsp: install.stack_pointer,
+            rbp: install.frame_pointer,
+            rbx: cursor.rbx,
+            r12: cursor.r12,
+            r13: cursor.r13,
+            r14: cursor.r14,
+            r15: cursor.r15,
+            rax: install.general_register_0,
+            rdx: install.general_register_1,
+        })
     }
 }
 
@@ -1667,18 +2672,13 @@ fn prepare_landing_pad_install(
 fn prepare_x86_64_landing_pad_install(
     context: &UnwindContext,
     row: OwnedCfiRow,
+    gnu_args_size: usize,
 ) -> Result<OwnedLandingPadInstall, OwnedContextInstallError> {
     if context.ip == 0 {
         return Err(OwnedContextInstallError::NullLandingPad);
     }
-    if context.frame_pointer == 0 || context.stack_pointer == 0 {
+    if context.stack_pointer == 0 {
         return Err(OwnedContextInstallError::MissingPhysicalCursor);
-    }
-    if !context
-        .frame_pointer
-        .is_multiple_of(core::mem::align_of::<usize>())
-    {
-        return Err(OwnedContextInstallError::MisalignedFramePointer);
     }
     if !context
         .stack_pointer
@@ -1686,23 +2686,41 @@ fn prepare_x86_64_landing_pad_install(
     {
         return Err(OwnedContextInstallError::MisalignedStackPointer);
     }
-    if context.stack_pointer >= context.frame_pointer {
-        return Err(OwnedContextInstallError::StackPointerEscapesHandlerFrame);
-    }
     if row.saved_rip_offset.is_none() {
         return Err(OwnedContextInstallError::MissingSavedInstructionPointer);
     }
     let cfa_base = match row.cfa_register {
-        X86_64_DWARF_RBP => context.frame_pointer,
+        X86_64_DWARF_RBP => {
+            if context.frame_pointer == 0 {
+                return Err(OwnedContextInstallError::MissingPhysicalCursor);
+            }
+            if !context
+                .frame_pointer
+                .is_multiple_of(core::mem::align_of::<usize>())
+            {
+                return Err(OwnedContextInstallError::MisalignedFramePointer);
+            }
+            if context.stack_pointer >= context.frame_pointer {
+                return Err(OwnedContextInstallError::StackPointerEscapesHandlerFrame);
+            }
+            context.frame_pointer
+        }
         X86_64_DWARF_RSP => context.stack_pointer,
+        X86_64_DWARF_RBX => context.physical_cursor.map(|c| c.rbx).ok_or(
+            OwnedContextInstallError::UnsupportedCfaRegister(row.cfa_register),
+        )?,
         other => return Err(OwnedContextInstallError::UnsupportedCfaRegister(other)),
     };
     let _cfa = checked_add_signed_usize(cfa_base, row.cfa_offset)
         .ok_or(OwnedContextInstallError::CfaOverflow)?;
+    let adjusted_sp = context
+        .stack_pointer
+        .checked_add(gnu_args_size)
+        .ok_or(OwnedContextInstallError::CfaOverflow)?;
 
     Ok(OwnedLandingPadInstall {
         ip: context.ip,
-        stack_pointer: context.stack_pointer,
+        stack_pointer: adjusted_sp,
         frame_pointer: context.frame_pointer,
         general_register_0: context.general_registers[0],
         general_register_1: context.general_registers[1],
@@ -1718,32 +2736,36 @@ fn checked_add_signed_usize(base: usize, offset: isize) -> Option<usize> {
     }
 }
 
-unsafe fn install_landing_pad_context(install: OwnedLandingPadInstall) -> ! {
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "C" fn install_x86_64_landing_pad(_regs: *const X86LandingPadRegisters) -> ! {
+    std::arch::naked_asm!(
+        "mov r11, [rdi + 0]",
+        "mov rbp, [rdi + 16]",
+        "mov rbx, [rdi + 24]",
+        "mov r12, [rdi + 32]",
+        "mov r13, [rdi + 40]",
+        "mov r14, [rdi + 48]",
+        "mov r15, [rdi + 56]",
+        "mov rax, [rdi + 64]",
+        "mov rdx, [rdi + 72]",
+        "mov rsp, [rdi + 8]",
+        "jmp r11",
+    );
+}
+
+unsafe fn install_landing_pad_registers(regs: X86LandingPadRegisters) -> ! {
     #[cfg(target_arch = "x86_64")]
     {
-        // SAFETY: the caller validated that the target IP, frame pointer, and
-        // stack pointer describe an in-stack x86_64 handler frame. This path
-        // never returns to Rust; it installs the Itanium ABI landing-pad
-        // registers (GR0/GR1 map to RAX/RDX on x86_64 SysV) and jumps to the
-        // personality-selected landing pad.
-        unsafe {
-            core::arch::asm!(
-                "mov rbp, r8",
-                "mov rsp, r9",
-                "jmp r10",
-                in("r8") install.frame_pointer,
-                in("r9") install.stack_pointer,
-                in("r10") install.ip,
-                in("rax") install.general_register_0,
-                in("rdx") install.general_register_1,
-                options(noreturn)
-            );
-        }
+        // SAFETY: `regs` was validated by `prepare_cursor_landing_pad_registers`.
+        // `install_x86_64_landing_pad` reads all register slots from `&regs` before
+        // switching `rsp` and jumping to `r11`.
+        unsafe { install_x86_64_landing_pad(&regs) }
     }
 
     #[cfg(not(target_arch = "x86_64"))]
     {
-        let _ = install;
+        let _ = regs;
         std::process::abort()
     }
 }
@@ -1883,6 +2905,7 @@ fn parse_cie_record(
                     fde_pointer_encoding = encoding;
                     augmentation_cursor = after_encoding;
                 }
+                b'S' => {}
                 other => return Err(OwnedUnwindDecodeError::UnsupportedAugmentation(other)),
             }
         }
@@ -1931,6 +2954,24 @@ fn parse_fde_record(
         .find(|cie| cie.offset == cie_offset)
         .ok_or(OwnedUnwindDecodeError::MissingCie)?;
 
+    parse_fde_record_with_cie(
+        eh_frame,
+        section_addr,
+        record,
+        cie,
+        cie_offset,
+        resolve_indirect,
+    )
+}
+
+fn parse_fde_record_with_cie(
+    eh_frame: &[u8],
+    section_addr: usize,
+    record: EhFrameRecord,
+    cie: &OwnedCieRecord,
+    cie_offset: usize,
+    resolve_indirect: bool,
+) -> Result<OwnedFdeRecord, OwnedUnwindDecodeError> {
     let pc_field = record.body;
     let (pc_begin, cursor) = read_encoded_pointer(
         eh_frame,
@@ -2130,11 +3171,11 @@ fn read_encoded_raw(
     }
 }
 
-fn evaluate_cfi_row(
+fn evaluate_cfi_state(
     eh_frame: &[u8],
     fde: OwnedFdeRecord,
     ip: usize,
-) -> Result<OwnedCfiRow, OwnedUnwindDecodeError> {
+) -> Result<CfiEvaluationState, OwnedUnwindDecodeError> {
     if ip < fde.pc_begin || ip >= fde.pc_end {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
@@ -2163,8 +3204,11 @@ fn evaluate_cfi_row(
     if state.cfa_register == UNSET_DWARF_REGISTER {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
+    Ok(state)
+}
 
-    Ok(OwnedCfiRow {
+fn cfi_row_from_state(state: &CfiEvaluationState, fde: OwnedFdeRecord, ip: usize) -> OwnedCfiRow {
+    OwnedCfiRow {
         pc: ip,
         cfa_register: state.cfa_register,
         cfa_offset: state.cfa_offset,
@@ -2172,7 +3216,16 @@ fn evaluate_cfi_row(
         saved_rip_offset: cfi_rule_offset(state.register_rule(X86_64_DWARF_RIP)),
         saved_rbp_offset: cfi_rule_offset(state.register_rule(X86_64_DWARF_RBP)),
         saved_rsp_offset: cfi_rule_offset(state.register_rule(X86_64_DWARF_RSP)),
-    })
+    }
+}
+
+fn evaluate_cfi_row(
+    eh_frame: &[u8],
+    fde: OwnedFdeRecord,
+    ip: usize,
+) -> Result<OwnedCfiRow, OwnedUnwindDecodeError> {
+    let state = evaluate_cfi_state(eh_frame, fde, ip)?;
+    Ok(cfi_row_from_state(&state, fde, ip))
 }
 
 fn apply_cfi_program(
@@ -2270,6 +3323,12 @@ fn apply_cfi_program(
                 cursor = next;
                 set_register_rule(state, register, CfiRegisterRule::SameValue);
             }
+            0x09 => {
+                let (register, after_reg) = decode_uleb128(input, cursor)?;
+                let (target_reg, after_target) = decode_uleb128(input, after_reg)?;
+                cursor = after_target;
+                set_register_rule(state, register, CfiRegisterRule::Register(target_reg));
+            }
             DW_CFA_REMEMBER_STATE => saved_states.push(*state),
             DW_CFA_RESTORE_STATE => {
                 *state = saved_states
@@ -2329,7 +3388,9 @@ fn apply_cfi_program(
                 set_register_rule(state, register, CfiRegisterRule::ValOffset(offset));
             }
             0x2e => {
-                cursor = decode_uleb128(input, cursor)?.1;
+                let (args_size, next) = decode_uleb128(input, cursor)?;
+                cursor = next;
+                state.gnu_args_size = args_size;
             }
             other => return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(other)),
         }
@@ -2424,9 +3485,10 @@ fn usize_to_isize(value: usize) -> Result<isize, OwnedUnwindDecodeError> {
 fn cfi_rule_offset(rule: CfiRegisterRule) -> Option<isize> {
     match rule {
         CfiRegisterRule::Offset(offset) => Some(offset),
-        CfiRegisterRule::Undefined | CfiRegisterRule::SameValue | CfiRegisterRule::ValOffset(_) => {
-            None
-        }
+        CfiRegisterRule::Undefined
+        | CfiRegisterRule::SameValue
+        | CfiRegisterRule::ValOffset(_)
+        | CfiRegisterRule::Register(_) => None,
     }
 }
 
@@ -2436,6 +3498,7 @@ impl CfiEvaluationState {
             pc,
             cfa_register: UNSET_DWARF_REGISTER,
             cfa_offset: 0,
+            gnu_args_size: 0,
             register_rules: [CfiRegisterRule::Undefined; MAX_TRACKED_DWARF_REGISTERS],
         }
     }

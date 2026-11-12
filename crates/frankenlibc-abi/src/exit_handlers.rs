@@ -57,6 +57,7 @@ impl ExitHandlerRegistry {
         removed
     }
 
+    #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
     fn remove_by_ticket(&mut self, ticket: usize) -> Option<ExitHandler> {
         for idx in 0..self.inline_len {
             // SAFETY: `idx < self.inline_len`.

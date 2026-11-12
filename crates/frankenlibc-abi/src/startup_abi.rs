@@ -780,6 +780,7 @@ unsafe fn count_c_string_vector(base: *mut *mut c_char, max_entries: usize) -> O
 
 const INLINE_AUXV_CAPACITY: usize = 64;
 
+#[allow(clippy::large_enum_variant)]
 enum AuxvPairs {
     Inline {
         buf: [(usize, usize); INLINE_AUXV_CAPACITY],

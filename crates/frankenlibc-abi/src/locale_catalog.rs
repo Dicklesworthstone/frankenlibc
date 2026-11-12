@@ -95,7 +95,7 @@ mod tests {
                 match std::fs::create_dir(&path) {
                     Ok(()) => return Self(path),
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    Err(e) => panic!("create catalog fixture: {e}"),
+                    Err(e) => panic!("create catalog fixture: {e}"), // test helper
                 }
             }
         }

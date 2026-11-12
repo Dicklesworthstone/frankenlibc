@@ -1,14 +1,14 @@
-#![cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+#![cfg(feature = "owned-unwind-stub")]
 
 use frankenlibc_abi::owned_unwind_abi::{
     __deregister_frame, __deregister_frame_info, __register_frame, __register_frame_info,
-    _Unwind_Backtrace, _Unwind_GetDataRelBase, _Unwind_GetGR, _Unwind_GetIP, _Unwind_GetIPInfo,
-    _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart, _Unwind_GetTextRelBase, _Unwind_SetGR,
-    _Unwind_SetIP, OwnedContextInstallError, OwnedLandingPadInstall, OwnedLandingPadInstallInput,
-    OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedProgramHeaderForTests,
-    OwnedUnwindDecodeError, UnwindContext, owned_decode_sleb128_for_tests,
-    owned_decode_uleb128_for_tests, owned_evaluate_cfi_row_for_tests,
-    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    _Unwind_Backtrace, _Unwind_ForcedUnwind, _Unwind_GetCFA, _Unwind_GetDataRelBase, _Unwind_GetGR,
+    _Unwind_GetIP, _Unwind_GetIPInfo, _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart,
+    _Unwind_GetTextRelBase, _Unwind_SetGR, _Unwind_SetIP, OwnedContextInstallError,
+    OwnedLandingPadInstall, OwnedLandingPadInstallInput, OwnedPhase1SearchOutcome,
+    OwnedPhase2CleanupOutcome, OwnedProgramHeaderForTests, OwnedUnwindDecodeError, UnwindContext,
+    UnwindException, owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
+    owned_evaluate_cfi_row_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
     owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
     owned_loaded_eh_frame_ranges_for_tests, owned_loaded_eh_frame_ranges_from_phdrs_for_tests,
     owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
@@ -980,4 +980,171 @@ fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
     Some(u64::from_le_bytes(
         bytes.get(offset..offset + 8)?.try_into().ok()?,
     ))
+}
+
+#[test]
+fn get_cfa_handles_null_and_live_backtrace_frames() {
+    assert_eq!(unsafe { _Unwind_GetCFA(std::ptr::null_mut()) }, 0);
+
+    unsafe extern "C" fn collect_cfas(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
+        let out = unsafe { &mut *(arg.cast::<Vec<usize>>()) };
+        let cfa = unsafe { _Unwind_GetCFA(ctx) };
+        if cfa != 0 {
+            out.push(cfa);
+        }
+        URC_NO_REASON
+    }
+
+    let mut cfas = Vec::new();
+    let reason =
+        unsafe { _Unwind_Backtrace(Some(collect_cfas), (&mut cfas as *mut Vec<usize>).cast()) };
+    assert_eq!(reason, 5);
+    assert!(cfas.len() >= 2, "expected multiple frames, got {cfas:?}");
+    for pair in cfas.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "outer frame CFA must be >= inner frame CFA on downward-growing x86_64 stack: {cfas:?}"
+        );
+    }
+}
+
+#[test]
+fn rsp_cfa_landing_pad_install_allows_arbitrary_rbp() {
+    let section_addr = 0x540000usize;
+    let pc_begin = 0x542000usize;
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, 0x40, &[]);
+    let mut stack_words = [0usize; 8];
+    // CIE default rule in synthetic_eh_frame is CFA = %rsp + 8, RA = *(CFA - 8) = *(%rsp).
+    stack_words[0] = pc_begin + 4;
+    std::hint::black_box(&stack_words);
+    let sp = stack_words.as_mut_ptr() as usize;
+    let prepared = owned_prepare_landing_pad_install_for_tests(
+        &eh_frame,
+        section_addr,
+        OwnedLandingPadInstallInput {
+            call_site_ip: pc_begin + 4,
+            landing_pad_ip: TEST_LANDING_PAD,
+            frame_pointer: 0x1111_2222_3333_4444,
+            stack_pointer: sp,
+            general_register_0: 0xaa,
+            general_register_1: 0xbb,
+        },
+    )
+    .expect("RSP-based CFA without saved rbp must validate");
+    assert_eq!(
+        prepared,
+        OwnedLandingPadInstall {
+            ip: TEST_LANDING_PAD,
+            frame_pointer: 0x1111_2222_3333_4444,
+            stack_pointer: sp,
+            general_register_0: 0xaa,
+            general_register_1: 0xbb,
+        }
+    );
+}
+
+#[test]
+fn forced_unwind_executes_rust_drop_frames_until_stop_boundary() {
+    struct ForcedStopState {
+        boundary_sp: usize,
+        stop_calls: usize,
+        events: Vec<u32>,
+    }
+
+    struct DropRecorder(*mut Vec<u32>, u32);
+    impl Drop for DropRecorder {
+        fn drop(&mut self) {
+            unsafe { (*self.0).push(self.1) };
+        }
+    }
+
+    unsafe extern "C" fn cleanup_noop(_reason: i32, _exc: *mut UnwindException) {}
+
+    unsafe extern "C-unwind" fn stop_at_boundary(
+        version: i32,
+        actions: i32,
+        _exc_class: u64,
+        _exc: *mut UnwindException,
+        ctx: *mut UnwindContext,
+        arg: *mut c_void,
+    ) -> i32 {
+        assert_eq!(version, 1);
+        assert_ne!(actions & 8, 0, "_UA_FORCE_UNWIND must be set");
+        assert_ne!(actions & 2, 0, "_UA_CLEANUP_PHASE must be set");
+        let state = unsafe { &mut *(arg.cast::<ForcedStopState>()) };
+        state.stop_calls += 1;
+        let cfa = unsafe { _Unwind_GetCFA(ctx) };
+        if (actions & 16) != 0 || cfa > state.boundary_sp {
+            // Reached our caller boundary; exit the worker thread cleanly.
+            state.events.push(999);
+            unsafe { libc::pthread_exit(std::ptr::null_mut()) };
+        }
+        URC_NO_REASON
+    }
+
+    #[inline(never)]
+    unsafe extern "C-unwind" fn inner_frame(
+        exc: *mut UnwindException,
+        state: *mut ForcedStopState,
+    ) {
+        let _g2 = DropRecorder(unsafe { &raw mut (*state).events }, 20);
+        std::hint::black_box(&_g2);
+        let _ = unsafe { _Unwind_ForcedUnwind(exc, Some(stop_at_boundary), state.cast()) };
+    }
+
+    #[inline(never)]
+    unsafe extern "C-unwind" fn outer_frame(
+        exc: *mut UnwindException,
+        state: *mut ForcedStopState,
+    ) {
+        let _g1 = DropRecorder(unsafe { &raw mut (*state).events }, 10);
+        std::hint::black_box(&_g1);
+        unsafe { inner_frame(exc, state) };
+    }
+
+    struct WorkerBox {
+        exc: UnwindException,
+        state: ForcedStopState,
+    }
+
+    #[inline(never)]
+    extern "C" fn thread_entry(arg: *mut c_void) -> *mut c_void {
+        let wb = unsafe { &mut *(arg.cast::<WorkerBox>()) };
+        let anchor = 0usize;
+        std::hint::black_box(&anchor);
+        wb.state.boundary_sp = (&raw const anchor) as usize;
+        unsafe { outer_frame(&raw mut wb.exc, &raw mut wb.state) };
+        std::ptr::null_mut()
+    }
+
+    let mut wb = Box::new(WorkerBox {
+        exc: UnwindException {
+            exception_class: 0,
+            exception_cleanup: Some(cleanup_noop),
+            private_1: 0,
+            private_2: 0,
+        },
+        state: ForcedStopState {
+            boundary_sp: 0,
+            stop_calls: 0,
+            events: Vec::new(),
+        },
+    });
+    let mut tid: libc::pthread_t = 0;
+    let rc = unsafe {
+        libc::pthread_create(
+            &mut tid,
+            std::ptr::null(),
+            thread_entry,
+            (&raw mut *wb).cast::<c_void>(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { libc::pthread_join(tid, std::ptr::null_mut()) }, 0);
+    assert!(wb.state.stop_calls >= 2);
+    assert_eq!(
+        wb.state.events,
+        vec![20, 10, 999],
+        "forced unwind must drop inner then outer RAII guards in LIFO order before boundary stop"
+    );
 }

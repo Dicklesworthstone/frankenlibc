@@ -68,6 +68,8 @@ const GLIBC_IO_EOF_SEEN: i32 = 0x0010;
 const GLIBC_IO_ERR_SEEN: i32 = 0x0020;
 const GLIBC_234_IO_FILE_SIZE: usize = 216;
 const GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET: usize = GLIBC_234_IO_FILE_SIZE;
+pub const GLIBC_234_IO_FILE_PLUS_SIZE: usize =
+    GLIBC_234_IO_FILE_SIZE + std::mem::size_of::<*const _IO_jump_t>();
 const IO_JUMPS_EXPORT_SIZE: usize = 168;
 
 /// Bitflags for [`NativeFile::flags`].
@@ -685,6 +687,44 @@ impl NativeFileState {
             .map_or(ptr::null_mut(), |lock| lock.opaque_ptr())
     }
 }
+
+/// Exact 224-byte glibc `_IO_FILE_plus` ABI layout for exported
+/// `_IO_2_1_stdin_`, `_IO_2_1_stdout_`, and `_IO_2_1_stderr_` objects.
+///
+/// When a `-no-pie` executable references `_IO_2_1_std*_` directly, `ld.so`
+/// emits an `R_X86_64_COPY` relocation copying exactly 224 bytes into the
+/// executable's `.bss` and rebinding global lookups there. Keeping these
+/// exported objects at 224 bytes (`sizeof(_IO_FILE_plus)`) with no trailing
+/// private fields prevents out-of-bounds reads on copy-relocated instances.
+#[repr(C)]
+pub struct GlibcIoFilePlus {
+    _io_file: _IO_FILE_Layout,
+    pub vtable: *const _IO_jump_t,
+}
+
+impl GlibcIoFilePlus {
+    const fn const_std(slot_index: usize, fd: c_int, extra_flags: i32) -> Self {
+        let mut io_file = _IO_FILE_Layout::new(fd);
+        io_file._flags =
+            GLIBC_IO_MAGIC | glibc_flag_bits::LINKED | glibc_flag_bits::IS_FILEBUF | extra_flags;
+        io_file._lock = (&raw const STD_STREAM_LOCKS[slot_index])
+            .cast::<c_void>()
+            .cast_mut();
+        Self {
+            _io_file: io_file,
+            vtable: &raw const NATIVE_IO_JUMP_T,
+        }
+    }
+}
+
+const _: () = assert!(
+    std::mem::size_of::<GlibcIoFilePlus>() == GLIBC_234_IO_FILE_PLUS_SIZE,
+    "GlibcIoFilePlus must match glibc 2.34 _IO_FILE_plus size (224 bytes)"
+);
+const _: () = assert!(
+    std::mem::offset_of!(GlibcIoFilePlus, vtable) == GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET,
+    "GlibcIoFilePlus.vtable must sit at offset 216"
+);
 
 /// FrankenLibC-owned FILE structure.
 ///
@@ -1501,6 +1541,7 @@ pub struct NativeStreamRegistry {
     /// Wrapped in `Option<Box<...>>` so `Self::EMPTY` is 100% zero bytes and
     /// the 63.5 KiB static registry resides in `.bss` rather than `.data`
     /// (`Vec::new()` contains a non-zero `NonNull::dangling()` pointer).
+    #[allow(clippy::box_collection)]
     overflow: Option<Box<Vec<Vec<StreamSlot>>>>,
 }
 
@@ -1840,6 +1881,15 @@ static NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3] = [
     AtomicUsize::new(0),
 ];
 
+/// Cached process-visible `_IO_2_1_{stdin,stdout,stderr}_` addresses (either
+/// GOT-resolved to an executable's `R_X86_64_COPY` `.bss` copy when interposed,
+/// or FrankenLibC's own 224-byte `_IO_2_1_*` storage).
+static VISIBLE_STDIO_HANDLE_ADDR: [AtomicUsize; 3] = [
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+];
+
 /// Base address of `&NATIVE_STREAM_REGISTRY.slots[0].file`, published once when
 /// the static registry is initialized. Used by `is_native_slot_ptr_lockfree`
 /// so single-threaded fast paths can verify that a `FILE*` points to one of our
@@ -1858,9 +1908,9 @@ pub(crate) fn is_native_slot_ptr_lockfree(stream: *const c_void) -> bool {
     offset <= NATIVE_FILE_MAX_OFFSET && offset.is_multiple_of(NATIVE_SLOT_STRIDE)
 }
 
-/// Address of the std handle for `fd` (0..=2) without taking the registry
-/// lock, or 0 if the slot addresses are not published yet. Safe to call while
-/// the native registry lock is held.
+/// Address of the internal `NativeFile` slot for `fd` (0..=2) without taking
+/// the registry lock, or 0 if the slot addresses are not published yet. Safe
+/// to call while the native registry lock is held.
 pub(crate) fn native_stdio_slot_addr_lockfree(fd: usize) -> usize {
     if fd >= NATIVE_STDIO_SLOT_ADDR.len()
         || !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire)
@@ -1868,6 +1918,30 @@ pub(crate) fn native_stdio_slot_addr_lockfree(fd: usize) -> usize {
         return 0;
     }
     NATIVE_STDIO_SLOT_ADDR[fd].load(Ordering::Acquire)
+}
+
+/// Address of the caller-visible `_IO_2_1_{stdin,stdout,stderr}_` `FILE` header
+/// for `fd` (0..=2), resolved lock-free (respecting `R_X86_64_COPY` when
+/// interposed).
+#[inline]
+pub(crate) fn visible_stdio_handle_addr_lockfree(fd: usize) -> usize {
+    if fd >= VISIBLE_STDIO_HANDLE_ADDR.len() {
+        return 0;
+    }
+    let cached = VISIBLE_STDIO_HANDLE_ADDR[fd].load(Ordering::Acquire);
+    if cached != 0 {
+        return cached;
+    }
+    visible_stdio_stream_ptr(fd as c_int) as usize
+}
+
+/// Lock-free check: returns `true` iff `stream` matches one of FrankenLibC's
+/// owned or copy-relocated `_IO_2_1_{stdin,stdout,stderr}_` objects.
+#[inline]
+pub(crate) fn is_visible_stdio_handle_ptr_lockfree(stream: *const c_void) -> bool {
+    let addr = stream as usize;
+    addr != 0
+        && (owned_io_2_1_fd_for_addr(addr).is_some() || visible_stdio_fd_for_addr(addr).is_some())
 }
 
 /// Access the global stream registry.
@@ -1900,6 +1974,10 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
                 None => 0,
             };
             slot_addr.store(addr, Ordering::Relaxed);
+        }
+        for (index, vis_addr) in VISIBLE_STDIO_HANDLE_ADDR.iter().enumerate() {
+            let vis = visible_stdio_stream_ptr(index as c_int) as usize;
+            vis_addr.store(vis, Ordering::Relaxed);
         }
 
         // Release: publishes the slot-address stores above to every `Acquire` reader of
@@ -1934,6 +2012,13 @@ pub fn native_stdio_fd_for_ptr(stream: *const c_void) -> Option<c_int> {
     if stream.is_null() {
         return None;
     }
+    let addr = stream as usize;
+    if let Some(fd) = owned_io_2_1_fd_for_addr(addr) {
+        return Some(fd);
+    }
+    if let Some(fd) = visible_stdio_fd_for_addr(addr) {
+        return Some(fd);
+    }
     // Hot path: this fires on EVERY stdio op against a non-sentinel `FILE *` (every
     // fgetc/fputc/fputs/fwrite to an fopen'd file, pipe, or fmemopen stream) purely to
     // rule out the three native glibc std FILE slots. It used to take the global
@@ -1943,12 +2028,12 @@ pub fn native_stdio_fd_for_ptr(stream: *const c_void) -> Option<c_int> {
     // three reserved slot addresses are fixed, so the locked scan is exactly three
     // integer compares against a published table.
     if STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
-        return native_stdio_fd_for_addr(stream as usize);
+        return native_stdio_fd_for_addr(addr);
     }
     // Cold: first-ever access. Taking the lock runs the lazy chain init, which publishes
     // the table (and is the side effect callers rely on); then answer from it.
     let _guard = native_stream_registry();
-    native_stdio_fd_for_addr(stream as usize)
+    native_stdio_fd_for_addr(addr)
 }
 
 /// Bench-only mirror of the pre-lock-free `native_stdio_fd_for_ptr`: take the global
@@ -1982,6 +2067,12 @@ pub fn bench_native_stdio_fd_for_ptr_locked(stream: *const c_void) -> Option<c_i
 /// unoccupied slot and never matches (`addr` is non-null here).
 #[inline]
 fn native_stdio_fd_for_addr(addr: usize) -> Option<c_int> {
+    if let Some(fd) = owned_io_2_1_fd_for_addr(addr) {
+        return Some(fd);
+    }
+    if let Some(fd) = visible_stdio_fd_for_addr(addr) {
+        return Some(fd);
+    }
     for (index, fd) in [
         (0usize, libc::STDIN_FILENO),
         (1, libc::STDOUT_FILENO),
@@ -2017,6 +2108,17 @@ pub unsafe fn configure_native_stdio_stream(
     };
     // SAFETY: caller guarantees `user_buf` (if non-null) has `size` bytes of storage.
     unsafe { file.configure_buffering(mode, user_buf, size) };
+    let buf_base = file._io_file._IO_buf_base;
+    let buf_end = file._io_file._IO_buf_end;
+    drop(registry);
+    let vis = visible_stdio_stream_ptr(fd).cast::<_IO_FILE_Layout>();
+    if !vis.is_null() {
+        // SAFETY: `vis` points to our owned or copy-relocated 224-byte `_IO_2_1_*` object.
+        unsafe {
+            (*vis)._IO_buf_base = buf_base;
+            (*vis)._IO_buf_end = buf_end;
+        }
+    }
     true
 }
 
@@ -2130,13 +2232,12 @@ pub(crate) const IO_BUF_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout
 /// `ptr` must be a live handle from [`register_stdio_handle`] or a memory
 /// stream registered with a native handle.
 pub(crate) unsafe fn reset_stdio_handle_header(ptr: *mut c_void, fd: c_int, glibc_flags: i32) {
-    let file = ptr.cast::<NativeFile>();
-    // SAFETY: caller guarantees `ptr` is a live NativeFile.
+    let file = ptr.cast::<_IO_FILE_Layout>();
+    // SAFETY: caller guarantees `ptr` is a live `NativeFile` or 224-byte `GlibcIoFilePlus` header.
     unsafe {
-        (*file)._io_file._flags =
-            GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
-        (*file)._io_file._fileno = fd;
-        (*file)._io_file._mode = 0;
+        (*file)._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
+        (*file)._fileno = fd;
+        (*file)._mode = 0;
     }
 }
 
@@ -2152,7 +2253,10 @@ pub(crate) fn is_native_handle_slot_address(ptr: *mut c_void) -> bool {
 }
 
 pub fn register_native_file_ptr(ptr: *mut c_void) {
-    if !ptr.is_null() && !is_native_slot_ptr_lockfree(ptr) {
+    if !ptr.is_null()
+        && !is_native_slot_ptr_lockfree(ptr)
+        && !is_visible_stdio_handle_ptr_lockfree(ptr)
+    {
         NATIVE_FILE_BLOOM.insert(ptr as usize);
         NATIVE_FILE_BLOOM_INITIALIZED.store(true, Ordering::Release);
     }
@@ -2167,7 +2271,7 @@ pub fn might_be_native_file(ptr: *mut c_void) -> bool {
     if ptr.is_null() {
         return false;
     }
-    if is_native_slot_ptr_lockfree(ptr) {
+    if is_native_slot_ptr_lockfree(ptr) || is_visible_stdio_handle_ptr_lockfree(ptr) {
         return true;
     }
     NATIVE_FILE_BLOOM_INITIALIZED.load(Ordering::Acquire)
@@ -2772,6 +2876,208 @@ unsafe fn publish_native_file_list(head: *mut c_void) {
             _IO_list_all = head;
         }
     }
+}
+
+/// `_IO_2_1_stdin_` — 224-byte glibc `_IO_FILE_plus` object backing `stdin`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut _IO_2_1_stdin_: GlibcIoFilePlus =
+    GlibcIoFilePlus::const_std(0, libc::STDIN_FILENO, glibc_flag_bits::NO_WRITES);
+
+/// `_IO_2_1_stdout_` — 224-byte glibc `_IO_FILE_plus` object backing `stdout`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut _IO_2_1_stdout_: GlibcIoFilePlus =
+    GlibcIoFilePlus::const_std(1, libc::STDOUT_FILENO, glibc_flag_bits::NO_READS);
+
+/// `_IO_2_1_stderr_` — 224-byte glibc `_IO_FILE_plus` object backing `stderr`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut _IO_2_1_stderr_: GlibcIoFilePlus = GlibcIoFilePlus::const_std(
+    2,
+    libc::STDERR_FILENO,
+    glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED,
+);
+
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_io_2_1_stdin_storage",
+    ".hidden __frankenlibc_io_2_1_stdin_storage",
+    ".set __frankenlibc_io_2_1_stdin_storage, _IO_2_1_stdin_",
+    ".globl __frankenlibc_io_2_1_stdout_storage",
+    ".hidden __frankenlibc_io_2_1_stdout_storage",
+    ".set __frankenlibc_io_2_1_stdout_storage, _IO_2_1_stdout_",
+    ".globl __frankenlibc_io_2_1_stderr_storage",
+    ".hidden __frankenlibc_io_2_1_stderr_storage",
+    ".set __frankenlibc_io_2_1_stderr_storage, _IO_2_1_stderr_",
+);
+
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+))]
+core::arch::global_asm!(
+    ".symver _IO_2_1_stdin_, _IO_2_1_stdin_@@GLIBC_2.2.5, remove",
+    ".symver _IO_2_1_stdout_, _IO_2_1_stdout_@@GLIBC_2.2.5, remove",
+    ".symver _IO_2_1_stderr_, _IO_2_1_stderr_@@GLIBC_2.2.5, remove",
+);
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "__frankenlibc_io_2_1_stdin_storage"]
+    static mut OWNED_IO_2_1_STDIN: GlibcIoFilePlus;
+    #[link_name = "__frankenlibc_io_2_1_stdout_storage"]
+    static mut OWNED_IO_2_1_STDOUT: GlibcIoFilePlus;
+    #[link_name = "__frankenlibc_io_2_1_stderr_storage"]
+    static mut OWNED_IO_2_1_STDERR: GlibcIoFilePlus;
+}
+
+#[inline]
+pub(crate) fn owned_io_2_1_stream_ptr(fd: c_int) -> *mut c_void {
+    #[cfg(debug_assertions)]
+    {
+        match fd {
+            libc::STDIN_FILENO => (&raw mut _IO_2_1_stdin_).cast::<c_void>(),
+            libc::STDOUT_FILENO => (&raw mut _IO_2_1_stdout_).cast::<c_void>(),
+            libc::STDERR_FILENO => (&raw mut _IO_2_1_stderr_).cast::<c_void>(),
+            _ => ptr::null_mut(),
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        match fd {
+            libc::STDIN_FILENO => (&raw mut OWNED_IO_2_1_STDIN).cast::<c_void>(),
+            libc::STDOUT_FILENO => (&raw mut OWNED_IO_2_1_STDOUT).cast::<c_void>(),
+            libc::STDERR_FILENO => (&raw mut OWNED_IO_2_1_STDERR).cast::<c_void>(),
+            _ => ptr::null_mut(),
+        }
+    }
+}
+
+#[inline]
+fn dynamic_io_2_1_stream_ptr(fd: c_int) -> *mut c_void {
+    #[cfg(all(not(debug_assertions), target_os = "linux", target_arch = "x86_64"))]
+    {
+        let ptr: *mut c_void;
+        match fd {
+            libc::STDIN_FILENO => {
+                // SAFETY: loads the GOT slot for `_IO_2_1_stdin_`, which `ld.so`
+                // binds to the main executable's `.bss` copy under `R_X86_64_COPY`
+                // or to this DSO's 224-byte definition in PIE builds.
+                unsafe {
+                    core::arch::asm!(
+                        "mov {}, qword ptr [rip + _IO_2_1_stdin_@GOTPCREL]",
+                        out(reg) ptr,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                ptr
+            }
+            libc::STDOUT_FILENO => {
+                // SAFETY: see `_IO_2_1_stdin_` above.
+                unsafe {
+                    core::arch::asm!(
+                        "mov {}, qword ptr [rip + _IO_2_1_stdout_@GOTPCREL]",
+                        out(reg) ptr,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                ptr
+            }
+            libc::STDERR_FILENO => {
+                // SAFETY: see `_IO_2_1_stdin_` above.
+                unsafe {
+                    core::arch::asm!(
+                        "mov {}, qword ptr [rip + _IO_2_1_stderr_@GOTPCREL]",
+                        out(reg) ptr,
+                        options(nostack, preserves_flags),
+                    );
+                }
+                ptr
+            }
+            _ => ptr::null_mut(),
+        }
+    }
+    #[cfg(not(all(not(debug_assertions), target_os = "linux", target_arch = "x86_64")))]
+    {
+        owned_io_2_1_stream_ptr(fd)
+    }
+}
+
+/// Process-visible `_IO_2_1_{stdin,stdout,stderr}_` object pointer.
+///
+/// When FrankenLibC interposes stdio (or runs standalone), resolves through GOT
+/// so `-no-pie` executables with `R_X86_64_COPY` relocations on `_IO_2_1_std*_`
+/// see `stdin == &_IO_2_1_stdin_` and coherent `fflush`/`fwrite`/`fileno`/`freopen`.
+/// When loaded locally without interposing (e.g. `dlopen` differential harnesses),
+/// returns FrankenLibC's `.hidden` private storage rather than host `libc.so.6`.
+pub fn visible_stdio_stream_ptr(fd: c_int) -> *mut c_void {
+    let idx = match fd {
+        libc::STDIN_FILENO => 0usize,
+        libc::STDOUT_FILENO => 1usize,
+        libc::STDERR_FILENO => 2usize,
+        _ => return ptr::null_mut(),
+    };
+    let cached = VISIBLE_STDIO_HANDLE_ADDR[idx].load(Ordering::Acquire);
+    if cached != 0 {
+        return cached as *mut c_void;
+    }
+    let resolved = if stdio_abi::stdio_symbols_are_interposed() {
+        let dyn_ptr = dynamic_io_2_1_stream_ptr(fd);
+        if dyn_ptr.is_null() {
+            owned_io_2_1_stream_ptr(fd)
+        } else {
+            dyn_ptr
+        }
+    } else {
+        owned_io_2_1_stream_ptr(fd)
+    };
+    if !resolved.is_null() {
+        let header = resolved.cast::<GlibcIoFilePlus>();
+        // SAFETY: `resolved` points to our owned or copy-relocated 224-byte
+        // `GlibcIoFilePlus`. Ensure `_lock` and `vtable` are populated even if a
+        // loader zero-initialized a copy cell prior to relocation.
+        unsafe {
+            if (*header)._io_file._lock.is_null() {
+                (*header)._io_file._lock = STD_STREAM_LOCKS[idx].opaque_ptr();
+            }
+            if (*header).vtable.is_null() {
+                (*header).vtable = &raw const NATIVE_IO_JUMP_T;
+            }
+        }
+        VISIBLE_STDIO_HANDLE_ADDR[idx].store(resolved as usize, Ordering::Release);
+    }
+    resolved
+}
+
+#[inline]
+fn owned_io_2_1_fd_for_addr(addr: usize) -> Option<c_int> {
+    if addr == owned_io_2_1_stream_ptr(libc::STDIN_FILENO) as usize {
+        Some(libc::STDIN_FILENO)
+    } else if addr == owned_io_2_1_stream_ptr(libc::STDOUT_FILENO) as usize {
+        Some(libc::STDOUT_FILENO)
+    } else if addr == owned_io_2_1_stream_ptr(libc::STDERR_FILENO) as usize {
+        Some(libc::STDERR_FILENO)
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn visible_stdio_fd_for_addr(addr: usize) -> Option<c_int> {
+    for (idx, fd) in [
+        (0usize, libc::STDIN_FILENO),
+        (1usize, libc::STDOUT_FILENO),
+        (2usize, libc::STDERR_FILENO),
+    ] {
+        let mut vis = VISIBLE_STDIO_HANDLE_ADDR[idx].load(Ordering::Acquire);
+        if vis == 0 {
+            vis = visible_stdio_stream_ptr(fd) as usize;
+        }
+        if vis != 0 && vis == addr {
+            return Some(fd);
+        }
+    }
+    None
 }
 
 /// `_IO_file_jumps` — default FILE vtable for regular files.

@@ -502,7 +502,7 @@ mod tests {
     fn listener() -> (TcpListener, libc::sockaddr_in) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let std::net::SocketAddr::V4(address) = listener.local_addr().unwrap() else {
-            panic!("IPv4");
+            panic!("IPv4"); // test helper
         };
         (listener, address_of(address))
     }
@@ -534,7 +534,7 @@ mod tests {
                     assert!(std::time::Instant::now() < deadline, "accept timed out");
                     std::thread::sleep(Duration::from_millis(1));
                 }
-                Err(error) => panic!("accept: {error}"),
+                Err(error) => panic!("accept: {error}"), // test helper
             }
         }
     }

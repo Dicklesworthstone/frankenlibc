@@ -69,14 +69,18 @@ static int check_provider(void) {
         }
     }
     const char *objects[] = {"_IO_2_1_stdin_", "_IO_2_1_stdout_", "_IO_2_1_stderr_"};
+    FILE *visible_objects[] = {&_IO_2_1_stdin_, &_IO_2_1_stdout_, &_IO_2_1_stderr_};
     for (size_t i = 0; i < 3; ++i) {
         void *object = dlsym(handle, objects[i]);
         Dl_info info;
         const ElfW(Sym) *entry = NULL;
-        if (object != NULL &&
-            (dladdr1(object, &info, (void **)&entry, RTLD_DL_SYMENT) == 0 ||
-             entry == NULL || entry->st_size < sizeof(FILE))) {
-            fprintf(stderr, "FAIL: %s must be a FILE object, not a pointer cell\n", objects[i]);
+        if (object == NULL ||
+            dladdr1(object, &info, (void **)&entry, RTLD_DL_SYMENT) == 0 ||
+            entry == NULL || entry->st_size != 224 ||
+            !same_file(info.dli_fname, expected) ||
+            dlsym(RTLD_DEFAULT, objects[i]) != visible_objects[i]) {
+            fprintf(stderr, "FAIL: %s must be a 224-byte provider FILE object bound to visible object\n",
+                    objects[i]);
             dlclose(handle);
             return 1;
         }
@@ -177,11 +181,30 @@ int main(void) {
             return 1;
         }
     }
-    /* Correctly declared host objects have distinct addresses from the public
-     * pointer cells. Do not require native storage to equal host storage. */
+    /* Correctly declared objects have distinct addresses from the public
+     * pointer cells, and the initial pointer cells must resolve directly to
+     * the visible _IO_2_1_* objects (including under R_X86_64_COPY). */
     if ((void *)&stdin == (void *)&_IO_2_1_stdin_ ||
         (void *)&stdout == (void *)&_IO_2_1_stdout_ ||
         (void *)&stderr == (void *)&_IO_2_1_stderr_) return 1;
+    if (stdin != &_IO_2_1_stdin_ ||
+        stdout != &_IO_2_1_stdout_ ||
+        stderr != &_IO_2_1_stderr_) {
+        fprintf(stderr, "FAIL: stdin/stdout/stderr must initially alias visible _IO_2_1_* objects\n");
+        return 1;
+    }
+    if (fileno(&_IO_2_1_stdin_) != STDIN_FILENO ||
+        fileno(&_IO_2_1_stdout_) != STDOUT_FILENO ||
+        fileno(&_IO_2_1_stderr_) != STDERR_FILENO) {
+        fprintf(stderr, "FAIL: fileno(&_IO_2_1_*) mismatch\n");
+        return 1;
+    }
+    if (putc('X', &_IO_2_1_stdout_) != 'X' ||
+        fwrite("-direct\n", 1, 8, &_IO_2_1_stdout_) != 8 ||
+        fflush(&_IO_2_1_stdout_) != 0) {
+        fprintf(stderr, "FAIL: direct I/O on &_IO_2_1_stdout_ failed\n");
+        return 1;
+    }
 
     if (setvbuf(stdout, user_buf, _IOFBF, sizeof(user_buf)) != 0) {
         fprintf(stderr, "FAIL: setvbuf(stdout,_IOFBF,user_buf) failed\n");

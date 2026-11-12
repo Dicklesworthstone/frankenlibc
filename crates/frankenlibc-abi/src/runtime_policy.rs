@@ -4065,11 +4065,7 @@ pub(crate) fn observe_size_class_mapping(
     ensure_minimal_panic_hook();
     if let Some(k) = kernel()
         && runtime_policy_guard(|| {
-            k.observe_size_class_mapping(
-                requested_size,
-                mapped_class_size,
-                class_membership_valid,
-            );
+            k.observe_size_class_mapping(requested_size, mapped_class_size, class_membership_valid);
         })
         .is_err()
     {
@@ -4364,9 +4360,8 @@ mod tests {
             "enter_policy_reentry_guard",
             "observe_validation_result",
         ] {
-            let at = body
-                .find(later)
-                .unwrap_or_else(|| panic!("observe() should still call {later}"));
+            assert!(body.contains(later), "observe() should still call {later}");
+            let at = body.find(later).unwrap();
             assert!(
                 guard_at < at,
                 "the errno guard is installed AFTER {later}, so anything that call \
@@ -5700,11 +5695,18 @@ mod tests {
             (FFI_PCC_STRNCPY_INDEX, "strncpy", true, 24),
         ];
         for (pcc_index, expected_symbol, is_write, policy_offset) in string_pcc_cases {
-            let mode = try_decide_certified_string_pcc(pcc_index, 0x7fff_4321, 32, is_write, false)
-                .unwrap_or_else(|| panic!("{expected_symbol} PCC fast path should succeed"));
-            assert_eq!(mode, SafetyLevel::Hardened);
-            let explain = take_last_explainability()
-                .unwrap_or_else(|| panic!("{expected_symbol} must record explainability"));
+            let mode = try_decide_certified_string_pcc(pcc_index, 0x7fff_4321, 32, is_write, false);
+            assert!(
+                mode.is_some(),
+                "{expected_symbol} PCC fast path should succeed"
+            );
+            assert_eq!(mode.unwrap(), SafetyLevel::Hardened);
+            let explain = take_last_explainability();
+            assert!(
+                explain.is_some(),
+                "{expected_symbol} must record explainability"
+            );
+            let explain = explain.unwrap();
             assert_eq!(explain.symbol, expected_symbol);
             assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
             assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + policy_offset);

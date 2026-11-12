@@ -48,8 +48,10 @@ compile_error!(
     raw-syscall sequences before this crate can build on them."
 );
 
-#[cfg(all(feature = "owned-unwind-stub", not(feature = "standalone")))]
-compile_error!("owned-unwind-stub is only valid for opt-in standalone experiments");
+// Opt-in `owned-unwind-stub` exports FrankenLibC's owned Itanium/DWARF unwinder
+// (`_Unwind_*`, `__register_frame*`) for both `libgcc_s`-denied interposition
+// verification and standalone replacement lanes while keeping the default
+// `LD_PRELOAD` profile free of `_Unwind_*` symbol interposition.
 
 #[macro_use]
 mod macros;
@@ -79,8 +81,17 @@ pub use runtime_policy::conformance_testing;
 // libc in the test binary, causing infinite recursion or deadlock.
 #[cfg(not(test))]
 pub mod malloc_abi;
-#[cfg(all(not(test), feature = "standalone", feature = "owned-unwind-stub"))]
+#[cfg(all(
+    not(test),
+    any(
+        feature = "owned-unwind-stub",
+        all(feature = "standalone", feature = "owned-unwind-stub")
+    )
+))]
 pub mod owned_unwind_abi;
+#[cfg(all(not(test), not(feature = "owned-unwind-stub")))]
+#[path = "owned_unwind_abi.rs"]
+pub(crate) mod owned_unwind_abi;
 #[cfg(not(test))]
 pub mod stdlib_abi;
 #[cfg(not(test))]

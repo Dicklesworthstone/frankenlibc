@@ -180,28 +180,34 @@ check_pointer_cell() {
 
 check_file_object() {
   local symbol="$1"
-  local pointer_size
-  pointer_size="$(( $(getconf LONG_BIT) / 8 ))"
-  nm -D --defined-only --print-size "${LIB}" | awk -v sym="${symbol}" -v width="${pointer_size}" '
+  nm -D --defined-only --print-size "${LIB}" | awk -v sym="${symbol}" -v lib="${LIB}" '
     {
       name = $NF
       sub(/@.*/, "", name)
       if (name == sym) {
-        size = $2
-        sub(/^0+/, "", size)
-        if (size == width) {
-          print "FAIL: " sym " must not be a pointer-sized FILE alias" > "/dev/stderr"
+        found = 1
+        raw = tolower($2)
+        sub(/^0+/, "", raw)
+        type = $3
+        if (raw != "e0" || type !~ /^[BD]$/) {
+          print "FAIL: " sym " expected 224-byte (0xe0) data OBJECT, got size=0x" (raw == "" ? "0" : raw) " type=" type > "/dev/stderr"
           invalid = 1
         }
       }
     }
-    END { exit invalid }
+    END {
+      if (!found) {
+        print "FAIL: missing exported FILE object " sym " in " lib > "/dev/stderr"
+        exit 1
+      }
+      exit invalid
+    }
   '
 }
 
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  # stdin/out/err are pointer cells. _IO_2_1_* are FILE objects in glibc,
-  # not aliases of those cells; the hybrid preload need not export them.
+  # stdin/out/err are pointer cells; _IO_2_1_* are 224-byte _IO_FILE_plus
+  # data objects exported at GLIBC_2.2.5.
   check_pointer_cell "stdin"
   check_pointer_cell "stdout"
   check_pointer_cell "stderr"

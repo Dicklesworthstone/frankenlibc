@@ -1545,7 +1545,10 @@ pub unsafe extern "C-unwind" fn nanosleep(
 /// the caller of whichever exported entry point was called
 /// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
 #[inline(always)]
-pub(crate) unsafe fn nanosleep_cp(req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
+pub(crate) unsafe extern "C-unwind" fn nanosleep_cp(
+    req: *const libc::timespec,
+    rem: *mut libc::timespec,
+) -> c_int {
     if req.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -1559,8 +1562,8 @@ pub(crate) unsafe fn nanosleep_cp(req: *const libc::timespec, rem: *mut libc::ti
     match unsafe {
         crate::pthread_abi::cancellation_point_nanosleep(req as *const u8, rem as *mut u8)
     } {
-        Ok(()) => 0,
-        Err(e) => {
+        0 => 0,
+        e => {
             unsafe { set_abi_errno(e) };
             -1
         }
@@ -1584,7 +1587,7 @@ pub unsafe extern "C-unwind" fn clock_nanosleep(
 
 /// Body of [`clock_nanosleep`] and its aliases (see [`nanosleep_cp`]).
 #[inline(always)]
-pub(crate) unsafe fn clock_nanosleep_cp(
+pub(crate) unsafe extern "C-unwind" fn clock_nanosleep_cp(
     clock_id: c_int,
     flags: c_int,
     req: *const libc::timespec,
@@ -1626,16 +1629,13 @@ pub(crate) unsafe fn clock_nanosleep_cp(
     }
 
     // clock_nanosleep returns the error number directly (not via errno).
-    let result = match unsafe {
+    let result = unsafe {
         crate::pthread_abi::cancellation_point_clock_nanosleep(
             clock_id,
             flags,
             req as *const u8,
             rem as *mut u8,
         )
-    } {
-        Ok(()) => 0,
-        Err(e) => e, // Return error code directly, not via errno
     };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 6, result != 0);
     result

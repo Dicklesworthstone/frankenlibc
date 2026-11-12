@@ -1503,7 +1503,7 @@ impl Drop for StreamGuard<'_> {
 #[inline]
 fn resolve_flags_word(flags_word: usize) -> usize {
     if (1..=3).contains(&flags_word) {
-        io_internal_abi::native_stdio_slot_addr_lockfree(flags_word - 1)
+        io_internal_abi::visible_stdio_handle_addr_lockfree(flags_word - 1)
     } else {
         flags_word
     }
@@ -2309,7 +2309,8 @@ fn write_cache_store(stream: *mut c_void, id: usize, ptr: *mut StdioStream) {
 #[inline]
 fn try_fputc_window(stream: *mut c_void, byte: u8) -> Option<c_int> {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
-        || !io_internal_abi::is_native_slot_ptr_lockfree(stream)
+        || !(io_internal_abi::is_native_slot_ptr_lockfree(stream)
+            || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream))
     {
         return None;
     }
@@ -2396,7 +2397,8 @@ fn try_fwrite_fast_by_stream(stream: *mut c_void, bytes: &[u8]) -> bool {
 #[inline]
 fn try_fgetc_window(stream: *mut c_void) -> Option<c_int> {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
-        || !io_internal_abi::is_native_slot_ptr_lockfree(stream)
+        || !(io_internal_abi::is_native_slot_ptr_lockfree(stream)
+            || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream))
     {
         return None;
     }
@@ -2821,39 +2823,20 @@ fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
     }
     let addr = stream as usize;
 
-    // In standalone mode, only match sentinel addresses (no host glibc FILE* comparison).
-    #[cfg(feature = "standalone")]
-    {
-        return match addr {
-            STDIN_SENTINEL => Some(STDIN_SENTINEL),
-            STDOUT_SENTINEL => Some(STDOUT_SENTINEL),
-            STDERR_SENTINEL => Some(STDERR_SENTINEL),
-            _ => None,
-        };
+    // Check the 3 sentinel ADDRESSES first (cheap integer compares), then match
+    // against FrankenLibC's visible `_IO_2_1_{stdin,stdout,stderr}_` objects
+    // (including `R_X86_64_COPY` `.bss` copies) and reserved `NativeFile` slots.
+    match addr {
+        STDIN_SENTINEL => return Some(STDIN_SENTINEL),
+        STDOUT_SENTINEL => return Some(STDOUT_SENTINEL),
+        STDERR_SENTINEL => return Some(STDERR_SENTINEL),
+        _ => {}
     }
-
-    #[cfg(not(feature = "standalone"))]
-    {
-        // Check the 3 sentinel ADDRESSES first (cheap integer compares): fl's own
-        // stdin/stdout/stderr are sentinels, so the hot stdout/stderr write path
-        // resolves here with ZERO `native_stream_registry` locks. Previously each
-        // branch's `|| stream == native_stdio_stream_ptr(fd)` took that std::sync
-        // mutex (a stdout write paid the STDIN-branch lock; a non-std stream paid all
-        // 3). Byte-identical ptr->id mapping. (bd-hqo6b6 hot-path; cc/BoldFalcon)
-        match addr {
-            STDIN_SENTINEL => return Some(STDIN_SENTINEL),
-            STDOUT_SENTINEL => return Some(STDOUT_SENTINEL),
-            STDERR_SENTINEL => return Some(STDERR_SENTINEL),
-            _ => {}
-        }
-        // Non-sentinel pointer: a single locked check against the 3 native FILE slots
-        // (was up to 3 separate locked calls).
-        match io_internal_abi::native_stdio_fd_for_ptr(stream) {
-            Some(libc::STDIN_FILENO) => Some(STDIN_SENTINEL),
-            Some(libc::STDOUT_FILENO) => Some(STDOUT_SENTINEL),
-            Some(libc::STDERR_FILENO) => Some(STDERR_SENTINEL),
-            _ => None,
-        }
+    match io_internal_abi::native_stdio_fd_for_ptr(stream) {
+        Some(libc::STDIN_FILENO) => Some(STDIN_SENTINEL),
+        Some(libc::STDOUT_FILENO) => Some(STDOUT_SENTINEL),
+        Some(libc::STDERR_FILENO) => Some(STDERR_SENTINEL),
+        _ => None,
     }
 }
 
@@ -4087,27 +4070,8 @@ pub(crate) fn stdio_symbols_are_interposed() -> bool {
     }
 }
 
-// glibc internal `_IO_2_1_{stdin,stdout,stderr}_` mirrors.
-//
-// These names are not pointer cells in glibc; they are the actual `_IO_FILE_plus`
-// objects backing the public `stdin/stdout/stderr` pointer variables. Release
-// builds therefore must not export them as aliases to the 8-byte pointer cells:
-// that creates an ABI lie which makes preloaded processes treat a pointer value
-// as a FILE header during dynamic-loader/libc startup.
-//
-// Debug/test builds do not export the libc symbol surface, so they keep local
-// pointer mirrors with the same runtime values for unit-test coverage only.
-#[cfg(debug_assertions)]
-#[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDIN: *mut c_void = STDIN_SENTINEL as *mut c_void;
-
-#[cfg(debug_assertions)]
-#[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDOUT: *mut c_void = STDOUT_SENTINEL as *mut c_void;
-
-#[cfg(debug_assertions)]
-#[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDERR: *mut c_void = STDERR_SENTINEL as *mut c_void;
+// `_IO_2_1_{stdin,stdout,stderr}_` 224-byte `_IO_FILE_plus` objects are defined
+// and exported in `io_internal_abi` (`GLIBC_2.2.5`).
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 #[cfg_attr(feature = "standalone", allow(dead_code))]
@@ -4174,7 +4138,7 @@ fn active_standard_stream(fd: c_int) -> *mut c_void {
         }
     };
     if stream.is_null() {
-        io_internal_abi::native_stdio_stream_ptr(fd)
+        io_internal_abi::visible_stdio_stream_ptr(fd)
     } else {
         stream
     }
@@ -4221,9 +4185,22 @@ pub(crate) fn init_host_stdio_streams() {
         return;
     }
 
-    // In standalone mode, globals are pre-set to sentinels - just mark as ready.
     #[cfg(feature = "standalone")]
     {
+        let _ = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdin_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdout_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDOUT_FILENO);
+        let stderr_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDERR_FILENO);
+        if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
+            unsafe {
+                owned_stdio_cell(libc::STDIN_FILENO).write(stdin_ptr);
+                owned_stdio_cell(libc::STDOUT_FILENO).write(stdout_ptr);
+                owned_stdio_cell(libc::STDERR_FILENO).write(stderr_ptr);
+                stdin = stdin_ptr;
+                stdout = stdout_ptr;
+                stderr = stderr_ptr;
+            }
+        }
         HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
     }
 
@@ -4236,9 +4213,10 @@ pub(crate) fn init_host_stdio_streams() {
         let can_sync_copy_relocations = interposed
             && runtime_policy::is_runtime_ready()
             && !HOST_STDIO_COPY_RELOCATIONS_SYNCED.load(Ordering::Acquire);
-        let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
-        let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
-        let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
+        let _ = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdin_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdout_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDOUT_FILENO);
+        let stderr_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDERR_FILENO);
         if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
             unsafe {
                 owned_stdio_cell(libc::STDIN_FILENO).write(stdin_ptr);
@@ -4250,12 +4228,6 @@ pub(crate) fn init_host_stdio_streams() {
                     stdin = stdin_ptr;
                     stdout = stdout_ptr;
                     stderr = stderr_ptr;
-                }
-                #[cfg(debug_assertions)]
-                {
-                    IO_2_1_STDIN = stdin_ptr;
-                    IO_2_1_STDOUT = stdout_ptr;
-                    IO_2_1_STDERR = stderr_ptr;
                 }
                 #[cfg(not(debug_assertions))]
                 {
@@ -8527,7 +8499,7 @@ unsafe fn stream_uses_caller_locking(stream: *mut c_void) -> bool {
         return false;
     }
     let handle = if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&addr) {
-        let handle = io_internal_abi::native_stdio_slot_addr_lockfree(addr - STDIN_SENTINEL);
+        let handle = io_internal_abi::visible_stdio_handle_addr_lockfree(addr - STDIN_SENTINEL);
         if handle == 0 {
             // __fsetlocking publishes the standard handle before changing
             // its mode, so an unpublished handle still uses INTERNAL.
@@ -8544,6 +8516,7 @@ unsafe fn stream_uses_caller_locking(stream: *mut c_void) -> bool {
     #[cfg(feature = "standalone")]
     if !(io_internal_abi::native_stdio_slot_addr_lockfree(0) != 0
         && io_internal_abi::is_native_slot_ptr_lockfree(handle as *const c_void))
+        && !io_internal_abi::is_visible_stdio_handle_ptr_lockfree(handle as *const c_void)
         && !io_internal_abi::is_native_handle_slot_address(handle as *mut c_void)
     {
         // Standalone rejects foreign handles without interpreting their
@@ -11298,10 +11271,7 @@ fn populate_ro_mappings_from_proc_maps(collector: &mut RoMappingCollector) {
     let mut buf = [0u8; 4096];
     let mut line = [0u8; 512];
     let mut line_len = 0usize;
-    loop {
-        let Ok(n) = (unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) }) else {
-            break;
-        };
+    while let Ok(n) = unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) } {
         if n == 0 {
             break;
         }
@@ -16446,12 +16416,32 @@ pub unsafe extern "C-unwind" fn freopen(
         // error after freopen(path, "r", stdin) never reached the inline
         // ferror_unlocked (coreutils uniq/tsort/shuf, which freopen stdin,
         // exited 0 on a directory: tests/misc/read-errors.sh).
-        match id {
+        let std_word = match id {
             STDIN_SENTINEL => 1,
             STDOUT_SENTINEL => 2,
             STDERR_SENTINEL => 3,
             _ => 0,
+        };
+        if std_word != 0 {
+            let glibc_flags = initial_glibc_flags(&open_flags, true, new_stream.buf_mode());
+            let vis = io_internal_abi::visible_stdio_handle_addr_lockfree(std_word - 1);
+            if vis != 0 {
+                unsafe {
+                    io_internal_abi::reset_stdio_handle_header(vis as *mut c_void, fd, glibc_flags);
+                }
+            }
+            let slot = io_internal_abi::native_stdio_slot_addr_lockfree(std_word - 1);
+            if slot != 0 && slot != vis {
+                unsafe {
+                    io_internal_abi::reset_stdio_handle_header(
+                        slot as *mut c_void,
+                        fd,
+                        glibc_flags,
+                    );
+                }
+            }
         }
+        std_word
     };
     reg.insert_stream_with_handle(id, new_stream, handle);
 

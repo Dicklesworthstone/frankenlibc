@@ -2,15 +2,15 @@
   "schema_version": "v1",
   "manifest_id": "libc-map-export-golden",
   "bead": "bd-yzm3v",
-  "generated_utc": "2026-06-04T19:54:54Z",
-  "source_commit": "13fb5e556ff7831d7453c567f75d1cca8f95e1dd",
+  "generated_utc": "2026-11-11T21:35:00Z",
+  "source_commit": "e4e625fb09b01118c18b461f10b7d1404602ef8b",
   "subject": {
     "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
   },
   "purpose": "Tamper-evident SHA-256 fingerprint of the canonical sorted-deduplicated exported-symbol set in crates/frankenlibc-abi/version_scripts/libc.map. Any silent addition or deletion of an exported libc.so symbol fails one of the two cited fingerprints with the live hex visible alongside the frozen value.",
-  "total_export_count": 4211,
+  "total_export_count": 4215,
   "blocks_count": 3,
-  "exports_sha256": "2607cce1aa096e3f42ae875c795d6809f7d991555baec863e5b0bddad54498cb",
+  "exports_sha256": "605a3e2fca449ee70e8eae8b240a8d7f03e12ebe702cbe7f4ef6562150d9f02b",
   "block_names_sha256": "4490a55373587aca255c76afb83fa72df11453afcf1f2f802d6f0802458b88f3",
   "regeneration_note": "If a planned ABI change adds/removes/renames symbols, update total_export_count, blocks_count, exports_sha256, and block_names_sha256 atomically with the version_script change. Do NOT update one without the others; mismatch is itself a fail-closed signal."
 }

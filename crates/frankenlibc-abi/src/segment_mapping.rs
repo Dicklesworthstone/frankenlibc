@@ -124,7 +124,7 @@ pub mod tests {
                 return fields.next().unwrap().to_owned();
             }
         }
-        panic!("mapping not found");
+        unreachable!("mapping not found"); // test helper
     }
 
     pub fn range_rounding_and_last_bit_are_exact() {
@@ -156,7 +156,9 @@ pub mod tests {
             (GRANULE, GRANULE, 0, GRANULE + 1),
             (usize::MAX & !(GRANULE - 1), GRANULE, 0, 1),
         ] {
-            assert!(!pages.enable_with(base, len, start, end, |_, _| panic!("invalid syscall")));
+            assert!(!pages.enable_with(base, len, start, end, |_, _| {
+                unreachable!("invalid syscall")
+            }));
         }
         assert_eq!(pages.ready.load(Ordering::Acquire), 0);
     }
@@ -167,11 +169,9 @@ pub mod tests {
             assert_eq!((a, n), (GRANULE, GRANULE));
             true
         }));
-        assert!(
-            pages.enable_with(GRANULE, 4 * GRANULE, 100, 200, |_, _| panic!(
-                "duplicate upgrade"
-            ))
-        );
+        assert!(pages.enable_with(GRANULE, 4 * GRANULE, 100, 200, |_, _| {
+            unreachable!("duplicate upgrade")
+        }));
         assert_eq!(pages.ready.load(Ordering::Acquire), 1);
     }
 

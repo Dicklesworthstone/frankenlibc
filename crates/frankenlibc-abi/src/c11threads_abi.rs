@@ -254,8 +254,8 @@ pub unsafe extern "C-unwind" fn thrd_sleep(
         )
     };
     match result {
-        Ok(()) => 0,
-        Err(e) => {
+        0 => 0,
+        e => {
             if e == libc::EINTR {
                 -1
             } else {

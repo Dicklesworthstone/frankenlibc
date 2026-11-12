@@ -3841,6 +3841,171 @@ fn pthread_cleanup_native_type_changes_match_gnu() {
     check_cleanup_type_changes_against_gnu();
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct NestedCleanupTypeObservation {
+    results: [c_int; 6],
+    in_outer: c_int,
+    in_inner: c_int,
+    after_inner_pop: c_int,
+    after_outer_pop: c_int,
+    inner_cb_type: c_int,
+    outer_cb_type: c_int,
+}
+
+fn observe_nested_cleanup_types(
+    functions: CleanupFunctions,
+    outer_reg: CleanupRegistration,
+    inner_reg: CleanupRegistration,
+    initial_type: c_int,
+    outer_body_type: c_int,
+    inner_body_type: c_int,
+) -> NestedCleanupTypeObservation {
+    struct Probe {
+        set_type: CleanupSetCancel,
+        calls: usize,
+        cancel_type: c_int,
+    }
+    unsafe extern "C-unwind" fn record_type(argument: *mut c_void) {
+        let probe = unsafe { &mut *argument.cast::<Probe>() };
+        probe.calls += 1;
+        let _ = unsafe { (probe.set_type)(0, &mut probe.cancel_type) };
+        let _ = unsafe { (probe.set_type)(probe.cancel_type, ptr::null_mut()) };
+    }
+
+    #[repr(align(16))]
+    struct Buffer([usize; 32]);
+    let mut outer_buf = Buffer([0; 32]);
+    let mut inner_buf = Buffer([0; 32]);
+    let outer_ptr = outer_buf.0.as_mut_ptr().cast::<c_void>();
+    let inner_ptr = inner_buf.0.as_mut_ptr().cast::<c_void>();
+    let mut outer_probe = Probe {
+        set_type: functions.set_type,
+        calls: 0,
+        cancel_type: -1,
+    };
+    let mut inner_probe = Probe {
+        set_type: functions.set_type,
+        calls: 0,
+        cancel_type: -1,
+    };
+    let outer_arg = std::ptr::from_mut(&mut outer_probe).cast::<c_void>();
+    let inner_arg = std::ptr::from_mut(&mut inner_probe).cast::<c_void>();
+    let (mut saved_state, mut saved_type) = (0, 0);
+    let (mut in_outer, mut in_inner, mut after_inner_pop, mut after_outer_pop) = (-1, -1, -1, -1);
+
+    let results = unsafe {
+        let r0 = (functions.set_state)(1, &mut saved_state);
+        let r1 = (functions.set_type)(initial_type, &mut saved_type);
+        match outer_reg {
+            CleanupRegistration::Legacy => {
+                (functions.push_defer)(outer_ptr, record_type as *mut c_void, outer_arg);
+            }
+            CleanupRegistration::JumpBuffer => (functions.register_defer)(outer_ptr),
+        }
+        let r2 = (functions.set_type)(outer_body_type, &mut in_outer);
+        match inner_reg {
+            CleanupRegistration::Legacy => {
+                (functions.push_defer)(inner_ptr, record_type as *mut c_void, inner_arg);
+            }
+            CleanupRegistration::JumpBuffer => (functions.register_defer)(inner_ptr),
+        }
+        let r3 = (functions.set_type)(inner_body_type, &mut in_inner);
+        match inner_reg {
+            CleanupRegistration::Legacy => (functions.pop_restore)(inner_ptr, 1),
+            CleanupRegistration::JumpBuffer => {
+                (functions.unregister_restore)(inner_ptr);
+                record_type(inner_arg);
+            }
+        }
+        // Observe type after inner pop without disturbing it before outer pop.
+        let _ = (functions.set_type)(0, &mut after_inner_pop);
+        let _ = (functions.set_type)(after_inner_pop, ptr::null_mut());
+        match outer_reg {
+            CleanupRegistration::Legacy => (functions.pop_restore)(outer_ptr, 1),
+            CleanupRegistration::JumpBuffer => {
+                (functions.unregister_restore)(outer_ptr);
+                record_type(outer_arg);
+            }
+        }
+        let r4 = (functions.set_type)(saved_type, &mut after_outer_pop);
+        let r5 = (functions.set_state)(saved_state, ptr::null_mut());
+        [r0, r1, r2, r3, r4, r5]
+    };
+
+    assert_eq!((outer_probe.calls, inner_probe.calls), (1, 1));
+    NestedCleanupTypeObservation {
+        results,
+        in_outer,
+        in_inner,
+        after_inner_pop,
+        after_outer_pop,
+        inner_cb_type: inner_probe.cancel_type,
+        outer_cb_type: outer_probe.cancel_type,
+    }
+}
+
+fn check_nested_cleanup_type_changes_against_gnu() {
+    let host = HostCleanupFunctions::new();
+    let candidate = CleanupFunctions::candidate();
+    let mut mismatches = Vec::new();
+    let mut cases = 0;
+    for outer_reg in [CleanupRegistration::Legacy, CleanupRegistration::JumpBuffer] {
+        for inner_reg in [CleanupRegistration::Legacy, CleanupRegistration::JumpBuffer] {
+            for initial_type in [0, 1] {
+                for outer_body_type in [0, 1] {
+                    for inner_body_type in [0, 1] {
+                        let expected = observe_nested_cleanup_types(
+                            host.functions,
+                            outer_reg,
+                            inner_reg,
+                            initial_type,
+                            outer_body_type,
+                            inner_body_type,
+                        );
+                        let actual = observe_nested_cleanup_types(
+                            candidate,
+                            outer_reg,
+                            inner_reg,
+                            initial_type,
+                            outer_body_type,
+                            inner_body_type,
+                        );
+                        cases += 1;
+                        assert_eq!(expected.results, [0; 6]);
+                        if actual != expected {
+                            mismatches.push(format!(
+                                "outer={outer_reg:?} inner={inner_reg:?} init={initial_type} outer_body={outer_body_type} inner_body={inner_body_type}: GNU={expected:?}, candidate={actual:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 32);
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn pthread_cleanup_nested_type_changes_match_gnu() {
+    check_nested_cleanup_type_changes_against_gnu();
+}
+
+#[test]
+fn pthread_cleanup_native_nested_type_changes_match_gnu() {
+    use frankenlibc_abi::pthread_abi::{
+        pthread_threading_restore_for_tests, pthread_threading_swap_force_native_for_tests,
+    };
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(pthread_threading_swap_force_native_for_tests());
+    check_nested_cleanup_type_changes_against_gnu();
+}
+
 // ===========================================================================
 // Session 13: obstack
 // ===========================================================================

@@ -23,6 +23,7 @@ fn workspace_root() -> PathBuf {
 
 fn abi_source_mentions_export(content: &str, symbol: &str) -> bool {
     let fn_pattern = format!("extern \"C\" fn {symbol}");
+    let fn_unwind_pattern = format!("extern \"C-unwind\" fn {symbol}");
     let export_name_pattern = format!("export_name = \"{symbol}\"");
     let static_pattern = format!("pub static {symbol}");
     let static_mut_pattern = format!("pub static mut {symbol}");
@@ -31,6 +32,7 @@ fn abi_source_mentions_export(content: &str, symbol: &str) -> bool {
     let macro_arg_bare_pattern = format!("!({symbol});");
 
     content.contains(&fn_pattern)
+        || content.contains(&fn_unwind_pattern)
         || content.contains(&export_name_pattern)
         || content.contains(&static_pattern)
         || content.contains(&static_mut_pattern)
@@ -39,11 +41,77 @@ fn abi_source_mentions_export(content: &str, symbol: &str) -> bool {
         || content.contains(&macro_arg_bare_pattern)
 }
 
-fn supported_via_host_visible_symbol(symbol: &str) -> bool {
-    matches!(
-        symbol,
-        "_IO_2_1_stdin_" | "_IO_2_1_stdout_" | "_IO_2_1_stderr_"
-    )
+fn supported_via_host_visible_symbol(_symbol: &str) -> bool {
+    false
+}
+
+/// Returns symbols in `content` that are exported *only* under `#[cfg(debug_assertions)]`
+/// (without an accompanying release / `not(debug_assertions)` export in the same file).
+fn debug_assertions_only_abi_symbols(content: &str) -> Vec<String> {
+    let mut debug_gated = std::collections::BTreeSet::new();
+    let mut release_exported = std::collections::BTreeSet::new();
+
+    let extract_symbol = |line: &str| -> Option<String> {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed
+            .strip_prefix("pub unsafe extern \"C\" fn ")
+            .or_else(|| trimmed.strip_prefix("pub unsafe extern \"C-unwind\" fn "))
+            .or_else(|| trimmed.strip_prefix("pub extern \"C\" fn "))
+            .or_else(|| trimmed.strip_prefix("pub extern \"C-unwind\" fn "))
+        {
+            let sym: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !sym.is_empty() {
+                return Some(sym);
+            }
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("pub static mut ")
+            .or_else(|| trimmed.strip_prefix("pub static "))
+        {
+            let sym: String = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect();
+            if !sym.is_empty() {
+                return Some(sym);
+            }
+        }
+        None
+    };
+
+    let mut pending_attrs = String::new();
+    for raw_line in content.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed.starts_with("#[") || (!pending_attrs.is_empty() && !pending_attrs.ends_with(']'))
+        {
+            pending_attrs.push(' ');
+            pending_attrs.push_str(trimmed);
+            continue;
+        }
+        if let Some(sym) = extract_symbol(trimmed) {
+            let compact: String = pending_attrs
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            let has_pos_debug = compact.contains("cfg(debug_assertions)")
+                || (compact.contains("debug_assertions")
+                    && !compact.contains("not(debug_assertions)"));
+            if has_pos_debug {
+                debug_gated.insert(sym);
+            } else {
+                release_exported.insert(sym);
+            }
+        }
+        pending_attrs.clear();
+    }
+
+    debug_gated.difference(&release_exported).cloned().collect()
 }
 
 #[test]
@@ -275,5 +343,84 @@ fn implemented_symbols_have_abi_exports() {
         missing.is_empty(),
         "Implemented/RawSyscall symbols must have ABI exports:\n{}",
         missing.join("\n")
+    );
+}
+
+#[test]
+fn no_debug_assertions_only_implemented_symbols() {
+    let root = workspace_root();
+    let matrix_path = root.join("support_matrix.json");
+    let abi_src = root.join("crates/frankenlibc-abi/src");
+
+    let content = std::fs::read_to_string(&matrix_path).unwrap();
+    let matrix: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let mut debug_only_all = std::collections::BTreeSet::new();
+    let mut release_all = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&abi_src).expect("should read abi src dir") {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        let debug_syms = debug_assertions_only_abi_symbols(&src);
+        for sym in &debug_syms {
+            debug_only_all.insert(sym.clone());
+        }
+        for sym in matrix["symbols"].as_array().unwrap() {
+            let name = sym["symbol"].as_str().unwrap();
+            if abi_source_mentions_export(&src, name) && !debug_syms.iter().any(|s| s == name) {
+                release_all.insert(name.to_string());
+            }
+        }
+    }
+
+    let mut violations = Vec::new();
+    for sym in matrix["symbols"].as_array().unwrap() {
+        let name = sym["symbol"].as_str().unwrap();
+        let status = sym["status"].as_str().unwrap();
+        if matches!(status, "Implemented" | "RawSyscall")
+            && debug_only_all.contains(name)
+            && !release_all.contains(name)
+        {
+            violations.push(format!("  {name} ({status})"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Implemented/RawSyscall symbols must NOT be gated exclusively on #[cfg(debug_assertions)]:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn debug_assertions_only_detector_catches_synthetic_counterexample() {
+    let synthetic = r#"
+        #[cfg(debug_assertions)]
+        pub static mut _IO_2_1_stdout_: [u8; 224] = [0; 224];
+
+        #[cfg(all(target_os = "linux", debug_assertions))]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __synthetic_debug_only_fn() -> i32 { 0 }
+
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn __synthetic_release_fn() -> i32 { 0 }
+
+        #[cfg(debug_assertions)]
+        pub static mut __dual_mode_sym: usize = 0;
+        #[cfg(not(debug_assertions))]
+        #[unsafe(no_mangle)]
+        pub static mut __dual_mode_sym: usize = 0;
+    "#;
+    let detected = debug_assertions_only_abi_symbols(synthetic);
+    assert_eq!(
+        detected,
+        vec![
+            "_IO_2_1_stdout_".to_string(),
+            "__synthetic_debug_only_fn".to_string()
+        ],
+        "detector must flag debug-only exports and ignore release/dual-mode exports"
     );
 }

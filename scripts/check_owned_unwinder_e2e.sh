@@ -31,6 +31,8 @@ fi
 REQUIRED_SYMBOLS=(
   "_Unwind_Backtrace"
   "_Unwind_DeleteException"
+  "_Unwind_ForcedUnwind"
+  "_Unwind_GetCFA"
   "_Unwind_GetDataRelBase"
   "_Unwind_GetGR"
   "_Unwind_GetIP"

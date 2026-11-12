@@ -444,6 +444,89 @@ support_stub_count = None
 if isinstance(support, dict):
     support_stub_count = sum(row.get("status") == "Stub" for row in support.get("symbols", []))
 
+def find_debug_only_abi_symbols(text):
+    debug_gated = set()
+    release_exported = set()
+    pending_attrs = []
+    sym_re = re.compile(
+        r'^(?:pub\s+(?:unsafe\s+)?extern\s+"C(?:-unwind)?"\s+fn|pub\s+static(?:\s+mut)?)\s+([A-Za-z_]\w*)\b'
+    )
+    for raw in text.splitlines():
+        trimmed = raw.strip()
+        if not trimmed or trimmed.startswith("//"):
+            continue
+        if trimmed.startswith("#[") or (pending_attrs and not pending_attrs[-1].endswith("]")):
+            pending_attrs.append(trimmed)
+            continue
+        m = sym_re.match(trimmed)
+        if m:
+            sym = m.group(1)
+            compact = re.sub(r"\s+", "", "".join(pending_attrs))
+            has_pos_debug = "cfg(debug_assertions)" in compact or (
+                "debug_assertions" in compact and "not(debug_assertions)" not in compact
+            )
+            if has_pos_debug:
+                debug_gated.add(sym)
+            else:
+                release_exported.add(sym)
+        pending_attrs = []
+    return debug_gated - release_exported
+
+_synthetic_probe = find_debug_only_abi_symbols(
+    "#[cfg(debug_assertions)]\npub static mut _IO_2_1_stdout_: usize = 0;\n"
+    "#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]\npub unsafe extern \"C\" fn ok_sym() {}\n"
+)
+if _synthetic_probe != {"_IO_2_1_stdout_"}:
+    fail(
+        "release_abi_export_presence",
+        f"debug_assertions-only detector self-test failed: got {_synthetic_probe}",
+        expected_contract="{'_IO_2_1_stdout_'}",
+        actual_contract=str(_synthetic_probe),
+        failure_signature="broken_debug_only_detector",
+    )
+
+abi_src_dir = root / "crates" / "frankenlibc-abi" / "src"
+debug_only_across_abi = set()
+release_across_abi = set()
+if abi_src_dir.is_dir():
+    for rs_file in sorted(abi_src_dir.glob("*.rs")):
+        src_text = read_text(rs_file, "abi release export scan")
+        file_debug_only = find_debug_only_abi_symbols(src_text)
+        debug_only_across_abi.update(file_debug_only)
+        for m in re.finditer(
+            r'\b(?:extern\s+"C(?:-unwind)?"\s+fn|pub\s+static(?:\s+mut)?)\s+([A-Za-z_]\w*)\b',
+            src_text,
+        ):
+            if m.group(1) not in file_debug_only:
+                release_across_abi.add(m.group(1))
+
+debug_only_violations = []
+if isinstance(support, dict):
+    for row in support.get("symbols", []):
+        sym = str(row.get("symbol", ""))
+        st = str(row.get("status", ""))
+        if st in ("Implemented", "RawSyscall") and sym in debug_only_across_abi and sym not in release_across_abi:
+            debug_only_violations.append(f"{sym} ({st})")
+            fail(
+                "release_abi_export_presence",
+                f"symbol {sym} is classified {st} in support_matrix.json but gated on #[cfg(debug_assertions)]",
+                symbol=sym,
+                file_path="support_matrix.json",
+                expected_contract="release ABI export present in not(debug_assertions)",
+                actual_contract="debug_assertions-only ABI symbol",
+                failure_signature="debug_assertions_only_implemented_symbol",
+            )
+
+if not debug_only_violations and _synthetic_probe == {"_IO_2_1_stdout_"}:
+    checks["release_abi_export_presence"] = "pass"
+    event(
+        "release_abi_export_presence",
+        expected_contract="zero Implemented/RawSyscall symbols gated exclusively on #[cfg(debug_assertions)]",
+        actual_contract="0 debug-only Implemented/RawSyscall symbols (negative counterexample verified)",
+    )
+else:
+    checks["release_abi_export_presence"] = "fail"
+
 overlay_policy = overlay.get("coverage_policy", {}) if isinstance(overlay, dict) else {}
 snapshot_stubs = overlay.get("support_matrix_snapshot", {}).get("status_counts", {}).get("Stub") if isinstance(overlay, dict) else None
 if (

@@ -103,7 +103,7 @@ mod tests {
             CACHE.with(|value| {
                 *value = 7;
                 assert!(CACHE.is_accessed_by_current_thread());
-                panic!("owned-cache callback unwind");
+                panic!("owned-cache callback unwind"); // test helper
             });
         });
         assert!(result.is_err());

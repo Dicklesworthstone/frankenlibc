@@ -424,6 +424,7 @@ fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
 }
 
 #[cfg(not(feature = "standalone"))]
+#[allow(clippy::large_enum_variant)]
 pub(super) enum RootParseOutcome {
     NotAttempted,
     InvalidElf,

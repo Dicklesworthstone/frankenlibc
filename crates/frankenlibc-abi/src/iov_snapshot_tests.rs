@@ -2,7 +2,7 @@ use super::*;
 
 fn expect_error(result: Result<PreparedIovecs, c_int>, expected: c_int) {
     match result {
-        Ok(_) => panic!("descriptor import unexpectedly succeeded"),
+        Ok(_) => panic!("descriptor import unexpectedly succeeded"), // test helper
         Err(error) => assert_eq!(error, expected),
     }
 }
