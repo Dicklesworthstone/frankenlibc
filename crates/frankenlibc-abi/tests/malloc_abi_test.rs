@@ -34,6 +34,112 @@ fn test_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[test]
+fn native_allocator_fallbacks_keep_owned_mapping_provenance() {
+    const NAME: &str = "native_allocator_fallbacks_keep_owned_mapping_provenance";
+    const CHILD: &str = "FRANKENLIBC_NATIVE_ALLOCATION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_THREAD_NATIVE", "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "native allocator child failed: {:?}\n{}\n{}",
+            output.status, String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+    let _guard = test_lock().lock().unwrap();
+    // SAFETY: this isolated test process owns its watchdog disposition.
+    unsafe { libc::alarm(15) };
+    struct Probe { retained: usize }
+    unsafe extern "C" fn worker(argument: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 1usize as *mut c_void;
+        }
+        // Exercise the same raw backends reached by nested allocator work and
+        // arena block allocation, without any Rust allocation on this worker.
+        let previous = malloc_swap_reentry_depth_for_tests(1);
+        let allocation = unsafe { malloc(41) };
+        if allocation.is_null() || !unsafe { malloc_bump_overflow_header_valid_for_tests(allocation) } {
+            return 2usize as *mut c_void;
+        }
+        if fallback_size_for_bench(allocation) != Some(41) {
+            return 10usize as *mut c_void;
+        }
+        unsafe { allocation.cast::<u8>().write_bytes(0xa7, 41) };
+        let zeroed = unsafe { calloc(17, 7) };
+        if zeroed.is_null() || !unsafe { malloc_bump_overflow_header_valid_for_tests(zeroed) } {
+            return 3usize as *mut c_void;
+        }
+        for index in 0..119 {
+            if unsafe { *zeroed.cast::<u8>().add(index) } != 0 {
+                return 4usize as *mut c_void;
+            }
+        }
+        let resized = unsafe { realloc(allocation, 9001) };
+        if resized.is_null() || !unsafe { malloc_bump_overflow_header_valid_for_tests(resized) } {
+            return 5usize as *mut c_void;
+        }
+        if fallback_size_for_bench(allocation).is_some() {
+            return 9usize as *mut c_void;
+        }
+        if fallback_size_for_bench(resized) != Some(9001) {
+            return 11usize as *mut c_void;
+        }
+        for index in 0..41 {
+            if unsafe { *resized.cast::<u8>().add(index) } != 0xa7 {
+                return 6usize as *mut c_void;
+            }
+        }
+        let mut aligned = ptr::null_mut();
+        if unsafe { posix_memalign(&mut aligned, 8192, 4097) } != 0
+            || (aligned as usize) % 8192 != 0
+            || !unsafe { malloc_bump_overflow_header_valid_for_tests(aligned) }
+        {
+            return 7usize as *mut c_void;
+        }
+        if !unsafe { calloc(usize::MAX, 2) }.is_null() {
+            return 8usize as *mut c_void;
+        }
+        unsafe { free(zeroed); free(resized); }
+        malloc_restore_reentry_depth_for_tests(previous);
+        // SAFETY: the parent keeps this writable probe alive through join.
+        unsafe { (*argument.cast::<Probe>()).retained = aligned as usize };
+        ptr::null_mut()
+    }
+    let before = malloc_bump_overflow_stats();
+    let mut probe = Probe { retained: 0 };
+    let mut thread = 0;
+    // SAFETY: valid output, C entry point and argument retained through join.
+    assert_eq!(unsafe {
+        frankenlibc_abi::pthread_abi::pthread_create(
+            &mut thread, ptr::null(), Some(worker), (&raw mut probe).cast(),
+        )
+    }, 0);
+    let mut result = ptr::null_mut();
+    assert_eq!(unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) }, 0);
+    assert!(result.is_null(), "native allocation failure stage {}", result as usize);
+    let retained = probe.retained as *mut c_void;
+    assert!(!retained.is_null());
+    assert!(unsafe { malloc_bump_overflow_header_valid_for_tests(retained) });
+    assert_eq!(unsafe { malloc_bump_allocation_size_for_tests(retained) }, Some(4097));
+    let live = malloc_bump_overflow_stats();
+    assert_eq!(live.mappings_created - before.mappings_created, 4);
+    assert_eq!(live.live_mappings, before.live_mappings + 1);
+    // The creator must recognize and retire a mapping allocated by its worker.
+    unsafe { free(retained) };
+    let after = malloc_bump_overflow_stats();
+    assert_eq!(after.live_mappings, before.live_mappings);
+    assert_eq!(after.mappings_released - before.mappings_released, 4);
+    assert_eq!(after.static_bytes_used, before.static_bytes_used);
+    unsafe { libc::alarm(0) };
+}
+
 // ---------------------------------------------------------------------------
 // malloc — basic allocation
 // ---------------------------------------------------------------------------

@@ -3158,6 +3158,14 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
     }
     #[cfg(not(feature = "standalone"))]
     {
+        // Native clones still inherit their creator's hardware TLS. Calling
+        // the host allocator here would concurrently reuse its arena/tcache,
+        // including on bootstrap and membrane-internal allocation paths.
+        // Reuse the owned mapping path and exact provenance registry so either
+        // the worker or another thread can later reclaim the allocation.
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+            return host_alloc_result(unsafe { bump_alloc_overflow(size.max(1), BUMP_ALIGN) });
+        }
         let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC) else {
             return unsafe { bump_alloc(size) };
         };
@@ -3222,6 +3230,13 @@ unsafe fn native_libc_calloc_with_slot(
     }
     #[cfg(not(feature = "standalone"))]
     {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+            let Some(total) = nmemb.checked_mul(size) else {
+                return host_alloc_result(std::ptr::null_mut());
+            };
+            // Anonymous mappings are zeroed and do not use a host TLS cache.
+            return host_alloc_result(unsafe { bump_alloc_overflow(total.max(1), BUMP_ALIGN) });
+        }
         let Some(_reentry_guard) = enter_native_reentry_guard_for_slot(slot, NATIVE_REENTRY_CALLOC)
         else {
             let Some(total) = nmemb.checked_mul(size) else {
@@ -3451,14 +3466,16 @@ unsafe fn native_libc_free_host_only(slot: &'static AllocatorReentrySlot, ptr: *
 /// bookkeeping (no fallback-table insert, no stats, no decide/observe). Lets a
 /// head-to-head bench separate the membrane's own per-call cost from the cost of
 /// the host allocator operating on the busy main-namespace heap. Diagnostic for
-/// bd-f874go; do not use outside benches.
+/// bd-f874go. On native clones the raw backend instead uses owned mappings:
+/// those threads cannot safely call through inherited host allocator TLS.
+/// Also used by the native allocation ownership regression.
 #[doc(hidden)]
 #[must_use]
 pub unsafe fn native_calloc_probe_for_bench(nmemb: usize, size: usize) -> *mut c_void {
     unsafe { native_libc_calloc(nmemb, size) }
 }
 
-/// Bench-only probe: bare host (main-namespace) `free`. See
+/// Bench-only probe: raw backend free, including owned mappings. See
 /// [`native_calloc_probe_for_bench`].
 #[doc(hidden)]
 pub unsafe fn native_free_probe_for_bench(ptr: *mut c_void) {
@@ -3499,6 +3516,9 @@ unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
     }
     #[cfg(not(feature = "standalone"))]
     {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+            return host_alloc_result(unsafe { bump_alloc_overflow(size.max(1), alignment) });
+        }
         let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MEMALIGN) else {
             return unsafe { bump_alloc_aligned(size, alignment) };
         };
@@ -5871,7 +5891,8 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
     // A bump block (made inside a signal handler, or while this thread held
     // the fallback table) is not host memory: host realloc on it aborted the
     // process with "double free or corruption (out)" (perl
-    // run/runenv_hashseed.t, hardened). Move it into a host block instead.
+    // run/runenv_hashseed.t, hardened). Move it through the selected raw
+    // allocation backend instead.
     if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
         let out = unsafe { bootstrap_malloc_passthrough(size) };
         if !out.is_null() {
@@ -5882,8 +5903,9 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
                     out.cast::<u8>(),
                     old_size.min(size),
                 );
-                let _ = bump_mmap_release(ptr);
             }
+            let _ = fallback_remove(ptr);
+            let _ = unsafe { bump_mmap_release(ptr) };
         }
         return out;
     }
@@ -6998,9 +7020,10 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         unsafe {
             std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
         }
-        // SAFETY: ownership transferred successfully to `out`.
-        let _ = unsafe { bump_mmap_release(ptr) };
         let _ = fallback_remove(ptr);
+        // SAFETY: ownership transferred successfully to `out`; retire its old
+        // table entry before the address can be reused by another allocation.
+        let _ = unsafe { bump_mmap_release(ptr) };
         fallback_insert_sized(out, size.max(1));
         return out;
     }
