@@ -1818,12 +1818,14 @@ fn bump_overflow_realloc_preserves_payload_and_releases_old_mapping() {
 /// More cumulative allocations than the fixed record-table capacity must
 /// succeed when the simultaneous live set is small. This is the regression
 /// contract the immortal-chunk design could not provide: exhaustion depends on
-/// live demand, never on historical churn.
+/// live demand, never on historical churn. Tracked native fallbacks must also
+/// retain their own size row when another thread frees a reused address.
 #[test]
 fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     const THREADS: usize = 8;
-    const ROUNDS: usize = 640;
+    const ROUNDS: usize = 4096;
+    signal_runtime_ready_for_tests();
     let before = malloc_bump_overflow_stats();
     let barrier = Arc::new(Barrier::new(THREADS));
     let mut handles = Vec::with_capacity(THREADS);
@@ -1831,6 +1833,7 @@ fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
     for thread_index in 0..THREADS {
         let barrier = Arc::clone(&barrier);
         handles.push(std::thread::spawn(move || {
+            assert!(malloc_current_reentry_slot_index_for_tests().is_some());
             barrier.wait();
             for round in 0..ROUNDS {
                 let request = 2048 + ((thread_index + round) & 63);
@@ -1839,6 +1842,16 @@ fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
                 assert!(
                     !p.is_null(),
                     "overflow churn returned NULL at thread={thread_index} round={round}"
+                );
+                // Native raw fallbacks publish this exact size row before the
+                // allocation escapes. Reusing an unmapped address must never
+                // let its previous owner's free retire this new row.
+                fallback_insert_sized_for_bench(p, request);
+                std::thread::yield_now();
+                assert_eq!(
+                    fallback_size_for_bench(p),
+                    Some(request),
+                    "live overflow allocation lost its fallback row at thread={thread_index} round={round}"
                 );
                 // Touch both ends so a publication or premature-unmap defect faults
                 // at the point it is introduced.

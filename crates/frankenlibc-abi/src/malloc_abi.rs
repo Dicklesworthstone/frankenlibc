@@ -5295,9 +5295,13 @@ pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
         unsafe { bootstrap_free_passthrough(ptr) };
         return;
     }
-    // SAFETY: exact registry membership owns and retires overflow mappings.
-    if unsafe { bump_mmap_release(ptr) }.is_some() {
+    if bump_mmap_record(ptr).is_some() {
+        // Retire the size row while this mapping still owns its address. After
+        // munmap, another thread may immediately publish a new allocation there.
         let _ = fallback_remove(ptr);
+        // SAFETY: exact registry membership established ownership above. A
+        // failed munmap retains the record and must never fall through to glibc.
+        let _ = unsafe { bump_mmap_release(ptr) };
         return;
     }
     if is_static_bump_ptr(ptr) {
@@ -6626,9 +6630,13 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         }
         SegmentFreeResult::NotOwned => {}
     }
-    // SAFETY: exact registry membership owns and retires overflow mappings.
-    if unsafe { bump_mmap_release(ptr) }.is_some() {
+    if bump_mmap_record(ptr).is_some() {
+        // Retire the size row while this mapping still owns its address. After
+        // munmap, another thread may immediately publish a new allocation there.
         let _ = fallback_remove(ptr);
+        // SAFETY: exact registry membership established ownership above. A
+        // failed munmap retains the record and must never fall through to glibc.
+        let _ = unsafe { bump_mmap_release(ptr) };
         return;
     }
     if is_static_bump_ptr(ptr) {
