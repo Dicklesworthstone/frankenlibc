@@ -50,9 +50,12 @@ LIBS=(
     /usr/lib/x86_64-linux-gnu/libutil.so.1
     /usr/lib/x86_64-linux-gnu/libresolv.so.2
     /usr/lib/x86_64-linux-gnu/libcrypt.so.1
+    /usr/lib/x86_64-linux-gnu/libgcc_s.so.1
+    /lib/x86_64-linux-gnu/libgcc_s.so.1
 )
 
 python3 - "${SCAN_PATHS[@]}" "${LIBS[@]}" <<'PY'
+import concurrent.futures
 import pathlib
 import re
 import subprocess
@@ -66,12 +69,19 @@ for a in sys.argv[1:]:
 # ---- 1. Collect library exports: symbol -> sorted lib tags -------------------
 lib_tag = {}
 exports: dict[str, set[str]] = {}
+seen_real: set[pathlib.Path] = set()
+present_names: set[str] = {pathlib.Path(x).name for x in libs if pathlib.Path(x).exists()}
 for path in libs:
     p = pathlib.Path(path)
     if not p.exists():
-        print(f"WARN: library not present, skipping: {path}", file=sys.stderr)
+        if p.name not in present_names:
+            print(f"WARN: library not present, skipping: {path}", file=sys.stderr)
         continue
-    tag = re.search(r"lib(\w+?)\.so", p.name).group(1)[0]  # m, c, p(thr), r, d, u
+    real = p.resolve()
+    if real in seen_real:
+        continue
+    seen_real.add(real)
+    tag = re.search(r"lib(\w+?)\.so", p.name).group(1)[0]  # m, c, p(thr), r, d, u, g
     out = subprocess.run(["nm", "-D", "--defined-only", str(p)],
                          capture_output=True, text=True)
     for line in out.stdout.splitlines():
@@ -92,10 +102,13 @@ DECL = re.compile(
     r'([A-Za-z_][A-Za-z0-9_]*)')
 
 decls: dict[str, set[str]] = {}   # symbol -> files
+zz_probes: list[pathlib.Path] = []
 files_scanned = 0
 blocks_found = 0
 for root in scan_paths:
     for path in sorted(pathlib.Path(root).rglob("*.rs")):
+        if path.name.startswith("zz_"):
+            zz_probes.append(path)
         text = path.read_text(encoding="utf-8", errors="replace")
         files_scanned += 1
         for m in re.finditer(r'unsafe\s+extern\s+"C"\s*\{', text):
@@ -139,17 +152,44 @@ for root in scan_paths:
                     decls.setdefault("__blocklibs__", set()).update(
                         f"{sym}:{sorted(block_libs)}")
 
-# ---- 3. Report ----------------------------------------------------------------
+# ---- 3. Syntax-parse any gitignored zz_*.rs probes ---------------------------
+def check_zz_parse(probe: pathlib.Path) -> tuple[str, str] | None:
+    res = subprocess.run(
+        ["rustc", "--edition=2024", "-Zparse-crate-root-only", str(probe)],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode == 0:
+        return None
+    first = next((ln.strip() for ln in res.stderr.splitlines() if ln.strip()), "parse failed")
+    return (str(probe), first)
+
+parse_failures: list[tuple[str, str]] = []
+if zz_probes:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        for item in pool.map(check_zz_parse, zz_probes):
+            if item is not None:
+                parse_failures.append(item)
+
+# ---- 4. Report ----------------------------------------------------------------
 unresolved = sorted(s for s in decls if s != "__blocklibs__" and s not in exports)
-print(f"scanned_files={files_scanned} extern_blocks={blocks_found} "
+print(f"scanned_files={files_scanned} zz_probes={len(zz_probes)} extern_blocks={blocks_found} "
       f"declared_symbols={len(decls) - (1 if '__blocklibs__' in decls else 0)} "
       f"library_exports={len(exports)}")
+failed = False
 if unresolved:
     print(f"FAIL: {len(unresolved)} declared extern symbol(s) exported by NONE of "
           f"the scanned libraries — their test targets cannot link:")
     for s in unresolved:
         for f in sorted(decls[s]):
             print(f"  {s}  <- {f}")
+    failed = True
+if parse_failures:
+    print(f"FAIL: {len(parse_failures)} zz_*.rs probe(s) failed syntax parse:")
+    for f, diag in parse_failures:
+        print(f"  {f}: {diag}")
+    failed = True
+if failed:
     sys.exit(1)
 print("PASS: every declared extern symbol resolves against the scanned libraries")
 PY

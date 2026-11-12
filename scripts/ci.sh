@@ -115,6 +115,11 @@ scripts/check_separation_logic_annotations.sh --strict
 echo "PASS"
 echo ""
 
+echo "--- test extern-symbol & zz_ probe static audit ---"
+bash scripts/check_test_extern_symbols.sh
+echo "PASS"
+echo ""
+
 # --keep-going is load-bearing: without it cargo stops at the FIRST failing
 # target and reports a fraction of the damage. Measured 2026-08-06 — bare
 # --all-targets reported 2 broken targets, --keep-going found 68.
