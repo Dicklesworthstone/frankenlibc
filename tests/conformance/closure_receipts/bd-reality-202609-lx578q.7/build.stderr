@@ -1,0 +1,2 @@
+[1m[33mwarning[0m: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7/debug/build/frankenlibc-core/7d66e31a18dc9463/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 0.14s

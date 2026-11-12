@@ -1,0 +1,12 @@
+
+running 7 tests
+test host_arm_classifier_discriminates_the_golden_values_shape ... ok
+test extern_c_oracle_arms_resolve_to_host_glibc_not_to_fl ... ok
+test differential_suite_is_only_evidence_with_debug_assertions_on ... ok
+test mutated_or_self_aliased_arm_is_rejected ... ok
+test libc_crate_oracle_arms_resolve_to_host_glibc_not_to_fl ... ok
+test every_differential_gate_reaches_a_host_arm_or_is_a_declared_invariant ... ok
+test symbol_and_differential_inventory_separates_implemented_executed_skipped_unproven_and_known_failing ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+

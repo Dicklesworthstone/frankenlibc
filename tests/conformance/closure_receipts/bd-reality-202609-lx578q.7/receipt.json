@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7",
+  "contract": {
+    "behavior": "Executable differential, native-plugin semaphore cancellation, multibyte guard-page/locale, metamorphic, and oracle-provenance inventory verification with mutated-arm rejection",
+    "acceptance_sha256": "13678a635f66c55624501114c31dc2c268383632a619b71ffe9f5e41040dd8f4",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "crates/frankenlibc-abi/src/wchar_abi.rs",
+      "crates/frankenlibc-abi/tests/dlfcn_native_semaphore_test.rs",
+      "crates/frankenlibc-abi/tests/conformance_diff_mb_singlechar.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_diff_oracle_arm_provenance.rs"
+    ],
+    "source": {
+      "commit": "b2b04151f6f22d3f183fa44aef4cd43f913c24b1",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/pthread_abi.rs": "1fbc93c2a84fb2bcbe2ee0f229ce5e6e1ef779efdec34995433cbb76a72432d1",
+        "crates/frankenlibc-abi/src/wchar_abi.rs": "2328b7a39c7d9934ecfdbcd00cd0b0b69c4d5f6decb4af5f490c9577363b274e",
+        "crates/frankenlibc-abi/tests/conformance_diff_mb_singlechar.rs": "b86b7fd8bf1ffe701c97f7b78f147f136e5603a3ed06f7cb397d7d6bb9be9cce",
+        "crates/frankenlibc-abi/tests/conformance_diff_oracle_arm_provenance.rs": "04d24c37d4d302a9944ab8488051fbd2960584988160e9b069527166b5baef60",
+        "crates/frankenlibc-abi/tests/dlfcn_native_semaphore_test.rs": "958b039565c104398ec6e5fe3b6ce98812ff271964457f97d5b747bdbaa4a164",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-09-08T04:41:52.542677795Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7/debug/build/frankenlibc-abi/b914dbafa20006f1/out/conformance_diff_oracle_arm_provenance-b914dbafa20006f1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_diff_oracle_arm_provenance",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7/debug/build/frankenlibc-abi/b914dbafa20006f1/out/conformance_diff_oracle_arm_provenance-b914dbafa20006f1"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "every_differential_gate_reaches_a_host_arm_or_is_a_declared_invariant",
+        "symbol_and_differential_inventory_separates_implemented_executed_skipped_unproven_and_known_failing",
+        "mutated_or_self_aliased_arm_is_rejected",
+        "host_arm_classifier_discriminates_the_golden_values_shape"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_diff_oracle_arm_provenance",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T18:01:15.920010+00:00",
+    "finished_at": "2026-11-12T18:01:16.136444+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e7ad1a26f343fd2c8ef4c13fb079352e2873ffd8d4126c089daad72d87c23079",
+    "stderr_sha256": "e980619d5a77a915c80bd61b8fe56f6e4886110652b9b2c61dee1ab0357fc21c",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7/debug/build/frankenlibc-abi/b914dbafa20006f1/out/conformance_diff_oracle_arm_provenance-b914dbafa20006f1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T18:01:16.151734+00:00",
+    "finished_at": "2026-11-12T18:01:16.569390+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "e59f43af1a2e09ec5f776bcfefe17ab7618ee17845411b4606f6a9c9be362f3b",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 7
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7/debug/build/frankenlibc-abi/b914dbafa20006f1/out/conformance_diff_oracle_arm_provenance-b914dbafa20006f1": "0a8177dfd237a2d6736eafc04847c24833ba937d2de8f68a94be757fb82331b9"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1293453-pool-21d1d5fc2f911be29b784603f9f936d7/debug/build/frankenlibc-abi/b914dbafa20006f1/out/conformance_diff_oracle_arm_provenance-b914dbafa20006f1": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/pthread_abi.rs": "1fbc93c2a84fb2bcbe2ee0f229ce5e6e1ef779efdec34995433cbb76a72432d1",
+    "crates/frankenlibc-abi/src/wchar_abi.rs": "2328b7a39c7d9934ecfdbcd00cd0b0b69c4d5f6decb4af5f490c9577363b274e",
+    "crates/frankenlibc-abi/tests/conformance_diff_mb_singlechar.rs": "b86b7fd8bf1ffe701c97f7b78f147f136e5603a3ed06f7cb397d7d6bb9be9cce",
+    "crates/frankenlibc-abi/tests/conformance_diff_oracle_arm_provenance.rs": "04d24c37d4d302a9944ab8488051fbd2960584988160e9b069527166b5baef60",
+    "crates/frankenlibc-abi/tests/dlfcn_native_semaphore_test.rs": "958b039565c104398ec6e5fe3b6ce98812ff271964457f97d5b747bdbaa4a164",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "0a8177dfd237a2d6736eafc04847c24833ba937d2de8f68a94be757fb82331b9"
+}
