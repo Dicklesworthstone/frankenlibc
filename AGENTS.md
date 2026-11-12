@@ -468,7 +468,7 @@ frankentui-ui = [...]                                 # TUI-driven analysis outp
 
 | Crate | Policy | Notes |
 |-------|--------|-------|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust by default; `407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit boundary/SIMD files (`lib.rs`, `syscall/mod.rs`, `pthread/{mod,cond,thread,tls}.rs`, `rcu/mod.rs`, `string/str.rs`, `termios/mod.rs`, `float128.rs`, `math/mod.rs`) with `// SAFETY:` comments. |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust by default; `406` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit boundary/SIMD files (`lib.rs`, `syscall/mod.rs`, `pthread/{mod,cond,thread,tls}.rs`, `rcu/mod.rs`, `string/str.rs`, `termios/mod.rs`, `float128.rs`, `math/mod.rs`) with `// SAFETY:` comments. |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena/fingerprint modules get `#[allow(unsafe_code)]` for raw pointer ops. Every unsafe block must have `// SAFETY:` comment. |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Entrypoints use a mixture of membrane-gated delegation, raw-syscall veneers, and host-backed wrappers. |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | Test harness never needs unsafe. |

@@ -600,3 +600,287 @@ fn dated_historical_snapshots_remain_permitted() {
     );
     assert_eq!(report["status"].as_str(), Some("pass"));
 }
+
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("create_dir_all should succeed");
+    for entry in std::fs::read_dir(src).expect("read_dir should succeed") {
+        let entry = entry.expect("dir entry");
+        let ty = entry.file_type().expect("file_type");
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dst_path);
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), &dst_path).expect("copy file");
+        }
+    }
+}
+
+fn assert_log_contains_failure_signature(root: &Path, expected_sig: &str) {
+    let log_content =
+        std::fs::read_to_string(root.join("target/conformance/docs_semantic_claims.log.jsonl"))
+            .expect("docs semantic claims log should exist");
+    let found = log_content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .any(|line| {
+            let row: serde_json::Value = serde_json::from_str(line).expect("valid jsonl row");
+            row["status"].as_str() == Some("fail")
+                && row["failure_signature"].as_str() == Some(expected_sig)
+        });
+    assert!(
+        found,
+        "expected failure_signature={expected_sig} in docs_semantic_claims.log.jsonl, got:\n{log_content}"
+    );
+}
+
+#[test]
+fn deployment_and_plan_reject_stale_smoke_and_stub_claims() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+
+    // (a.1) Inject stale Sept `189 pass / 1 xfail` (`a8a4110b`) line into DEPLOYMENT.md
+    let dep_src = std::fs::read_to_string(root.join("DEPLOYMENT.md")).unwrap();
+    let dep_mutated = format!(
+        "{dep_src}\n\nSecondary summary: Sept 24 snapshot at `a8a4110b` recorded 189 pass / 0 fail / 4 optional skips and 1 xfail.\n"
+    );
+    let dep_temp = unique_temp_path("docs-semantic-deployment-stale-sept.md");
+    std::fs::write(&dep_temp, dep_mutated).expect("write DEPLOYMENT fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_DEPLOYMENT", &dep_temp)]);
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["multi_guide_consistency"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "cross_guide_smoke_drift");
+
+    // (a.2) Inject stale `44 Stub` rollup into PLAN_TO_PORT_GLIBC_TO_RUST.md
+    let plan_src = std::fs::read_to_string(root.join("PLAN_TO_PORT_GLIBC_TO_RUST.md")).unwrap();
+    let plan_mutated = plan_src.replace("18 Stub", "44 Stub");
+    let plan_temp = unique_temp_path("docs-semantic-plan-stale-stub.md");
+    std::fs::write(&plan_temp, plan_mutated).expect("write PLAN fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_PLAN", &plan_temp)]);
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["multi_guide_consistency"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "cross_guide_taxonomy_drift");
+}
+
+#[test]
+fn readme_rejects_duplicate_contradictory_loc_table() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let mutated = format!(
+        "{source}\n\n| Dimension | Status |\n|---|---|\n| `crates/frankenlibc-abi/src/` | 99 Rust files, 123,456 lines |\n"
+    );
+    let temp = unique_temp_path("docs-semantic-readme-dup-loc.md");
+    std::fs::write(&temp, mutated).expect("write README dup LOC fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_README", &temp)]);
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["multi_occurrence_loc_consistency"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "duplicate_contradictory_loc_claim");
+}
+
+#[test]
+fn readme_rejects_closed_bead_cited_as_open() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let mutated = source.replace(
+        "### Known broken or not yet freshly evidenced under preload\n\n",
+        "### Known broken or not yet freshly evidenced under preload\n\n- Legacy regression still open (`bd-rc0923-epic-eeuy4f.4`).\n",
+    );
+    let readme_temp = unique_temp_path("docs-semantic-readme-closed-bead.md");
+    std::fs::write(&readme_temp, mutated).expect("write README closed-bead fixture");
+
+    let beads_temp = unique_temp_path("docs-semantic-beads.jsonl");
+    let synthetic_beads = concat!(
+        "{\"id\":\"bd-rc0923-epic-eeuy4f.4\",\"status\":\"closed\"}\n",
+        "{\"id\":\"bd-rc0923-epic-eeuy4f.26\",\"status\":\"blocked\"}\n",
+        "{\"id\":\"bd-rc0923-epic-eeuy4f.25\",\"status\":\"closed\"}\n",
+        "{\"id\":\"bd-rc0923-epic-eeuy4f.3\",\"status\":\"closed\"}\n",
+        "{\"id\":\"bd-reality-202609-lx578q.6.1\",\"status\":\"in_progress\"}\n",
+        "{\"id\":\"bd-rc0923-epic-eeuy4f.24\",\"status\":\"in_progress\"}\n",
+        "{\"id\":\"bd-rc0923-epic-eeuy4f.37\",\"status\":\"in_progress\"}\n"
+    );
+    std::fs::write(&beads_temp, synthetic_beads).expect("write synthetic beads jsonl");
+
+    let output = run_gate_with_env(&[
+        ("FLC_DOCS_SEMANTIC_README", &readme_temp),
+        ("FLC_DOCS_SEMANTIC_BEADS_JSONL", &beads_temp),
+    ]);
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["bead_status_consistency"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "closed_bead_cited_as_open");
+}
+
+#[test]
+fn core_rejects_unapproved_unsafe_code_allow_module() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let temp_core_src = unique_temp_path("docs-semantic-core-src");
+    copy_dir_recursive(&root.join("crates/frankenlibc-core/src"), &temp_core_src);
+    std::fs::write(
+        temp_core_src.join("unapproved_unsafe_probe.rs"),
+        "#[allow(unsafe_code)]\npub unsafe fn forbidden_probe() {}\n",
+    )
+    .expect("write unapproved unsafe module");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_CORE_SRC_DIR", &temp_core_src)]);
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["core_unsafe_allow_budget"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "unapproved_core_unsafe_allow");
+}
+
+#[test]
+fn feature_parity_rejects_orphaned_source_commit_sha() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+
+    // (e.1) Mutate FEATURE_PARITY.md to cite orphaned SHA `b70205895`
+    let fp_src = std::fs::read_to_string(root.join("FEATURE_PARITY.md")).unwrap();
+    let fp_mutated = fp_src.replace("(`e9760aa9e`)", "(`b70205895`)");
+    let fp_temp = unique_temp_path("docs-semantic-feature-orphaned-sha.md");
+    std::fs::write(&fp_temp, fp_mutated).expect("write FEATURE_PARITY fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_FEATURE_PARITY", &fp_temp)]);
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["source_commit_provenance"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "orphaned_source_commit_sha");
+
+    // (e.2) Verify git-object existence check rejects an orphaned 40-hex commit in git
+    let bare_repo = unique_temp_path("docs-semantic-orphaned-git");
+    let init_status = Command::new("git")
+        .args(["init", "--bare"])
+        .arg(&bare_repo)
+        .status()
+        .expect("git init --bare");
+    assert!(init_status.success());
+
+    let output = Command::new(root.join("scripts/check_docs_semantic_claims.sh"))
+        .current_dir(&root)
+        .env("FLC_DOCS_SEMANTIC_VERIFY_GIT_OBJECTS", "1")
+        .env("FLC_DOCS_SEMANTIC_GIT_REPO", &bare_repo)
+        .output()
+        .expect("run gate with bare repo");
+    let report = parse_stdout_report(&output);
+    assert!(!output.status.success(), "{report}");
+    assert_eq!(
+        report["checks"]["source_commit_provenance"].as_str(),
+        Some("fail"),
+        "{report}"
+    );
+    assert_log_contains_failure_signature(&root, "orphaned_source_commit_sha");
+}
+
+#[test]
+fn closure_gate_rejects_ephemeral_data_tmp_receipt_and_companion_gates_pass() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+
+    // Verify semantic drift and claim reconciliation gates pass cleanly
+    for gate_rel in [
+        "scripts/check_semantic_contract_drift.sh",
+        "scripts/check_claim_reconciliation.sh",
+    ] {
+        let out = Command::new("bash")
+            .arg(root.join(gate_rel))
+            .current_dir(&root)
+            .output()
+            .expect("companion gate should execute");
+        assert!(
+            out.status.success(),
+            "{gate_rel} failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // Verify check_closure_gate.sh rejects an unmounted/ephemeral `/data/tmp/...` receipt path
+    let bad_bead_id = "bd-ephemeral-tmp-receipt-probe";
+    let beads_temp = unique_temp_path("closure-ephemeral-beads.jsonl");
+    std::fs::write(
+        &beads_temp,
+        format!(
+            "{{\"id\":\"{bad_bead_id}\",\"status\":\"closed\",\"issue_type\":\"task\",\"labels\":[\"verification\"],\"created_at\":\"2026-11-11T00:00:00Z\",\"updated_at\":\"2026-11-12T00:00:00Z\",\"closed_at\":\"2026-11-12T00:00:00Z\",\"acceptance_criteria\":\"must fail on /data/tmp\"}}\n"
+        ),
+    )
+    .expect("write synthetic beads jsonl");
+
+    let matrix_temp = unique_temp_path("closure-ephemeral-matrix.json");
+    let synthetic_matrix = serde_json::json!({
+        "entries": [{
+            "bead_id": bad_bead_id,
+            "status": "closed",
+            "labels": ["verification"],
+            "coverage_summary": { "overall": "complete" },
+            "row": {
+                "unit_cmds": ["cargo test"],
+                "e2e_cmds": [],
+                "artifact_paths": ["README.md"],
+                "close_blockers": [],
+                "result_receipts": ["/data/tmp/unmounted-ephemeral-worker-dir/receipt.json"],
+                "closure_evidence": {
+                    "behavior": "probe",
+                    "acceptance_sha256": "e4847a3ca8ac1965571211fb1e2a0a672ba3fb473026249a385f99df5f00cb6b",
+                    "claim_class": "executed_unit",
+                    "evidence_class": "executed_unit",
+                    "behavior_paths": ["README.md"],
+                    "test_paths": ["crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs"],
+                    "source": { "commit": "0000000000000000000000000000000000000000", "files": {} },
+                    "configuration": { "architecture": "x86_64", "mode": "strict", "profile": "test", "features": ["default"] },
+                    "not_before": "2026-11-11T00:00:00Z",
+                    "gate": { "command": ["/bin/true"], "environment": {}, "artifacts": [], "result_format": "libtest", "required_tests": ["t"] }
+                }
+            }
+        }]
+    });
+    std::fs::write(
+        &matrix_temp,
+        serde_json::to_string_pretty(&synthetic_matrix).unwrap() + "\n",
+    )
+    .expect("write synthetic matrix");
+
+    let out = Command::new("bash")
+        .arg(root.join("scripts/check_closure_gate.sh"))
+        .current_dir(&root)
+        .env("FRANKENLIBC_BEADS_JSONL", &beads_temp)
+        .env("FRANKENLIBC_CLOSURE_MATRIX", &matrix_temp)
+        .output()
+        .expect("check_closure_gate.sh should execute");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success() && stdout.contains("POST_FAIL=1"),
+        "expected ephemeral /data/tmp receipt to fail closed, got:\nstdout={stdout}\nstderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

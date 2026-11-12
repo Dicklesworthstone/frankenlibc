@@ -153,6 +153,13 @@ inventory_path = env_path("FLC_DOCS_SEMANTIC_INVENTORY", "semantic_contract_inve
 join_path = env_path("FLC_DOCS_SEMANTIC_JOIN", "semantic_contract_symbol_join")
 oracle_path = env_path("FLC_DOCS_SEMANTIC_ORACLE", "oracle_precedence")
 replacement_path = env_path("FLC_DOCS_SEMANTIC_REPLACEMENT_LEVELS", "replacement_levels")
+plan_path = resolve_path(os.environ.get("FLC_DOCS_SEMANTIC_PLAN", "PLAN_TO_PORT_GLIBC_TO_RUST.md"))
+core_lib_path = resolve_path(os.environ.get("FLC_DOCS_SEMANTIC_CORE_LIB_RS", "crates/frankenlibc-core/src/lib.rs"))
+core_src_dir = resolve_path(os.environ.get("FLC_DOCS_SEMANTIC_CORE_SRC_DIR", "crates/frankenlibc-core/src"))
+beads_jsonl_override = os.environ.get("FLC_DOCS_SEMANTIC_BEADS_JSONL")
+beads_jsonl_path = resolve_path(beads_jsonl_override) if beads_jsonl_override else resolve_path(".beads/issues.jsonl")
+reality_report_path = resolve_path(os.environ.get("FLC_DOCS_SEMANTIC_REALITY_REPORT", "tests/conformance/reality_report.v1.json"))
+smoke_path = resolve_path(os.environ.get("FLC_DOCS_SEMANTIC_SMOKE_SUMMARY", "tests/conformance/ld_preload_smoke_summary.v1.json"))
 
 support = load_json(support_path, "support_matrix")
 overlay = load_json(overlay_path, "support_semantic_overlay")
@@ -216,6 +223,13 @@ operator_docs = {
     "PARITY_COVERAGE": (parity_coverage_path, read_text(parity_coverage_path, "PARITY_COVERAGE")),
 }
 all_docs = {**docs, **operator_docs}
+plan_text = read_text(plan_path, "PLAN_TO_PORT_GLIBC_TO_RUST")
+core_lib_text = read_text(core_lib_path, "CORE_LIB_RS")
+extended_docs = {
+    **all_docs,
+    "PLAN_TO_PORT_GLIBC_TO_RUST": (plan_path, plan_text),
+    "CORE_LIB_RS": (core_lib_path, core_lib_text),
+}
 
 readme_text = docs["README"][1]
 feature_text = docs["FEATURE_PARITY"][1]
@@ -362,7 +376,6 @@ else:
         failure_signature="missing_toolchain_channel",
     )
 
-smoke_path = root / "tests/conformance/ld_preload_smoke_summary.v1.json"
 smoke = load_json(smoke_path, "smoke summary")
 if isinstance(smoke, dict):
     smoke_summary = smoke.get("summary", {})
@@ -622,6 +635,445 @@ for surface_id, (path, text) in all_docs.items():
             )
 
 checks["forbidden_claim_patterns"] = "pass" if not forbidden_claims else "fail"
+
+# (a) Multi-occurrence & cross-guide smoke counts and support-taxonomy rollups
+def is_dated_historical_line(line_text):
+    lowered_line = line_text.lower()
+    return any(tok in lowered_line for tok in ("historical", "superseded", "earlier ", "former "))
+
+multi_guide_ok = True
+stale_guide_tokens = [
+    ("stale_sept_smoke_pass", "189 pass"),
+    ("stale_sept_smoke_xfail", "1 xfail"),
+    ("stale_sept_smoke_commit", "a8a4110b"),
+    ("stale_nov_early_smoke_pass", "344 pass"),
+    ("stale_nov_early_smoke_run", "20261111T045420Z"),
+    ("stale_oct_smoke_pass", "310 pass"),
+    ("stale_oct_smoke_commit", "7fafe5bee"),
+    ("stale_plan_stub_count", "44 Stub"),
+    ("stale_invalid_row_count", "1,085"),
+    ("stale_orphaned_feature_sha", "b70205895"),
+]
+expected_smoke_tuple = None
+if isinstance(smoke, dict) and isinstance(smoke.get("summary"), dict):
+    sm = smoke["summary"]
+    expected_smoke_tuple = (
+        int(sm.get("passes", -1)),
+        int(sm.get("fails", -1)),
+        int(sm.get("skips", -1)),
+    )
+
+smoke_triplet_re = re.compile(
+    r"(\d+)\s+pass(?:es)?\s*/\s*(\d+)\s+fail(?:s)?\s*/\s*(\d+)\s+(?:optional\s+)?skips?",
+    flags=re.IGNORECASE,
+)
+for surface_id, (path, text) in extended_docs.items():
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if is_dated_historical_line(line):
+            continue
+        for token_id, token in stale_guide_tokens:
+            if token.lower() in line.lower():
+                multi_guide_ok = False
+                fail(
+                    "multi_guide_consistency",
+                    f"{surface_id}: stale cross-guide claim {token_id} ({token!r}) at {rel(path)}:{line_no}",
+                    doc_surface=surface_id,
+                    symbol_or_section=token_id,
+                    previous_claim=line.strip(),
+                    generated_claim="must match current ld_preload_smoke_summary.v1.json and support_matrix.json",
+                    failure_signature="cross_guide_smoke_drift",
+                )
+        if expected_smoke_tuple is not None:
+            for match in smoke_triplet_re.finditer(line):
+                observed = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                if observed != expected_smoke_tuple:
+                    multi_guide_ok = False
+                    fail(
+                        "multi_guide_consistency",
+                        f"{surface_id}: smoke triplet {match.group(0)!r} at {rel(path)}:{line_no} contradicts canonical {expected_smoke_tuple}",
+                        doc_surface=surface_id,
+                        symbol_or_section="ld_preload_smoke_summary",
+                        previous_claim=match.group(0),
+                        generated_claim=f"{expected_smoke_tuple[0]} pass / {expected_smoke_tuple[1]} fail / {expected_smoke_tuple[2]} optional skips",
+                        failure_signature="cross_guide_smoke_drift",
+                    )
+
+if isinstance(support, dict):
+    sup_sum = support.get("summary", {})
+    expected_plan_phrases = [
+        ("plan_total_classified", f"{sup_sum.get('total'):,} exported symbols classified"),
+        (
+            "plan_native_rollup",
+            f"{sup_sum.get('implemented'):,} Implemented + {sup_sum.get('raw_syscall'):,} RawSyscall = {sup_sum.get('implemented', 0) + sup_sum.get('raw_syscall', 0):,}",
+        ),
+        (
+            "plan_non_native_rollup",
+            f"{sup_sum.get('wraps_host_libc'):,} WrapsHostLibc, {sup_sum.get('glibc_call_through')} GlibcCallThrough, {sup_sum.get('stub')} Stub",
+        ),
+    ]
+    for claim_id, phrase in expected_plan_phrases:
+        if phrase not in plan_text:
+            multi_guide_ok = False
+            fail(
+                "multi_guide_consistency",
+                f"PLAN_TO_PORT_GLIBC_TO_RUST: missing current taxonomy rollup {claim_id}: {phrase}",
+                doc_surface="PLAN_TO_PORT_GLIBC_TO_RUST",
+                symbol_or_section=claim_id,
+                generated_claim=phrase,
+                failure_signature="cross_guide_taxonomy_drift",
+            )
+checks["multi_guide_consistency"] = "pass" if multi_guide_ok else "fail"
+if multi_guide_ok:
+    event(
+        "multi_guide_consistency",
+        generated_claim=f"all occurrences across {len(extended_docs)} surfaces agree on smoke and taxonomy counts",
+    )
+
+# (b) Multi-occurrence crate file/LOC table consistency in README.md
+loc_ok = True
+expected_crate_sizes = {
+    "abi": (abi_rust_count, abi_line_count),
+    "membrane": (membrane_rust_count, membrane_line_count),
+    "core": (core_rust_count, core_line_count),
+}
+exact_src_row_re = re.compile(
+    r"\|\s*`crates/frankenlibc-(abi|membrane|core)/src/`\s*\|\s*(\d+)\s+Rust files,\s*([\d,]+)\s+lines"
+)
+approx_crate_re = re.compile(
+    r"(?:crates/)?`?frankenlibc-(abi|membrane|core)`?[^\n]*?(\d+)\s+Rust(?:\s+source)?\s+files(?:,\s*~(\d+(?:\.\d+)?)\s*(kLOC|MLOC))?"
+)
+for line_no, line in enumerate(readme_text.splitlines(), start=1):
+    if is_dated_historical_line(line):
+        continue
+    for match in exact_src_row_re.finditer(line):
+        crate_key = match.group(1)
+        obs_files = int(match.group(2))
+        obs_lines = int(match.group(3).replace(",", ""))
+        exp_files, exp_lines = expected_crate_sizes[crate_key]
+        if (obs_files, obs_lines) != (exp_files, exp_lines):
+            loc_ok = False
+            fail(
+                "multi_occurrence_loc_consistency",
+                f"README: crates/frankenlibc-{crate_key}/src/ row at line {line_no} reports ({obs_files} files, {obs_lines:,} lines) != ({exp_files} files, {exp_lines:,} lines)",
+                doc_surface="README",
+                symbol_or_section=f"crates/frankenlibc-{crate_key}/src/",
+                previous_claim=line.strip(),
+                generated_claim=f"{exp_files} Rust files, {exp_lines:,} lines",
+                failure_signature="duplicate_contradictory_loc_claim",
+            )
+    if exact_src_row_re.search(line):
+        continue
+    for match in approx_crate_re.finditer(line):
+        crate_key = match.group(1)
+        obs_files = int(match.group(2))
+        exp_files, exp_lines = expected_crate_sizes[crate_key]
+        approx_bad = obs_files != exp_files
+        if match.group(3) and match.group(4):
+            approx_val = float(match.group(3))
+            unit = match.group(4)
+            if unit == "kLOC" and abs(approx_val - (exp_lines / 1000.0)) > 5.0:
+                approx_bad = True
+            elif unit == "MLOC" and abs(approx_val - (exp_lines / 1_000_000.0)) > 0.05:
+                approx_bad = True
+        if approx_bad:
+            loc_ok = False
+            fail(
+                "multi_occurrence_loc_consistency",
+                f"README: frankenlibc-{crate_key} summary at line {line_no} contradicts ({exp_files} files, {exp_lines:,} lines)",
+                doc_surface="README",
+                symbol_or_section=f"frankenlibc-{crate_key}",
+                previous_claim=line.strip(),
+                generated_claim=f"{exp_files} Rust files (~{exp_lines:,} lines)",
+                failure_signature="duplicate_contradictory_loc_claim",
+            )
+checks["multi_occurrence_loc_consistency"] = "pass" if loc_ok else "fail"
+if loc_ok:
+    event(
+        "multi_occurrence_loc_consistency",
+        doc_surface="README",
+        generated_claim="all crate file/LOC occurrences in README agree with working tree",
+    )
+
+# (c) Closed beads cited as open in README Known-broken section
+bead_status_ok = True
+if beads_jsonl_override and not beads_jsonl_path.exists():
+    bead_status_ok = False
+    fail(
+        "bead_status_consistency",
+        f"configured FLC_DOCS_SEMANTIC_BEADS_JSONL does not exist: {beads_jsonl_path}",
+        doc_surface="README",
+        symbol_or_section="Known broken or not yet freshly evidenced under preload",
+        failure_signature="missing_beads_jsonl",
+    )
+elif beads_jsonl_path.exists():
+    bead_status_by_id = {}
+    for raw_bead_line in read_text(beads_jsonl_path, "beads_jsonl").splitlines():
+        if not raw_bead_line.strip():
+            continue
+        try:
+            bead_obj = json.loads(raw_bead_line)
+            if isinstance(bead_obj, dict) and bead_obj.get("id"):
+                bead_status_by_id[str(bead_obj["id"])] = str(bead_obj.get("status", ""))
+        except Exception as exc:
+            bead_status_ok = False
+            fail(
+                "bead_status_consistency",
+                f"invalid JSON in {rel(beads_jsonl_path)}: {exc}",
+                doc_surface="README",
+                failure_signature="malformed_beads_jsonl",
+            )
+            break
+    known_hdr = "### Known broken or not yet freshly evidenced under preload"
+    if known_hdr in readme_text:
+        after_hdr = readme_text.split(known_hdr, 1)[1]
+        section_end = re.search(r"\n(?:## |### |---)", after_hdr)
+        known_section = after_hdr[: section_end.start()] if section_end else after_hdr
+        for bullet_line in known_section.splitlines():
+            for match in re.finditer(r"`(bd-[a-z0-9]+(?:[-.][a-z0-9]+)+)`", bullet_line):
+                bid = match.group(1)
+                if bead_status_by_id.get(bid) != "closed":
+                    continue
+                # Check the enclosing parenthetical (or line if unparenthesized) for explicit resolved/closed marker
+                open_paren = bullet_line.rfind("(", 0, match.start())
+                close_paren = bullet_line.find(")", match.end())
+                scope_slice = (
+                    bullet_line[open_paren : close_paren + 1].lower()
+                    if open_paren != -1 and close_paren != -1
+                    else bullet_line.lower()
+                )
+                if "resolved" not in scope_slice and "closed" not in scope_slice:
+                    bead_status_ok = False
+                    fail(
+                        "bead_status_consistency",
+                        f"README: closed bead {bid} is cited as open without resolved/closed qualifier",
+                        doc_surface="README",
+                        symbol_or_section="Known broken or not yet freshly evidenced under preload",
+                        previous_claim=bullet_line.strip(),
+                        generated_claim=f"{bid} has status=closed in .beads/issues.jsonl",
+                        failure_signature="closed_bead_cited_as_open",
+                    )
+checks["bead_status_consistency"] = "pass" if bead_status_ok else "fail"
+if bead_status_ok:
+    event(
+        "bead_status_consistency",
+        doc_surface="README",
+        generated_claim="no closed beads cited as open in README preload limitations",
+    )
+
+# (d) frankenlibc-core #[allow(unsafe_code)] module allow-list and attribute budget
+approved_core_unsafe_files = {
+    "float128.rs",
+    "lib.rs",
+    "math/mod.rs",
+    "pthread/cond.rs",
+    "pthread/mod.rs",
+    "pthread/thread.rs",
+    "pthread/tls.rs",
+    "rcu/mod.rs",
+    "string/str.rs",
+    "syscall/mod.rs",
+    "termios/mod.rs",
+}
+unsafe_allow_re = re.compile(r"#!?\[allow\([^\]]*\bunsafe_code\b[^\]]*\)\]")
+core_unsafe_ok = True
+if "No `unsafe` code is permitted" in core_lib_text:
+    core_unsafe_ok = False
+    fail(
+        "core_unsafe_allow_budget",
+        "CORE_LIB_RS: blanket 'No `unsafe` code is permitted' claim contradicts boundary exemptions",
+        doc_surface="CORE_LIB_RS",
+        symbol_or_section="lib.rs",
+        failure_signature="false_zero_unsafe_claim",
+    )
+if not core_src_dir.is_dir():
+    core_unsafe_ok = False
+    fail(
+        "core_unsafe_allow_budget",
+        f"core_src_dir is missing: {core_src_dir}",
+        doc_surface="CORE_LIB_RS",
+        failure_signature="missing_core_src_dir",
+    )
+else:
+    observed_unsafe_files = {}
+    for rs_path in sorted(core_src_dir.rglob("*.rs")):
+        if not rs_path.is_file():
+            continue
+        rel_rs = rs_path.relative_to(core_src_dir).as_posix()
+        rs_text = read_text(rs_path, f"core {rel_rs}")
+        code_only = "\n".join(line.split("//", 1)[0] for line in rs_text.splitlines())
+        count = len(unsafe_allow_re.findall(code_only))
+        if count > 0:
+            observed_unsafe_files[rel_rs] = count
+            if rel_rs not in approved_core_unsafe_files:
+                core_unsafe_ok = False
+                fail(
+                    "core_unsafe_allow_budget",
+                    f"CORE_LIB_RS: unapproved #[allow(unsafe_code)] ({count}) in crates/frankenlibc-core/src/{rel_rs}",
+                    doc_surface="CORE_LIB_RS",
+                    symbol_or_section=rel_rs,
+                    previous_claim=f"{count} #[allow(unsafe_code)] attributes",
+                    generated_claim=f"only {sorted(approved_core_unsafe_files)} are approved boundary modules",
+                    failure_signature="unapproved_core_unsafe_allow",
+                )
+    total_unsafe_attrs = sum(observed_unsafe_files.values())
+    budget_match = re.search(
+        r"\(`(\d+)`\s+attributes\s+across\s*\n?\s*//!?\s*`(\d+)`\s+(?:boundary\s+)?files",
+        core_lib_text,
+    )
+    if not budget_match:
+        core_unsafe_ok = False
+        fail(
+            "core_unsafe_allow_budget",
+            "CORE_LIB_RS: missing explicit (`<N>` attributes across `<M>` boundary files) unsafe budget declaration",
+            doc_surface="CORE_LIB_RS",
+            symbol_or_section="unsafe_budget_declaration",
+            generated_claim=f"(`{total_unsafe_attrs}` attributes across `{len(observed_unsafe_files)}` boundary files)",
+            failure_signature="missing_core_unsafe_budget_claim",
+        )
+    else:
+        declared_attrs = int(budget_match.group(1))
+        declared_files = int(budget_match.group(2))
+        if (declared_attrs, declared_files) != (total_unsafe_attrs, len(observed_unsafe_files)):
+            core_unsafe_ok = False
+            fail(
+                "core_unsafe_allow_budget",
+                f"CORE_LIB_RS: declared unsafe budget ({declared_attrs} attrs across {declared_files} files) != observed ({total_unsafe_attrs} attrs across {len(observed_unsafe_files)} files)",
+                doc_surface="CORE_LIB_RS",
+                symbol_or_section="unsafe_budget_declaration",
+                previous_claim=f"{declared_attrs} attrs / {declared_files} files",
+                generated_claim=f"{total_unsafe_attrs} attrs / {len(observed_unsafe_files)} files",
+                failure_signature="unapproved_core_unsafe_allow",
+            )
+    for m_readme in re.finditer(
+        r"`(\d+)`\s+`#\[allow\(unsafe_code\)\]`\s*/\s*`#!\[allow\(unsafe_code\)\]`\s+attributes\s+across\s+`(\d+)`",
+        readme_text,
+    ):
+        rm_attrs, rm_files = int(m_readme.group(1)), int(m_readme.group(2))
+        if (rm_attrs, rm_files) != (total_unsafe_attrs, len(observed_unsafe_files)):
+            core_unsafe_ok = False
+            fail(
+                "core_unsafe_allow_budget",
+                f"README: core unsafe attribute count ({rm_attrs} across {rm_files}) != observed ({total_unsafe_attrs} across {len(observed_unsafe_files)})",
+                doc_surface="README",
+                symbol_or_section="frankenlibc-core unsafe policy",
+                previous_claim=m_readme.group(0),
+                generated_claim=f"`{total_unsafe_attrs}` attributes across `{len(observed_unsafe_files)}` files",
+                failure_signature="unapproved_core_unsafe_allow",
+            )
+checks["core_unsafe_allow_budget"] = "pass" if core_unsafe_ok else "fail"
+if core_unsafe_ok:
+    event(
+        "core_unsafe_allow_budget",
+        doc_surface="CORE_LIB_RS",
+        generated_claim=f"{sum(observed_unsafe_files.values())} #[allow(unsafe_code)] attributes confined to {len(observed_unsafe_files)} approved boundary files",
+    )
+
+# (e) source_commit SHA provenance in FEATURE_PARITY.md and canonical JSON artifacts
+provenance_ok = True
+reality_report = load_json(reality_report_path, "reality_report")
+support_commit = str(support.get("source_commit", "")) if isinstance(support, dict) else ""
+reality_commit = str(reality_report.get("source_commit", "")) if isinstance(reality_report, dict) else ""
+smoke_full_commit = str(smoke.get("source_commit", "")) if isinstance(smoke, dict) else ""
+
+if not re.fullmatch(r"[0-9a-f]{40}", support_commit):
+    provenance_ok = False
+    fail(
+        "source_commit_provenance",
+        f"support_matrix.json source_commit is not 40-hex: {support_commit!r}",
+        doc_surface="support_matrix",
+        symbol_or_section="source_commit",
+        previous_claim=support_commit,
+        failure_signature="orphaned_source_commit_sha",
+    )
+else:
+    expected_fp_ref = f"as `support_matrix.json` (`{support_commit[:9]}`)"
+    if expected_fp_ref not in feature_text:
+        provenance_ok = False
+        fail(
+            "source_commit_provenance",
+            f"FEATURE_PARITY: missing or mismatched support_matrix.json source_commit prefix (expected {expected_fp_ref})",
+            doc_surface="FEATURE_PARITY",
+            symbol_or_section="source_commit",
+            generated_claim=expected_fp_ref,
+            failure_signature="orphaned_source_commit_sha",
+        )
+    if reality_commit != support_commit:
+        provenance_ok = False
+        fail(
+            "source_commit_provenance",
+            f"reality_report.v1.json source_commit ({reality_commit}) != support_matrix.json ({support_commit})",
+            doc_surface="reality_report",
+            symbol_or_section="source_commit",
+            previous_claim=reality_commit,
+            generated_claim=support_commit,
+            failure_signature="orphaned_source_commit_sha",
+        )
+
+def git_blob_exists(repo_path: Path, file_path: Path) -> bool:
+    try:
+        raw = file_path.read_bytes()
+    except OSError:
+        return False
+    oid = hashlib.sha1(f"blob {len(raw)}\0".encode("ascii") + raw).hexdigest()
+    return (
+        subprocess.run(
+            ["git", "-C", str(repo_path), "cat-file", "-e", oid],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+verify_git_objects = (
+    os.environ.get("FLC_DOCS_SEMANTIC_VERIFY_GIT_OBJECTS") == "1"
+    or (
+        os.environ.get("RCH_BUILD_SOURCE") is None
+        and os.environ.get("GIT_DIR") is None
+        and (root / ".git").exists()
+        and git_blob_exists(root, root / "tests/conformance/verification_matrix.json")
+        and git_blob_exists(root, root / "tests/conformance/semantic_contract_inventory.v1.json")
+    )
+)
+if verify_git_objects:
+    git_repo = resolve_path(os.environ.get("FLC_DOCS_SEMANTIC_GIT_REPO", str(root)))
+    commits_to_verify = [
+        ("support_matrix", support_commit),
+        ("reality_report", reality_commit),
+        ("ld_preload_smoke_summary", smoke_full_commit),
+    ]
+    for fp_line in feature_text.splitlines():
+        if "source commit" in fp_line.lower() or "amendment in" in fp_line.lower():
+            for sha_tok in re.findall(r"`([0-9a-f]{7,40})`", fp_line):
+                commits_to_verify.append(("FEATURE_PARITY", sha_tok))
+    for surface_label, sha_val in commits_to_verify:
+        if not sha_val:
+            continue
+        chk = subprocess.run(
+            ["git", "-C", str(git_repo), "cat-file", "-e", f"{sha_val}^{{commit}}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if chk.returncode != 0:
+            provenance_ok = False
+            fail(
+                "source_commit_provenance",
+                f"{surface_label}: source_commit {sha_val} does not exist in git repository",
+                doc_surface=surface_label,
+                symbol_or_section="source_commit",
+                previous_claim=sha_val,
+                generated_claim="existing git commit object",
+                failure_signature="orphaned_source_commit_sha",
+            )
+checks["source_commit_provenance"] = "pass" if provenance_ok else "fail"
+if provenance_ok:
+    event(
+        "source_commit_provenance",
+        doc_surface="FEATURE_PARITY",
+        generated_claim="source_commit references resolve and match canonical artifacts",
+    )
 
 join_summary = join.get("summary", {}) if isinstance(join, dict) else {}
 inventory_entries = inventory.get("entries", []) if isinstance(inventory, dict) else []

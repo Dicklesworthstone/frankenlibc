@@ -1691,7 +1691,7 @@ Via `thread_local! { static ERRNO: Cell<i32> = ... }`. `__errno_location()` retu
 
 | Crate | Policy |
 |---|---|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` (`407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments) |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` (`406` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments) |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` (arena/fingerprint modules `#[allow(unsafe_code)]` with `// SAFETY:` per block) |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` (the ABI boundary is inherently unsafe; entrypoints mix membrane-gated delegation, raw syscalls, local ABI logic, and host-backed wrappers) |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` |
@@ -2295,7 +2295,7 @@ The two companion crates (`asupersync-conformance`, `ftui-harness`) are explicit
 
 | Crate | `unsafe` policy | Notes |
 |---|---|---|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` | `407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | `406` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena / fingerprint / page-oracle modules `#[allow]` with `// SAFETY:` |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe; entrypoints use path-specific membrane, raw-syscall, local, or host-backed logic |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | The test harness never needs unsafe |
