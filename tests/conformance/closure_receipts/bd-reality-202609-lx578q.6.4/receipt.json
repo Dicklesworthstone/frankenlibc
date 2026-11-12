@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.6.4",
+  "contract": {
+    "behavior": "Export 224-byte release _IO_2_1_stdin_/stdout_/stderr_ ABI objects at GLIBC_2.2.5 with copy-relocation-safe GOT resolution, implement owned DWARF _Unwind_ForcedUnwind and _Unwind_GetCFA with RSP-based CFA landing-pad installation, and restore nested pthread_cleanup_push_defer_np cancellation types",
+    "acceptance_sha256": "6a672c280c87c2b4fd2e20ea12a9ed1d3ab8d699cdd24fda03a82ad6db3e5ba3",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/build_elf.rs",
+      "crates/frankenlibc-abi/src/io_internal_abi.rs",
+      "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+      "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "crates/frankenlibc-abi/version_scripts/libc.map",
+      "scripts/check_semantic_contract_drift.sh"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/owned_unwind_abi_test.rs"
+    ],
+    "source": {
+      "commit": "e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/build_elf.rs": "3a1835bac2aa90a5a98fc7ff959a87c2b37fff246e41deea1c05ddea6a1826e4",
+        "crates/frankenlibc-abi/src/io_internal_abi.rs": "fc7dd47d08058c96cb9142f71f30b971dfb7bd1092f7e60f783ea40837d8bf6d",
+        "crates/frankenlibc-abi/src/owned_unwind_abi.rs": "60f526110bcf0d89b7f8cd28748c37d4cb69d1b5344fbf4178d9b05756597435",
+        "crates/frankenlibc-abi/src/pthread_abi.rs": "3d534e0fcce7f8757a90020d0ddf7cbb79fb15a0b11d4881fd38a78db8129a0a",
+        "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+        "crates/frankenlibc-abi/tests/owned_unwind_abi_test.rs": "2889ffa26f15df2b1ae20eb22a9471f84210f62e6afeeda2e60d62ff95e1deb6",
+        "crates/frankenlibc-abi/version_scripts/libc.map": "295ab0a4c499c2f1dc601809646c79a6b872635c4d61a79d796938c4abb0d78d",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/check_semantic_contract_drift.sh": "a09cb38ca398a3071d5b28a60fa73c3a93ba67bd8f9d2c241b80b3c179463167"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default",
+        "owned-unwind-stub"
+      ]
+    },
+    "not_before": "2026-11-12T01:35:00+00:00",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--features",
+        "owned-unwind-stub",
+        "--test",
+        "owned_unwind_abi_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "get_cfa_handles_null_and_live_backtrace_frames",
+        "rsp_cfa_landing_pad_install_allows_arbitrary_rbp",
+        "forced_unwind_executes_rust_drop_frames_until_stop_boundary"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--features",
+      "owned-unwind-stub",
+      "--test",
+      "owned_unwind_abi_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T01:47:31.615490+00:00",
+    "finished_at": "2026-11-12T01:47:31.830164+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "145355f8b240046265a58fa4c5d012ede698f33d39025df5c2269b07be9671e7",
+    "stderr_sha256": "e41a4fd415476ec23592dff7f454c752c53e23950c7d5d5415e393561c7fbc3f",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T01:47:31.837105+00:00",
+    "finished_at": "2026-11-12T01:47:31.951712+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "17cbf5b22c00e8c74291b618ed23739edbb1f644bea340c8362343ce93c40e79",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 24
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e": "b8ef450268661f3ad4afd8fbb889cc9ed1b287efe0c5ea059408f2df8ca59984"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/build_elf.rs": "3a1835bac2aa90a5a98fc7ff959a87c2b37fff246e41deea1c05ddea6a1826e4",
+    "crates/frankenlibc-abi/src/io_internal_abi.rs": "fc7dd47d08058c96cb9142f71f30b971dfb7bd1092f7e60f783ea40837d8bf6d",
+    "crates/frankenlibc-abi/src/owned_unwind_abi.rs": "60f526110bcf0d89b7f8cd28748c37d4cb69d1b5344fbf4178d9b05756597435",
+    "crates/frankenlibc-abi/src/pthread_abi.rs": "3d534e0fcce7f8757a90020d0ddf7cbb79fb15a0b11d4881fd38a78db8129a0a",
+    "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+    "crates/frankenlibc-abi/tests/owned_unwind_abi_test.rs": "2889ffa26f15df2b1ae20eb22a9471f84210f62e6afeeda2e60d62ff95e1deb6",
+    "crates/frankenlibc-abi/version_scripts/libc.map": "295ab0a4c499c2f1dc601809646c79a6b872635c4d61a79d796938c4abb0d78d",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/check_semantic_contract_drift.sh": "a09cb38ca398a3071d5b28a60fa73c3a93ba67bd8f9d2c241b80b3c179463167"
+  },
+  "executable_sha256": "b8ef450268661f3ad4afd8fbb889cc9ed1b287efe0c5ea059408f2df8ca59984"
+}

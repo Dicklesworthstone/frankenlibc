@@ -1,0 +1,11686 @@
+//! ABI layer for selected `<pthread.h>` functions.
+//!
+//! This bootstrap implementation provides runtime-math routed threading surfaces
+//! while full POSIX pthread coverage is still in progress.
+
+#![allow(clippy::missing_safety_doc)]
+
+// Threading policy state and atfork slots exist in both feature configurations.
+// Only `RefCell` belongs to the non-owned-TLS path.
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::RefCell;
+use std::cell::{Cell, UnsafeCell};
+use std::ffi::{c_int, c_void};
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+
+use frankenlibc_core::elf::Elf64Header;
+use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
+use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
+use frankenlibc_core::pthread::thread::{
+    ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
+    current_cancellation_wait as core_current_cancellation_wait,
+    current_thread_handle as core_current_thread_handle,
+    request_cancellation as core_request_cancellation,
+    take_current_cancellation as core_take_current_cancellation,
+};
+use frankenlibc_core::pthread::tls::{
+    PthreadKey, pthread_key_create as core_pthread_key_create,
+    pthread_key_delete as core_pthread_key_delete,
+};
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use frankenlibc_core::pthread::tls::{
+    pthread_getspecific as core_pthread_getspecific,
+    pthread_setspecific as core_pthread_setspecific,
+};
+use frankenlibc_core::pthread::{
+    CondvarData, MANAGED_CONDVAR_MAGIC, MANAGED_CONDVAR_PSHARED_MAGIC, PTHREAD_COND_CLOCK_REALTIME,
+    THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, ThreadHandle, ThreadStack,
+    condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
+    condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
+    condvar_timed_futex_op as core_condvar_timed_futex_op,
+    condvar_wait_finish as core_condvar_wait_finish,
+    condvar_wait_prepare as core_condvar_wait_prepare, current_tid as core_cached_tid,
+    detach_thread as core_detach_thread, exit_current_thread as core_exit_current_thread,
+    handle_for_tid as core_handle_for_tid, join_thread as core_join_thread,
+    self_tid as core_self_tid,
+};
+use frankenlibc_core::syscall as raw_syscall;
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::runtime_math::ApiFamily;
+
+use crate::errno_abi::set_abi_errno;
+use crate::host_resolve::{
+    host_pthread_cancel_raw as resolved_thread_cancel_raw,
+    host_pthread_clockjoin_np_raw as resolved_thread_clockjoin_np_raw,
+    host_pthread_condattr_getclock_raw as resolved_thread_condattr_getclock_raw,
+    host_pthread_create_raw as resolved_thread_create_raw,
+    host_pthread_detach_raw as resolved_thread_detach_raw,
+    host_pthread_exit_raw as resolved_thread_exit_raw,
+    host_pthread_join_raw as resolved_thread_join_raw,
+    host_pthread_register_cancel_defer_raw as resolved_thread_register_cancel_defer_raw,
+    host_pthread_register_cancel_raw as resolved_thread_register_cancel_raw,
+    host_pthread_self_raw as resolved_thread_self_raw,
+    host_pthread_setcancelstate_raw as resolved_thread_setcancelstate_raw,
+    host_pthread_setcanceltype_raw as resolved_thread_setcanceltype_raw,
+    host_pthread_testcancel_raw as resolved_thread_testcancel_raw,
+    host_pthread_timedjoin_np_raw as resolved_thread_timedjoin_np_raw,
+    host_pthread_tryjoin_np_raw as resolved_thread_tryjoin_np_raw,
+    host_pthread_unregister_cancel_raw as resolved_thread_unregister_cancel_raw,
+    host_pthread_unregister_cancel_restore_raw as resolved_thread_unregister_cancel_restore_raw,
+    host_pthread_unwind_next_raw as resolved_thread_unwind_next_raw,
+};
+use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
+use crate::malloc_abi::known_remaining;
+use crate::runtime_policy;
+use crate::util::{ArtifactHashMap, ArtifactHashSet, artifact_hash_map, artifact_hash_set};
+
+#[path = "pthread_cancel_poll.rs"]
+mod cancel_poll;
+#[path = "pthread_cancel_wait.rs"]
+mod cancel_wait;
+
+type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+type UnwindStartRoutine = unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void;
+type ResolvedPthreadGettidNpFn = unsafe extern "C" fn(libc::pthread_t) -> libc::pid_t;
+type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+type ResolvedPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+type ResolvedPthreadAttrSetdetachstateFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type ResolvedPthreadAttrGetdetachstateFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+type ResolvedPthreadAttrSetguardsizeFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type ResolvedPthreadAttrGetguardsizeFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+type ResolvedPthreadAttrSetstackFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> c_int;
+type ResolvedPthreadAttrGetstackFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
+type ResolvedPthreadAttrSetstacksizeFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type ResolvedPthreadAttrGetstacksizeFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+type ResolvedPthreadAttrSetinheritschedFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type ResolvedPthreadAttrSetschedpolicyFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type ResolvedPthreadAttrSetschedparamFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sched_param) -> c_int;
+type ResolvedPthreadAttrSetaffinityNpFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize, *const libc::cpu_set_t) -> c_int;
+type ResolvedPthreadAttrSetsigmaskNpFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sigset_t) -> c_int;
+// Host attr type aliases reintroduced for LD_PRELOAD compatibility in host mode.
+
+// ---------------------------------------------------------------------------
+// Futex-backed NORMAL mutex core (bd-z84)
+// ---------------------------------------------------------------------------
+
+static MUTEX_SPIN_BRANCHES: AtomicU64 = AtomicU64::new(0);
+static MUTEX_WAIT_BRANCHES: AtomicU64 = AtomicU64::new(0);
+static MUTEX_WAKE_BRANCHES: AtomicU64 = AtomicU64::new(0);
+static PTHREAD_CONCURRENCY_LEVEL: AtomicI32 = AtomicI32::new(0);
+#[allow(dead_code)]
+static PTHREAD_MUTEX_HTM_SITE: HtmSite = HtmSite::new("pthread_mutex_lock");
+
+/// When true, thread lifecycle operations (create/join/detach/self/equal) skip
+/// host delegation and use the native implementation. Non-standalone preload
+/// mode defaults to host pthreads because foreign runtimes depend on glibc's
+/// thread-control-block/TLS startup. Set `FRANKENLIBC_THREAD_NATIVE=1` to opt in
+/// to the native lifecycle path outside standalone mode.
+static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
+/// Left in the magic word by `pthread_mutex_destroy`. Being neither zero nor
+/// `MANAGED_MUTEX_MAGIC`, it makes `ensure_managed_default_mutex` refuse the
+/// storage, so lock/trylock/timedlock/unlock/cond_wait return EINVAL until the
+/// next `pthread_mutex_init` -- glibc's behaviour (it marks `__kind` -1).
+/// Zeroing instead made the next lock adopt it as a fresh default mutex.
+const DESTROYED_MUTEX_MAGIC: u32 = 0x444d_5854; // "DMXT"
+
+// ---------------------------------------------------------------------------
+// Mutex type constants (POSIX values)
+// ---------------------------------------------------------------------------
+const PTHREAD_MUTEX_NORMAL_TYPE: i32 = 0;
+const PTHREAD_MUTEX_RECURSIVE_TYPE: i32 = 1;
+const PTHREAD_MUTEX_ERRORCHECK_TYPE: i32 = 2;
+/// glibc's `PTHREAD_MUTEX_KIND_MASK_NP`: the type bits of `__kind`, as the
+/// static initializers leave them.
+const GLIBC_MUTEX_KIND_MASK: u32 = 3;
+const PTHREAD_CANCEL_ENABLE_STATE: c_int = 0;
+const PTHREAD_CANCEL_DISABLE_STATE: c_int = 1;
+const PTHREAD_CANCEL_DEFERRED_TYPE: c_int = 0;
+const PTHREAD_CANCEL_ASYNCHRONOUS_TYPE: c_int = 1;
+
+/// Sentinel value for "no owner" in owner_tid fields.
+const MUTEX_NO_OWNER: i32 = 0;
+const MANAGED_RWLOCK_MAGIC: u32 = 0x4752_5758; // "GRWX"
+/// Magic of a `PTHREAD_PROCESS_SHARED` rwlock (shared futexes).
+const MANAGED_RWLOCK_PSHARED_MAGIC: u32 = 0x4752_5753; // "GRWS"
+const MUTEX_MAGIC_OFFSET: usize = std::mem::size_of::<AtomicI32>();
+const MUTEX_TYPE_OFFSET: usize = MUTEX_MAGIC_OFFSET + std::mem::size_of::<AtomicU32>();
+const MUTEX_OWNER_OFFSET: usize = MUTEX_TYPE_OFFSET + std::mem::size_of::<AtomicI32>();
+const MUTEX_LOCK_COUNT_OFFSET: usize = MUTEX_OWNER_OFFSET + std::mem::size_of::<AtomicI32>();
+const RWLOCK_MAGIC_OFFSET: usize = std::mem::size_of::<AtomicI32>();
+/// Owner process id of a robust/process-shared mutex (bd-rc0923-epic-eeuy4f.24):
+/// Layout: [lock_word][magic][type|flags][owner_tid][lock_count][owner_pid].
+const MUTEX_OWNER_PID_OFFSET: usize = MUTEX_LOCK_COUNT_OFFSET + std::mem::size_of::<AtomicU32>();
+/// The type word keeps the POSIX type in its low byte and these flags above it.
+const MUTEX_TYPE_MASK: i32 = 0xff;
+const MUTEX_FLAG_PSHARED: i32 = 1 << 8;
+const MUTEX_FLAG_ROBUST: i32 = 1 << 9;
+const MUTEX_FLAG_PI: i32 = 1 << 10;
+/// Robust mutex acquired from a dead owner and not yet marked consistent.
+const MUTEX_FLAG_INCONSISTENT: i32 = 1 << 11;
+/// Robust mutex unlocked while inconsistent: every later lock fails.
+const MUTEX_FLAG_NOTRECOVERABLE: i32 = 1 << 12;
+/// `PTHREAD_PRIO_PROTECT` mutex; its priority ceiling is kept in
+/// `MUTEX_PRIOCEILING_MASK`.
+const MUTEX_FLAG_PP: i32 = 1 << 13;
+const MUTEX_PRIOCEILING_SHIFT: u32 = 16;
+const MUTEX_PRIOCEILING_MASK: i32 = 0xff << MUTEX_PRIOCEILING_SHIFT;
+/// Flags that route a mutex off the private 0/1/2 fast path.
+const MUTEX_EXTENDED_FLAGS: i32 =
+    MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI | MUTEX_FLAG_PP;
+/// Linux SCHED_FIFO priority range (kernel MAX_RT_PRIO - 1), which glibc's
+/// `pthread_mutex_setprioceiling` validates against.
+const SCHED_FIFO_PRIO_MIN: c_int = 1;
+const SCHED_FIFO_PRIO_MAX: c_int = 99;
+
+struct ManagedThreadRecord {
+    handle_raw: usize,
+    detach_state: c_int,
+}
+
+struct HostThreadStartContext {
+    start_routine: StartRoutine,
+    arg: *mut c_void,
+    host_thread: AtomicUsize,
+    handoff_state: AtomicI32,
+    /// The creator registers the child's TID itself and never touches this
+    /// context again: the child takes its handle from host `pthread_self`
+    /// and frees the context. See [`new_host_thread_start_context`].
+    child_owned: bool,
+}
+
+const STRICT_HOST_THREAD_TLS_GAP_BYTES: usize = 4 * 1024 * 1024;
+static STRICT_HOST_THREAD_TLS_GAP_PTR: AtomicUsize = AtomicUsize::new(0);
+
+const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
+const HOST_THREAD_HANDOFF_READY: i32 = 1;
+const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
+
+/// Counts children that exhausted [`HOST_THREAD_HANDOFF_SPIN_LIMIT`] and had to
+/// block on the futex for the parent's publication (bd-xh08pf).
+///
+/// This exists because the blocking half of the rendezvous is otherwise
+/// invisible: nothing outside can tell which path a handoff took, so a gate
+/// could neither steer it nor confirm it. (In practice the parent publishes
+/// before the child's first load, which is why the existing host-backed
+/// `pthread_create` arms are expected to resolve on the spin path — an
+/// inference this counter is what finally makes checkable.) It is incremented
+/// once per waiter, on the slow path only — never on the spin path.
+static HOST_THREAD_HANDOFF_FUTEX_WAITS: AtomicU64 = AtomicU64::new(0);
+
+/// Yields the creating thread spends waiting for the child to publish its TID
+/// before it stops spinning and blocks on [`HOST_THREAD_REGISTRATION_EPOCH`].
+const HOST_THREAD_REGISTRATION_YIELD_SPINS: usize = 256;
+
+/// Upper bound on how long `pthread_create` waits for that publication. This
+/// is a safety net against a child that never runs, not the mechanism: the
+/// futex wake makes the common case return as soon as the child publishes.
+const HOST_THREAD_REGISTRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Bumped by every host-thread trampoline immediately after it publishes its
+/// kernel TID into [`HOST_THREAD_TID_REGISTRY`]. Global and `'static` so a
+/// creating thread can block on it without any lifetime relationship to the
+/// child's start context, which the child still owns while we wait.
+static HOST_THREAD_REGISTRATION_EPOCH: AtomicI32 = AtomicI32::new(0);
+
+static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ManagedThreadRecord>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static MANAGED_THREAD_TOMBSTONES: LazyLock<Mutex<ArtifactHashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_set()));
+static DETACHED_THREAD_TOMBSTONES: LazyLock<Mutex<ArtifactHashSet<usize>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_set()));
+static DETACHED_THREAD_TID_SNAPSHOTS: LazyLock<Mutex<ArtifactHashMap<usize, i32>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static HOST_THREAD_TID_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, i32>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static CANCEL_PENDING_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, bool>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<ArtifactHashMap<&'static str, usize>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static RESOLVED_PTHREAD_GETTID_NP_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
+
+const THREAD_BACKEND_UNKNOWN: u8 = 0;
+const THREAD_BACKEND_MANAGED: u8 = 1;
+const THREAD_BACKEND_HOST: u8 = 2;
+
+struct PthreadTlsState {
+    force_native_threading_override: Option<bool>,
+    threading_test_override_baseline: bool,
+    threading_test_override_depth: usize,
+    thread_cancel_state: c_int,
+    thread_cancel_type: c_int,
+    native_cleanup_head: usize,
+    native_exit_started: bool,
+    native_unwind_exception: [u128; 2],
+    current_threading_backend: u8,
+    current_pthread_self_cache: libc::pthread_t,
+}
+
+impl PthreadTlsState {
+    const fn new() -> Self {
+        Self {
+            force_native_threading_override: None,
+            threading_test_override_baseline: false,
+            threading_test_override_depth: 0,
+            thread_cancel_state: PTHREAD_CANCEL_ENABLE_STATE,
+            thread_cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
+            native_cleanup_head: 0,
+            native_exit_started: false,
+            native_unwind_exception: [0; 2],
+            current_threading_backend: THREAD_BACKEND_UNKNOWN,
+            current_pthread_self_cache: 0,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static PTHREAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PthreadTlsState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(PthreadTlsState::new);
+
+#[cfg(feature = "owned-tls-cache")]
+static PTHREAD_TLS_ACCESS_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+struct PthreadTlsAccessGuard;
+
+#[cfg(feature = "owned-tls-cache")]
+impl Drop for PthreadTlsAccessGuard {
+    fn drop(&mut self) {
+        PTHREAD_TLS_ACCESS_DEPTH.fetch_sub(1, Ordering::Release);
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn with_owned_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
+    PTHREAD_TLS_ACCESS_DEPTH.fetch_add(1, Ordering::Acquire);
+    let _guard = PthreadTlsAccessGuard;
+    PTHREAD_OWNED_TLS.with(f)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) fn pthread_tls_access_active() -> bool {
+    PTHREAD_TLS_ACCESS_DEPTH.load(Ordering::Acquire) != 0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) const fn pthread_tls_access_active() -> bool {
+    false
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static PTHREAD_TLS: RefCell<PthreadTlsState> = const { RefCell::new(PthreadTlsState::new()) };
+    static PTHREAD_SELF_FAST: Cell<libc::pthread_t> = const { Cell::new(0) };
+}
+
+// Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
+//
+// `in_threading_policy_context()` is on the allocator's hot path: the allocator
+// re-entry guard evaluates it on EVERY `malloc` and `free`, because the term that
+// would short-circuit it, `pthread_tls_access_active()`, is a `const fn` returning
+// `false` unless the `owned-tls-cache` feature is on. Reading the depth out of
+// `PTHREAD_TLS` cost a `RefCell` borrow-flag check and, worse, a LAZY-INIT check,
+// because that `thread_local!` has a non-`const` initializer
+// (`RefCell::new(PthreadTlsState::new())`) and so carries a state word the
+// accessor must test on every use.
+//
+// A single `u32` in its own `const`-initialised `Cell` needs neither. Hosted
+// threads use that fast path in both feature configurations. Registered native
+// clones instead keep the depth in their live ThreadHandle: even the owned-cache
+// feature does not give those clones independent compiler TLS.
+thread_local! {
+    static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+#[inline]
+fn with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_owned_pthread_tls(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PTHREAD_TLS.with(|tls| {
+            let mut tls = tls.borrow_mut();
+            f(&mut tls)
+        })
+    }
+}
+
+#[inline]
+fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_owned_pthread_tls(f))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PTHREAD_TLS
+            .try_with(|tls| {
+                let Ok(mut tls) = tls.try_borrow_mut() else {
+                    return None;
+                };
+                Some(f(&mut tls))
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+#[inline]
+fn global_force_native_threading_enabled() -> bool {
+    #[cfg(feature = "standalone")]
+    {
+        true
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    }
+}
+
+#[inline]
+fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        if force_native_threading_enabled() {
+            return None;
+        }
+        try_with_pthread_tls(|tls| {
+            (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
+        })
+        .flatten()
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        // All force-native entrypoints update the global flag before installing
+        // a TLS override. The deployed cache-hit path can therefore avoid
+        // borrowing the larger pthread TLS state unless the global flag is set.
+        if global_force_native_threading_enabled() {
+            return None;
+        }
+        if let Some(cached_self) = PTHREAD_SELF_FAST
+            .try_with(|cell| (cell.get() != 0).then_some(cell.get()))
+            .ok()
+            .flatten()
+        {
+            return Some(cached_self);
+        }
+
+        if force_native_threading_enabled() {
+            return None;
+        }
+        let cached_self = try_with_pthread_tls(|tls| {
+            (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
+        })
+        .flatten()?;
+        let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(cached_self));
+        Some(cached_self)
+    }
+}
+
+#[inline]
+fn remember_current_pthread_self(value: libc::pthread_t) {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    if !force_native_threading_enabled() {
+        let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(value));
+    }
+    let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = value);
+}
+
+#[inline]
+fn force_native_threading_enabled() -> bool {
+    // In standalone mode, always use native threading (no host pthreads)
+    #[cfg(feature = "standalone")]
+    {
+        global_force_native_threading_enabled()
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let global = global_force_native_threading_enabled();
+        try_with_pthread_tls(|tls| tls.force_native_threading_override.unwrap_or(global))
+            .unwrap_or(global)
+    }
+}
+
+#[inline]
+fn current_threading_backend() -> u8 {
+    if force_native_threading_enabled() {
+        return THREAD_BACKEND_MANAGED;
+    }
+
+    let Some(cached) = try_with_pthread_tls(|tls| tls.current_threading_backend) else {
+        return THREAD_BACKEND_MANAGED;
+    };
+    if cached != THREAD_BACKEND_UNKNOWN {
+        return cached;
+    }
+
+    let resolved = if core_current_thread_handle().is_some() {
+        THREAD_BACKEND_MANAGED
+    } else {
+        // Supported host targets always provide pthread_self, so any
+        // non-managed thread in non-forced mode is host-backed.
+        THREAD_BACKEND_HOST
+    };
+    let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = resolved);
+    resolved
+}
+
+fn loaded_libc_base_and_path() -> Option<(u64, String)> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    for line in maps.lines() {
+        let mut parts = line.split_whitespace();
+        let range = parts.next()?;
+        let _perms = parts.next()?;
+        let offset = parts.next()?;
+        let _dev = parts.next()?;
+        let _inode = parts.next()?;
+        let path = parts.next()?;
+        if !path.contains("libc.so.6") {
+            continue;
+        }
+        let mut range_parts = range.split('-');
+        let start = u64::from_str_radix(range_parts.next()?, 16).ok()?;
+        let file_offset = u64::from_str_radix(offset, 16).ok()?;
+        return Some((start.saturating_sub(file_offset), path.to_string()));
+    }
+    None
+}
+
+fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
+    if let Some(addr) = HOST_LIBC_SYMBOL_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(symbol)
+        .copied()
+    {
+        return (addr != 0).then_some(addr);
+    }
+
+    let (base, path) = loaded_libc_base_and_path()?;
+    let data = std::fs::read(path).ok()?;
+    let header = Elf64Header::parse(&data).ok()?;
+    let sections =
+        parse_section_headers(&data, header.e_shoff, header.e_shentsize, header.e_shnum).ok()?;
+    let dynsym_section = sections
+        .iter()
+        .find(|section| matches!(section.sh_type, SectionType::Dynsym))?;
+    let dynstr_section = sections.get(dynsym_section.sh_link as usize)?;
+    let dynstr_start = dynstr_section.sh_offset as usize;
+    let dynstr_end = dynstr_start.checked_add(dynstr_section.sh_size as usize)?;
+    let dynstr = data.get(dynstr_start..dynstr_end)?;
+    let dynsym = parse_symbols(&data, dynsym_section.sh_offset, dynsym_section.sh_size).ok()?;
+    let symbol_addr = dynsym
+        .iter()
+        .find(|sym| sym.is_defined() && get_string(dynstr, sym.st_name).ok() == Some(symbol))
+        .map(|sym| base.saturating_add(sym.st_value) as usize)?;
+    insert_without_growing_under_lock(&HOST_LIBC_SYMBOL_CACHE, symbol, symbol_addr);
+    Some(symbol_addr)
+}
+
+unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {
+    let glibc_v34 = b"GLIBC_2.34\0";
+    let glibc_v232 = b"GLIBC_2.3.2\0";
+    let glibc_v225 = b"GLIBC_2.2.5\0";
+    // Try versions in order: newest first, then NPTL baseline (2.3.2),
+    // then legacy (2.2.5). For pthread_cond_*, the 2.3.2 version uses
+    // the NPTL layout which is the current default; 2.2.5 is the old
+    // LinuxThreads ABI with incompatible struct layout.
+    let mut ptr = unsafe {
+        crate::dlfcn_abi::dlvsym_next(
+            name.as_ptr().cast::<libc::c_char>(),
+            glibc_v34.as_ptr().cast::<libc::c_char>(),
+        )
+    };
+    if ptr.is_null() {
+        // SAFETY: NPTL baseline — preferred for pthread_cond_* and pthread_mutex_*.
+        ptr = unsafe {
+            crate::dlfcn_abi::dlvsym_next(
+                name.as_ptr().cast::<libc::c_char>(),
+                glibc_v232.as_ptr().cast::<libc::c_char>(),
+            )
+        };
+    }
+    if ptr.is_null() {
+        // SAFETY: oldest baseline — LinuxThreads era.
+        ptr = unsafe {
+            crate::dlfcn_abi::dlvsym_next(
+                name.as_ptr().cast::<libc::c_char>(),
+                glibc_v225.as_ptr().cast::<libc::c_char>(),
+            )
+        };
+    }
+    if ptr.is_null() {
+        let symbol = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok();
+        if let Some(symbol) = symbol
+            && let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)
+        {
+            ptr = addr as *mut c_void;
+        }
+    }
+    ptr
+}
+
+unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {
+    let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
+        return std::ptr::null_mut();
+    };
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol) {
+        return addr as *mut c_void;
+    }
+    if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
+        return addr as *mut c_void;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {
+    for name in names {
+        // SAFETY: each symbol name is a static NUL-terminated C string.
+        let ptr = unsafe { resolve_host_symbol_via_libc_handle(name) };
+        if !ptr.is_null() {
+            return ptr;
+        }
+        // SAFETY: each symbol name is a static NUL-terminated C string.
+        let ptr = unsafe { resolve_host_symbol_nocache(name) };
+        if !ptr.is_null() {
+            return ptr;
+        }
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn resolve_cached_pthread_attr_symbol(
+    slot: &OnceLock<usize>,
+    names: &[&'static [u8]],
+) -> Option<usize> {
+    let ptr = *slot.get_or_init(|| unsafe { resolve_host_symbol_with_aliases(names) as usize });
+    (ptr != 0).then_some(ptr)
+}
+
+/// Host glibc's `pthread_gettid_np` (GLIBC_2.42): a host thread's kernel TID,
+/// which `clone` stores before the host `pthread_create` returns.
+unsafe fn resolved_pthread_gettid_np_fn() -> Option<ResolvedPthreadGettidNpFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_GETTID_NP_PTR,
+            &[b"pthread_gettid_np\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadGettidNpFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_init_fn() -> Option<ResolvedPthreadAttrInitFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_INIT_PTR,
+            &[b"pthread_attr_init\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrInitFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_destroy_fn() -> Option<ResolvedPthreadAttrDestroyFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_DESTROY_PTR,
+            &[b"pthread_attr_destroy\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrDestroyFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setdetachstate_fn() -> Option<ResolvedPthreadAttrSetdetachstateFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR,
+            &[b"pthread_attr_setdetachstate\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetdetachstateFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_getdetachstate_fn() -> Option<ResolvedPthreadAttrGetdetachstateFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_GETDETACHSTATE_PTR,
+            &[b"pthread_attr_getdetachstate\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetdetachstateFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setguardsize_fn() -> Option<ResolvedPthreadAttrSetguardsizeFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETGUARDSIZE_PTR,
+            &[b"pthread_attr_setguardsize\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetguardsizeFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setstack_fn() -> Option<ResolvedPthreadAttrSetstackFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETSTACK_PTR,
+            &[b"pthread_attr_setstack\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetstackFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_getguardsize_fn() -> Option<ResolvedPthreadAttrGetguardsizeFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR,
+            &[b"pthread_attr_getguardsize\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetguardsizeFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_getstack_fn() -> Option<ResolvedPthreadAttrGetstackFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_GETSTACK_PTR,
+            &[b"pthread_attr_getstack\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstackFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setstacksize_fn() -> Option<ResolvedPthreadAttrSetstacksizeFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETSTACKSIZE_PTR,
+            &[b"pthread_attr_setstacksize\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetstacksizeFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_getstacksize_fn() -> Option<ResolvedPthreadAttrGetstacksizeFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_GETSTACKSIZE_PTR,
+            &[b"pthread_attr_getstacksize\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstacksizeFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAttrSetinheritschedFn>
+{
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR,
+            &[b"pthread_attr_setinheritsched\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetinheritschedFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setschedpolicy_fn() -> Option<ResolvedPthreadAttrSetschedpolicyFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETSCHEDPOLICY_PTR,
+            &[b"pthread_attr_setschedpolicy\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetschedpolicyFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setschedparam_fn() -> Option<ResolvedPthreadAttrSetschedparamFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR,
+            &[b"pthread_attr_setschedparam\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetschedparamFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setaffinity_np_fn() -> Option<ResolvedPthreadAttrSetaffinityNpFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR,
+            &[b"pthread_attr_setaffinity_np\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetaffinityNpFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttrSetsigmaskNpFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR,
+            &[b"pthread_attr_setsigmask_np\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetsigmaskNpFn>(ptr) })
+}
+
+pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
+    // Keep startup on the raw bootstrap path, but leave individual pthread
+    // host-fallback symbols lazy so the live guard reflects only runtime
+    // fallback sites that are still needed.
+    crate::host_resolve::bootstrap_host_symbols();
+}
+
+pub(crate) fn prewarm_host_thread_symbols() {
+    prewarm_host_thread_lifecycle_symbols();
+
+    // Check for explicit thread-backend env vars without std::env::var heap
+    // allocations during process startup. Host delegation is the preload-compatible
+    // default; native remains available for focused tests and standalone-style
+    // validation.
+    if crate::startup_abi::startup_env_var_equals_one(b"FRANKENLIBC_THREAD_NATIVE=") {
+        FORCE_NATIVE_THREADING.store(true, Ordering::Release);
+    }
+    if crate::startup_abi::startup_env_var_equals_one(b"FRANKENLIBC_THREAD_DELEGATE=") {
+        FORCE_NATIVE_THREADING.store(false, Ordering::Release);
+    }
+    // Startup runs on the main thread.
+    remember_main_thread_host_handle();
+}
+
+static ACTIVE_THREADING_POLICY_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
+#[allow(dead_code)]
+enum ThreadingPolicyGuard {
+    Hosted,
+    // The calling thread keeps its handle alive until its stack is unwound.
+    // Keeping the pointer also prevents accidentally moving this guard to a
+    // different thread, which would release another owner's policy context.
+    Native(*const AtomicU32),
+}
+
+impl Drop for ThreadingPolicyGuard {
+    fn drop(&mut self) {
+        let decremented_to_zero = match self {
+            Self::Hosted => THREADING_POLICY_DEPTH
+                .try_with(|d| {
+                    let prev = d.get();
+                    let next = prev.saturating_sub(1);
+                    d.set(next);
+                    prev > 0 && next == 0
+                })
+                .unwrap_or(false),
+            // SAFETY: only this native owner and its signal handlers access
+            // the field. The handle outlives every guard on its stack,
+            // including cancellation unwinding and key-destructor callbacks.
+            Self::Native(depth) => unsafe { (**depth).swap(0, Ordering::Relaxed) != 0 },
+        };
+        if decremented_to_zero {
+            ACTIVE_THREADING_POLICY_CONTEXTS.fetch_sub(1, Ordering::Release);
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: current_thread_handle returns this thread's live handle.
+        // No allocation, lock, or inherited compiler TLS is needed here.
+        let depth = unsafe { &(*handle).threading_policy_depth };
+        depth
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
+            .ok()?;
+        ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
+        return Some(ThreadingPolicyGuard::Native(depth));
+    }
+    THREADING_POLICY_DEPTH
+        .try_with(|d| {
+            if d.get() > 0 {
+                None
+            } else {
+                d.set(d.get() + 1);
+                ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
+                Some(ThreadingPolicyGuard::Hosted)
+            }
+        })
+        .unwrap_or(None)
+}
+
+#[allow(dead_code)]
+fn with_threading_policy_guard<T, Fallback, Work>(fallback: Fallback, work: Work) -> T
+where
+    Fallback: FnOnce() -> T,
+    Work: FnOnce() -> T,
+{
+    if let Some(_guard) = enter_threading_policy_guard() {
+        work()
+    } else {
+        fallback()
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn in_threading_policy_context_slow() -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the calling native thread owns this field until final exit.
+        return unsafe { (*handle).threading_policy_depth.load(Ordering::Relaxed) != 0 };
+    }
+    // `unwrap_or(true)` preserved: a thread whose TLS cannot be reached is treated
+    // as being inside the threading-policy context, which is the conservative answer
+    // the allocator guard relies on.
+    THREADING_POLICY_DEPTH
+        .try_with(|d| d.get() > 0)
+        .unwrap_or(true)
+}
+
+#[inline(always)]
+#[must_use]
+pub(crate) fn in_threading_policy_context() -> bool {
+    if ACTIVE_THREADING_POLICY_CONTEXTS.load(Ordering::Acquire) == 0 {
+        return false;
+    }
+    in_threading_policy_context_slow()
+}
+
+/// Exercise the production reentry guard without exporting a C ABI symbol.
+#[doc(hidden)]
+pub fn __test_with_threading_policy_context<R>(work: impl FnOnce() -> R) -> Option<R> {
+    let _guard = enter_threading_policy_guard()?;
+    Some(work())
+}
+
+/// Observe the calling thread's policy context using the allocator's query.
+#[doc(hidden)]
+pub fn __test_threading_policy_context_active() -> bool {
+    in_threading_policy_context()
+}
+
+/// Treats the leading atomic word of `pthread_mutex_t` as our lock state.
+/// This avoids recursive dependence on libc's own pthread mutex internals.
+fn mutex_word_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
+    if mutex.is_null() {
+        return None;
+    }
+    let align = std::mem::align_of::<AtomicI32>();
+    if !(mutex as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(mutex.cast::<AtomicI32>())
+}
+
+fn mutex_magic_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicU32> {
+    if mutex.is_null() {
+        return None;
+    }
+    let base = mutex.cast::<u8>();
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_MAGIC_OFFSET) };
+    let align = std::mem::align_of::<AtomicU32>();
+    if !(ptr as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicU32>())
+}
+
+fn mark_managed_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
+    let Some(magic_ptr) = mutex_magic_ptr(mutex) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `mutex_magic_ptr`.
+    let magic = unsafe { &*magic_ptr };
+    magic.store(MANAGED_MUTEX_MAGIC, Ordering::Release);
+    true
+}
+
+fn is_managed_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
+    let Some(magic_ptr) = mutex_magic_ptr(mutex) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `mutex_magic_ptr`.
+    let magic = unsafe { &*magic_ptr };
+    magic.load(Ordering::Acquire) == MANAGED_MUTEX_MAGIC
+}
+
+/// Returns a pointer to the mutex type field within the managed metadata
+/// overlay. Layout: [lock_word][magic][type]...
+fn mutex_type_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
+    if mutex.is_null() {
+        return None;
+    }
+    let base = mutex.cast::<u8>();
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_TYPE_OFFSET) };
+    let align = std::mem::align_of::<AtomicI32>();
+    if !(ptr as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicI32>())
+}
+
+/// Returns a pointer to the owner tid field within the managed metadata
+/// overlay. Layout: [lock_word][magic][type][owner_tid]...
+fn mutex_owner_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
+    if mutex.is_null() {
+        return None;
+    }
+    let base = mutex.cast::<u8>();
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_OWNER_OFFSET) };
+    let align = std::mem::align_of::<AtomicI32>();
+    if !(ptr as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicI32>())
+}
+
+/// Returns a pointer to the lock count field within the managed metadata
+/// overlay. Layout: [lock_word][magic][type][owner_tid][lock_count]...
+fn mutex_lock_count_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicU32> {
+    if mutex.is_null() {
+        return None;
+    }
+    let base = mutex.cast::<u8>();
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_LOCK_COUNT_OFFSET) };
+    let align = std::mem::align_of::<AtomicU32>();
+    if !(ptr as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicU32>())
+}
+
+/// Read the mutex type stored in the managed metadata overlay. Returns NORMAL (0) for unmanaged
+/// or unrecognized mutexes.
+fn read_mutex_type(mutex: *mut libc::pthread_mutex_t) -> i32 {
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return PTHREAD_MUTEX_NORMAL_TYPE;
+    };
+    // SAFETY: alignment and non-null checked above.
+    let mtype = unsafe { &*type_ptr };
+    mtype.load(Ordering::Acquire) & MUTEX_TYPE_MASK
+}
+
+/// The type word including the extended-mutex flags.
+fn read_mutex_type_word(mutex: *mut libc::pthread_mutex_t) -> i32 {
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return PTHREAD_MUTEX_NORMAL_TYPE;
+    };
+    // SAFETY: alignment and non-null checked in `mutex_type_ptr`.
+    unsafe { &*type_ptr }.load(Ordering::Acquire)
+}
+
+fn mark_destroyed_mutex(mutex: *mut libc::pthread_mutex_t) {
+    if let Some(magic_ptr) = mutex_magic_ptr(mutex) {
+        // SAFETY: alignment and non-null checked in `mutex_magic_ptr`.
+        let magic = unsafe { &*magic_ptr };
+        magic.store(DESTROYED_MUTEX_MAGIC, Ordering::Release);
+    }
+}
+
+fn is_destroyed_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
+    let Some(magic_ptr) = mutex_magic_ptr(mutex) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `mutex_magic_ptr`.
+    unsafe { &*magic_ptr }.load(Ordering::Acquire) == DESTROYED_MUTEX_MAGIC
+}
+
+fn ensure_managed_default_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
+    if is_managed_mutex(mutex) {
+        return true;
+    }
+
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return false;
+    };
+    let Some(magic_ptr) = mutex_magic_ptr(mutex) else {
+        return false;
+    };
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return false;
+    };
+    let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+        return false;
+    };
+    let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+        return false;
+    };
+
+    // SAFETY: all pointers were alignment-checked and point into pthread_mutex_t storage.
+    let word = unsafe { &*word_ptr };
+    let magic = unsafe { &*magic_ptr };
+    let mtype = unsafe { &*type_ptr };
+    let owner = unsafe { &*owner_ptr };
+    let count = unsafe { &*count_ptr };
+
+    if word.load(Ordering::Acquire) != 0 || magic.load(Ordering::Acquire) != 0 {
+        return false;
+    }
+
+    // A never-initialized mutex is a glibc static initializer, and those are not
+    // all zero: PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP and
+    // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP set glibc's `__kind` (byte 16,
+    // which is our lock-count slot) to 1 and 2; the adaptive one sets 3, which
+    // behaves as normal. Adopting them all as NORMAL turned every statically
+    // allocated C++ `std::recursive_mutex` into a plain one, so a nested lock
+    // deadlocked -- libLLVM's constructor does exactly that, which hung `perf`,
+    // mesa and anything else linking LLVM at startup.
+    let static_kind = match count.load(Ordering::Acquire) & GLIBC_MUTEX_KIND_MASK {
+        1 => PTHREAD_MUTEX_RECURSIVE_TYPE,
+        2 => PTHREAD_MUTEX_ERRORCHECK_TYPE,
+        _ => PTHREAD_MUTEX_NORMAL_TYPE,
+    };
+    mtype.store(static_kind, Ordering::Release);
+    owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    count.store(0, Ordering::Release);
+    magic.store(MANAGED_MUTEX_MAGIC, Ordering::Release);
+    true
+}
+
+fn rwlock_word_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicI32> {
+    if rwlock.is_null() {
+        return None;
+    }
+    let align = std::mem::align_of::<AtomicI32>();
+    if !(rwlock as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(rwlock.cast::<AtomicI32>())
+}
+
+/// glibc `pthread_rwlock_t` fields fl reuses beside its word (0) and magic
+/// (4): `__flags` holds the preference kind — where glibc and
+/// PTHREAD_RWLOCK_WRITER_NONRECURSIVE_INITIALIZER_NP put it — and
+/// `__wrphase_futex` counts writers waiting for the lock.
+const RWLOCK_KIND_OFFSET: usize = 48;
+const RWLOCK_WRITERS_WAITING_OFFSET: usize = 8;
+const RWLOCK_PREFER_WRITER_NONRECURSIVE: u32 = 2;
+
+/// The waiting-writer counter of a PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
+/// lock, or `None` for the default reader-preferring kinds (glibc ignores
+/// PREFER_WRITER_NP too). Under that kind a reader does not join while a
+/// writer waits, so readers cannot starve writers (gnulib test-rwlock1, whose
+/// glthread rwlocks request it).
+fn rwlock_writer_pref(rwlock: *mut libc::pthread_rwlock_t) -> Option<&'static AtomicI32> {
+    if rwlock.is_null() || !(rwlock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return None;
+    }
+    let base = rwlock.cast::<u8>();
+    // SAFETY: `pthread_rwlock_t` is 56 bytes on LP64 and 4-aligned (checked):
+    // both offsets lie inside it.
+    let kind = unsafe { &*base.add(RWLOCK_KIND_OFFSET).cast::<AtomicU32>() };
+    if kind.load(Ordering::Relaxed) != RWLOCK_PREFER_WRITER_NONRECURSIVE {
+        return None;
+    }
+    Some(unsafe { &*base.add(RWLOCK_WRITERS_WAITING_OFFSET).cast::<AtomicI32>() })
+}
+
+fn rwlock_magic_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicU32> {
+    if rwlock.is_null() {
+        return None;
+    }
+    let base = rwlock.cast::<u8>();
+    // SAFETY: `base` comes from non-null `rwlock`; adding a small in-object offset.
+    let ptr = unsafe { base.add(RWLOCK_MAGIC_OFFSET) };
+    let align = std::mem::align_of::<AtomicU32>();
+    if !(ptr as usize).is_multiple_of(align) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicU32>())
+}
+
+fn is_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) -> bool {
+    is_managed_rwlock_observed(rwlock, || {})
+}
+
+fn is_managed_rwlock_observed(
+    rwlock: *mut libc::pthread_rwlock_t,
+    mut after_zero_magic: impl FnMut(),
+) -> bool {
+    let Some(magic_ptr) = rwlock_magic_ptr(rwlock) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
+    let magic = unsafe { &*magic_ptr };
+    match magic.load(Ordering::Acquire) {
+        MANAGED_RWLOCK_MAGIC | MANAGED_RWLOCK_PSHARED_MAGIC => true,
+        // PTHREAD_RWLOCK_INITIALIZER is all zero bytes: an unlocked private
+        // rwlock without its magic. glibc accepts it without
+        // pthread_rwlock_init, so adopt it on first use (every lock on a
+        // statically initialized rwlock used to return EINVAL).
+        0 => {
+            after_zero_magic();
+            let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+                return false;
+            };
+            // SAFETY: alignment and non-null checked in `rwlock_word_ptr`.
+            if unsafe { &*word_ptr }.load(Ordering::Acquire) != 0 {
+                // A concurrent first user can publish the magic and acquire
+                // the lock after our initial zero-magic observation.
+                return matches!(
+                    magic.load(Ordering::Acquire),
+                    MANAGED_RWLOCK_MAGIC | MANAGED_RWLOCK_PSHARED_MAGIC
+                );
+            }
+            match magic.compare_exchange(
+                0,
+                MANAGED_RWLOCK_MAGIC,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => true,
+                Err(current) => {
+                    current == MANAGED_RWLOCK_MAGIC || current == MANAGED_RWLOCK_PSHARED_MAGIC
+                }
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Observe the initial zero-magic read during native static-rwlock adoption.
+///
+/// # Safety
+/// Any non-null `rwlock` must point to live, aligned `pthread_rwlock_t` storage.
+/// The observer may coordinate concurrent lock calls, but must not destroy or
+/// directly modify that storage.
+#[doc(hidden)]
+pub unsafe fn pthread_rwlock_is_managed_observed_for_tests(
+    rwlock: *mut libc::pthread_rwlock_t,
+    after_zero_magic: impl FnMut(),
+) -> bool {
+    is_managed_rwlock_observed(rwlock, after_zero_magic)
+}
+
+/// Whether a managed rwlock's futexes are process-private.
+fn rwlock_is_private(rwlock: *mut libc::pthread_rwlock_t) -> bool {
+    rwlock_magic_ptr(rwlock).is_none_or(|magic_ptr| {
+        // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
+        unsafe { &*magic_ptr }.load(Ordering::Acquire) != MANAGED_RWLOCK_PSHARED_MAGIC
+    })
+}
+
+fn mark_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t, pshared: bool) -> bool {
+    let Some(magic_ptr) = rwlock_magic_ptr(rwlock) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
+    let magic = unsafe { &*magic_ptr };
+    magic.store(
+        if pshared {
+            MANAGED_RWLOCK_PSHARED_MAGIC
+        } else {
+            MANAGED_RWLOCK_MAGIC
+        },
+        Ordering::Release,
+    );
+    true
+}
+
+fn clear_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) {
+    if let Some(magic_ptr) = rwlock_magic_ptr(rwlock) {
+        // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
+        let magic = unsafe { &*magic_ptr };
+        magic.store(0, Ordering::Release);
+    }
+}
+
+fn condvar_data_ptr(cond: *mut libc::pthread_cond_t) -> Option<*mut CondvarData> {
+    if cond.is_null() {
+        return None;
+    }
+    let ptr = cond.cast::<CondvarData>();
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<CondvarData>()) {
+        return None;
+    }
+    Some(ptr)
+}
+
+fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `condvar_data_ptr`.
+    let condvar = unsafe { &*cond_ptr };
+    match condvar.magic.load(Ordering::Acquire) {
+        MANAGED_CONDVAR_MAGIC | MANAGED_CONDVAR_PSHARED_MAGIC => true,
+        0 => adopt_static_condvar(condvar),
+        _ => false,
+    }
+}
+
+/// `PTHREAD_COND_INITIALIZER` is all zero bytes, which is exactly an
+/// initialized realtime-clock condvar without its magic word. glibc accepts it
+/// without `pthread_cond_init`, so adopt it on first use; before this every
+/// wait, signal and broadcast on a statically initialized condvar returned
+/// EINVAL. Concurrent first uses race on the magic word only.
+fn adopt_static_condvar(condvar: &CondvarData) -> bool {
+    if condvar.seq.load(Ordering::Acquire) != 0
+        || condvar.nwaiters.load(Ordering::Acquire) != 0
+        || condvar.assoc_mutex.load(Ordering::Acquire) != 0
+        || condvar.clock_id.load(Ordering::Acquire) != 0
+    {
+        return false;
+    }
+    match condvar.magic.compare_exchange(
+        0,
+        MANAGED_CONDVAR_MAGIC,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => true,
+        Err(current) => current == MANAGED_CONDVAR_MAGIC,
+    }
+}
+
+#[inline(always)]
+pub(crate) fn native_pthread_self() -> libc::pthread_t {
+    // Per-thread cache: pthread_self() is constant for the life of a thread, so
+    // the first computed value is cached in pthread TLS and every later call
+    // returns it directly — skipping `core_self_tid()`, which issues a `gettid()`
+    // SYSCALL each time (measured ~72 ns/call vs glibc's ~2 ns TCB read). The
+    // cache is now checked for ALL threads (not just the HOST backend): the value
+    // stored is exactly what this function would recompute, so it stays correct
+    // for native-backend and kernel-created (main) threads too — whose cache
+    // `pthread_create` never populates, which is why they previously paid the
+    // syscall on every call.
+    if let Some(cached_self) = cached_pthread_self_fast() {
+        return cached_self;
+    }
+
+    let tid = core_self_tid();
+    let result = if tid > 0 {
+        // Use the TLS table to resolve our own ThreadHandle in O(1) time
+        // without taking the global registry lock. This also ensures
+        // consistency for detached threads that are still running.
+        core_handle_for_tid(tid)
+            .map(|handle_ptr| handle_ptr as usize as libc::pthread_t)
+            // Fallback for threads not created via our managed pthread_create path.
+            .unwrap_or_else(|| {
+                if tid == raw_syscall::sys_getpid() {
+                    MAIN_THREAD_FL_NAME.store(tid as usize, Ordering::Release);
+                }
+                tid as libc::pthread_t
+            })
+    } else {
+        tid as libc::pthread_t
+    };
+    remember_current_pthread_self(result);
+    result
+}
+
+#[inline]
+fn native_pthread_equal(a: libc::pthread_t, b: libc::pthread_t) -> c_int {
+    if a == b { 1 } else { 0 }
+}
+
+fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
+    if thread == 0 || tid <= 0 {
+        return;
+    }
+    insert_without_growing_under_lock(&HOST_THREAD_TID_REGISTRY, thread as usize, tid);
+    // Publish AFTER the insert is visible, then wake every creating thread
+    // waiting for any registration; each re-checks its own key. Without this
+    // the creator only ever polled, and gave up. bd-4atx9e.
+    HOST_THREAD_REGISTRATION_EPOCH.fetch_add(1, Ordering::Release);
+    #[cfg(target_os = "linux")]
+    {
+        let _ = futex_wake_private(&HOST_THREAD_REGISTRATION_EPOCH, i32::MAX);
+    }
+}
+
+/// Insert into a registry that `pthread_create` itself locks, without ever
+/// allocating while the registry's lock is held. The table grows through the
+/// process's `malloc`, which is the application's own allocator when the
+/// executable exports one (Bun links mimalloc), and that allocator may start a
+/// thread of its own: its `pthread_create` then waited on this very lock, held
+/// by the same thread, forever (`claude --help`, bd-e54e25). A larger table is
+/// built with the lock released, entries are moved into it (no allocation: it
+/// already has room), and the old table is freed after unlocking.
+fn insert_without_growing_under_lock<K: Eq + std::hash::Hash, V>(
+    registry: &Mutex<ArtifactHashMap<K, V>>,
+    key: K,
+    value: V,
+) {
+    let mut grown: Option<ArtifactHashMap<K, V>> = None;
+    loop {
+        let mut map = registry.lock().unwrap_or_else(|e| e.into_inner());
+        // An existing key (glibc reuses pthread_t values) is overwritten in
+        // place: `insert` reserves room for one more entry BEFORE looking the
+        // key up, so on a full table it grew under the lock anyway. In hardened
+        // mode that growth's memset validated through the membrane, whose
+        // first use on a new thread registers a TLS destructor under the
+        // loader lock -- held by a dlopen whose constructor (OpenBLAS) was in
+        // pthread_create waiting for this registry: CPython's test_pickle hung.
+        if let Some(slot) = map.get_mut(&key) {
+            *slot = value;
+            drop(map);
+            drop(grown);
+            return;
+        }
+        if map.len() < map.capacity() {
+            map.insert(key, value);
+            drop(map);
+            drop(grown);
+            return;
+        }
+        // A table built too small (the registry grew meanwhile) stays in
+        // `grown` and is replaced, and so freed, after the lock is released.
+        if let Some(mut bigger) = grown.take_if(|b| b.capacity() > map.len()) {
+            bigger.extend(map.drain());
+            bigger.insert(key, value);
+            let old = std::mem::replace(&mut *map, bigger);
+            drop(map);
+            drop(old);
+            return;
+        }
+        let want = map.len() * 2 + 8;
+        drop(map);
+        let mut bigger = artifact_hash_map();
+        bigger.reserve(want);
+        grown = Some(bigger);
+    }
+}
+
+fn host_thread_is_registered(thread_key: usize) -> bool {
+    HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(&thread_key)
+}
+
+fn prune_registered_host_thread_tid_if_matches(thread_key: usize, stale_tid: i32) {
+    let mut registry = HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if registry.get(&thread_key).copied() == Some(stale_tid) {
+        registry.remove(&thread_key);
+    }
+}
+
+fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
+    if thread == 0 {
+        return false;
+    }
+
+    let thread_key = thread as usize;
+    // Host-backed lifecycle helpers like pthread_gettid_np/pthread_cancel can
+    // run immediately after pthread_create returns. Wait until the child
+    // trampoline publishes its kernel TID into the registry so those entry
+    // points see a coherent live-thread view.
+    //
+    // Fast path: on an idle machine the child publishes within a few yields,
+    // so this costs no syscall beyond the yields it already did.
+    for _ in 0..HOST_THREAD_REGISTRATION_YIELD_SPINS {
+        if host_thread_is_registered(thread_key) {
+            return true;
+        }
+        raw_syscall::sys_sched_yield();
+    }
+
+    // Slow path. The yield spin above USED TO BE THE WHOLE FUNCTION, and
+    // returning false after it is a silent loss of the very invariant the
+    // comment promises: the caller proceeds with no registry entry, so the
+    // next resolve_thread_tid finds nothing and every tid-based entry point
+    // (pthread_getaffinity_np, pthread_getcpuclockid, pthread_sigqueue,
+    // pthread_gettid_np, pthread_cancel) answers ESRCH for a thread that is
+    // running. It reproduced as `left: 3, right: 0` in pthread_abi_test on a
+    // loaded 64-core host: 256 yields is a bet on scheduling latency, and a
+    // contended machine loses that bet. bd-4atx9e.
+    //
+    // Blocking on a futex instead of spinning matters for the same reason:
+    // burning the parent's slice competes with the child we are waiting for.
+    // The epoch is a 'static global precisely so that waiting on it needs no
+    // lifetime relationship with the child's start context, which the child
+    // still owns at this point.
+    let deadline = std::time::Instant::now() + HOST_THREAD_REGISTRATION_TIMEOUT;
+    loop {
+        // Snapshot BEFORE re-checking the registry: if the child publishes in
+        // the gap, the futex wait below returns EAGAIN immediately rather than
+        // sleeping through the wake.
+        let epoch = HOST_THREAD_REGISTRATION_EPOCH.load(Ordering::Acquire);
+        if host_thread_is_registered(thread_key) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            // Give up exactly as before: the caller keeps the start context
+            // alive rather than freeing a box the child may still read.
+            return false;
+        }
+        futex_wait_private_timeout(&HOST_THREAD_REGISTRATION_EPOCH, epoch, 1_000_000);
+    }
+}
+
+/// Allocate the trampoline's start context. When host `pthread_gettid_np`
+/// exists, the context is child-owned and the creator will not wait for the
+/// child at all, as glibc's `pthread_create` never does: an application may
+/// create a thread while holding a lock the new thread needs before it could
+/// register itself (Bun's allocator, hardened `claude --help`, bd-e54e25), so
+/// a creator blocked on that registration deadlocked until its timeout, once
+/// per thread.
+fn new_host_thread_start_context(
+    start_routine: StartRoutine,
+    arg: *mut c_void,
+) -> (
+    *mut HostThreadStartContext,
+    Option<ResolvedPthreadGettidNpFn>,
+) {
+    // SAFETY: resolving a host symbol has no preconditions.
+    let gettid = unsafe { resolved_pthread_gettid_np_fn() };
+    let start_ctx = Box::into_raw(Box::new(HostThreadStartContext {
+        start_routine,
+        arg,
+        host_thread: AtomicUsize::new(0),
+        handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
+        child_owned: gettid.is_some(),
+    }));
+    (start_ctx, gettid)
+}
+
+/// Publish a successful host `pthread_create`'s handle and register the
+/// child's kernel TID, so tid-based entry points (pthread_gettid_np,
+/// pthread_kill, pthread_getaffinity_np, ...) see the thread as soon as
+/// `pthread_create` returns.
+///
+/// # Safety
+/// `thread_out` must be writable; `start_ctx` must come from
+/// [`new_host_thread_start_context`] together with `gettid`, and the host
+/// create must have succeeded with it.
+unsafe fn finish_host_thread_create(
+    start_ctx: *mut HostThreadStartContext,
+    gettid: Option<ResolvedPthreadGettidNpFn>,
+    host_thread: libc::pthread_t,
+    thread_out: *mut libc::pthread_t,
+) {
+    unsafe { *thread_out = host_thread };
+    if let Some(gettid) = gettid {
+        // The child owns `start_ctx` (and may already have freed it). An
+        // insert, not remove-then-insert, replaces the entry of an earlier
+        // thread that had this pthread_t; the child stores the same TID.
+        // SAFETY: `host_thread` was just created by the host library.
+        let tid = unsafe { gettid(host_thread) };
+        if tid > 0 {
+            insert_without_growing_under_lock(&HOST_THREAD_TID_REGISTRY, host_thread as usize, tid);
+        }
+        return;
+    }
+
+    // Clear any stale registration from a previous thread that reused this pthread_t.
+    HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&(host_thread as usize));
+
+    publish_host_thread_handoff(start_ctx, host_thread);
+    if wait_for_host_thread_registration(host_thread) {
+        // SAFETY: the child copied the start routine/argument before
+        // publishing its TID, so the parent can reclaim the handoff box.
+        drop(unsafe { Box::from_raw(start_ctx) });
+    }
+}
+
+fn publish_host_thread_handoff(
+    start_ctx: *const HostThreadStartContext,
+    host_thread: libc::pthread_t,
+) {
+    // SAFETY: the parent thread owns `start_ctx` until the child trampoline takes
+    // ownership, so publishing the host thread handle through the atomics is safe.
+    let start_ctx = unsafe { &*start_ctx };
+    start_ctx
+        .host_thread
+        .store(host_thread as usize, Ordering::Release);
+    start_ctx
+        .handoff_state
+        .store(HOST_THREAD_HANDOFF_READY, Ordering::Release);
+    #[cfg(target_os = "linux")]
+    {
+        let _ = futex_wake_private(&start_ctx.handoff_state, 1);
+    }
+}
+
+fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pthread_t {
+    for _ in 0..HOST_THREAD_HANDOFF_SPIN_LIMIT {
+        let raw = start_ctx.host_thread.load(Ordering::Acquire);
+        if raw != 0 {
+            return raw as libc::pthread_t;
+        }
+        core::hint::spin_loop();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        HOST_THREAD_HANDOFF_FUTEX_WAITS.fetch_add(1, Ordering::Relaxed);
+        while start_ctx.handoff_state.load(Ordering::Acquire) == HOST_THREAD_HANDOFF_PENDING {
+            let rc = futex_wait_private(&start_ctx.handoff_state, HOST_THREAD_HANDOFF_PENDING);
+            if rc == 0 {
+                continue;
+            }
+            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+            if errno == libc::EAGAIN || errno == libc::EINTR {
+                continue;
+            }
+            break;
+        }
+        let raw = start_ctx.host_thread.load(Ordering::Acquire);
+        if raw != 0 {
+            return raw as libc::pthread_t;
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        for _ in 0..HOST_THREAD_HANDOFF_SPIN_LIMIT {
+            let raw = start_ctx.host_thread.load(Ordering::Acquire);
+            if raw != 0 {
+                return raw as libc::pthread_t;
+            }
+            raw_syscall::sys_sched_yield();
+        }
+    }
+
+    if let Some(host_self) = resolved_thread_self_raw() {
+        // SAFETY: the resolved host symbol points to `pthread_self`.
+        return unsafe { host_self() };
+    }
+
+    0
+}
+
+fn ensure_strict_host_thread_tls_gap() {
+    if runtime_policy::mode().heals_enabled()
+        || STRICT_HOST_THREAD_TLS_GAP_PTR.load(Ordering::Acquire) != 0
+    {
+        return;
+    }
+
+    let mapped = unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
+            STRICT_HOST_THREAD_TLS_GAP_BYTES,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    if let Ok(ptr) = mapped {
+        let _ = STRICT_HOST_THREAD_TLS_GAP_PTR.compare_exchange(
+            0,
+            ptr as usize,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+}
+
+fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
+    let thread_key = thread as usize;
+    let tid = HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&thread_key)
+        .copied()?;
+    if thread_tid_appears_alive(tid) {
+        return Some(tid);
+    }
+    // A host `pthread_t` is a reusable value.  A creator can publish a new
+    // TID for this key after the lookup above but before this stale-prune lock
+    // is acquired.  Removing unconditionally would erase that live
+    // registration and make the next tid-based call report ESRCH.
+    prune_registered_host_thread_tid_if_matches(thread_key, tid);
+    None
+}
+
+pub(crate) fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
+    let self_tid = core_self_tid();
+    if self_tid > 0 && thread == native_pthread_self() {
+        return Some(self_tid);
+    }
+
+    let thread_key = thread as usize;
+    let handle_ptr = thread as *mut ThreadHandle;
+
+    // Check if it's a managed thread handle.
+    // We check the registry to ensure the pointer is still live and managed.
+    let is_managed = {
+        let registry = THREAD_HANDLE_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.contains_key(&thread_key)
+    };
+
+    if is_managed {
+        // SAFETY: handle_ptr is validated.
+        let tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
+        if tid > 0 {
+            return Some(tid);
+        }
+        let self_tid = unsafe { (*handle_ptr).self_tid.load(Ordering::Acquire) };
+        if self_tid > 0 {
+            return Some(self_tid);
+        }
+    }
+
+    let detached_snapshot_tid = DETACHED_THREAD_TID_SNAPSHOTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&thread_key)
+        .copied();
+    if let Some(tid) = detached_snapshot_tid {
+        if tid > 0 && thread_tid_appears_alive(tid) {
+            return Some(tid);
+        }
+        DETACHED_THREAD_TID_SNAPSHOTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&thread_key);
+    }
+
+    if let Some(tid) = resolve_registered_host_thread_tid(thread) {
+        return Some(tid);
+    }
+
+    // The main thread's tid is the pid. A fork child keeps the parent's name
+    // for it (pthread_self is cached), which as a tid names no thread here.
+    if thread as usize == MAIN_THREAD_FL_NAME.load(Ordering::Acquire) {
+        return Some(raw_syscall::sys_getpid());
+    }
+
+    // A thread no registry knows -- the main thread above all -- has its tid
+    // as its pthread_t (see native_pthread_self). Handles are heap pointers,
+    // never this small; tgkill(pid, tid, 0) confirms it is one of ours.
+    if let Ok(tid) = i32::try_from(thread)
+        && tid > 0
+        && thread_tid_appears_alive(tid)
+    {
+        return Some(tid);
+    }
+
+    None
+}
+
+fn thread_tid_appears_alive(tid: i32) -> bool {
+    if tid <= 0 {
+        return false;
+    }
+    let pid = raw_syscall::sys_getpid();
+    match raw_syscall::sys_tgkill(pid, tid, 0) {
+        Ok(_) => true,
+        Err(errno) => errno != libc::ESRCH,
+    }
+}
+
+/// Parse `/proc/self/task/<tid>/maps` (or `/proc/self/maps` for the main thread)
+/// to discover stack boundaries. Returns `(stack_start, stack_size)` where
+/// `stack_start` is the lowest address of the stack mapping.
+///
+/// For the main thread the kernel labels the mapping `[stack]`. For spawned
+/// threads there is no such label, but we can locate the mapping that contains
+/// the current stack pointer.
+/// Stack bounds as glibc's `pthread_getattr_np` reports them, from
+/// /proc/self/maps: `(lowest usable address, size, guard size)`.
+///
+/// The main thread (`main_thread`) gets glibc's RLIMIT_STACK extent: the top
+/// is the page after the initial stack pointer (`__libc_stack_end`, which the
+/// kernel reports as `startstack` in /proc/self/stat), the size is the
+/// rlimit minus the part of the mapping above that page, page-aligned and
+/// clamped to the gap down to the next mapping; no guard. Any other thread
+/// must be the caller: its stack is the mapping holding the current stack
+/// pointer, and an adjacent inaccessible mapping just below is its guard
+/// (glibc reports `stackblock + guard` and `stackblock_size - guard`, the
+/// same range). The `[stack]` label names only the main stack, even in a
+/// thread's own /proc/self/task/<tid>/maps.
+fn read_proc_self_startstack() -> Option<usize> {
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/stat".as_ptr().cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
+    }
+    .ok()?;
+    let mut buf = [0u8; 1024];
+    let mut total = 0usize;
+    while total < buf.len() {
+        match unsafe { raw_syscall::sys_read(fd, buf[total..].as_mut_ptr(), buf.len() - total) } {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(libc::EINTR) => continue,
+            Err(_) => {
+                let _ = raw_syscall::sys_close(fd);
+                return None;
+            }
+        }
+    }
+    let _ = raw_syscall::sys_close(fd);
+    let stat = core::str::from_utf8(&buf[..total]).ok()?;
+    // Fields after the parenthesised command name; startstack is field 28.
+    let after_comm = stat.get(stat.rfind(')')? + 2..)?;
+    after_comm.split(' ').nth(25)?.parse::<usize>().ok()
+}
+
+fn stack_bounds_from_maps_line(
+    line: &str,
+    anchor: usize,
+    main_thread: bool,
+    previous: &mut Option<(usize, usize, bool)>,
+) -> Option<Option<(usize, usize, usize)>> {
+    let page = 4096usize;
+    let (start, end) = parse_maps_range(line)?;
+    let inaccessible = line
+        .split_whitespace()
+        .nth(1)
+        .is_some_and(|perms| perms.starts_with("---"));
+    if (start..end).contains(&anchor) {
+        let (below_start, below_end, below_inaccessible) = previous.unwrap_or((0, 0, false));
+        if main_thread {
+            let stack_end = (anchor & !(page - 1)) + page;
+            let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            // SAFETY: getrlimit writes a complete rlimit on success.
+            if unsafe {
+                raw_syscall::sys_getrlimit(
+                    libc::RLIMIT_STACK as i32,
+                    limit.as_mut_ptr().cast::<u8>(),
+                )
+            }
+            .is_err()
+            {
+                return Some(None);
+            }
+            // SAFETY: initialized by the successful call above.
+            let rlim = unsafe { limit.assume_init() }.rlim_cur as usize;
+            let mut size = rlim.saturating_sub(end - stack_end) / page * page;
+            size = size.min(stack_end - below_end);
+            return Some(Some((stack_end - size, size, 0)));
+        }
+        let guard = if below_inaccessible && below_end == start {
+            below_end - below_start
+        } else {
+            0
+        };
+        return Some(Some((start, end - start, guard)));
+    }
+    *previous = Some((start, end, inaccessible));
+    None
+}
+
+fn stack_bounds_from_proc_maps(main_thread: bool) -> Option<(usize, usize, usize)> {
+    let anchor = if main_thread {
+        read_proc_self_startstack()?
+    } else {
+        let sp: usize;
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: reading rsp is a single instruction with no side effects.
+            unsafe { core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack)) };
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack)) };
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            return None;
+        }
+        sp
+    };
+
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/maps".as_ptr().cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
+    }
+    .ok()?;
+    let mut buf = [0u8; 4096];
+    let mut filled = 0usize;
+    let mut discard_until_newline = false;
+    let mut previous: Option<(usize, usize, bool)> = None;
+    let mut result = None;
+
+    'read_loop: loop {
+        let n = match unsafe {
+            raw_syscall::sys_read(fd, buf[filled..].as_mut_ptr(), buf.len() - filled)
+        } {
+            Ok(n) => n,
+            Err(libc::EINTR) => continue,
+            Err(_) => break,
+        };
+        if n == 0 {
+            if !discard_until_newline
+                && filled > 0
+                && let Ok(line) = core::str::from_utf8(&buf[..filled])
+                && let Some(found) =
+                    stack_bounds_from_maps_line(line, anchor, main_thread, &mut previous)
+            {
+                result = found;
+            }
+            break;
+        }
+        filled += n;
+        let mut consumed = 0usize;
+        while let Some(rel_nl) = buf[consumed..filled].iter().position(|&b| b == b'\n') {
+            let line_bytes = &buf[consumed..consumed + rel_nl];
+            consumed += rel_nl + 1;
+            if discard_until_newline {
+                discard_until_newline = false;
+                continue;
+            }
+            if let Ok(line) = core::str::from_utf8(line_bytes)
+                && let Some(found) =
+                    stack_bounds_from_maps_line(line, anchor, main_thread, &mut previous)
+            {
+                result = found;
+                break 'read_loop;
+            }
+        }
+        if consumed > 0 {
+            buf.copy_within(consumed..filled, 0);
+            filled -= consumed;
+        } else if filled == buf.len() {
+            filled = 0;
+            discard_until_newline = true;
+        }
+    }
+
+    let _ = raw_syscall::sys_close(fd);
+    result
+}
+
+/// Extract (start_addr, end_addr) from a `/proc/self/maps` line.
+/// Delegates to the shared core helper.
+fn parse_maps_range(line: &str) -> Option<(usize, usize)> {
+    frankenlibc_core::proc_maps::parse_maps_range(line)
+}
+
+fn detached_thread_tid_snapshot(handle_ptr: *mut ThreadHandle) -> Option<i32> {
+    if handle_ptr.is_null() {
+        return None;
+    }
+    let tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
+    if tid > 0 {
+        return Some(tid);
+    }
+    let self_tid = unsafe { (*handle_ptr).self_tid.load(Ordering::Acquire) };
+    (self_tid > 0).then_some(self_tid)
+}
+
+fn clock_gettime_checked(clockid: c_int) -> Result<libc::timespec, c_int> {
+    let mut now: libc::timespec = unsafe { std::mem::zeroed() }; // ubs:ignore - zeroed timespec is immediately filled by clock_gettime.
+    match unsafe { raw_syscall::sys_clock_gettime(clockid, &mut now as *mut _ as *mut u8) } {
+        Ok(()) => Ok(now),
+        Err(errno) => Err(errno),
+    }
+}
+
+/// Convert an absolute `timespec` deadline from `clockid` to `CLOCK_REALTIME`.
+fn clock_convert_to_realtime(
+    clockid: c_int,
+    abstime: *const libc::timespec,
+) -> Result<libc::timespec, c_int> {
+    clock_convert_between(clockid, libc::CLOCK_REALTIME, abstime)
+}
+
+fn clock_convert_between(
+    from_clockid: c_int,
+    to_clockid: c_int,
+    abstime: *const libc::timespec,
+) -> Result<libc::timespec, c_int> {
+    if from_clockid == to_clockid {
+        // SAFETY: caller supplied a valid absolute timespec pointer.
+        return Ok(unsafe { *abstime });
+    }
+    let clock_now = clock_gettime_checked(from_clockid)?;
+    let target_now = clock_gettime_checked(to_clockid)?;
+    let deadline = unsafe { &*abstime };
+    let mut result = libc::timespec {
+        tv_sec: target_now.tv_sec + (deadline.tv_sec - clock_now.tv_sec),
+        tv_nsec: target_now.tv_nsec + (deadline.tv_nsec - clock_now.tv_nsec),
+    };
+    if result.tv_nsec >= 1_000_000_000 {
+        result.tv_sec += 1;
+        result.tv_nsec -= 1_000_000_000;
+    } else if result.tv_nsec < 0 {
+        result.tv_sec -= 1;
+        result.tv_nsec += 1_000_000_000;
+    }
+    Ok(result)
+}
+
+fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
+    if abstime.is_null() {
+        return false;
+    }
+    let ts = unsafe { &*abstime };
+    // The remaining conversion-based mutex paths require a nonnegative input.
+    // Condition, rwlock and join waits validate nanoseconds separately and
+    // pass a clamped expired deadline to the kernel without epoch arithmetic.
+    ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec)
+}
+
+/// Futex wait with an absolute CLOCK_REALTIME deadline.
+///
+/// Linux `FUTEX_WAIT` expects a relative timeout, so convert the caller's
+/// absolute pthread-style deadline to a per-call relative duration.
+#[cfg(target_os = "linux")]
+fn futex_wait_timed(
+    word: &AtomicI32,
+    expected: i32,
+    abstime: *const libc::timespec,
+    private: bool,
+) -> c_int {
+    let now = match clock_gettime_checked(libc::CLOCK_REALTIME) {
+        Ok(now) => now,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            return -1;
+        }
+    };
+    let deadline = unsafe { &*abstime };
+    // Use checked_sub so that extreme tv_sec values (already filtered by
+    // absolute_timespec_valid, but kept defensive for untrusted callers)
+    // produce ETIMEDOUT instead of panicking in debug or wrapping to a
+    // ~9e18-second "infinite" timeout in release. (bd-dc9mc)
+    let Some(sec_diff) = deadline.tv_sec.checked_sub(now.tv_sec) else {
+        unsafe { set_abi_errno(libc::ETIMEDOUT) };
+        return -1;
+    };
+    let mut rel = libc::timespec {
+        tv_sec: sec_diff,
+        tv_nsec: deadline.tv_nsec - now.tv_nsec,
+    };
+    if rel.tv_nsec < 0 {
+        // tv_sec may already be at i64::MIN; fail closed with ETIMEDOUT.
+        let Some(adj) = rel.tv_sec.checked_sub(1) else {
+            unsafe { set_abi_errno(libc::ETIMEDOUT) };
+            return -1;
+        };
+        rel.tv_sec = adj;
+        rel.tv_nsec += 1_000_000_000;
+    }
+    if rel.tv_sec < 0 || (rel.tv_sec == 0 && rel.tv_nsec <= 0) {
+        unsafe { set_abi_errno(libc::ETIMEDOUT) };
+        return -1;
+    }
+    let futex_op = libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 };
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            futex_op,
+            expected as u32,
+            &rel as *const libc::timespec as usize,
+            0,
+            0,
+        )
+    } {
+        Ok(_) => 0,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wait_absolute_clock(
+    word: &AtomicI32,
+    expected: i32,
+    deadline: &libc::timespec,
+    clockid: c_int,
+    private: bool,
+) -> c_int {
+    // The ABI validated the clock and nanoseconds. Negative seconds name an
+    // expired instant, but Linux rejects them: use the epoch instead. Passing
+    // the absolute timestamp directly also avoids overflow for time_t::MAX
+    // and lets the selected clock, not a sampled epoch offset, govern expiry.
+    let expired = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let deadline = if deadline.tv_sec < 0 {
+        &expired
+    } else {
+        deadline
+    };
+    let op = libc::FUTEX_WAIT_BITSET
+        | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 }
+        | if clockid == libc::CLOCK_REALTIME {
+            libc::FUTEX_CLOCK_REALTIME
+        } else {
+            0
+        };
+    // SAFETY: the caller's live, aligned atomic word and timespec outlive the
+    // syscall. This is not a cancellation point (rwlock acquisition is not one).
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            op,
+            expected as u32,
+            deadline as *const libc::timespec as usize,
+            0,
+            u32::MAX,
+        )
+    } {
+        Ok(_) => 0,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wait_timed_private(
+    word: &AtomicI32,
+    expected: i32,
+    abstime: *const libc::timespec,
+) -> c_int {
+    futex_wait_timed(word, expected, abstime, true)
+}
+
+#[allow(unsafe_code)]
+unsafe fn native_pthread_create(
+    thread_out: *mut libc::pthread_t,
+    attr: *const libc::pthread_attr_t,
+    start_routine: StartRoutine,
+    arg: *mut c_void,
+) -> c_int {
+    if thread_out.is_null() {
+        return libc::EINVAL;
+    }
+
+    // Use the same default that pthread_attr_init reports, then retain the
+    // actual allocation metadata in the handle for pthread_getattr_np.
+    let mut stack_size = attr_default_stack_size();
+    let mut stack_addr: usize = 0;
+    let mut caller_stack = false;
+    let mut guard_size = ATTR_DEFAULT_GUARD_SIZE;
+    let mut detach_state: c_int = 0;
+    let mut affinity = None;
+    let mut signal_mask = None;
+    let mut scheduling = None;
+    if !attr.is_null() {
+        if let Some(data_ptr) = managed_attr_data_for_host_translation(attr)
+            && data_ptr.is_null()
+        {
+            return libc::EINVAL;
+        }
+        let mut handled = false;
+        if let Some(data) = managed_attr_data_ptr_const(attr) {
+            stack_size = unsafe { (*data).stack_size };
+            stack_addr = unsafe { (*data).stack_addr };
+            caller_stack = unsafe { (*data).has_stack_address() };
+            guard_size = unsafe { (*data).guard_size };
+            detach_state = unsafe { (*data).detach_state };
+            // Scheduling attributes take effect only in explicit mode. A
+            // clone already inherits the creator's policy and priority.
+            // SAFETY: managed_attr_data_ptr_const checked the live overlay.
+            let data = unsafe { &*data };
+            if data.inherit_sched == libc::PTHREAD_EXPLICIT_SCHED {
+                scheduling = Some((data.sched_policy, data.sched_priority));
+            }
+            if data.flags & 0b11 != 0 {
+                // Snapshot extended storage before clone. No registry lock or
+                // reference into it may remain live while the child starts.
+                let extended = EXTENDED_ATTR_REGISTRY
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .get(&(attr as usize))
+                    .cloned();
+                let Some(extended) = extended else {
+                    return libc::EINVAL;
+                };
+                if data.flags & 0b01 != 0 {
+                    let Some((size, bytes)) = extended.affinity else {
+                        return libc::EINVAL;
+                    };
+                    if size == 0 || size != bytes.len() {
+                        return libc::EINVAL;
+                    }
+                    affinity = Some(bytes);
+                }
+                if data.flags & 0b10 != 0 {
+                    let Some(bytes) = extended.sigmask else {
+                        return libc::EINVAL;
+                    };
+                    // Linux's rt_sigprocmask ABI consumes the first 64 bits of
+                    // sigset_t on both supported targets. Like the public
+                    // pthread signal API, never block NPTL's reserved signals.
+                    let mut kernel_mask = [0u8; 8];
+                    kernel_mask.copy_from_slice(&bytes[..8]);
+                    signal_mask = Some(u64::from_ne_bytes(kernel_mask) & !((1 << 31) | (1 << 32)));
+                }
+            }
+            handled = true;
+        }
+        if !handled {
+            let Some(getstacksize) = (unsafe { resolved_pthread_attr_getstacksize_fn() }) else {
+                return libc::ENOSYS;
+            };
+            let rc = unsafe { getstacksize(attr, &mut stack_size) };
+            if rc != 0 {
+                return rc;
+            }
+            let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
+                return libc::ENOSYS;
+            };
+            let mut address = std::ptr::null_mut();
+            let mut size = 0;
+            let rc = unsafe { getstack(attr, &mut address, &mut size) };
+            if rc != 0 {
+                return rc;
+            }
+            // GNU attributes with only a stack size set expose an unset stack
+            // top as base == 0 - size. It is not caller-provided memory. Keep
+            // getstacksize's effective default when that representation appears.
+            if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
+                stack_addr = address as usize;
+                stack_size = size;
+                caller_stack = true;
+            }
+            let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() }) else {
+                return libc::ENOSYS;
+            };
+            let rc = unsafe { getguardsize(attr, &mut guard_size) };
+            if rc != 0 {
+                return rc;
+            }
+            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
+            else {
+                return libc::ENOSYS;
+            };
+            let rc = unsafe { getdetachstate(attr, &mut detach_state) };
+            if rc != 0 {
+                return rc;
+            }
+        }
+    }
+
+    // These threads share this thread's TCB self pointer; stop keying allocator
+    // slots by it before the clone.
+    crate::malloc_abi::note_native_thread_backend();
+    let stack = if !caller_stack {
+        ThreadStack::Allocated {
+            size: stack_size,
+            guard_size,
+            page_size: unsafe { crate::unistd_abi::getpagesize() } as usize,
+        }
+    } else {
+        ThreadStack::Borrowed {
+            address: stack_addr,
+            size: stack_size,
+        }
+    };
+    let handle_ptr = match unsafe {
+        core_create_thread_with_startup(
+            start_routine as usize,
+            arg as usize,
+            stack,
+            ThreadStartup {
+                affinity: affinity.as_deref(),
+                signal_mask,
+                scheduling,
+            },
+        )
+    } {
+        Ok(ptr) => ptr,
+        Err(errno) => return errno,
+    };
+
+    let thread_key = handle_ptr as usize;
+
+    let mut registry = THREAD_HANDLE_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if registry.contains_key(&thread_key) {
+        let _ = unsafe { core_detach_thread(handle_ptr) };
+        return libc::EAGAIN;
+    }
+    MANAGED_THREAD_TOMBSTONES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&thread_key);
+    DETACHED_THREAD_TOMBSTONES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&thread_key);
+    registry.insert(
+        thread_key,
+        ManagedThreadRecord {
+            handle_raw: handle_ptr as usize,
+            detach_state,
+        },
+    );
+    drop(registry);
+
+    // SAFETY: thread_out validated non-null above.
+    unsafe { *thread_out = thread_key as libc::pthread_t };
+
+    // If created with PTHREAD_CREATE_DETACHED, detach immediately.
+    // Must remove from registry first (same as native_pthread_detach) to
+    // prevent a dangling pointer after the thread self-cleans on exit.
+    if detach_state == libc::PTHREAD_CREATE_DETACHED {
+        {
+            let mut registry = THREAD_HANDLE_REGISTRY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            registry.remove(&thread_key);
+        }
+        if let Some(tid) = detached_thread_tid_snapshot(handle_ptr) {
+            DETACHED_THREAD_TID_SNAPSHOTS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(thread_key, tid);
+        }
+        MANAGED_THREAD_TOMBSTONES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_key);
+        DETACHED_THREAD_TOMBSTONES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_key);
+        let _ = unsafe { core_detach_thread(handle_ptr) };
+    }
+
+    0
+}
+
+fn managed_attr_data_for_host_translation(
+    attr: *const libc::pthread_attr_t,
+) -> Option<*const PthreadAttrData> {
+    let data = attr_data_ptr_const(attr)?;
+    // SAFETY: `data` came from `attr_data_ptr_const`, which validates alignment and non-null.
+    let attr_ref = unsafe { &*data };
+    if attr_ref.magic == MANAGED_ATTR_MAGIC {
+        return Some(data);
+    }
+    // A fully zeroed overlay is our destroyed/uninitialized managed attr shape, not a
+    // valid host pthread attr object. Reject rather than passing malformed bytes to glibc.
+    if attr_ref.magic == 0
+        && attr_ref.detach_state == 0
+        && attr_ref.stack_size == 0
+        && attr_ref.guard_size == 0
+        && attr_ref.stack_addr == 0
+        && attr_ref.inherit_sched == 0
+        && attr_ref.sched_policy == 0
+        && attr_ref.sched_priority == 0
+        && attr_ref.flags == 0
+    {
+        return Some(std::ptr::null());
+    }
+    None
+}
+
+unsafe fn dispatch_host_thread_create_with_managed_attr(
+    host_create: unsafe extern "C" fn(
+        *mut libc::pthread_t,
+        *const libc::pthread_attr_t,
+        Option<StartRoutine>,
+        *mut c_void,
+    ) -> c_int,
+    thread_out: *mut libc::pthread_t,
+    attr: *const libc::pthread_attr_t,
+    start_routine: StartRoutine,
+    arg: *mut c_void,
+) -> c_int {
+    let Some(data_ptr) = managed_attr_data_for_host_translation(attr) else {
+        let (start_ctx, gettid) = new_host_thread_start_context(start_routine, arg);
+        let mut host_thread: libc::pthread_t = 0;
+        let rc = unsafe {
+            host_create(
+                &mut host_thread,
+                attr,
+                Some(host_thread_start_entry()),
+                start_ctx.cast(),
+            )
+        };
+        if rc != 0 {
+            drop(unsafe { Box::from_raw(start_ctx) });
+        } else {
+            // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
+            unsafe { finish_host_thread_create(start_ctx, gettid, host_thread, thread_out) };
+        }
+        return rc;
+    };
+    if data_ptr.is_null() {
+        return libc::EINVAL;
+    }
+
+    // SAFETY: `data_ptr` came from `managed_attr_data_for_host_translation`.
+    let data = unsafe { &*data_ptr };
+    let mut host_attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() }; // ubs:ignore - pthread_attr_init initializes the C attr object before use.
+    let Some(attr_init) = (unsafe { resolved_pthread_attr_init_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let init_rc = unsafe { attr_init(&mut host_attr) };
+    if init_rc != 0 {
+        return init_rc;
+    }
+
+    let Some(setdetachstate) = (unsafe { resolved_pthread_attr_setdetachstate_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let Some(setguardsize) = (unsafe { resolved_pthread_attr_setguardsize_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let Some(setstack) = (unsafe { resolved_pthread_attr_setstack_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let Some(setstacksize) = (unsafe { resolved_pthread_attr_setstacksize_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let Some(setinheritsched) = (unsafe { resolved_pthread_attr_setinheritsched_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let Some(setschedpolicy) = (unsafe { resolved_pthread_attr_setschedpolicy_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let Some(setschedparam) = (unsafe { resolved_pthread_attr_setschedparam_fn() }) else {
+        return libc::ENOSYS;
+    };
+    let mut rc = unsafe { setdetachstate(&mut host_attr, data.detach_state) };
+    if rc == 0 {
+        rc = unsafe { setguardsize(&mut host_attr, data.guard_size) };
+    }
+    if rc == 0 {
+        if data.has_stack_address() {
+            rc = unsafe {
+                setstack(
+                    &mut host_attr,
+                    data.stack_addr as *mut c_void,
+                    data.stack_size,
+                )
+            };
+        } else {
+            rc = unsafe { setstacksize(&mut host_attr, data.stack_size) };
+        }
+    }
+    if rc == 0 {
+        rc = unsafe { setinheritsched(&mut host_attr, data.inherit_sched) };
+    }
+    if rc == 0 {
+        rc = unsafe { setschedpolicy(&mut host_attr, data.sched_policy) };
+    }
+    if rc == 0 {
+        let mut param: libc::sched_param = unsafe { std::mem::zeroed() }; // ubs:ignore - Linux sched_param is zero-initialized before priority assignment.
+        param.sched_priority = data.sched_priority;
+        rc = unsafe { setschedparam(&mut host_attr, &param) };
+    }
+    if rc == 0 && data.flags & 0b01 != 0 {
+        let Some(setaffinity_np) = (unsafe { resolved_pthread_attr_setaffinity_np_fn() }) else {
+            return libc::ENOSYS;
+        };
+        let key = attr as usize;
+        let reg = EXTENDED_ATTR_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(ext) = reg.get(&key)
+            && let Some((cpusetsize, mask_bytes)) = &ext.affinity
+        {
+            rc = unsafe {
+                setaffinity_np(
+                    &mut host_attr,
+                    *cpusetsize,
+                    mask_bytes.as_ptr().cast::<libc::cpu_set_t>(),
+                )
+            };
+        }
+    }
+    if rc == 0 && data.flags & 0b10 != 0 {
+        let Some(setsigmask_np) = (unsafe { resolved_pthread_attr_setsigmask_np_fn() }) else {
+            return libc::ENOSYS;
+        };
+        let key = attr as usize;
+        let reg = EXTENDED_ATTR_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(ext) = reg.get(&key)
+            && let Some(mask_bytes) = &ext.sigmask
+        {
+            rc = unsafe {
+                setsigmask_np(&mut host_attr, mask_bytes.as_ptr().cast::<libc::sigset_t>())
+            };
+        }
+    }
+
+    let result = if rc == 0 {
+        let (start_ctx, gettid) = new_host_thread_start_context(start_routine, arg);
+        let mut host_thread: libc::pthread_t = 0;
+        unsafe {
+            let create_rc = host_create(
+                &mut host_thread,
+                &host_attr,
+                Some(host_thread_start_entry()),
+                start_ctx.cast(),
+            );
+            if create_rc != 0 {
+                drop(Box::from_raw(start_ctx));
+            } else {
+                finish_host_thread_create(start_ctx, gettid, host_thread, thread_out);
+            }
+            create_rc
+        }
+    } else {
+        rc
+    };
+    if let Some(attr_destroy) = unsafe { resolved_pthread_attr_destroy_fn() } {
+        let _ = unsafe { attr_destroy(&mut host_attr) };
+    }
+    result
+}
+
+fn host_thread_start_entry() -> StartRoutine {
+    // SAFETY: C and C-unwind have the same machine ABI. The host pthread slot
+    // uses C, while the actual entry must permit pthread_exit/cancellation to
+    // unwind through its Rust frame.
+    unsafe { std::mem::transmute::<UnwindStartRoutine, StartRoutine>(host_thread_start_trampoline) }
+}
+
+unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
+    // Create the membrane's per-thread validation cache first, while this
+    // thread holds no lock at all. Created lazily, its destructor registration
+    // callocs and takes the loader lock from inside whatever validation first
+    // touches it -- which can be a memmove nested under an arena shard lock
+    // this thread holds (a BTreeMap node split: the calloc then waited on that
+    // same shard forever, bd-na6ede) or a registry lock taken below while the
+    // creating thread holds the loader lock in a dlopen'd constructor and waits
+    // for that registry. Strict mode never validates through it.
+    if !crate::runtime_policy::strict_passthrough_active() {
+        frankenlibc_membrane::tls_cache::with_tls_cache(|_| ());
+    }
+    let start_ctx_ptr = arg.cast::<HostThreadStartContext>();
+    let start_ctx = unsafe { &*start_ctx_ptr };
+    let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = THREAD_BACKEND_HOST);
+    let child_owned = start_ctx.child_owned;
+    let host_thread = if child_owned {
+        // SAFETY: the resolved host symbol points to `pthread_self`.
+        resolved_thread_self_raw().map_or(0, |host_self| unsafe { host_self() })
+    } else {
+        wait_for_host_thread_handoff(start_ctx)
+    };
+    // SAFETY: POSIX start routines can leave through pthread_exit or forced
+    // cancellation unwinding. Use the unwind-capable ABI at the Rust call
+    // boundary without changing the exported pthread_create signature.
+    let start_routine =
+        unsafe { std::mem::transmute::<StartRoutine, UnwindStartRoutine>(start_ctx.start_routine) };
+    let start_arg = start_ctx.arg;
+    if child_owned {
+        // SAFETY: the creator never touches a child-owned context after the
+        // host create, and nothing below reads `start_ctx`.
+        drop(unsafe { Box::from_raw(start_ctx_ptr) });
+    }
+    if host_thread != 0 {
+        remember_current_pthread_self(host_thread);
+        remember_host_thread_tid(host_thread, core_self_tid());
+    }
+    unsafe { start_routine(start_arg) }
+}
+
+#[allow(unsafe_code)]
+unsafe fn native_pthread_join(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    caller: usize,
+) -> c_int {
+    unsafe { native_pthread_join_common(thread, retval, caller, None) }
+}
+
+/// Wait before core join can claim FINISHED -> JOINED or reclaim the handle.
+/// A cancellation or timeout leaves the target joinable and retval untouched.
+/// The optional deadline retains its original clock throughout the wait.
+unsafe fn native_pthread_join_common(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    caller: usize,
+    deadline: Option<(c_int, *const libc::timespec)>,
+) -> c_int {
+    let thread_key = thread as usize;
+    let handle_ptr = thread as *mut ThreadHandle;
+    let my_tid = core_self_tid();
+
+    // Self-join detection: compare handles directly for O(1) reliability.
+    if let Some(my_handle) = core_handle_for_tid(my_tid)
+        && handle_ptr == my_handle
+    {
+        return libc::EDEADLK;
+    }
+    if my_tid > 0 && thread_key == my_tid as usize {
+        return libc::EDEADLK;
+    }
+
+    // After a successful pthread_detach, the handle has been consumed: it has
+    // been removed from THREAD_HANDLE_REGISTRY and a tombstone recorded. A
+    // subsequent pthread_join on that handle therefore refers to no joinable
+    // thread, and the correct error is ESRCH (not EINVAL). POSIX says joining
+    // a detached thread is undefined; we choose the same convention used for
+    // joining an already-joined handle so callers see consistent behavior.
+    if is_detached_thread_handle(thread) {
+        return if deadline.is_some() {
+            libc::EINVAL
+        } else {
+            libc::ESRCH
+        };
+    }
+
+    // Verify this is a valid managed thread handle that we know about.
+    // We check the registry to ensure the pointer is still live and managed.
+    let is_managed = {
+        let registry = THREAD_HANDLE_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.contains_key(&thread_key)
+    };
+
+    if !is_managed {
+        return libc::ESRCH;
+    }
+
+    // SAFETY: the registry admitted this live, joinable handle. Concurrent
+    // join/detach of the same target is outside the pthread caller's contract.
+    let handle = unsafe { &*handle_ptr };
+    if matches!(
+        handle.state.load(Ordering::Acquire),
+        THREAD_DETACHED | THREAD_JOINED
+    ) {
+        return libc::EINVAL;
+    }
+
+    // A target that already exited is immediately joinable even with a past
+    // deadline. Keep explicit nanosecond validation for live waits; negative
+    // seconds with valid nanoseconds mean that the absolute deadline expired.
+    let deadline = if handle.tid.load(Ordering::Acquire) == 0 {
+        None
+    } else {
+        match deadline {
+            Some((clock, time)) => {
+                // SAFETY: timed entry points pass a non-null readable timespec.
+                let mut time = unsafe { *time };
+                if !(0..1_000_000_000).contains(&time.tv_nsec) {
+                    return libc::EINVAL;
+                }
+                if time.tv_sec < 0 {
+                    time = libc::timespec {
+                        tv_sec: 0,
+                        tv_nsec: 0,
+                    };
+                }
+                Some((clock, time))
+            }
+            None => None,
+        }
+    };
+
+    if caller != 0 {
+        // SAFETY: all validation has finished and no registry lock is held.
+        // Nothing has claimed the target or written the caller's return value.
+        unsafe { cancellation_window(caller, || ()) };
+    }
+
+    // Native handles enter the registry only after CLONE_PARENT_SETTID and the
+    // startup handshake complete. Thereafter zero means kernel clear-tid, not
+    // an unpublished STARTING thread. Its exit wake is deliberately non-private.
+    let word = core::ptr::from_ref(&handle.tid).cast::<u32>().cast_mut();
+    loop {
+        let tid = handle.tid.load(Ordering::Acquire);
+        if tid == 0 {
+            break;
+        }
+        let (operation, timeout, bitset) = match deadline.as_ref() {
+            Some((clock, time)) => (
+                libc::FUTEX_WAIT_BITSET
+                    | if *clock == libc::CLOCK_REALTIME {
+                        libc::FUTEX_CLOCK_REALTIME
+                    } else {
+                        0
+                    },
+                time as *const libc::timespec as usize,
+                u32::MAX,
+            ),
+            None => (libc::FUTEX_WAIT, 0, 0),
+        };
+        let result = if caller == 0 {
+            // tryjoin and internal callers must never open a host cancellation
+            // window, even when the joining thread itself is host-backed.
+            unsafe { raw_syscall::sys_futex(word, operation, tid as u32, timeout, 0, bitset) }
+        } else {
+            // SAFETY: preserve the actual exported caller; the new wait adapter
+            // wakes owned threads through their static cancellation word.
+            unsafe {
+                cancellation_futex_window(caller, word, operation, tid as u32, timeout, bitset)
+            }
+        };
+        match result {
+            Ok(_) | Err(libc::EAGAIN | libc::EINTR) => {}
+            Err(error) => return error,
+        }
+    }
+
+    if caller != 0 {
+        // A request racing the final exit is still delivered before ownership
+        // transfers. Nothing below this point introduces a cancellation point.
+        unsafe { cancellation_window(caller, || ()) };
+    }
+
+    // Kernel clear-tid already completed, so core join cannot park after its
+    // FINISHED -> JOINED claim. It can safely reclaim the target before retval
+    // and registry ownership are committed together on the successful path.
+    match unsafe { core_join_thread(handle_ptr) } {
+        Ok(value) => {
+            if !retval.is_null() {
+                // SAFETY: caller provided a writable retval pointer.
+                unsafe { *retval = value as *mut c_void };
+            }
+            // Remove from registry after successful join.
+            let mut registry = THREAD_HANDLE_REGISTRY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            registry.remove(&thread_key);
+            DETACHED_THREAD_TID_SNAPSHOTS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&thread_key);
+            MANAGED_THREAD_TOMBSTONES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(thread_key);
+            DETACHED_THREAD_TOMBSTONES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&thread_key);
+            0
+        }
+        Err(errno) => errno,
+    }
+}
+
+#[allow(unsafe_code)]
+unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
+    let thread_key = thread as usize;
+    let handle_ptr = thread as *mut ThreadHandle;
+
+    // After a successful pthread_detach, the handle is consumed (removed from
+    // THREAD_HANDLE_REGISTRY with a tombstone). A second detach on that handle
+    // therefore refers to no live thread; ESRCH is the consistent answer
+    // (matching the analogous post-join cases). POSIX leaves double-detach
+    // undefined, so this is a permissible choice and matches the project's
+    // existing test contract for consumed handles.
+    if is_detached_thread_handle(thread) {
+        return libc::ESRCH;
+    }
+
+    // Verify this is a valid managed thread handle that we know about
+    // BEFORE dereferencing it. Callers may pass arbitrary `pthread_t`
+    // values (including garbage from buggy code or test fuzzers); we must
+    // not dereference until the registry confirms the handle is live.
+    let is_managed = {
+        let registry = THREAD_HANDLE_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.contains_key(&thread_key)
+    };
+
+    if !is_managed {
+        return libc::ESRCH;
+    }
+
+    // Now safe to dereference: registry membership proves the handle is a
+    // live, properly aligned ThreadHandle owned by the runtime.
+    let detached_tid_snapshot = detached_thread_tid_snapshot(handle_ptr);
+
+    match unsafe { core_detach_thread(handle_ptr) } {
+        Ok(()) => {
+            if let Some(tid) = detached_tid_snapshot {
+                DETACHED_THREAD_TID_SNAPSHOTS
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(thread_key, tid);
+            }
+            // Remove from registry after successful detach.
+            let mut registry = THREAD_HANDLE_REGISTRY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            registry.remove(&thread_key);
+            MANAGED_THREAD_TOMBSTONES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(thread_key);
+            DETACHED_THREAD_TOMBSTONES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(thread_key);
+            0
+        }
+        Err(errno) => errno,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wait_private(word: &AtomicI32, expected: i32) -> c_int {
+    futex_wait_word(word, expected, true)
+}
+
+/// Untimed FUTEX_WAIT, process-private or shared.
+#[cfg(target_os = "linux")]
+fn futex_wait_word(word: &AtomicI32, expected: i32, private: bool) -> c_int {
+    // SAFETY: Linux futex syscall with valid userspace address and null timeout.
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
+            expected as u32,
+            0, // null timeout
+            0,
+            0,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+/// `futex_wait_private` with a RELATIVE timeout in nanoseconds.
+///
+/// Returns without distinguishing wake from timeout from `EAGAIN` — every
+/// caller re-checks the condition it actually cares about, so the wait is only
+/// ever a hint about when to look again.
+fn futex_wait_private_timeout(word: &AtomicI32, expected: i32, timeout_ns: i64) -> c_int {
+    let ts = libc::timespec {
+        tv_sec: timeout_ns / 1_000_000_000,
+        tv_nsec: timeout_ns % 1_000_000_000,
+    };
+    // SAFETY: Linux futex syscall with a valid userspace address and a valid
+    // relative timeout that outlives the call.
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected as u32,
+            &ts as *const libc::timespec as usize,
+            0,
+            0,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(_) => -1,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wake_private(word: &AtomicI32, count: i32) -> c_int {
+    futex_wake_word(word, count, true)
+}
+
+/// FUTEX_WAKE, process-private or shared.
+#[cfg(target_os = "linux")]
+fn futex_wake_word(word: &AtomicI32, count: i32, private: bool) -> c_int {
+    // SAFETY: Linux futex syscall with valid userspace address.
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAKE | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
+            count as u32,
+            0,
+            0,
+            0,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+fn futex_lock_normal(word: &AtomicI32) -> c_int {
+    // HTM lock elision is dead weight without RTM (all AMD, most Intel): the site attempts
+    // a transaction, `real_htm_supported()` returns false, and it falls back to the CAS
+    // below on every uncontended lock — pure per-call cost (current_test_mode + fallback
+    // record). The `timed_futex_lock_normal` sibling already goes CAS-first with no HTM,
+    // proving the elision is superfluous. Attempt HTM only under a forced test mode (so the
+    // HTM-site tests still exercise it); deployed builds go straight to the atomic CAS,
+    // which is *stronger* than the transaction's non-atomic load-then-store anyway.
+    if crate::htm_fast_path::htm_forced_mode_active_for_tests()
+        && matches!(
+            PTHREAD_MUTEX_HTM_SITE.run(|| {
+                if word.load(Ordering::Acquire) == 0 {
+                    word.store(1, Ordering::Release);
+                    true
+                } else {
+                    false
+                }
+            }),
+            Ok(true)
+        )
+    {
+        return 0;
+    }
+
+    if word
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        return 0;
+    }
+
+    // Deterministic path: one spin/classification pass before parking.
+    MUTEX_SPIN_BRANCHES.fetch_add(1, Ordering::Relaxed);
+    loop {
+        let observed = word.load(Ordering::Relaxed);
+        if observed == 0 {
+            if word
+                .compare_exchange(0, 2, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return 0;
+            }
+            continue;
+        }
+
+        if observed == 1 {
+            let _ = word.compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
+        }
+
+        MUTEX_WAIT_BRANCHES.fetch_add(1, Ordering::Relaxed);
+
+        #[cfg(target_os = "linux")]
+        {
+            let rc = futex_wait_private(word, 2);
+            if rc == 0 {
+                continue;
+            }
+            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+            if errno == libc::EINTR || errno == libc::EAGAIN {
+                continue;
+            }
+            return if errno == 0 { libc::EAGAIN } else { errno };
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            thread::yield_now();
+        }
+    }
+}
+
+fn futex_trylock_normal(word: &AtomicI32) -> c_int {
+    if word
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        0
+    } else {
+        libc::EBUSY
+    }
+}
+
+fn futex_unlock_normal(word: &AtomicI32) -> c_int {
+    let prev = word.swap(0, Ordering::Release);
+    match prev {
+        0 => libc::EPERM,
+        1 => 0,
+        _ => {
+            MUTEX_WAKE_BRANCHES.fetch_add(1, Ordering::Relaxed);
+            #[cfg(target_os = "linux")]
+            {
+                let _ = futex_wake_private(word, 1);
+            }
+            0
+        }
+    }
+}
+
+/// Returns a pointer to the owner pid field of a managed mutex.
+fn mutex_owner_pid_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
+    if mutex.is_null() {
+        return None;
+    }
+    // SAFETY: small in-object offset from a non-null mutex.
+    let ptr = unsafe { mutex.cast::<u8>().add(MUTEX_OWNER_PID_OFFSET) };
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicI32>())
+}
+
+// ---------------------------------------------------------------------------
+// Process-shared, robust and priority-inheritance mutexes
+// (bd-rc0923-epic-eeuy4f.15)
+// ---------------------------------------------------------------------------
+//
+// Process-shared mutexes use shared (non-private) futexes so waiters in other
+// processes mapping the same memory are woken. Robust mutexes record the
+// owner's pid and tid; a waiter polls owner liveness with tgkill(pid, tid, 0)
+// and takes a dead owner's lock with EOWNERDEAD. (The kernel's robust list
+// would be the zero-poll alternative, but each thread has exactly one and on
+// host threads glibc owns it.) Priority-inheritance mutexes use the kernel's
+// FUTEX_LOCK_PI protocol, whose lock word holds the owner tid.
+
+const FUTEX_PI_WAITERS: i32 = 0x8000_0000_u32 as i32;
+const FUTEX_PI_OWNER_DIED: i32 = 0x4000_0000;
+const FUTEX_PI_TID_MASK: i32 = 0x3fff_ffff;
+/// How often a waiter on a robust mutex re-checks that the owner is alive when
+/// the owner dies without running TLS destructors (e.g. cross-process SIGKILL
+/// or `_exit`). Normal thread exit wakes waiters immediately via
+/// [`ROBUST_HELD_SET`]'s TLS destructor.
+const ROBUST_OWNER_POLL_NS: i64 = 1_000_000;
+/// Sentinel stored in `owner_pid` by [`RobustHeldSet::drop`] when a thread
+/// exits while still holding a robust mutex, before the kernel reaps its TID.
+const ROBUST_OWNER_EXITED_PID: i32 = -1;
+const MAX_TRACKED_ROBUST_MUTEXES: usize = 32;
+
+struct RobustHeldSet {
+    tid: i32,
+    len: usize,
+    mutexes: [usize; MAX_TRACKED_ROBUST_MUTEXES],
+}
+
+impl RobustHeldSet {
+    const fn new() -> Self {
+        Self {
+            tid: 0,
+            len: 0,
+            mutexes: [0; MAX_TRACKED_ROBUST_MUTEXES],
+        }
+    }
+
+    fn insert(&mut self, tid: i32, mutex: *mut libc::pthread_mutex_t) {
+        let addr = mutex as usize;
+        if addr == 0 {
+            return;
+        }
+        self.tid = tid;
+        if self.mutexes[..self.len].contains(&addr) {
+            return;
+        }
+        if self.len < MAX_TRACKED_ROBUST_MUTEXES {
+            self.mutexes[self.len] = addr;
+            self.len += 1;
+        }
+    }
+
+    fn remove(&mut self, mutex: *mut libc::pthread_mutex_t) {
+        let addr = mutex as usize;
+        if let Some(pos) = self.mutexes[..self.len].iter().position(|&m| m == addr) {
+            self.len -= 1;
+            self.mutexes[pos] = self.mutexes[self.len];
+            self.mutexes[self.len] = 0;
+        }
+    }
+}
+
+impl Drop for RobustHeldSet {
+    fn drop(&mut self) {
+        if self.len == 0 || self.tid <= 0 {
+            return;
+        }
+        let pid = raw_syscall::sys_getpid();
+        for i in 0..self.len {
+            let addr = self.mutexes[i];
+            if addr == 0 {
+                continue;
+            }
+            let mutex = addr as *mut libc::pthread_mutex_t;
+            if !is_managed_mutex(mutex) {
+                continue;
+            }
+            let Some(m) = ext_mutex_fields(mutex) else {
+                continue;
+            };
+            let raw_type = m.type_word.load(Ordering::Acquire);
+            if raw_type & MUTEX_FLAG_ROBUST == 0 {
+                continue;
+            }
+            if m.owner.load(Ordering::Acquire) == self.tid
+                && m.owner_pid.load(Ordering::Acquire) == pid
+            {
+                m.owner_pid
+                    .store(ROBUST_OWNER_EXITED_PID, Ordering::Release);
+                if raw_type & MUTEX_FLAG_PI == 0 {
+                    ext_futex_wake(m.word, raw_type, i32::MAX);
+                }
+            }
+        }
+        self.len = 0;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TppThreadState {
+    base_policy: c_int,
+    base_prio: c_int,
+    priomax: c_int,
+    counts: [u32; SCHED_FIFO_PRIO_MAX as usize],
+}
+
+impl TppThreadState {
+    const fn new() -> Self {
+        Self {
+            base_policy: libc::SCHED_OTHER,
+            base_prio: 0,
+            priomax: 0,
+            counts: [0; SCHED_FIFO_PRIO_MAX as usize],
+        }
+    }
+}
+
+std::thread_local! {
+    static ROBUST_HELD_SET: Box<std::cell::RefCell<RobustHeldSet>> =
+        Box::new(std::cell::RefCell::new(RobustHeldSet::new()));
+    static THREAD_TPP_STATE: Box<std::cell::Cell<TppThreadState>> =
+        Box::new(std::cell::Cell::new(TppThreadState::new()));
+}
+
+fn remember_robust_mutex_held(tid: i32, mutex: *mut libc::pthread_mutex_t) {
+    let _ = ROBUST_HELD_SET.try_with(|cell| {
+        if let Ok(mut set) = cell.try_borrow_mut() {
+            set.insert(tid, mutex);
+        }
+    });
+}
+
+fn forget_robust_mutex_held(mutex: *mut libc::pthread_mutex_t) {
+    let _ = ROBUST_HELD_SET.try_with(|cell| {
+        if let Ok(mut set) = cell.try_borrow_mut() {
+            set.remove(mutex);
+        }
+    });
+}
+
+/// Acquire a `PTHREAD_PRIO_PROTECT` priority ceiling `ceiling` for `tid`,
+/// boosting the thread's scheduler priority if needed (or returning `EINVAL` /
+/// `EPERM` when the thread's priority exceeds `ceiling` or the kernel refuses
+/// the boost, e.g. `SCHED_OTHER` with `ceiling > 0`).
+fn tpp_acquire_ceiling(tid: i32, ceiling: c_int) -> c_int {
+    if !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&ceiling) {
+        return libc::EINVAL;
+    }
+    THREAD_TPP_STATE
+        .try_with(|cell| {
+            let mut state = cell.get();
+            if state.priomax == 0 {
+                let policy = match raw_syscall::sys_sched_getscheduler(tid) {
+                    Ok(p) => p,
+                    Err(e) => return e,
+                };
+                let mut param = libc::sched_param { sched_priority: 0 };
+                if let Err(e) = unsafe {
+                    raw_syscall::sys_sched_getparam(
+                        tid,
+                        &mut param as *mut libc::sched_param as *mut u8,
+                    )
+                } {
+                    return e;
+                }
+                state.base_policy = policy;
+                state.base_prio = param.sched_priority;
+            }
+            if state.base_prio > ceiling {
+                return libc::EINVAL;
+            }
+            let idx = (ceiling - 1) as usize;
+            if state.counts[idx] == u32::MAX {
+                return libc::EAGAIN;
+            }
+            let old_effective = state.priomax.max(state.base_prio);
+            let new_priomax = state.priomax.max(ceiling);
+            let new_effective = new_priomax.max(state.base_prio);
+            if new_effective > old_effective {
+                let param = libc::sched_param {
+                    sched_priority: new_effective,
+                };
+                if let Err(e) = unsafe {
+                    raw_syscall::sys_sched_setscheduler(
+                        tid,
+                        state.base_policy,
+                        &param as *const libc::sched_param as *const u8,
+                    )
+                } {
+                    return e;
+                }
+            }
+            state.counts[idx] += 1;
+            state.priomax = new_priomax;
+            cell.set(state);
+            0
+        })
+        .unwrap_or(libc::EINVAL)
+}
+
+/// Release a previously acquired `PTHREAD_PRIO_PROTECT` priority ceiling
+/// `ceiling` for `tid`, lowering the thread's scheduler priority back to the
+/// next highest held ceiling (or its base priority).
+fn tpp_release_ceiling(tid: i32, ceiling: c_int) {
+    if !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&ceiling) {
+        return;
+    }
+    let _ = THREAD_TPP_STATE.try_with(|cell| {
+        let mut state = cell.get();
+        let idx = (ceiling - 1) as usize;
+        if state.counts[idx] == 0 {
+            return;
+        }
+        state.counts[idx] -= 1;
+        if state.counts[idx] == 0 && ceiling == state.priomax {
+            let old_effective = state.priomax.max(state.base_prio);
+            let mut next_max = 0;
+            for i in (0..idx).rev() {
+                if state.counts[i] > 0 {
+                    next_max = (i + 1) as c_int;
+                    break;
+                }
+            }
+            state.priomax = next_max;
+            let new_effective = state.priomax.max(state.base_prio);
+            if new_effective < old_effective {
+                let param = libc::sched_param {
+                    sched_priority: new_effective,
+                };
+                let _ = unsafe {
+                    raw_syscall::sys_sched_setscheduler(
+                        tid,
+                        state.base_policy,
+                        &param as *const libc::sched_param as *const u8,
+                    )
+                };
+            }
+        }
+        cell.set(state);
+    });
+}
+
+/// Replace `old_ceiling` with `new_ceiling` in `tid`'s held TPP set.
+fn tpp_change_ceiling(tid: i32, old_ceiling: c_int, new_ceiling: c_int) -> c_int {
+    if old_ceiling == new_ceiling {
+        return 0;
+    }
+    let rc = tpp_acquire_ceiling(tid, new_ceiling);
+    if rc == 0 {
+        tpp_release_ceiling(tid, old_ceiling);
+    }
+    rc
+}
+
+struct ExtMutex<'a> {
+    word: &'a AtomicI32,
+    type_word: &'a AtomicI32,
+    owner: &'a AtomicI32,
+    count: &'a AtomicU32,
+    owner_pid: &'a AtomicI32,
+}
+
+fn ext_mutex_fields<'a>(mutex: *mut libc::pthread_mutex_t) -> Option<ExtMutex<'a>> {
+    // SAFETY: every pointer is alignment-checked and lies inside the caller's
+    // pthread_mutex_t, which outlives the lock/unlock call.
+    unsafe {
+        Some(ExtMutex {
+            word: &*mutex_word_ptr(mutex)?,
+            type_word: &*mutex_type_ptr(mutex)?,
+            owner: &*mutex_owner_ptr(mutex)?,
+            count: &*mutex_lock_count_ptr(mutex)?,
+            owner_pid: &*mutex_owner_pid_ptr(mutex)?,
+        })
+    }
+}
+
+fn futex_private_bit(raw_type: i32) -> c_int {
+    if raw_type & MUTEX_FLAG_PSHARED != 0 {
+        0
+    } else {
+        libc::FUTEX_PRIVATE_FLAG
+    }
+}
+
+/// A recorded owner that no longer exists.
+fn mutex_owner_dead(pid: i32, tid: i32) -> bool {
+    pid == ROBUST_OWNER_EXITED_PID
+        || (pid > 0 && tid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH))
+}
+
+/// Nanoseconds from now until an absolute CLOCK_REALTIME deadline.
+fn realtime_remaining_ns(deadline: &libc::timespec) -> i64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: valid out-pointer for clock_gettime.
+    let _ = unsafe {
+        raw_syscall::sys_clock_gettime(
+            libc::CLOCK_REALTIME,
+            &mut now as *mut libc::timespec as *mut u8,
+        )
+    };
+    (deadline.tv_sec - now.tv_sec).saturating_mul(1_000_000_000) + (deadline.tv_nsec - now.tv_nsec)
+}
+
+/// Block while `word == expected` for at most `timeout_ns` (None: forever).
+fn ext_futex_wait(word: &AtomicI32, expected: i32, raw_type: i32, timeout_ns: Option<i64>) {
+    let ts = timeout_ns.map(|ns| libc::timespec {
+        tv_sec: ns / 1_000_000_000,
+        tv_nsec: ns % 1_000_000_000,
+    });
+    let ts_ptr = ts
+        .as_ref()
+        .map_or(0, |t| t as *const libc::timespec as usize);
+    // SAFETY: futex wait on the caller's lock word with a live timeout.
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAIT | futex_private_bit(raw_type),
+            expected as u32,
+            ts_ptr,
+            0,
+            0,
+        )
+    };
+}
+
+fn ext_futex_wake(word: &AtomicI32, raw_type: i32, count: i32) {
+    // SAFETY: futex wake on the caller's lock word.
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAKE | futex_private_bit(raw_type),
+            count as u32,
+            0,
+            0,
+            0,
+        )
+    };
+}
+
+/// Lock, trylock or timedlock a process-shared, robust, PI or PP mutex.
+unsafe fn ext_mutex_lock(
+    mutex: *mut libc::pthread_mutex_t,
+    raw_type: i32,
+    deadline: Option<&libc::timespec>,
+    try_only: bool,
+) -> c_int {
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let mtype = raw_type & MUTEX_TYPE_MASK;
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    let is_pp = raw_type & MUTEX_FLAG_PP != 0;
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
+    if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
+        return libc::ENOTRECOVERABLE;
+    }
+    if m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER {
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
+            let cur = m.count.load(Ordering::Relaxed);
+            if cur == u32::MAX {
+                return libc::EAGAIN;
+            }
+            m.count.store(cur + 1, Ordering::Release);
+            return 0;
+        }
+        if mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE
+            && (!try_only || raw_type & (MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI) != 0)
+        {
+            // glibc's robust and PI trylock paths report EDEADLK to an
+            // errorcheck owner; its plain trylock reports EBUSY.
+            return libc::EDEADLK;
+        }
+        if try_only {
+            return libc::EBUSY;
+        }
+        // A normal mutex (robust or not) relocked by its owner deadlocks, as in glibc.
+    }
+    let pp_ceiling = if is_pp {
+        let ceil = (m.type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK)
+            >> MUTEX_PRIOCEILING_SHIFT;
+        let pp_rc = tpp_acquire_ceiling(tid, ceil);
+        if pp_rc != 0 {
+            return pp_rc;
+        }
+        ceil
+    } else {
+        0
+    };
+    let rc = if raw_type & MUTEX_FLAG_PI != 0 {
+        ext_pi_acquire(&m, raw_type, tid, deadline, try_only)
+    } else {
+        ext_acquire(&m, raw_type, tid, deadline, try_only)
+    };
+    if rc != 0 && rc != libc::EOWNERDEAD {
+        if is_pp {
+            tpp_release_ceiling(tid, pp_ceiling);
+        }
+        return rc;
+    }
+    if is_pp {
+        let current_ceil = (m.type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK)
+            >> MUTEX_PRIOCEILING_SHIFT;
+        if current_ceil != pp_ceiling {
+            let change_rc = tpp_change_ceiling(tid, pp_ceiling, current_ceil);
+            if change_rc != 0 {
+                tpp_release_ceiling(tid, pp_ceiling);
+                if m.word.swap(0, Ordering::Release) == 2 {
+                    ext_futex_wake(m.word, raw_type, 1);
+                }
+                return change_rc;
+            }
+        }
+    }
+    m.owner.store(tid, Ordering::Release);
+    if robust {
+        m.owner_pid
+            .store(raw_syscall::sys_getpid(), Ordering::Release);
+    }
+    m.count.store(1, Ordering::Release);
+    if robust {
+        remember_robust_mutex_held(tid, mutex);
+    }
+    if rc == libc::EOWNERDEAD {
+        m.type_word
+            .fetch_or(MUTEX_FLAG_INCONSISTENT, Ordering::AcqRel);
+    }
+    rc
+}
+
+/// 0/1/2 futex acquire with shared futexes and dead-owner takeover.
+fn ext_acquire(
+    m: &ExtMutex<'_>,
+    raw_type: i32,
+    tid: i32,
+    deadline: Option<&libc::timespec>,
+    try_only: bool,
+) -> c_int {
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    if m.word
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        return 0;
+    }
+    loop {
+        if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
+            return libc::ENOTRECOVERABLE;
+        }
+        if robust {
+            let owner = m.owner.load(Ordering::Acquire);
+            if mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), owner)
+                && m.owner
+                    .compare_exchange(owner, tid, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                // The lock word stays held; mark it contended so our unlock
+                // wakes anyone else who queued behind the dead owner.
+                m.word.store(2, Ordering::Release);
+                return libc::EOWNERDEAD;
+            }
+        }
+        if try_only {
+            return if m
+                .word
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                0
+            } else {
+                libc::EBUSY
+            };
+        }
+        if m.word.swap(2, Ordering::Acquire) == 0 {
+            return 0;
+        }
+        let mut timeout = robust.then_some(ROBUST_OWNER_POLL_NS);
+        if let Some(deadline) = deadline {
+            let remaining = realtime_remaining_ns(deadline);
+            if remaining <= 0 {
+                return libc::ETIMEDOUT;
+            }
+            timeout = Some(timeout.map_or(remaining, |t| t.min(remaining)));
+        }
+        ext_futex_wait(m.word, 2, raw_type, timeout);
+    }
+}
+
+/// FUTEX_LOCK_PI acquire; the lock word holds the owner tid.
+fn ext_pi_acquire(
+    m: &ExtMutex<'_>,
+    raw_type: i32,
+    tid: i32,
+    deadline: Option<&libc::timespec>,
+    try_only: bool,
+) -> c_int {
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    loop {
+        if m.word
+            .compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return 0;
+        }
+        if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
+            return libc::ENOTRECOVERABLE;
+        }
+        if robust {
+            let observed = m.word.load(Ordering::Acquire);
+            let holder = observed & FUTEX_PI_TID_MASK;
+            let holder_gone = observed & FUTEX_PI_OWNER_DIED != 0
+                || (holder != 0 && mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), holder));
+            if holder_gone {
+                if m.word
+                    .compare_exchange(
+                        observed,
+                        tid | (observed & FUTEX_PI_WAITERS),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    return libc::EOWNERDEAD;
+                }
+                continue;
+            }
+        }
+        if try_only {
+            return libc::EBUSY;
+        }
+        // FUTEX_LOCK_PI takes an absolute CLOCK_REALTIME deadline.
+        let ts_ptr = deadline.map_or(0, |d| d as *const libc::timespec as usize);
+        // SAFETY: PI futex on the caller's lock word with a live deadline.
+        let r = unsafe {
+            raw_syscall::sys_futex(
+                m.word as *const AtomicI32 as *const u32,
+                libc::FUTEX_LOCK_PI | futex_private_bit(raw_type),
+                0,
+                ts_ptr,
+                0,
+                0,
+            )
+        };
+        match r {
+            Ok(_) => {
+                if m.word.load(Ordering::Acquire) & FUTEX_PI_OWNER_DIED != 0 {
+                    m.word.fetch_and(!FUTEX_PI_OWNER_DIED, Ordering::AcqRel);
+                    return libc::EOWNERDEAD;
+                }
+                return 0;
+            }
+            Err(libc::ETIMEDOUT) => return libc::ETIMEDOUT,
+            Err(libc::EINTR) | Err(libc::EAGAIN) => continue,
+            // The holder no longer exists and the mutex is not robust: glibc
+            // blocks such a locker forever; so does fl.
+            Err(_) if !robust => loop {
+                let forever = libc::timespec {
+                    tv_sec: 3600,
+                    tv_nsec: 0,
+                };
+                // SAFETY: plain sleep.
+                let _ = unsafe {
+                    raw_syscall::sys_nanosleep(
+                        &forever as *const libc::timespec as *const u8,
+                        std::ptr::null_mut(),
+                    )
+                };
+            },
+            Err(_) => continue,
+        }
+    }
+}
+
+/// Unlock a process-shared, robust, PI or PP mutex.
+unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> c_int {
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let mtype = raw_type & MUTEX_TYPE_MASK;
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    let is_pp = raw_type & MUTEX_FLAG_PP != 0;
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
+    let owned = m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER;
+    if !owned
+        && (robust
+            || mtype != PTHREAD_MUTEX_NORMAL_TYPE
+            || raw_type & (MUTEX_FLAG_PI | MUTEX_FLAG_PP) != 0)
+    {
+        return libc::EPERM;
+    }
+    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
+        let cur = m.count.load(Ordering::Relaxed);
+        if cur > 1 {
+            m.count.store(cur - 1, Ordering::Release);
+            return 0;
+        }
+    }
+    let pp_ceiling = if is_pp {
+        (m.type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT
+    } else {
+        0
+    };
+    let mut wake_all = false;
+    if robust && raw_type & MUTEX_FLAG_INCONSISTENT != 0 {
+        // Unlocked without pthread_mutex_consistent: the state is lost.
+        m.type_word
+            .fetch_or(MUTEX_FLAG_NOTRECOVERABLE, Ordering::AcqRel);
+        wake_all = true;
+    }
+    if robust {
+        forget_robust_mutex_held(mutex);
+        m.owner_pid.store(0, Ordering::Release);
+    }
+    m.owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    m.count.store(0, Ordering::Release);
+    if raw_type & MUTEX_FLAG_PI != 0 {
+        if m.word
+            .compare_exchange(tid, 0, Ordering::Release, Ordering::Relaxed)
+            .is_err()
+        {
+            // SAFETY: PI unlock on the caller's lock word.
+            let _ = unsafe {
+                raw_syscall::sys_futex(
+                    m.word as *const AtomicI32 as *const u32,
+                    libc::FUTEX_UNLOCK_PI | futex_private_bit(raw_type),
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            };
+        }
+        return 0;
+    }
+    if m.word.swap(0, Ordering::Release) == 2 || wake_all {
+        ext_futex_wake(m.word, raw_type, if wake_all { i32::MAX } else { 1 });
+    }
+    if is_pp {
+        tpp_release_ceiling(tid, pp_ceiling);
+    }
+    0
+}
+
+fn futex_rwlock_rdlock(
+    word: &AtomicI32,
+    private: bool,
+    wpref: Option<&AtomicI32>,
+    mut before_wait: impl FnMut(usize, c_int),
+) -> c_int {
+    loop {
+        let state = word.load(Ordering::Acquire);
+        // A queued writer can time out without changing the owner word. Wait
+        // on the counter that excluded us, using that same positive snapshot
+        // so a dequeue before FUTEX_WAIT cannot leave us asleep on an empty queue.
+        let writer_wait = if state >= 0 {
+            wpref.and_then(|waiting| {
+                let count = waiting.load(Ordering::Acquire);
+                (count > 0).then_some((waiting, count))
+            })
+        } else {
+            None
+        };
+        if state >= 0 && writer_wait.is_none() {
+            if state == i32::MAX {
+                return libc::EAGAIN;
+            }
+            if word
+                .compare_exchange(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return 0;
+            }
+            continue;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let (wait_word, expected) = writer_wait.unwrap_or((word, state));
+            before_wait(wait_word.as_ptr() as usize, expected);
+            let rc = futex_wait_word(wait_word, expected, private);
+            if rc == 0 {
+                continue;
+            }
+            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+            if errno == libc::EINTR || errno == libc::EAGAIN {
+                continue;
+            }
+            return if errno == 0 { libc::EAGAIN } else { errno };
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+/// A writer counted in a writer-preferring lock's waiting count for as long as
+/// it waits. The last writer to leave the queue wakes excluded readers, whether
+/// it acquires the lock or gives up. After acquisition they wait on the owner
+/// word until the active writer unlocks.
+struct WaitingWriter<'a> {
+    waiting: Option<&'a AtomicI32>,
+    private: bool,
+}
+
+impl<'a> WaitingWriter<'a> {
+    fn new(private: bool) -> Self {
+        Self {
+            waiting: None,
+            private,
+        }
+    }
+
+    /// Count this writer as waiting (once), before it first sleeps.
+    fn register(&mut self, wpref: Option<&'a AtomicI32>) {
+        if self.waiting.is_none()
+            && let Some(w) = wpref
+        {
+            w.fetch_add(1, Ordering::AcqRel);
+            self.waiting = Some(w);
+        }
+    }
+}
+
+impl Drop for WaitingWriter<'_> {
+    fn drop(&mut self) {
+        if let Some(w) = self.waiting
+            && w.fetch_sub(1, Ordering::AcqRel) == 1
+        {
+            #[cfg(target_os = "linux")]
+            {
+                let _ = futex_wake_word(w, i32::MAX, self.private);
+            }
+        }
+    }
+}
+
+fn futex_rwlock_wrlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32>) -> c_int {
+    let mut waiter = WaitingWriter::new(private);
+    loop {
+        if word
+            .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return 0;
+        }
+
+        let state = word.load(Ordering::Acquire);
+        if state == 0 {
+            // Released since the CAS. Waiting for "still 0" sleeps on a free
+            // lock whose unlock already woke everyone, until some later unlock
+            // -- forever if none comes.
+            continue;
+        }
+        waiter.register(wpref);
+
+        #[cfg(target_os = "linux")]
+        {
+            let rc = futex_wait_word(word, state, private);
+            if rc == 0 {
+                continue;
+            }
+            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+            if errno == libc::EINTR || errno == libc::EAGAIN {
+                continue;
+            }
+            return if errno == 0 { libc::EAGAIN } else { errno };
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+fn futex_rwlock_unlock(word: &AtomicI32, private: bool) -> c_int {
+    loop {
+        let state = word.load(Ordering::Acquire);
+        if state == 0 {
+            return libc::EPERM;
+        }
+        if state == -1 {
+            if word
+                .compare_exchange(-1, 0, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = futex_wake_word(word, i32::MAX, private);
+                }
+                return 0;
+            }
+            continue;
+        }
+        if state > 0 {
+            if word
+                .compare_exchange(state, state - 1, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
+                if state == 1 {
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = futex_wake_word(word, i32::MAX, private);
+                    }
+                }
+                return 0;
+            }
+            continue;
+        }
+        return libc::EINVAL;
+    }
+}
+
+fn futex_rwlock_tryrdlock(word: &AtomicI32, wpref: Option<&AtomicI32>) -> c_int {
+    loop {
+        let state = word.load(Ordering::Acquire);
+        if state < 0 || state == i32::MAX || wpref.is_some_and(|w| w.load(Ordering::Acquire) > 0) {
+            return libc::EBUSY;
+        }
+        if word
+            .compare_exchange(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return 0;
+        }
+    }
+}
+
+fn futex_rwlock_trywrlock(word: &AtomicI32) -> c_int {
+    match word.compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed) {
+        Ok(_) => 0,
+        Err(_) => libc::EBUSY,
+    }
+}
+
+/// Timed read lock: same as `futex_rwlock_rdlock` but with futex timeout.
+#[cfg(target_os = "linux")]
+fn futex_rwlock_timed_rdlock(
+    word: &AtomicI32,
+    abstime: *const libc::timespec,
+    clockid: c_int,
+    private: bool,
+    wpref: Option<&AtomicI32>,
+    mut before_wait: impl FnMut(usize, c_int),
+) -> c_int {
+    loop {
+        let state = word.load(Ordering::Acquire);
+        // Writer preference: see futex_rwlock_rdlock.
+        let writer_wait = if state >= 0 {
+            wpref.and_then(|waiting| {
+                let count = waiting.load(Ordering::Acquire);
+                (count > 0).then_some((waiting, count))
+            })
+        } else {
+            None
+        };
+        if state >= 0 && writer_wait.is_none() {
+            if state == i32::MAX {
+                return libc::EAGAIN;
+            }
+            if word
+                .compare_exchange(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return 0;
+            }
+            continue;
+        }
+        let (wait_word, expected) = writer_wait.unwrap_or((word, state));
+        before_wait(wait_word.as_ptr() as usize, expected);
+        // SAFETY: the common ABI path validated this live deadline.
+        let rc =
+            futex_wait_absolute_clock(wait_word, expected, unsafe { &*abstime }, clockid, private);
+        if rc == 0 {
+            continue;
+        }
+        let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+        if errno == libc::ETIMEDOUT {
+            return libc::ETIMEDOUT;
+        }
+        if errno == libc::EINTR || errno == libc::EAGAIN {
+            continue;
+        }
+        return if errno == 0 { libc::EAGAIN } else { errno };
+    }
+}
+
+/// Timed write lock: same as `futex_rwlock_wrlock` but with futex timeout.
+#[cfg(target_os = "linux")]
+fn futex_rwlock_timed_wrlock(
+    word: &AtomicI32,
+    abstime: *const libc::timespec,
+    clockid: c_int,
+    private: bool,
+    wpref: Option<&AtomicI32>,
+) -> c_int {
+    let mut waiter = WaitingWriter::new(private);
+    loop {
+        if word
+            .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return 0;
+        }
+        let state = word.load(Ordering::Acquire);
+        if state == 0 {
+            // Released since the CAS; see futex_rwlock_wrlock.
+            continue;
+        }
+        waiter.register(wpref);
+        // SAFETY: the common ABI path validated this live deadline.
+        let rc = futex_wait_absolute_clock(word, state, unsafe { &*abstime }, clockid, private);
+        if rc == 0 {
+            continue;
+        }
+        let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+        if errno == libc::ETIMEDOUT {
+            return libc::ETIMEDOUT;
+        }
+        if errno == libc::EINTR || errno == libc::EAGAIN {
+            continue;
+        }
+        return if errno == 0 { libc::EAGAIN } else { errno };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pthread_once
+// ---------------------------------------------------------------------------
+//
+// once_control layout (inside libc::pthread_once_t, which is at least 4 bytes):
+//   0 = INIT (never started)
+//   1 = IN_PROGRESS (init_routine is running)
+//   2 = DONE (init_routine completed)
+const ONCE_INIT: i32 = 0;
+const ONCE_IN_PROGRESS: i32 = 1;
+const ONCE_DONE: i32 = 2;
+
+/// Returns the once word to INIT and wakes waiters if `init_routine` unwinds
+/// (a C++ exception, or a forced unwind from thread cancellation). As in
+/// glibc, the unwind keeps propagating to the caller and the next
+/// `pthread_once` on the same control runs the routine again.
+struct OnceResetOnUnwind<'a>(&'a AtomicI32);
+
+impl Drop for OnceResetOnUnwind<'_> {
+    fn drop(&mut self) {
+        self.0.store(ONCE_INIT, Ordering::Release);
+        #[cfg(target_os = "linux")]
+        {
+            let _ = futex_wake_private(self.0, i32::MAX);
+        }
+    }
+}
+
+fn reset_mutex_registry_for_tests() {
+    MUTEX_SPIN_BRANCHES.store(0, Ordering::Relaxed);
+    MUTEX_WAIT_BRANCHES.store(0, Ordering::Relaxed);
+    MUTEX_WAKE_BRANCHES.store(0, Ordering::Relaxed);
+}
+
+fn mutex_branch_counters() -> (u64, u64, u64) {
+    (
+        MUTEX_SPIN_BRANCHES.load(Ordering::Relaxed),
+        MUTEX_WAIT_BRANCHES.load(Ordering::Relaxed),
+        MUTEX_WAKE_BRANCHES.load(Ordering::Relaxed),
+    )
+}
+
+/// Test hook: reset in-memory futex mutex registry + branch counters.
+#[doc(hidden)]
+pub fn pthread_mutex_reset_state_for_tests() {
+    reset_mutex_registry_for_tests();
+    PTHREAD_MUTEX_HTM_SITE.reset_for_tests();
+}
+
+/// Test hook: snapshot spin/wait/wake branch counters.
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_mutex_branch_counters_for_tests() -> (u64, u64, u64) {
+    mutex_branch_counters()
+}
+
+/// Test hook: snapshot HTM controller state for the native mutex fast path.
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_mutex_htm_snapshot_for_tests() -> HtmSiteSnapshot {
+    PTHREAD_MUTEX_HTM_SITE.snapshot()
+}
+
+/// The start routine a handoff probe context carries. It is never called: the
+/// probe drives the rendezvous atomics only, never the trampoline that would
+/// invoke this.
+unsafe extern "C" fn handoff_probe_unreachable_start(_arg: *mut c_void) -> *mut c_void {
+    unreachable!("a handoff probe context is never handed to the start trampoline")
+}
+
+/// Test hook: allocate a host-thread handoff context and return its address.
+///
+/// The API is address-based rather than handing out a shareable Rust value
+/// because that is the shape production uses — [`pthread_create`] passes the
+/// child trampoline a `*const HostThreadStartContext` — and because
+/// `HostThreadStartContext` is deliberately neither `Send` nor `Sync` (it holds
+/// the caller's `*mut c_void`). A `usize` crosses a thread boundary on its own,
+/// so exercising the rendezvous needs no fabricated auto-trait impl.
+///
+/// The returned address must be released with
+/// [`pthread_host_thread_handoff_probe_free_for_tests`].
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_host_thread_handoff_probe_new_for_tests() -> usize {
+    Box::into_raw(Box::new(HostThreadStartContext {
+        start_routine: handoff_probe_unreachable_start,
+        arg: std::ptr::null_mut(),
+        host_thread: AtomicUsize::new(0),
+        handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
+        child_owned: false,
+    })) as usize
+}
+
+/// Test hook: run the child half of the rendezvous, blocking until the parent
+/// publishes. Returns the handle the child would adopt as its own.
+///
+/// # Safety
+/// `addr` must come from [`pthread_host_thread_handoff_probe_new_for_tests`]
+/// and must not have been freed.
+#[doc(hidden)]
+pub unsafe fn pthread_host_thread_handoff_probe_wait_for_tests(addr: usize) -> libc::pthread_t {
+    // SAFETY: the caller guarantees `addr` is a live probe context; the waiter
+    // touches only its atomics, and the parent keeps the box alive until join.
+    let start_ctx = unsafe { &*(addr as *const HostThreadStartContext) };
+    wait_for_host_thread_handoff(start_ctx)
+}
+
+/// Test hook: run the parent half of the rendezvous.
+///
+/// # Safety
+/// As [`pthread_host_thread_handoff_probe_wait_for_tests`].
+#[doc(hidden)]
+pub unsafe fn pthread_host_thread_handoff_probe_publish_for_tests(
+    addr: usize,
+    host_thread: libc::pthread_t,
+) {
+    publish_host_thread_handoff(addr as *const HostThreadStartContext, host_thread);
+}
+
+/// Test hook: release a probe context.
+///
+/// # Safety
+/// `addr` must come from [`pthread_host_thread_handoff_probe_new_for_tests`],
+/// must not have been freed already, and no waiter may still be blocked on it.
+#[doc(hidden)]
+pub unsafe fn pthread_host_thread_handoff_probe_free_for_tests(addr: usize) {
+    // SAFETY: the caller guarantees sole ownership of a box from `..._new_...`.
+    drop(unsafe { Box::from_raw(addr as *mut HostThreadStartContext) });
+}
+
+/// Test hook: how many waiters have fallen through the spin loop and blocked on
+/// the futex. Process-global and monotonic; compare two snapshots.
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_host_thread_handoff_futex_waits_for_tests() -> u64 {
+    HOST_THREAD_HANDOFF_FUTEX_WAITS.load(Ordering::Relaxed)
+}
+
+/// Test hook: force thread lifecycle operations (create/join/detach/self/equal)
+/// to use the native implementation, bypassing host glibc delegation.
+///
+/// Sets BOTH the global `FORCE_NATIVE_THREADING` atomic (so every cargo-test
+/// worker thread reads native, not just the one that happened to run the
+/// `std::sync::Once` setter first) AND the thread-local override (for fast-
+/// path reads on the caller). Without the global-atomic store, tests that
+/// rely on our native clone-trampoline path (e.g. pthread_tsd_test's
+/// `tsd_destructor_runs_on_thread_exit`, bd-9hq64) silently dispatched to
+/// host libc pthread_create on any worker thread other than the one that
+/// tripped the `Once`, and teardown_thread_tls never ran.
+#[doc(hidden)]
+pub fn pthread_threading_force_native_for_tests() {
+    FORCE_NATIVE_THREADING.store(true, Ordering::Release);
+    with_pthread_tls(|tls| tls.force_native_threading_override = Some(true));
+}
+
+/// Test hook: force native threading on the calling test worker and return
+/// its previous mode so callers can restore it afterwards.
+///
+/// The test runner executes functions in parallel. Keeping this override in
+/// pthread TLS prevents one native-lifecycle test from changing the dispatch
+/// policy observed by an unrelated host-lifecycle test.
+#[doc(hidden)]
+pub fn pthread_threading_swap_force_native_for_tests() -> bool {
+    with_pthread_tls(|tls| {
+        let previous = tls
+            .force_native_threading_override
+            .unwrap_or_else(global_force_native_threading_enabled);
+        if tls.threading_test_override_depth == 0 {
+            tls.threading_test_override_baseline = previous;
+        }
+        tls.threading_test_override_depth += 1;
+        tls.force_native_threading_override = Some(true);
+        previous
+    })
+}
+
+/// Test hook: restore the thread lifecycle delegation mode after temporarily
+/// forcing native behavior in a test.
+#[doc(hidden)]
+pub fn pthread_threading_restore_for_tests(previous: bool) {
+    let restored = try_with_pthread_tls(|tls| {
+        if tls.threading_test_override_depth > 0 {
+            tls.threading_test_override_depth -= 1;
+            if tls.threading_test_override_depth == 0 {
+                tls.force_native_threading_override = Some(tls.threading_test_override_baseline);
+            } else {
+                tls.force_native_threading_override = Some(true);
+            }
+        } else {
+            tls.force_native_threading_override = Some(previous);
+        }
+    });
+    if restored.is_none() {
+        // Preserve the pre-lease behavior for callers whose TLS is already
+        // tearing down while a direct one-off override is being restored.
+        FORCE_NATIVE_THREADING.store(previous, Ordering::Release);
+    }
+}
+
+#[inline]
+#[allow(dead_code)]
+fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
+    ordering.iter().position(|s| *s == stage).unwrap_or(0)
+}
+
+#[inline]
+#[allow(dead_code)]
+fn threading_stage_context(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = ((addr1 | addr2) & 0x7) == 0;
+    let recent_page = (addr1 != 0 && known_remaining(addr1).is_some())
+        || (addr2 != 0 && known_remaining(addr2).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::Threading, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+#[allow(dead_code)]
+fn record_threading_stage_outcome(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    runtime_policy::note_check_order_outcome(
+        ApiFamily::Threading,
+        aligned,
+        recent_page,
+        ordering,
+        exit_stage,
+    );
+}
+
+/// POSIX `pthread_self`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_self() -> libc::pthread_t {
+    native_pthread_self()
+}
+
+/// POSIX `pthread_equal`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_equal(a: libc::pthread_t, b: libc::pthread_t) -> c_int {
+    native_pthread_equal(a, b)
+}
+
+/// POSIX `pthread_create`.
+///
+/// Returns `0` on success, otherwise an errno-style integer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_create(
+    thread_out: *mut libc::pthread_t,
+    attr: *const libc::pthread_attr_t,
+    start_routine: Option<StartRoutine>,
+    arg: *mut c_void,
+) -> c_int {
+    if thread_out.is_null() || start_routine.is_none() {
+        return libc::EINVAL;
+    }
+    // GNU process defaults govern creation with a null attr, including the
+    // extended affinity/signal settings. Snapshot them into a normal managed
+    // object so both lifecycle backends consume the same complete attributes.
+    // The common never-overridden path still inherits the backend defaults.
+    let use_defaults = attr.is_null() && DEFAULT_THREAD_ATTR_OVERRIDDEN.load(Ordering::Acquire);
+    let mut default_attr = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+    let attr = if use_defaults {
+        // SAFETY: the getter initializes this writable attr and its extension
+        // record; the local remains stable until creation and destruction end.
+        let rc = unsafe { pthread_getattr_default_np(default_attr.as_mut_ptr()) };
+        if rc != 0 {
+            return rc;
+        }
+        default_attr.as_ptr()
+    } else {
+        attr
+    };
+    // Clear __libc_single_threaded on first thread creation.
+    crate::glibc_internal_abi::__libc_single_threaded
+        .store(0, std::sync::atomic::Ordering::Release);
+    // rand()/random() skip their lock while single-threaded; flip them to the
+    // locked path now, before the new thread can run.
+    frankenlibc_core::stdlib::random_sv::mark_multithreaded();
+    let force_native = force_native_threading_enabled();
+    let start = start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
+    // Host pthreads are an explicit compatibility opt-out. The default and
+    // standalone paths stay on the native lifecycle.
+    let result = if !force_native && let Some(host_create) = resolved_thread_create_raw() {
+        ensure_strict_host_thread_tls_gap();
+        unsafe {
+            dispatch_host_thread_create_with_managed_attr(host_create, thread_out, attr, start, arg)
+        }
+    } else {
+        // SAFETY: pointers and start routine are validated by this wrapper.
+        unsafe { native_pthread_create(thread_out, attr, start, arg) }
+    };
+    if use_defaults {
+        // SAFETY: the local attr was initialized above and creation no longer
+        // borrows its storage. Destroy its temporary extension record too.
+        let _ = unsafe { pthread_attr_destroy(default_attr.as_mut_ptr()) };
+    }
+    result
+}
+
+/// POSIX `pthread_join`.
+///
+/// Thread handles are dispatched the same way as `pthread_detach`:
+/// if force_native_threading is off AND this handle was not minted
+/// by our native path, delegate to the host glibc so pthread_create's
+/// host-path threads can actually be joined (bd-21ypi).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_join(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    // SAFETY: preserve the C caller for native cancellation admission; the
+    // common implementation validates the target before consuming it.
+    unsafe { pthread_join_for_caller(thread, retval, caller) }
+}
+
+/// Shared join dispatch retaining the originating caller across aliases and
+/// the NULL-deadline forms of the GNU join extensions.
+unsafe fn pthread_join_for_caller(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    caller: usize,
+) -> c_int {
+    if !force_native_threading_enabled()
+        && !is_managed_thread_handle(thread)
+        && let Some(host_join) = resolved_thread_join_raw()
+    {
+        return unsafe { host_join(host_thread_handle(thread), retval) };
+    }
+    unsafe { native_pthread_join(thread, retval, caller) }
+}
+
+/// POSIX `pthread_detach`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
+    if !force_native_threading_enabled()
+        && !is_managed_thread_handle(thread)
+        && let Some(host_detach) = resolved_thread_detach_raw()
+    {
+        return unsafe { host_detach(host_thread_handle(thread)) };
+    }
+    unsafe { native_pthread_detach(thread) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_create`]. libstdc++
+/// thread support and a few NSS modules link against this name.
+///
+/// # Safety
+///
+/// Same as [`pthread_create`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_create(
+    thread_out: *mut libc::pthread_t,
+    attr: *const libc::pthread_attr_t,
+    start_routine: Option<StartRoutine>,
+    arg: *mut c_void,
+) -> c_int {
+    unsafe { pthread_create(thread_out, attr, start_routine, arg) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_join`].
+///
+/// # Safety
+///
+/// Same as [`pthread_join`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_join(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    // SAFETY: this alias has the public join contract; retain its external
+    // caller rather than replacing it with an address in this object.
+    unsafe { pthread_join_for_caller(thread, retval, caller) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_detach`].
+///
+/// # Safety
+///
+/// Same as [`pthread_detach`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_detach(thread: libc::pthread_t) -> c_int {
+    unsafe { pthread_detach(thread) }
+}
+
+// ===========================================================================
+// Mutex operations
+// ===========================================================================
+
+/// POSIX `pthread_mutex_init`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_init(
+    mutex: *mut libc::pthread_mutex_t,
+    attr: *const libc::pthread_mutexattr_t,
+) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+
+    // Read the mutex type from the attr if provided.
+    let mutex_type = if attr.is_null() {
+        PTHREAD_MUTEX_NORMAL_TYPE
+    } else {
+        let word = unsafe { *(attr.cast::<c_int>()) };
+        if word == MUTEXATTR_DESTROYED_SENTINEL {
+            return libc::EINVAL;
+        }
+        if !mutexattr_word_valid(word) {
+            return libc::EINVAL;
+        }
+        let mut flags = 0;
+        if decode_mutexattr_pshared(word) == libc::PTHREAD_PROCESS_SHARED {
+            flags |= MUTEX_FLAG_PSHARED;
+        }
+        if decode_mutexattr_robust(word) == libc::PTHREAD_MUTEX_ROBUST {
+            flags |= MUTEX_FLAG_ROBUST;
+        }
+        // PTHREAD_PRIO_PROTECT + PTHREAD_MUTEX_ROBUST is rejected with ENOTSUP
+        // by glibc's ___pthread_mutex_init.
+        match decode_mutexattr_protocol(word) {
+            libc::PTHREAD_PRIO_INHERIT => flags |= MUTEX_FLAG_PI,
+            libc::PTHREAD_PRIO_PROTECT => {
+                if flags & MUTEX_FLAG_ROBUST != 0 {
+                    return libc::ENOTSUP;
+                }
+                let ceiling = decode_mutexattr_prioceiling(word)
+                    .clamp(SCHED_FIFO_PRIO_MIN, SCHED_FIFO_PRIO_MAX);
+                flags |=
+                    MUTEX_FLAG_PP | ((ceiling << MUTEX_PRIOCEILING_SHIFT) & MUTEX_PRIOCEILING_MASK);
+            }
+            _ => {}
+        }
+        decode_mutexattr_type(word) | flags
+    };
+
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+
+    if !mark_managed_mutex(mutex) {
+        return libc::EINVAL;
+    }
+
+    // SAFETY: pointers are alignment-checked and point to caller-owned mutex storage.
+    let word = unsafe { &*word_ptr };
+    let mtype = unsafe { &*type_ptr };
+    let owner = unsafe { &*owner_ptr };
+    let count = unsafe { &*count_ptr };
+
+    word.store(0, Ordering::Release);
+    mtype.store(mutex_type, Ordering::Release);
+    owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    count.store(0, Ordering::Release);
+    if let Some(pid_ptr) = mutex_owner_pid_ptr(mutex) {
+        // SAFETY: alignment checked; within pthread_mutex_t storage.
+        unsafe { &*pid_ptr }.store(0, Ordering::Release);
+    }
+    0
+}
+
+/// POSIX `pthread_mutex_destroy`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    // Destroying an already-destroyed mutex succeeds, as in glibc.
+    if is_destroyed_mutex(mutex) {
+        return 0;
+    }
+    if !ensure_managed_default_mutex(mutex) {
+        return libc::EINVAL;
+    }
+
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned mutex storage.
+    let word = unsafe { &*word_ptr };
+    if word.load(Ordering::Acquire) != 0 {
+        return libc::EBUSY;
+    }
+
+    // Clear extended fields (type, owner, count) for hygiene.
+    if let Some(type_ptr) = mutex_type_ptr(mutex) {
+        // SAFETY: alignment checked; within pthread_mutex_t storage.
+        let mtype = unsafe { &*type_ptr };
+        mtype.store(0, Ordering::Release);
+    }
+    if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
+        // SAFETY: alignment checked.
+        let owner = unsafe { &*owner_ptr };
+        owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    }
+    if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
+        // SAFETY: alignment checked.
+        let count = unsafe { &*count_ptr };
+        count.store(0, Ordering::Release);
+    }
+
+    mark_destroyed_mutex(mutex);
+    0
+}
+
+/// POSIX `pthread_mutex_lock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if !ensure_managed_default_mutex(mutex) {
+        return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { ext_mutex_lock(mutex, raw_type, None, false) };
+    }
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: alignment is validated by `mutex_word_ptr`.
+    let word = unsafe { &*word_ptr };
+
+    match read_mutex_type(mutex) {
+        PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let owner = unsafe { &*owner_ptr };
+            let count = unsafe { &*count_ptr };
+            let self_tid = core_cached_tid();
+
+            // Check if we already own this mutex.
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                // We already own it — increment the recursion count.
+                let cur = count.load(Ordering::Relaxed);
+                if cur == u32::MAX {
+                    return libc::EAGAIN; // overflow guard
+                }
+                count.store(cur + 1, Ordering::Release);
+                return 0;
+            }
+            // Not the owner (or first acquisition) — acquire the underlying lock.
+            let rc = futex_lock_normal(word);
+            if rc != 0 {
+                return rc;
+            }
+            // We now own the mutex — record ownership.
+            owner.store(self_tid, Ordering::Release);
+            count.store(1, Ordering::Release);
+            0
+        }
+        PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let owner = unsafe { &*owner_ptr };
+            let self_tid = core_cached_tid();
+
+            // If we already own it, return EDEADLK.
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                return libc::EDEADLK;
+            }
+            // Acquire the lock.
+            let rc = futex_lock_normal(word);
+            if rc != 0 {
+                return rc;
+            }
+            // Record ownership.
+            owner.store(self_tid, Ordering::Release);
+            0
+        }
+        _ => {
+            // PTHREAD_MUTEX_NORMAL — existing behavior.
+            futex_lock_normal(word)
+        }
+    }
+}
+
+/// POSIX `pthread_mutex_trylock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if !ensure_managed_default_mutex(mutex) {
+        return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { ext_mutex_lock(mutex, raw_type, None, true) };
+    }
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: alignment is validated by `mutex_word_ptr`.
+    let word = unsafe { &*word_ptr };
+
+    match read_mutex_type(mutex) {
+        PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let owner = unsafe { &*owner_ptr };
+            let count = unsafe { &*count_ptr };
+            let self_tid = core_cached_tid();
+
+            // Check if we already own this mutex.
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                // Already own it — increment recursion count.
+                let cur = count.load(Ordering::Relaxed);
+                if cur == u32::MAX {
+                    return libc::EAGAIN;
+                }
+                count.store(cur + 1, Ordering::Release);
+                return 0;
+            }
+            // Try to acquire.
+            let rc = futex_trylock_normal(word);
+            if rc != 0 {
+                return rc;
+            }
+            // Record ownership.
+            owner.store(self_tid, Ordering::Release);
+            count.store(1, Ordering::Release);
+            0
+        }
+        PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let owner = unsafe { &*owner_ptr };
+            let self_tid = core_cached_tid();
+
+            // If we already own it, return EBUSY for trylock.
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                return libc::EBUSY;
+            }
+            let rc = futex_trylock_normal(word);
+            if rc != 0 {
+                return rc;
+            }
+            // Record ownership.
+            owner.store(self_tid, Ordering::Release);
+            0
+        }
+        _ => {
+            // PTHREAD_MUTEX_NORMAL — existing behavior.
+            futex_trylock_normal(word)
+        }
+    }
+}
+
+/// POSIX `pthread_mutex_unlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if !ensure_managed_default_mutex(mutex) {
+        return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { ext_mutex_unlock(mutex, raw_type) };
+    }
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: alignment is validated by `mutex_word_ptr`.
+    let word = unsafe { &*word_ptr };
+
+    match read_mutex_type(mutex) {
+        PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let owner = unsafe { &*owner_ptr };
+            let count = unsafe { &*count_ptr };
+            let self_tid = core_cached_tid();
+
+            // Verify ownership.
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
+            }
+
+            // Decrement lock count.
+            let cur = count.load(Ordering::Relaxed);
+            if cur > 1 {
+                count.store(cur - 1, Ordering::Release);
+                return 0; // still held recursively
+            }
+            // count == 1 (or 0 for robustness): release fully.
+            count.store(0, Ordering::Release);
+
+            // Clear ownership before releasing the underlying lock.
+            owner.store(MUTEX_NO_OWNER, Ordering::Release);
+
+            futex_unlock_normal(word)
+        }
+        PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let owner = unsafe { &*owner_ptr };
+            let self_tid = core_cached_tid();
+
+            // Verify ownership — non-owner unlock returns EPERM.
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
+            }
+            // Clear ownership.
+            owner.store(MUTEX_NO_OWNER, Ordering::Release);
+
+            futex_unlock_normal(word)
+        }
+        _ => {
+            // PTHREAD_MUTEX_NORMAL — existing behavior.
+            futex_unlock_normal(word)
+        }
+    }
+}
+
+// ===========================================================================
+// Condition variable operations
+// ===========================================================================
+
+/// POSIX `pthread_cond_init`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_cond_init(
+    cond: *mut libc::pthread_cond_t,
+    attr: *const libc::pthread_condattr_t,
+) -> c_int {
+    if cond.is_null() {
+        return libc::EINVAL;
+    }
+
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    let clock_id = if attr.is_null() {
+        PTHREAD_COND_CLOCK_REALTIME
+    } else {
+        let mut clock_id: c_int = PTHREAD_COND_CLOCK_REALTIME;
+        let rc = unsafe { pthread_condattr_getclock(attr, &mut clock_id as *mut c_int) };
+        if rc == 0 {
+            clock_id
+        } else {
+            let mut host_clock_id: libc::clockid_t = PTHREAD_COND_CLOCK_REALTIME;
+            let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {
+                return libc::EINVAL;
+            };
+            let host_rc =
+                unsafe { host_getclock(attr, &mut host_clock_id as *mut libc::clockid_t) };
+            if host_rc != 0 {
+                return libc::EINVAL;
+            }
+            host_clock_id
+        }
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    let rc = unsafe { core_condvar_init(cond_ptr, clock_id) };
+    let mut pshared = libc::PTHREAD_PROCESS_PRIVATE;
+    if rc == 0
+        && !attr.is_null()
+        && unsafe { pthread_condattr_getpshared(attr, &mut pshared) } == 0
+        && pshared == libc::PTHREAD_PROCESS_SHARED
+    {
+        // SAFETY: initialized just above.
+        unsafe { &*cond_ptr }.mark_process_shared();
+    }
+    rc
+}
+
+/// POSIX `pthread_cond_destroy`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -> c_int {
+    if !is_managed_condvar(cond) {
+        return libc::EINVAL;
+    }
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_destroy(cond_ptr) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_init`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_init`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_init(
+    cond: *mut libc::pthread_cond_t,
+    attr: *const libc::pthread_condattr_t,
+) -> c_int {
+    unsafe { pthread_cond_init(cond, attr) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_destroy`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_destroy`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -> c_int {
+    unsafe { pthread_cond_destroy(cond) }
+}
+
+/// What a condvar wait takes from its mutex, handed back whether the wait
+/// returns or is abandoned by a cancellation unwind: POSIX requires a
+/// cancelled waiter to hold the mutex again before its cleanup handlers run.
+struct CondWaitGuard {
+    cond: *mut CondvarData,
+    word: *const u32,
+    mutex: *mut libc::pthread_mutex_t,
+    mtype: c_int,
+    saved_count: u32,
+    /// `condvar_wait_prepare` succeeded, so the mutex was released.
+    prepared: bool,
+}
+
+impl Drop for CondWaitGuard {
+    fn drop(&mut self) {
+        if self.prepared {
+            // SAFETY: pairs the successful prepare on the same pointers.
+            unsafe { core_condvar_wait_finish(self.cond, self.word) };
+        }
+        if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || self.mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE
+        {
+            if let Some(owner_ptr) = mutex_owner_ptr(self.mutex) {
+                let owner = unsafe { &*owner_ptr };
+                owner.store(core_cached_tid(), Ordering::Release);
+            }
+            if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+                && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
+            {
+                let count = unsafe { &*count_ptr };
+                // Restore the lock count we had before waiting.
+                count.store(self.saved_count, Ordering::Release);
+            }
+        }
+    }
+}
+
+/// Block on a condvar's sequence word until it moves past `expected_seq`
+/// (0), the deadline passes (ETIMEDOUT), or a spurious wake (0). The futex
+/// wait is a cancellation point, so this and every function between it and
+/// the exported entry point is always inlined (see `at_cancellation_point`).
+#[inline(always)]
+fn cond_futex_wait(
+    cv: &CondvarData,
+    expected_seq: u32,
+    abstime: Option<&libc::timespec>,
+    clock: Option<c_int>,
+) -> c_int {
+    let seq_addr = &cv.seq as *const _ as usize;
+    // A negative absolute time is already expired, not an invalid timespec.
+    // Linux rejects negative futex deadlines, so use the epoch while still
+    // taking the cancellation-point path and the normal unlock/relock guards.
+    let expired = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let abstime = abstime.map(|ts| if ts.tv_sec < 0 { &expired } else { ts });
+    let timed_op = match clock {
+        Some(clock) => {
+            libc::FUTEX_WAIT_BITSET
+                | cv.futex_private_flag()
+                | if clock == libc::CLOCK_REALTIME {
+                    libc::FUTEX_CLOCK_REALTIME
+                } else {
+                    0
+                }
+        }
+        None => core_condvar_timed_futex_op(cv),
+    };
+    let (futex_op, deadline, bitset) = match abstime {
+        None => ((libc::FUTEX_WAIT | cv.futex_private_flag()) as usize, 0, 0),
+        // libc::timespec is the kernel's 64-bit timespec on supported targets.
+        Some(ts) => (
+            timed_op as usize,
+            ts as *const libc::timespec as usize,
+            u32::MAX as usize,
+        ),
+    };
+    loop {
+        // SAFETY: futex on the condvar sequence word with a live deadline.
+        let result = unsafe {
+            cancellation_point_futex_wait(
+                seq_addr as *mut u32,
+                futex_op as c_int,
+                expected_seq,
+                deadline,
+                bitset as u32,
+            )
+        };
+        match result {
+            Err(libc::EINTR) => continue,
+            Err(libc::ETIMEDOUT) => break libc::ETIMEDOUT,
+            // Woken, sequence already moved (EAGAIN), or another error: the
+            // caller re-checks its predicate either way.
+            _ => break 0,
+        }
+    }
+}
+
+/// Re-takes a pshared/robust/PI mutex after a condvar wait, including when
+/// the wait is abandoned by a cancellation unwind.
+struct ExtCondWaitGuard<'a> {
+    cv: &'a CondvarData,
+    mutex: *mut libc::pthread_mutex_t,
+    saved_count: u32,
+    armed: bool,
+}
+
+impl ExtCondWaitGuard<'_> {
+    /// Deregister and re-take the mutex; returns the lock result.
+    fn finish(&mut self) -> c_int {
+        self.armed = false;
+        self.cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+        let raw_type = read_mutex_type_word(self.mutex);
+        let rc = unsafe { ext_mutex_lock(self.mutex, raw_type, None, false) };
+        if (rc == 0 || rc == libc::EOWNERDEAD)
+            && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
+        {
+            unsafe { &*count_ptr }.store(self.saved_count.max(1), Ordering::Release);
+        }
+        rc
+    }
+}
+
+impl Drop for ExtCondWaitGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.finish();
+        }
+    }
+}
+
+/// Condvar wait whose mutex is process-shared, robust or PI: its lock word is
+/// not the private 0/1/2 word that core's prepare/finish release and re-take,
+/// so the mutex is released and re-acquired through the extended paths
+/// (EOWNERDEAD from the re-acquire is returned to the caller, as in glibc).
+/// Always inlined: it reaches the cond_futex_wait cancellation point.
+#[inline(always)]
+unsafe fn cond_wait_extended_mutex(
+    cond_ptr: *mut CondvarData,
+    mutex: *mut libc::pthread_mutex_t,
+    raw_type: i32,
+    abstime: Option<&libc::timespec>,
+    clock: Option<c_int>,
+) -> c_int {
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
+    if m.owner.load(Ordering::Acquire) != tid || tid == MUTEX_NO_OWNER {
+        return libc::EPERM;
+    }
+    // SAFETY: validated by the caller.
+    let cv = unsafe { &*cond_ptr };
+    let expected_seq = cv.seq.load(Ordering::Acquire);
+    cv.nwaiters.fetch_add(1, Ordering::AcqRel);
+    // A recursive mutex is released completely for the wait.
+    let saved_count = m.count.swap(1, Ordering::AcqRel);
+    let mut guard = ExtCondWaitGuard {
+        cv,
+        mutex,
+        saved_count,
+        armed: true,
+    };
+    let unlock_rc = unsafe { ext_mutex_unlock(mutex, raw_type) };
+    if unlock_rc != 0 {
+        guard.armed = false;
+        cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+        m.count.store(saved_count, Ordering::Release);
+        return unlock_rc;
+    }
+    let rc = cond_futex_wait(cv, expected_seq, abstime, clock);
+    let lock_rc = guard.finish();
+    if lock_rc != 0 { lock_rc } else { rc }
+}
+
+/// Shared body of `pthread_cond_wait` and `pthread_cond_timedwait`. Callers
+/// have rejected null pointers and invalid deadlines. The futex wait is a
+/// cancellation point, so this is always inlined into the entry points.
+#[inline(always)]
+unsafe fn cond_wait_common(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: Option<&libc::timespec>,
+    clock: Option<c_int>,
+) -> c_int {
+    let managed_condvar = is_managed_condvar(cond);
+    let managed_mutex = is_managed_mutex(mutex);
+    if !managed_condvar || !managed_mutex {
+        return libc::EINVAL;
+    }
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { cond_wait_extended_mutex(cond_ptr, mutex, raw_type, abstime, clock) };
+    }
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked by `mutex_word_ptr`.
+    let word = unsafe { &*word_ptr };
+    if word.load(Ordering::Acquire) == 0 {
+        return libc::EINVAL;
+    }
+
+    let mtype = read_mutex_type(mutex);
+    let mut saved_count = 0;
+    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
+        // Verify the calling thread actually owns the mutex before clearing
+        // owner/count state. Without this check, a thread that incorrectly
+        // calls cond_wait without holding the mutex would clobber the real
+        // owner's bookkeeping and silently steal the mutex on wake. (bd-cie59)
+        let self_tid = core_cached_tid();
+        if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
+            let owner = unsafe { &*owner_ptr };
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
+            }
+            owner.store(MUTEX_NO_OWNER, Ordering::Release);
+        }
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
+        {
+            let count = unsafe { &*count_ptr };
+            saved_count = count.swap(0, Ordering::Release);
+        }
+    }
+
+    let word_u32 = word_ptr.cast::<u32>() as *const u32;
+    let mut guard = CondWaitGuard {
+        cond: cond_ptr,
+        word: word_u32,
+        mutex,
+        mtype,
+        saved_count,
+        prepared: false,
+    };
+    // SAFETY: condvar pointer and mutex futex word pointer are validated/aligned and caller-owned.
+    let expected_seq = match unsafe { core_condvar_wait_prepare(cond_ptr, word_u32) } {
+        Ok(seq) => seq,
+        Err(e) => return e,
+    };
+    guard.prepared = true;
+
+    // SAFETY: `cond_ptr` was validated above.
+    let rc = cond_futex_wait(unsafe { &*cond_ptr }, expected_seq, abstime, clock);
+    drop(guard);
+    rc
+}
+
+/// POSIX `pthread_cond_wait`. A cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_cond_wait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    unsafe { pthread_cond_wait_cp(cond, mutex) }
+}
+
+/// Body of [`pthread_cond_wait`] and of `__pthread_cond_wait`/`cnd_wait`:
+/// always inlined (rustc ignores inline hints on exported functions), so the
+/// futex wait's cancellation window sees the caller of whichever exported
+/// entry point was called (see [`at_cancellation_point`]).
+#[inline(always)]
+pub(crate) unsafe fn pthread_cond_wait_cp(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    if cond.is_null() || mutex.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { cond_wait_common(cond, mutex, None, None) }
+}
+
+/// POSIX `pthread_cond_signal`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_cond_signal(cond: *mut libc::pthread_cond_t) -> c_int {
+    if !is_managed_condvar(cond) {
+        return libc::EINVAL;
+    }
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_signal(cond_ptr) }
+}
+
+/// POSIX `pthread_cond_broadcast`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut libc::pthread_cond_t) -> c_int {
+    if !is_managed_condvar(cond) {
+        return libc::EINVAL;
+    }
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_broadcast(cond_ptr) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_wait`]. libstdc++
+/// std::condition_variable links against this name.
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_wait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_cond_wait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    unsafe { pthread_cond_wait_cp(cond, mutex) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_signal`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_signal`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_signal(cond: *mut libc::pthread_cond_t) -> c_int {
+    unsafe { pthread_cond_signal(cond) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_broadcast`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_broadcast`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_broadcast(cond: *mut libc::pthread_cond_t) -> c_int {
+    unsafe { pthread_cond_broadcast(cond) }
+}
+
+// ===========================================================================
+// Reader-writer lock operations
+// ===========================================================================
+
+/// POSIX `pthread_rwlock_init`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_init(
+    rwlock: *mut libc::pthread_rwlock_t,
+    attr: *const libc::pthread_rwlockattr_t,
+) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    // A valid attribute is honoured for process sharing. The reader/writer
+    // preference kind is accepted; fl's rwlock has one fairness policy.
+    let mut pshared = libc::PTHREAD_PROCESS_PRIVATE;
+    if !attr.is_null() && unsafe { pthread_rwlockattr_getpshared(attr, &mut pshared) } != 0 {
+        clear_managed_rwlock(rwlock);
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        clear_managed_rwlock(rwlock);
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    word.store(0, Ordering::Release);
+    // The preference kind and an empty waiting-writer count (see
+    // rwlock_writer_pref).
+    let kind = if attr.is_null() {
+        0
+    } else {
+        rwlockattr_kind(unsafe { *(attr as *const c_int) })
+    };
+    let base = rwlock.cast::<u8>();
+    // SAFETY: inside the 4-aligned 56-byte rwlock object (word_ptr checked).
+    unsafe {
+        (*base.add(RWLOCK_KIND_OFFSET).cast::<AtomicU32>()).store(kind as u32, Ordering::Relaxed);
+        (*base.add(RWLOCK_WRITERS_WAITING_OFFSET).cast::<AtomicI32>()).store(0, Ordering::Relaxed);
+    }
+    if mark_managed_rwlock(rwlock, pshared == libc::PTHREAD_PROCESS_SHARED) {
+        0
+    } else {
+        libc::EINVAL
+    }
+}
+
+/// POSIX `pthread_rwlock_destroy`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_destroy(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        clear_managed_rwlock(rwlock);
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    if word.load(Ordering::Acquire) != 0 {
+        return libc::EBUSY;
+    }
+    clear_managed_rwlock(rwlock);
+    0
+}
+
+/// POSIX `pthread_rwlock_rdlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    // SAFETY: the public ABI requires live caller-owned rwlock storage.
+    unsafe { pthread_rwlock_rdlock_observed(rwlock, |_, _| {}) }
+}
+
+unsafe fn pthread_rwlock_rdlock_observed(
+    rwlock: *mut libc::pthread_rwlock_t,
+    before_wait: impl FnMut(usize, c_int),
+) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_rdlock(
+        word,
+        rwlock_is_private(rwlock),
+        rwlock_writer_pref(rwlock),
+        before_wait,
+    )
+}
+
+/// Exercise the production read-lock path with a controlled wait schedule.
+/// The observer receives the actual futex address and its expected value after
+/// the reader has decided to block, immediately before entering the kernel.
+///
+/// # Safety
+/// `rwlock` must remain live and initialized until all users finish. The
+/// observer may pause its caller but must not mutate or destroy the rwlock.
+#[doc(hidden)]
+pub unsafe fn pthread_rwlock_read_wait_observed_for_tests(
+    rwlock: *mut libc::pthread_rwlock_t,
+    deadline: Option<(c_int, libc::timespec)>,
+    before_wait: impl FnMut(usize, c_int),
+) -> c_int {
+    // SAFETY: the caller supplies the normal rwlock lifetime. An optional
+    // deadline is owned by this frame throughout validation and waiting.
+    unsafe {
+        match deadline {
+            Some((clock, deadline)) => {
+                pthread_rwlock_wait_common(rwlock, clock, &deadline, false, before_wait)
+            }
+            None => pthread_rwlock_rdlock_observed(rwlock, before_wait),
+        }
+    }
+}
+
+/// POSIX `pthread_rwlock_wrlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_wrlock(word, rwlock_is_private(rwlock), rwlock_writer_pref(rwlock))
+}
+
+/// POSIX `pthread_rwlock_unlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_unlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_unlock(word, rwlock_is_private(rwlock))
+}
+
+/// POSIX `pthread_rwlock_tryrdlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_tryrdlock(word, rwlock_writer_pref(rwlock))
+}
+
+/// POSIX `pthread_rwlock_trywrlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_trywrlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_trywrlock(word)
+}
+
+// ===========================================================================
+// Condition variable timed wait
+// ===========================================================================
+
+/// POSIX `pthread_cond_timedwait`. A cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_cond_timedwait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_cond_timedwait_cp(cond, mutex, abstime) }
+}
+
+/// Body of [`pthread_cond_timedwait`] and of `pthread_cond_clockwait`, the
+/// alias and `cnd_timedwait` (see [`pthread_cond_wait_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pthread_cond_timedwait_cp(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    if cond.is_null() || mutex.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: abstime is non-null and points to the caller's live timespec.
+    // Seconds may be negative: that requests an already-expired wait.
+    if !(0..1_000_000_000).contains(&unsafe { (*abstime).tv_nsec }) {
+        return libc::EINVAL;
+    }
+    // SAFETY: deadline nanoseconds are valid; the shared body handles expiry.
+    unsafe { cond_wait_common(cond, mutex, Some(&*abstime), None) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_timedwait`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_timedwait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_cond_timedwait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_cond_timedwait_cp(cond, mutex, abstime) }
+}
+
+// ===========================================================================
+// Thread-specific data (TSD / pthread_key)
+// ===========================================================================
+
+/// POSIX `pthread_key_create`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_key_create(
+    key: *mut libc::pthread_key_t,
+    destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> c_int {
+    if key.is_null() {
+        return libc::EINVAL;
+    }
+    let sensitive_context = runtime_policy::bootstrap_passthrough_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context();
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                libc::EAGAIN
+            } else {
+                let mut internal_key = PthreadKey::default();
+                let rc = core_pthread_key_create(&mut internal_key, destructor);
+                if rc == 0 {
+                    // SAFETY: key is non-null and we write the index.
+                    unsafe { *key = internal_key.id };
+                }
+                rc
+            }
+        },
+        || {
+            let mut internal_key = PthreadKey::default();
+            let rc = core_pthread_key_create(&mut internal_key, destructor);
+            if rc == 0 {
+                // SAFETY: key is non-null and we write the index.
+                unsafe { *key = internal_key.id };
+            }
+            rc
+        },
+    )
+}
+
+/// POSIX `pthread_key_delete`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
+    let sensitive_context = runtime_policy::bootstrap_passthrough_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context();
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                libc::EINVAL
+            } else {
+                core_pthread_key_delete(PthreadKey { id: key })
+            }
+        },
+        || core_pthread_key_delete(PthreadKey { id: key }),
+    )
+}
+
+/// glibc reserved-namespace alias for [`pthread_key_delete`]. TSD
+/// destructor cleanup paths in libstdc++ link against this name.
+///
+/// # Safety
+///
+/// Same as [`pthread_key_delete`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_key_delete(key: libc::pthread_key_t) -> c_int {
+    unsafe { pthread_key_delete(key) }
+}
+
+/// POSIX `pthread_getspecific`.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
+    let sensitive_context = runtime_policy::bootstrap_passthrough_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context();
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                std::ptr::null_mut()
+            } else {
+                core_pthread_getspecific(PthreadKey { id: key }) as *mut c_void
+            }
+        },
+        || core_pthread_getspecific(PthreadKey { id: key }) as *mut c_void,
+    )
+}
+
+/// POSIX `pthread_setspecific`.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setspecific(
+    key: libc::pthread_key_t,
+    value: *const c_void,
+) -> c_int {
+    let sensitive_context = runtime_policy::bootstrap_passthrough_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context();
+    let rc = with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                libc::EINVAL
+            } else {
+                core_pthread_setspecific(PthreadKey { id: key }, value as u64)
+            }
+        },
+        || core_pthread_setspecific(PthreadKey { id: key }, value as u64),
+    );
+    if rc == 0 && !value.is_null() && !sensitive_context {
+        ensure_host_thread_key_teardown();
+    }
+    rc
+}
+
+/// Key destructors of host-created threads (bd-v6cz9v).
+///
+/// Threads made by the host's pthread_create exit through the host's
+/// start_thread, which runs the HOST's key table -- empty, since keys and
+/// values live in fl's table. So no key destructor ever ran on the default
+/// backend: every per-thread buffer freed from a key destructor leaked at each
+/// thread exit. The first non-null value a non-main host thread stores
+/// registers one thread-exit callback (the host runs __cxa_thread_atexit_impl
+/// callbacks from start_thread) that runs fl's destructors. The main thread is
+/// skipped: glibc does not run key destructors at process exit.
+fn ensure_host_thread_key_teardown() {
+    thread_local! {
+        static DECIDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    // Once per thread: the backend and main-thread checks cannot change for
+    // its lifetime, and they cost a gettid and a getpid syscall on every
+    // non-null pthread_setspecific when they ran first.
+    if DECIDED.try_with(|d| d.replace(true)).unwrap_or(true) {
+        return;
+    }
+    if current_threading_backend() != THREAD_BACKEND_HOST {
+        return;
+    }
+    let tid = frankenlibc_core::syscall::sys_gettid();
+    if tid == frankenlibc_core::syscall::sys_getpid() {
+        return;
+    }
+    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.
+    unsafe {
+        crate::startup_abi::__cxa_thread_atexit_impl(
+            run_host_thread_key_destructors,
+            std::ptr::null_mut(),
+            (&raw const crate::unistd_abi::__dso_handle)
+                .cast_mut()
+                .cast(),
+        );
+    }
+}
+
+unsafe extern "C" fn run_host_thread_key_destructors(_: *mut c_void) {
+    frankenlibc_core::pthread::run_exiting_thread_key_destructors(
+        frankenlibc_core::syscall::sys_gettid(),
+    );
+}
+
+// ===========================================================================
+// pthread_once
+// ===========================================================================
+
+/// POSIX `pthread_once`.
+///
+/// Guarantees that `init_routine` is called exactly once, even when multiple
+/// threads call `pthread_once` concurrently with the same `once_control`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_once(
+    once_control: *mut libc::pthread_once_t,
+    init_routine: Option<unsafe extern "C-unwind" fn()>,
+) -> c_int {
+    if once_control.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(routine) = init_routine else {
+        return libc::EINVAL;
+    };
+
+    // Reinterpret the first 4 bytes of pthread_once_t as an AtomicI32.
+    // SAFETY: pthread_once_t is at least 4-byte aligned on all Linux platforms.
+    let state = unsafe { &*(once_control as *const AtomicI32) };
+
+    loop {
+        let s = state.load(Ordering::Acquire);
+        if s == ONCE_DONE {
+            return 0;
+        }
+
+        if s == ONCE_INIT {
+            match state.compare_exchange(
+                ONCE_INIT,
+                ONCE_IN_PROGRESS,
+                Ordering::Acquire,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    // We won; run the init routine. If it unwinds, the guard
+                    // resets the word so another caller can retry.
+                    let reset = OnceResetOnUnwind(state);
+                    unsafe { routine() };
+                    core::mem::forget(reset);
+                    state.store(ONCE_DONE, Ordering::Release);
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = futex_wake_private(state, i32::MAX);
+                    }
+                    return 0;
+                }
+                Err(_) => {
+                    // State changed concurrently. Loop and retry.
+                    continue;
+                }
+            }
+        } else {
+            // Another thread is running init_routine; wait until done or failed.
+            #[cfg(target_os = "linux")]
+            {
+                let _ = futex_wait_private(state, s);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                core::hint::spin_loop();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pthread attribute functions — native implementation
+//
+// We overlay our own data layout on the opaque pthread_attr_t memory.
+// Since we own the mutex/condvar/rwlock/thread implementations, our attrs
+// only need to be self-consistent (not glibc-layout-compatible).
+// ---------------------------------------------------------------------------
+
+/// Default stack size for new threads, glibc's rule: the RLIMIT_STACK soft
+/// limit rounded up to a page (8 MiB under the usual `ulimit -s 8192`), the
+/// 2 MiB architecture default when it is unlimited, PTHREAD_STACK_MIN when it
+/// is smaller. Stacks are committed lazily, so the size is address space,
+/// not memory. A thread made with a NULL attr gets this size from the host's
+/// pthread_create in interpose mode, so a default-initialized attr must
+/// agree. Override at runtime with `FRANKENLIBC_THREAD_STACK_SIZE` (bytes).
+fn attr_default_stack_size() -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CACHED: AtomicUsize = AtomicUsize::new(0);
+    let cached = CACHED.load(Ordering::Relaxed);
+    if cached != 0 {
+        return cached;
+    }
+
+    let rlimit_size = || {
+        let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+        // SAFETY: getrlimit writes a complete rlimit on success.
+        let rc = unsafe {
+            raw_syscall::sys_getrlimit(libc::RLIMIT_STACK as i32, limit.as_mut_ptr().cast::<u8>())
+        };
+        // SAFETY: initialized when the call succeeded.
+        let soft = rc.ok().map(|()| unsafe { limit.assume_init() }.rlim_cur);
+        match soft {
+            None | Some(libc::RLIM_INFINITY) => ATTR_DEFAULT_STACK_SIZE,
+            Some(soft) => (soft as usize)
+                .max(ATTR_MIN_STACK_SIZE)
+                .next_multiple_of(4096),
+        }
+    };
+    if !attr_stack_size_env_lookup_enabled() {
+        return rlimit_size();
+    }
+
+    let size = std::env::var("FRANKENLIBC_THREAD_STACK_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v >= ATTR_MIN_STACK_SIZE)
+        .unwrap_or_else(rlimit_size);
+    CACHED.store(size, Ordering::Relaxed);
+    size
+}
+
+#[inline]
+fn attr_stack_size_env_lookup_enabled() -> bool {
+    runtime_policy::is_runtime_ready()
+        && !crate::membrane_state::pipeline_initialization_active()
+        && !crate::malloc_abi::in_allocator_reentry_context()
+        && !in_threading_policy_context()
+        && !frankenlibc_membrane::ptr_validator::in_validation_context()
+}
+
+/// POSIX `PTHREAD_SCOPE_SYSTEM` — system contention scope (1:1 threading model).
+const PTHREAD_SCOPE_SYSTEM: c_int = 0;
+/// POSIX `PTHREAD_SCOPE_PROCESS` — process contention scope (unsupported on
+/// Linux/NPTL; a valid value rejected with ENOTSUP, unlike an invalid value
+/// which is EINVAL).
+const PTHREAD_SCOPE_PROCESS: c_int = 1;
+
+/// Minimum stack size: PTHREAD_STACK_MIN (typically 16 KiB on Linux x86_64).
+const ATTR_MIN_STACK_SIZE: usize = 16384;
+
+/// glibc's x86_64 ARCH_STACK_DEFAULT_SIZE, used when RLIMIT_STACK is unlimited.
+const ATTR_DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
+
+/// Magic tag to identify managed attr structs.
+const MANAGED_ATTR_MAGIC: u32 = 0x4741_5454; // "GATT"
+
+/// Default guard size: one page (4096 bytes on x86_64).
+const ATTR_DEFAULT_GUARD_SIZE: usize = 4096;
+
+/// POSIX scheduling inheritance constants.
+const PTHREAD_INHERIT_SCHED_VAL: i32 = 0;
+
+/// Extended attribute data that doesn't fit in the 56-byte inline overlay.
+/// Keyed by attr address, stores affinity mask and signal mask.
+#[derive(Clone)]
+struct ExtendedAttrData {
+    affinity: Option<(usize, Vec<u8>)>, // (cpusetsize, raw bytes)
+    sigmask: Option<[u8; 128]>,         // sigset_t is 128 bytes on x86_64
+}
+
+static EXTENDED_ATTR_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ExtendedAttrData>>> =
+    LazyLock::new(|| Mutex::new(artifact_hash_map()));
+
+/// Default thread attributes (for `pthread_getattr_default_np` / `pthread_setattr_default_np`).
+static DEFAULT_THREAD_ATTR: LazyLock<Mutex<PthreadAttrDefaults>> =
+    LazyLock::new(|| Mutex::new(PthreadAttrDefaults::new()));
+static DEFAULT_THREAD_ATTR_OVERRIDDEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Clone)]
+struct PthreadAttrDefaults {
+    detach_state: i32,
+    stack_size: usize,
+    guard_size: usize,
+    inherit_sched: i32,
+    sched_policy: i32,
+    sched_priority: i32,
+    extended: ExtendedAttrData,
+}
+
+impl PthreadAttrDefaults {
+    fn new() -> Self {
+        Self {
+            detach_state: libc::PTHREAD_CREATE_JOINABLE,
+            stack_size: attr_default_stack_size(),
+            guard_size: ATTR_DEFAULT_GUARD_SIZE,
+            inherit_sched: PTHREAD_INHERIT_SCHED_VAL,
+            sched_policy: 0, // SCHED_OTHER
+            sched_priority: 0,
+            extended: ExtendedAttrData {
+                affinity: None,
+                sigmask: None,
+            },
+        }
+    }
+}
+
+// An explicit stack can temporarily have a zero low base when the deprecated
+// high-address setter is used before the final size. Keep that state distinct
+// from a request for libc-allocated storage.
+const ATTR_FLAG_USER_STACK: u32 = 1 << 2;
+
+/// Internal layout overlaid on pthread_attr_t (56 bytes on x86_64, we use 48).
+#[repr(C)]
+struct PthreadAttrData {
+    magic: u32,          // 0..4
+    detach_state: i32,   // 4..8
+    stack_size: usize,   // 8..16
+    guard_size: usize,   // 16..24
+    stack_addr: usize,   // 24..32: low base; flags distinguish explicit zero
+    inherit_sched: i32,  // 32..36
+    sched_policy: i32,   // 36..40
+    sched_priority: i32, // 40..44
+    flags: u32,          // 44..48 (bit 0: affinity, bit 1: sigmask, bit 2: user stack)
+}
+
+impl PthreadAttrData {
+    fn has_stack_address(&self) -> bool {
+        self.stack_addr != 0 || self.flags & ATTR_FLAG_USER_STACK != 0
+    }
+
+    fn stack_top(&self) -> usize {
+        if self.has_stack_address() {
+            self.stack_addr.wrapping_add(self.stack_size)
+        } else {
+            0
+        }
+    }
+}
+
+fn attr_data_ptr(attr: *mut libc::pthread_attr_t) -> Option<*mut PthreadAttrData> {
+    if attr.is_null() {
+        return None;
+    }
+    let ptr = attr.cast::<PthreadAttrData>();
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<PthreadAttrData>()) {
+        return None;
+    }
+    Some(ptr)
+}
+
+fn attr_data_ptr_const(attr: *const libc::pthread_attr_t) -> Option<*const PthreadAttrData> {
+    if attr.is_null() {
+        return None;
+    }
+    let ptr = attr.cast::<PthreadAttrData>();
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<PthreadAttrData>()) {
+        return None;
+    }
+    Some(ptr)
+}
+
+fn managed_attr_data_ptr(attr: *mut libc::pthread_attr_t) -> Option<*mut PthreadAttrData> {
+    let data = attr_data_ptr(attr)?;
+    // SAFETY: `data` comes from `attr_data_ptr`, which validated non-null/alignment.
+    let is_managed = unsafe { (*data).magic == MANAGED_ATTR_MAGIC };
+    is_managed.then_some(data)
+}
+
+fn managed_attr_data_ptr_const(
+    attr: *const libc::pthread_attr_t,
+) -> Option<*const PthreadAttrData> {
+    let data = attr_data_ptr_const(attr)?;
+    // SAFETY: `data` comes from `attr_data_ptr_const`, which validated non-null/alignment.
+    let is_managed = unsafe { (*data).magic == MANAGED_ATTR_MAGIC };
+    is_managed.then_some(data)
+}
+
+/// An immutable, address-stable copy of SIGEV_THREAD attributes. Timers copy
+/// standard stack/guard/scheduling fields; message queues also copy affinity.
+/// No caller-owned attribute or extension pointer survives registration.
+pub(crate) struct NotificationThreadAttributes {
+    storage: Box<libc::pthread_attr_t>,
+}
+
+impl NotificationThreadAttributes {
+    /// The caller keeps source alive and unmodified during this call only.
+    pub(crate) unsafe fn new(source: *const libc::pthread_attr_t) -> Result<Self, c_int> {
+        // SAFETY: zero is valid backing storage; pthread_attr_init establishes
+        // the managed representation before any attribute operation or Drop.
+        let mut owned = Self {
+            storage: Box::new(unsafe { std::mem::zeroed() }),
+        };
+        let target = std::ptr::from_mut(owned.storage.as_mut());
+        // SAFETY: target is aligned, exclusively owned and address-stable.
+        let rc = unsafe { pthread_attr_init(target) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        if !source.is_null() {
+            if let Some(data) = managed_attr_data_ptr_const(source) {
+                // SAFETY: a managed inline attribute contains scalar values
+                // only. GNU extension ownership is deliberately not copied.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(data, target.cast::<PthreadAttrData>(), 1);
+                }
+            } else {
+                // Preserve valid attributes constructed by an un-interposed
+                // host library without copying its private extension pointers.
+                unsafe { Self::copy_host_fields(source, target.cast()) }?;
+            }
+        }
+        // SAFETY: this private object is never exposed for concurrent mutation.
+        unsafe {
+            (*target.cast::<PthreadAttrData>()).flags &= !3;
+            (*target.cast::<PthreadAttrData>()).detach_state = libc::PTHREAD_CREATE_DETACHED;
+        }
+        Ok(owned)
+    }
+
+    /// GNU message-queue notifications retain CPU affinity, unlike timers.
+    /// Both notification kinds establish their own signal masks at dispatch.
+    pub(crate) unsafe fn for_mqueue(source: *const libc::pthread_attr_t) -> Result<Self, c_int> {
+        // SAFETY: source remains live throughout this snapshot operation.
+        let mut owned = unsafe { Self::new(source) }?;
+        if source.is_null() {
+            return Ok(owned);
+        }
+        let affinity = if let Some(data) = managed_attr_data_ptr_const(source) {
+            // SAFETY: the managed source is live and not concurrently modified.
+            if unsafe { (*data).flags & 1 == 0 } {
+                None
+            } else {
+                let registry = EXTENDED_ATTR_REGISTRY
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                Some(
+                    registry
+                        .get(&(source as usize))
+                        .and_then(|extended| extended.affinity.clone())
+                        .ok_or(libc::EINVAL)?,
+                )
+            }
+        } else {
+            // Query the public host interface rather than copying private
+            // pointers from a foreign pthread_attr_t. Grow for large CPU sets.
+            let symbol =
+                unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"]) };
+            if symbol.is_null() {
+                return Err(libc::ENOSYS);
+            }
+            type GetAffinity = unsafe extern "C" fn(
+                *const libc::pthread_attr_t,
+                usize,
+                *mut libc::cpu_set_t,
+            ) -> c_int;
+            // SAFETY: the resolved public getter has this exact signature.
+            let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
+            let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
+            loop {
+                let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
+                if rc == 0 {
+                    // GNU reports an unset affinity as all ones, including
+                    // bytes beyond the kernel CPU set. Preserve inheritance.
+                    break if bytes.iter().all(|byte| *byte == u8::MAX) {
+                        None
+                    } else {
+                        Some((bytes.len(), bytes))
+                    };
+                }
+                if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
+                    return Err(rc);
+                }
+                bytes.resize(bytes.len() * 2, 0);
+            }
+        };
+        if let Some((size, bytes)) = affinity {
+            if size == 0 || size != bytes.len() {
+                return Err(libc::EINVAL);
+            }
+            // SAFETY: the snapshot owns the stable destination and all bytes.
+            let rc = unsafe {
+                pthread_attr_setaffinity_np(owned.storage.as_mut(), size, bytes.as_ptr().cast())
+            };
+            if rc != 0 {
+                return Err(rc);
+            }
+        }
+        Ok(owned)
+    }
+
+    unsafe fn copy_host_fields(
+        source: *const libc::pthread_attr_t,
+        target: *mut PthreadAttrData,
+    ) -> Result<(), c_int> {
+        let getstack = unsafe { resolved_pthread_attr_getstack_fn() }.ok_or(libc::ENOSYS)?;
+        let getsize = unsafe { resolved_pthread_attr_getstacksize_fn() }.ok_or(libc::ENOSYS)?;
+        let getguard = unsafe { resolved_pthread_attr_getguardsize_fn() }.ok_or(libc::ENOSYS)?;
+        let mut address = std::ptr::null_mut();
+        let mut size = 0;
+        // SAFETY: source is a live foreign attribute; each output is owned here.
+        let rc = unsafe { getstack(source, &mut address, &mut size) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let mut stack_size = 0;
+        let rc = unsafe { getsize(source, &mut stack_size) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        let mut guard_size = 0;
+        let rc = unsafe { getguard(source, &mut guard_size) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        type GetInt = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+        let mut inherit = 0;
+        let mut policy = 0;
+        for (name, output) in [
+            (b"pthread_attr_getinheritsched\0".as_slice(), &mut inherit),
+            (b"pthread_attr_getschedpolicy\0".as_slice(), &mut policy),
+        ] {
+            let symbol = unsafe { resolve_host_symbol_with_aliases(&[name]) };
+            if symbol.is_null() {
+                return Err(libc::ENOSYS);
+            }
+            // SAFETY: both named host getters have this exact signature.
+            let getter = unsafe { std::mem::transmute::<*mut c_void, GetInt>(symbol) };
+            let rc = unsafe { getter(source, output) };
+            if rc != 0 {
+                return Err(rc);
+            }
+        }
+        let symbol =
+            unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getschedparam\0"]) };
+        if symbol.is_null() {
+            return Err(libc::ENOSYS);
+        }
+        type GetParam =
+            unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sched_param) -> c_int;
+        // SAFETY: the symbol is the host getter with this signature.
+        let getter = unsafe { std::mem::transmute::<*mut c_void, GetParam>(symbol) };
+        let mut param = libc::sched_param { sched_priority: 0 };
+        let rc = unsafe { getter(source, &mut param) };
+        if rc != 0 {
+            return Err(rc);
+        }
+        // GNU unset stack addresses can appear as 0 - size. They do not
+        // describe a caller-provided mapping and must remain allocated stacks.
+        let user_stack = !address.is_null() && (address as usize).wrapping_add(size) != 0;
+        // SAFETY: target is our live, exclusively owned managed overlay.
+        unsafe {
+            (*target).stack_size = if user_stack { size } else { stack_size };
+            (*target).stack_addr = if user_stack { address as usize } else { 0 };
+            (*target).guard_size = guard_size;
+            (*target).inherit_sched = inherit;
+            (*target).sched_policy = policy;
+            (*target).sched_priority = param.sched_priority;
+            (*target).flags = if user_stack { ATTR_FLAG_USER_STACK } else { 0 };
+        }
+        Ok(())
+    }
+
+    pub(crate) fn as_ptr(&self) -> *const libc::pthread_attr_t {
+        std::ptr::from_ref(self.storage.as_ref())
+    }
+}
+
+impl Drop for NotificationThreadAttributes {
+    fn drop(&mut self) {
+        // SAFETY: this snapshot owns the managed object at a stable address.
+        let _ = unsafe { pthread_attr_destroy(std::ptr::from_mut(self.storage.as_mut())) };
+    }
+}
+
+// --- Thread attributes ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int {
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    unsafe {
+        (*data).magic = MANAGED_ATTR_MAGIC;
+        (*data).detach_state = libc::PTHREAD_CREATE_JOINABLE;
+        (*data).stack_size = attr_default_stack_size();
+        (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
+        (*data).stack_addr = 0;
+        (*data).inherit_sched = PTHREAD_INHERIT_SCHED_VAL;
+        (*data).sched_policy = 0; // SCHED_OTHER
+        (*data).sched_priority = 0;
+        (*data).flags = 0;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Clean up any extended data (affinity/sigmask).
+    let key = attr as usize;
+    if let Ok(mut reg) = EXTENDED_ATTR_REGISTRY.lock() {
+        reg.remove(&key);
+    }
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    unsafe {
+        std::ptr::write_bytes(data, 0, 1);
+    }
+    0
+}
+
+/// glibc reserved-namespace alias for [`pthread_attr_init`].
+///
+/// # Safety
+///
+/// Same as [`pthread_attr_init`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int {
+    unsafe { pthread_attr_init(attr) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_attr_destroy`].
+///
+/// # Safety
+///
+/// Same as [`pthread_attr_destroy`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int {
+    unsafe { pthread_attr_destroy(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setdetachstate(
+    attr: *mut libc::pthread_attr_t,
+    state: c_int,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if state != libc::PTHREAD_CREATE_JOINABLE && state != libc::PTHREAD_CREATE_DETACHED {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    unsafe {
+        (*data).detach_state = state;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getdetachstate(
+    attr: *const libc::pthread_attr_t,
+    state: *mut c_int,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if state.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: both pointers are non-null and aligned; caller owns the memory.
+    unsafe {
+        *state = (*data).detach_state;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setstacksize(
+    attr: *mut libc::pthread_attr_t,
+    size: usize,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if size < ATTR_MIN_STACK_SIZE {
+        return libc::EINVAL;
+    }
+    // GNU retains the high endpoint when changing a caller stack's size.
+    // Wrapping arithmetic also preserves intermediate attributes produced by
+    // setstackaddr before a smaller final size is supplied. The native creator
+    // validates the completed range before writing any startup data.
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    unsafe {
+        if (*data).has_stack_address() {
+            (*data).stack_addr = (*data).stack_top().wrapping_sub(size);
+            (*data).flags |= ATTR_FLAG_USER_STACK;
+        }
+        (*data).stack_size = size;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getstacksize(
+    attr: *const libc::pthread_attr_t,
+    size: *mut usize,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if size.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: both pointers are non-null and aligned; caller owns the memory.
+    unsafe {
+        *size = (*data).stack_size;
+    }
+    0
+}
+
+// --- Mutex attributes --- native implementation
+//
+// pthread_mutexattr_t is treated as one managed c_int word.
+// Low bits store type plus compact protocol/pshared/robust flags.
+
+const MUTEXATTR_TYPE_MASK: c_int = 0b0000_0011;
+const MUTEXATTR_PROTOCOL_MASK: c_int = 0b0000_1100;
+const MUTEXATTR_PROTOCOL_SHIFT: u32 = 2;
+const MUTEXATTR_PSHARED_BIT: c_int = 1 << 4;
+const MUTEXATTR_ROBUST_BIT: c_int = 1 << 5;
+const MUTEXATTR_VALID_BIT: c_int = 1 << 6;
+const MUTEXATTR_PRIOCEILING_SHIFT: u32 = 8;
+const MUTEXATTR_PRIOCEILING_MASK: c_int = 0xff << MUTEXATTR_PRIOCEILING_SHIFT;
+const MUTEXATTR_DEFAULT_PRIOCEILING: c_int = 1;
+const MUTEXATTR_MIN_PRIOCEILING: c_int = 1;
+const MUTEXATTR_MAX_PRIOCEILING: c_int = 99;
+const MUTEXATTR_DESTROYED_SENTINEL: c_int = 0x7fff_ffff;
+const MUTEXATTR_ALLOWED_MASK: c_int = MUTEXATTR_TYPE_MASK
+    | MUTEXATTR_PROTOCOL_MASK
+    | MUTEXATTR_PSHARED_BIT
+    | MUTEXATTR_ROBUST_BIT
+    | MUTEXATTR_VALID_BIT
+    | MUTEXATTR_PRIOCEILING_MASK;
+
+#[inline]
+fn encode_mutexattr(
+    type_kind: c_int,
+    protocol: c_int,
+    pshared: c_int,
+    robust: c_int,
+    prioceiling: c_int,
+) -> Option<c_int> {
+    // 0..=3, not 0..=2. Type 3 is `PTHREAD_MUTEX_ADAPTIVE_NP`, a valid glibc mutex type
+    // (NORMAL=0, RECURSIVE=1, ERRORCHECK=2, ADAPTIVE_NP=3). Rejecting it made
+    // `pthread_mutexattr_settype(attr, PTHREAD_MUTEX_ADAPTIVE_NP)` return EINVAL where live
+    // glibc returns 0, so any program asking for an adaptive mutex failed against fl —
+    // measured as the single divergence in a 125-check differential over the twelve attr
+    // setters (bd-5cbz3r).
+    //
+    // Nothing else has to change to accept it: `MUTEXATTR_TYPE_MASK` is `0b11`, so the
+    // encoded word already has room for 3, and `decode_mutexattr_type` is `word & 0b11`, so
+    // `gettype` round-trips it. Treating an adaptive mutex as a normal one matches glibc's
+    // observable semantics — it is non-recursive and non-errorchecking, and the adaptivity
+    // is a spin hint, which `frankenlibc-core`'s mutex already applies on its own.
+    if !(0..=3).contains(&type_kind) {
+        return None;
+    }
+    let protocol_bits = match protocol {
+        libc::PTHREAD_PRIO_NONE => 0,
+        libc::PTHREAD_PRIO_INHERIT => 1,
+        libc::PTHREAD_PRIO_PROTECT => 2,
+        _ => return None,
+    };
+    if pshared != libc::PTHREAD_PROCESS_PRIVATE && pshared != libc::PTHREAD_PROCESS_SHARED {
+        return None;
+    }
+    if robust != libc::PTHREAD_MUTEX_STALLED && robust != libc::PTHREAD_MUTEX_ROBUST {
+        return None;
+    }
+    if !(MUTEXATTR_MIN_PRIOCEILING..=MUTEXATTR_MAX_PRIOCEILING).contains(&prioceiling) {
+        return None;
+    }
+
+    let mut word = type_kind & MUTEXATTR_TYPE_MASK;
+    word |= protocol_bits << MUTEXATTR_PROTOCOL_SHIFT;
+    word |= prioceiling << MUTEXATTR_PRIOCEILING_SHIFT;
+    if pshared == libc::PTHREAD_PROCESS_SHARED {
+        word |= MUTEXATTR_PSHARED_BIT;
+    }
+    if robust == libc::PTHREAD_MUTEX_ROBUST {
+        word |= MUTEXATTR_ROBUST_BIT;
+    }
+    word |= MUTEXATTR_VALID_BIT;
+    Some(word)
+}
+
+#[inline]
+fn mutexattr_word_valid(word: c_int) -> bool {
+    if word & MUTEXATTR_VALID_BIT == 0 {
+        return false;
+    }
+    if word & !MUTEXATTR_ALLOWED_MASK != 0 {
+        return false;
+    }
+    let type_kind = word & MUTEXATTR_TYPE_MASK;
+    let protocol_bits = (word & MUTEXATTR_PROTOCOL_MASK) >> MUTEXATTR_PROTOCOL_SHIFT;
+    let prioceiling = decode_mutexattr_prioceiling(word);
+    // Type range must match `encode_mutexattr`'s: 0..=3, including
+    // `PTHREAD_MUTEX_ADAPTIVE_NP` (3). This is the SECOND gate on the type and the one that
+    // makes the first insufficient on its own — `pthread_mutexattr_gettype` and
+    // `pthread_mutex_init` both validate through here, so widening only `encode_mutexattr`
+    // produced a strictly worse state than the original bug: `settype(3)` returned success
+    // while `gettype` then failed with EINVAL and `pthread_mutex_init` refused the attr,
+    // i.e. an attr that reported OK but could not build a mutex. Caught by the round-trip
+    // and lock probe, not by the setter differential, which saw only the `settype` return
+    // code and read 125/125 parity (bd-5cbz3r).
+    (0..=3).contains(&type_kind)
+        && (0..=2).contains(&protocol_bits)
+        && (MUTEXATTR_MIN_PRIOCEILING..=MUTEXATTR_MAX_PRIOCEILING).contains(&prioceiling)
+}
+
+#[inline]
+fn decode_mutexattr_type(word: c_int) -> c_int {
+    word & MUTEXATTR_TYPE_MASK
+}
+
+#[inline]
+fn decode_mutexattr_protocol(word: c_int) -> c_int {
+    match (word & MUTEXATTR_PROTOCOL_MASK) >> MUTEXATTR_PROTOCOL_SHIFT {
+        0 => libc::PTHREAD_PRIO_NONE,
+        1 => libc::PTHREAD_PRIO_INHERIT,
+        2 => libc::PTHREAD_PRIO_PROTECT,
+        _ => libc::PTHREAD_PRIO_NONE,
+    }
+}
+
+#[inline]
+fn decode_mutexattr_pshared(word: c_int) -> c_int {
+    if word & MUTEXATTR_PSHARED_BIT != 0 {
+        libc::PTHREAD_PROCESS_SHARED
+    } else {
+        libc::PTHREAD_PROCESS_PRIVATE
+    }
+}
+
+#[inline]
+fn decode_mutexattr_robust(word: c_int) -> c_int {
+    if word & MUTEXATTR_ROBUST_BIT != 0 {
+        libc::PTHREAD_MUTEX_ROBUST
+    } else {
+        libc::PTHREAD_MUTEX_STALLED
+    }
+}
+
+#[inline]
+fn decode_mutexattr_prioceiling(word: c_int) -> c_int {
+    (word & MUTEXATTR_PRIOCEILING_MASK) >> MUTEXATTR_PRIOCEILING_SHIFT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let default_word = encode_mutexattr(
+        libc::PTHREAD_MUTEX_DEFAULT,
+        libc::PTHREAD_PRIO_NONE,
+        libc::PTHREAD_PROCESS_PRIVATE,
+        libc::PTHREAD_MUTEX_STALLED,
+        MUTEXATTR_DEFAULT_PRIOCEILING,
+    )
+    .unwrap_or(0);
+    // SAFETY: attr is non-null; caller owns the memory.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = default_word;
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_destroy(attr: *mut libc::pthread_mutexattr_t) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word != 0 && word != MUTEXATTR_DESTROYED_SENTINEL && !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    // SAFETY: attr is non-null; caller owns the memory.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = MUTEXATTR_DESTROYED_SENTINEL;
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_settype(
+    attr: *mut libc::pthread_mutexattr_t,
+    kind: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_mutexattr(
+        kind,
+        decode_mutexattr_protocol(*word),
+        decode_mutexattr_pshared(*word),
+        decode_mutexattr_robust(*word),
+        decode_mutexattr_prioceiling(*word),
+    ) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_gettype(
+    attr: *const libc::pthread_mutexattr_t,
+    kind: *mut c_int,
+) -> c_int {
+    if attr.is_null() || kind.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *kind = decode_mutexattr_type(word) };
+    0
+}
+
+// --- Condvar attributes --- native implementation
+//
+// pthread_condattr_t is treated as one managed c_int word.
+// Bit 0 stores CLOCK_MONOTONIC vs CLOCK_REALTIME, bit 1 stores pshared.
+
+const CONDATTR_CLOCK_MONOTONIC_BIT: c_int = 1 << 0;
+const CONDATTR_PSHARED_BIT: c_int = 1 << 1;
+const CONDATTR_VALID_BIT: c_int = 1 << 2;
+const CONDATTR_ALLOWED_MASK: c_int =
+    CONDATTR_CLOCK_MONOTONIC_BIT | CONDATTR_PSHARED_BIT | CONDATTR_VALID_BIT;
+
+#[inline]
+fn encode_condattr(clock_id: libc::clockid_t, pshared: c_int) -> Option<c_int> {
+    if clock_id != libc::CLOCK_REALTIME && clock_id != libc::CLOCK_MONOTONIC {
+        return None;
+    }
+    if pshared != libc::PTHREAD_PROCESS_PRIVATE && pshared != libc::PTHREAD_PROCESS_SHARED {
+        return None;
+    }
+
+    let mut word = 0;
+    if clock_id == libc::CLOCK_MONOTONIC {
+        word |= CONDATTR_CLOCK_MONOTONIC_BIT;
+    }
+    if pshared == libc::PTHREAD_PROCESS_SHARED {
+        word |= CONDATTR_PSHARED_BIT;
+    }
+    word |= CONDATTR_VALID_BIT;
+    Some(word)
+}
+
+#[inline]
+fn condattr_word_valid(word: c_int) -> bool {
+    if word & CONDATTR_VALID_BIT == 0 {
+        return false;
+    }
+    word & !CONDATTR_ALLOWED_MASK == 0
+}
+
+#[inline]
+fn decode_condattr_clock(word: c_int) -> libc::clockid_t {
+    if word & CONDATTR_CLOCK_MONOTONIC_BIT != 0 {
+        libc::CLOCK_MONOTONIC
+    } else {
+        libc::CLOCK_REALTIME
+    }
+}
+
+#[inline]
+fn decode_condattr_pshared(word: c_int) -> c_int {
+    if word & CONDATTR_PSHARED_BIT != 0 {
+        libc::PTHREAD_PROCESS_SHARED
+    } else {
+        libc::PTHREAD_PROCESS_PRIVATE
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_init(attr: *mut libc::pthread_condattr_t) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(default_word) = encode_condattr(libc::CLOCK_REALTIME, libc::PTHREAD_PROCESS_PRIVATE)
+    else {
+        return libc::EINVAL;
+    };
+    // SAFETY: attr is non-null; caller owns the memory.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = default_word;
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_destroy(attr: *mut libc::pthread_condattr_t) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_setclock(
+    attr: *mut libc::pthread_condattr_t,
+    clock_id: libc::clockid_t,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if !condattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let pshared = decode_condattr_pshared(*word);
+    let Some(next_word) = encode_condattr(clock_id, pshared) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_getclock(
+    attr: *const libc::pthread_condattr_t,
+    clock_id: *mut libc::clockid_t,
+) -> c_int {
+    if attr.is_null() || clock_id.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if condattr_word_valid(word) {
+        unsafe { *clock_id = decode_condattr_clock(word) };
+        return 0;
+    }
+    libc::EINVAL
+}
+
+// --- Rwlock attributes --- native implementation
+//
+// pthread_rwlockattr_t is 8 bytes. We pack the attribute state into the first
+// c_int: bit 0 = pshared, bits 1-2 = the reader/writer-preference kind (0/1/2),
+// bit 8 = a validity marker set by init. Default is PREFER_READER (kind 0).
+
+const RWLOCKATTR_VALID_BIT: c_int = 1 << 8;
+const RWLOCKATTR_PSHARED_BIT: c_int = 1 << 0;
+const RWLOCKATTR_KIND_SHIFT: c_int = 1;
+const RWLOCKATTR_KIND_MASK: c_int = 0b11 << RWLOCKATTR_KIND_SHIFT; // bits 1-2
+
+pub(crate) fn rwlockattr_word_valid(word: c_int) -> bool {
+    word & RWLOCKATTR_VALID_BIT != 0
+}
+
+/// Replace the kind field (bits 1-2) of an encoded rwlockattr word, preserving
+/// the validity and pshared bits. `kind` must already be range-checked (0..=2).
+pub(crate) fn rwlockattr_with_kind(word: c_int, kind: c_int) -> c_int {
+    (word & !RWLOCKATTR_KIND_MASK) | ((kind << RWLOCKATTR_KIND_SHIFT) & RWLOCKATTR_KIND_MASK)
+}
+
+/// Extract the reader/writer-preference kind (0/1/2) from an encoded word.
+pub(crate) fn rwlockattr_kind(word: c_int) -> c_int {
+    (word & RWLOCKATTR_KIND_MASK) >> RWLOCKATTR_KIND_SHIFT
+}
+
+fn encode_rwlockattr(pshared: c_int) -> Option<c_int> {
+    if pshared != libc::PTHREAD_PROCESS_PRIVATE && pshared != libc::PTHREAD_PROCESS_SHARED {
+        return None;
+    }
+    let mut word = RWLOCKATTR_VALID_BIT;
+    if pshared == libc::PTHREAD_PROCESS_SHARED {
+        word |= RWLOCKATTR_PSHARED_BIT;
+    }
+    Some(word)
+}
+
+fn decode_rwlockattr_pshared(word: c_int) -> c_int {
+    if word & RWLOCKATTR_PSHARED_BIT != 0 {
+        libc::PTHREAD_PROCESS_SHARED
+    } else {
+        libc::PTHREAD_PROCESS_PRIVATE
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlockattr_init(attr: *mut libc::pthread_rwlockattr_t) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(default_word) = encode_rwlockattr(libc::PTHREAD_PROCESS_PRIVATE) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: attr is non-null; caller owns the memory.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = default_word;
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlockattr_destroy(
+    attr: *mut libc::pthread_rwlockattr_t,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: attr is non-null; caller owns the memory.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = 0;
+    0
+}
+
+// ---------------------------------------------------------------------------
+// pthread cancellation — native cooperative cancellation state
+// ---------------------------------------------------------------------------
+
+fn pthread_handle_key(thread: libc::pthread_t) -> usize {
+    thread as usize
+}
+
+fn is_managed_thread_handle(thread: libc::pthread_t) -> bool {
+    let thread_key = thread as usize;
+    if THREAD_HANDLE_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(&thread_key)
+    {
+        return true;
+    }
+    MANAGED_THREAD_TOMBSTONES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&thread_key)
+}
+
+fn is_detached_thread_handle(thread: libc::pthread_t) -> bool {
+    DETACHED_THREAD_TOMBSTONES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&(thread as usize))
+}
+
+fn current_cancel_key() -> usize {
+    if let Some(handle) = core_current_thread_handle() {
+        return handle as usize;
+    }
+    native_pthread_self() as usize
+}
+
+fn cancellation_pending(thread_key: usize) -> bool {
+    CANCEL_PENDING_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&thread_key)
+        .copied()
+        .unwrap_or(false)
+}
+
+fn set_cancellation_pending(thread_key: usize, pending: bool) {
+    let mut registry = CANCEL_PENDING_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if pending {
+        registry.insert(thread_key, true);
+    } else {
+        registry.remove(&thread_key);
+    }
+}
+
+fn cancel_enabled_for_current_thread() -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: this is the calling thread's live, registered handle.
+        return unsafe { (*handle).cancel_state.load(Ordering::Relaxed) }
+            == PTHREAD_CANCEL_ENABLE_STATE;
+    }
+    with_pthread_tls(|tls| tls.thread_cancel_state == PTHREAD_CANCEL_ENABLE_STATE)
+}
+
+fn cancel_async_for_current_thread() -> bool {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: this is the calling thread's live, registered handle.
+        return unsafe { (*handle).cancel_type.load(Ordering::Relaxed) }
+            == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE;
+    }
+    with_pthread_tls(|tls| tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE)
+}
+
+fn consume_pending_cancel_for_current_thread() -> bool {
+    if !cancel_enabled_for_current_thread() {
+        return false;
+    }
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the owner keeps the handle live through all cleanup. A
+        // callback may reach another cancellation point, but its current
+        // forced unwind already owns the exit protocol and exception object.
+        if unsafe { (*handle).exit_started.load(Ordering::Relaxed) } != 0 {
+            return false;
+        }
+        return core_take_current_cancellation();
+    }
+    if with_pthread_tls(|tls| tls.native_exit_started) {
+        return false;
+    }
+    let thread_key = current_cancel_key();
+    if !cancellation_pending(thread_key) {
+        return false;
+    }
+    set_cancellation_pending(thread_key, false);
+    true
+}
+
+/// glibc's handle for the main thread. fl names a thread no registry knows --
+/// the main thread above all -- by its tid (see `native_pthread_self`), and
+/// glibc's `pthread_cancel` dereferences its argument as its own thread
+/// descriptor: `pthread_cancel(pthread_self())` in `main` died with SIGSEGV.
+/// Recorded on the main thread at startup (`prewarm_host_thread_symbols`) and
+/// in a fork child, whose only thread is its main thread.
+static MAIN_THREAD_HOST_HANDLE: AtomicUsize = AtomicUsize::new(0);
+/// The value `pthread_self` returns in the main thread (its tid when it was
+/// first asked; a fork child keeps the cached value, as glibc keeps the
+/// descriptor address).
+static MAIN_THREAD_FL_NAME: AtomicUsize = AtomicUsize::new(0);
+
+/// Record the calling thread's glibc handle when it is the main thread.
+pub(crate) fn remember_main_thread_host_handle() {
+    if force_native_threading_enabled() {
+        return;
+    }
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        && core_self_tid() != raw_syscall::sys_getpid()
+    {
+        return;
+    }
+    if let Some(host_self) = resolved_thread_self_raw() {
+        // SAFETY: the resolved host symbol is glibc's `pthread_self`.
+        let handle = unsafe { host_self() };
+        MAIN_THREAD_HOST_HANDLE.store(handle as usize, Ordering::Release);
+    }
+}
+
+/// The handle glibc knows `thread` by, and whether it is the calling thread.
+fn host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
+    if thread == native_pthread_self() {
+        let handle = resolved_thread_self_raw()
+            // SAFETY: the resolved host symbol is glibc's `pthread_self`.
+            .map_or(thread, |host_self| unsafe { host_self() });
+        return (handle, true);
+    }
+    let main_name = MAIN_THREAD_FL_NAME.load(Ordering::Acquire);
+    let main_handle = MAIN_THREAD_HOST_HANDLE.load(Ordering::Acquire);
+    if main_name != 0 && main_handle != 0 && thread as usize == main_name {
+        return (main_handle as libc::pthread_t, false);
+    }
+    (thread, false)
+}
+
+/// The handle glibc knows `thread` by, for every call forwarded to glibc with
+/// a pthread_t: the main thread's fl name (its tid) handed to glibc's
+/// pthread_join/detach/tryjoin_np from another thread died with SIGSEGV.
+fn host_thread_handle(thread: libc::pthread_t) -> libc::pthread_t {
+    host_cancel_target(thread).0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
+    if thread == 0 {
+        return libc::ESRCH;
+    }
+
+    let thread_key = pthread_handle_key(thread);
+    if !core_request_cancellation(thread_key) {
+        // A native identity can disappear concurrently with this call. Never
+        // leave an address-keyed fallback request behind for its next owner.
+        if is_managed_thread_handle(thread) {
+            // An unjoined native thread may already have completed teardown.
+            // Its still-owned joinable handle accepts a harmless request, as
+            // GNU does; detached/reclaimed handles are no longer live targets.
+            return if THREAD_HANDLE_REGISTRY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&thread_key)
+            {
+                0
+            } else {
+                libc::ESRCH
+            };
+        }
+        if !force_native_threading_enabled()
+            && let Some(host_cancel) = resolved_thread_cancel_raw()
+        {
+            let (target, is_self) = host_cancel_target(thread);
+            if is_self {
+                // A single-threaded process may cancel itself; glibc then
+                // treats the process as multi-threaded so that its next
+                // cancellation point acts. fl consults its own flag too.
+                crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
+            }
+            // SAFETY: `target` is glibc's handle for a live host thread.
+            return unsafe { host_cancel(target) };
+        }
+
+        // Unregistered native-mode callers (including main) retain the
+        // fallback path. Signal 0 checks existence without sending a signal.
+        let liveness = unsafe { pthread_kill(thread, 0) };
+        if liveness != 0 {
+            return liveness;
+        }
+        set_cancellation_pending(thread_key, true);
+    }
+
+    // If cancelling ourselves in async mode, act on it immediately.
+    if thread_key == current_cancel_key()
+        && cancel_enabled_for_current_thread()
+        && cancel_async_for_current_thread()
+    {
+        unsafe { pthread_testcancel() };
+    }
+
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_setcancelstate(
+    state: c_int,
+    oldstate: *mut c_int,
+) -> c_int {
+    if state != PTHREAD_CANCEL_ENABLE_STATE && state != PTHREAD_CANCEL_DISABLE_STATE {
+        return libc::EINVAL;
+    }
+
+    let native = core_current_thread_handle();
+    if native.is_none()
+        && !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_setcancelstate) = resolved_thread_setcancelstate_raw()
+    {
+        return unsafe { host_setcancelstate(state, oldstate) };
+    }
+
+    let previous = if let Some(handle) = native {
+        // SAFETY: the owner keeps this handle live through the call. Atomic
+        // settings also permit the owner's signal handler to query/change them.
+        unsafe { (*handle).cancel_state.swap(state, Ordering::Relaxed) }
+    } else {
+        with_pthread_tls(|tls| {
+            let prev = tls.thread_cancel_state;
+            tls.thread_cancel_state = state;
+            prev
+        })
+    };
+    if !oldstate.is_null() {
+        // SAFETY: oldstate is provided by caller and checked for null.
+        unsafe { *oldstate = previous };
+    }
+
+    if state == PTHREAD_CANCEL_ENABLE_STATE && cancel_async_for_current_thread() {
+        unsafe { pthread_testcancel() };
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
+    if typ != PTHREAD_CANCEL_DEFERRED_TYPE && typ != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
+        return libc::EINVAL;
+    }
+
+    let native = core_current_thread_handle();
+    if native.is_none()
+        && !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()
+    {
+        return unsafe { host_setcanceltype(typ, oldtype) };
+    }
+
+    let previous = if let Some(handle) = native {
+        // SAFETY: this is the calling thread's live, registered handle.
+        unsafe { (*handle).cancel_type.swap(typ, Ordering::Relaxed) }
+    } else {
+        with_pthread_tls(|tls| {
+            let prev = tls.thread_cancel_type;
+            tls.thread_cancel_type = typ;
+            prev
+        })
+    };
+    if !oldtype.is_null() {
+        // SAFETY: oldtype is provided by caller and checked for null.
+        unsafe { *oldtype = previous };
+    }
+
+    if typ == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE && cancel_enabled_for_current_thread() {
+        unsafe { pthread_testcancel() };
+    }
+    0
+}
+
+/// glibc reserved-namespace alias for [`pthread_self`]. libstdc++
+/// cancellation-cleanup machinery and a few NSS modules link
+/// against the underscored variant.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_self() -> libc::pthread_t {
+    unsafe { pthread_self() }
+}
+
+/// glibc reserved-namespace alias for [`pthread_setcancelstate`].
+///
+/// # Safety
+///
+/// Same as [`pthread_setcancelstate`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_setcancelstate(
+    state: c_int,
+    oldstate: *mut c_int,
+) -> c_int {
+    unsafe { pthread_setcancelstate(state, oldstate) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_setcanceltype`].
+///
+/// # Safety
+///
+/// Same as [`pthread_setcanceltype`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
+    unsafe { pthread_setcanceltype(typ, oldtype) }
+}
+
+// ===========================================================================
+// Cancellation points (bd-rc0923-epic-eeuy4f.24)
+// ===========================================================================
+//
+// Threads are host (glibc) threads by default, so pthread_cancel is glibc's:
+// it marks the target and sends SIGCANCEL. glibc >= 2.41 acts on a DEFERRED
+// request only when SIGCANCEL interrupts its own syscall bridge
+// (__syscall_cancel_arch), and installs the handler SA_RESTART, so a thread
+// blocked in one of fl's raw syscalls had the syscall restarted forever and
+// pthread_cancel never completed. fl uses glibc's pre-2.41 scheme instead: the
+// thread runs as ASYNCHRONOUS for exactly the blocking syscall. Switching to
+// asynchronous acts on a request that is already pending; one that arrives
+// while blocked is acted on by glibc's handler. Either way the forced unwind
+// runs the thread's cleanup handlers and crosses fl's C-unwind entry points.
+//
+// Only a call from OUTSIDE this object is a cancellation point. fl's own code
+// reaches the same exported symbols through the PLT -- Rust std's file I/O
+// (getpwnam reading /etc/passwd, lazy symbol resolution reading /proc, ...)
+// calls `open`/`read`/`close` -- and a forced unwind started there crosses
+// std and fl frames that called "C" functions the compiler assumed cannot
+// unwind; the personality routine reports a fatal error and glibc aborts the
+// process (getpwnam/getgrnam/getaddrinfo/aio_read with a pending cancel all
+// died with SIGABRT). glibc's internal I/O uses its *_nocancel variants for
+// the same reason. The window opens only when the exported entry point's
+// return address lies outside fl's loaded image.
+
+/// Issue one blocking syscall as a POSIX cancellation point. Returns the
+/// syscall result, or -1 with errno set.
+///
+/// Always inlined: [`at_cancellation_point`] reads the return address of the
+/// function it ends up in, which must be the exported entry point.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 6]) -> isize {
+    let ret = unsafe { cancellation_point_syscall_raw(nr, args) };
+    if (-4095..0).contains(&ret) {
+        unsafe { set_abi_errno(-ret as c_int) };
+        return -1;
+    }
+    ret
+}
+
+/// A cancellation point whose public entry captured its caller before entering
+/// shared, out-of-line I/O machinery. `caller == 0` explicitly requests internal
+/// non-cancelling I/O; a nonzero address still goes through the normal host-thread
+/// and own-image checks. This must surround only the raw syscall, never stream
+/// mutation, allocation, or a callback.
+///
+/// # Safety
+/// The caller supplies valid syscall arguments and keeps its surrounding state
+/// unwind-safe. `caller` must be the actual public entry's return address, or zero
+/// for internal work; inventing an external address would bypass its admission.
+pub(crate) unsafe fn cancellation_point_syscall_for_caller(
+    caller: usize,
+    nr: libc::c_long,
+    args: [usize; 6],
+) -> isize {
+    let syscall = || {
+        // SAFETY: forwarded from this function's caller without alteration.
+        unsafe {
+            raw_syscall::syscall6(
+                nr as usize,
+                args[0],
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args[5],
+            ) as isize
+        }
+    };
+    let ret = if caller == 0 {
+        syscall()
+    } else {
+        // SAFETY: the closure captures only the syscall number and arguments;
+        // cancellation_window opens asynchronous cancellation for that syscall.
+        unsafe { cancellation_window(caller, syscall) }
+    };
+    if (-4095..0).contains(&ret) {
+        unsafe { set_abi_errno(-ret as c_int) };
+        return -1;
+    }
+    ret
+}
+
+/// [`cancellation_point_syscall`] returning the raw kernel result (a negated
+/// errno on failure). Always inlined, for the reason given there.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usize; 6]) -> isize {
+    // SAFETY: the caller supplies a valid syscall number and arguments.
+    unsafe {
+        at_cancellation_point(|| {
+            raw_syscall::syscall6(
+                nr as usize,
+                args[0],
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args[5],
+            ) as isize
+        })
+    }
+}
+
+/// Run `blocking_syscall` (one blocking system call) as a POSIX cancellation
+/// point of the exported function this is inlined into.
+///
+/// Always inlined, and so must be every fl function between it and the
+/// exported entry point: `return_address` names the caller of the function it
+/// is finally inlined into, and that caller decides whether this call is a
+/// cancellation point at all (see [`cancellation_window_hook`]). rustc ignores
+/// inline hints on exported functions, so an exported cancellation point that
+/// other exported functions (its aliases: `__read`, `__read_chk`, `pread64`,
+/// ...) share keeps its body in an always-inlined `*_cp` function they all
+/// call.
+#[inline(always)]
+pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() -> R) -> R {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
+/// Wait for a signal with cancellation support for an already-parked native
+/// thread. Capture the exported entry's caller before the shared wait frame,
+/// including the reserved-namespace alias of `sigwait`.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sigwait(
+    set: *const u8,
+    sigset_size: usize,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_sigwait_window(caller, set, sigset_size) }
+}
+
+/// `sigwait` has no deadline and its caller retries EINTR. A bounded kernel
+/// wait can therefore observe native cancellation between slices without
+/// exposing a timeout or losing an interruption that the public API reports.
+/// This does not apply to sigwaitinfo/sigtimedwait, which do report EINTR.
+#[inline(never)]
+unsafe fn cancellation_sigwait_window(
+    caller: usize,
+    set: *const u8,
+    sigset_size: usize,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && core_current_thread_handle().is_some()
+        && !address_is_inside_this_object(caller)
+    {
+        let slice = raw_syscall::Timespec {
+            tv_sec: 0,
+            tv_nsec: 50_000_000,
+        };
+        // A signal handler may disable cancellation during a slice. Obtain a
+        // fresh descriptor before each wait, then retain the original indefinite
+        // syscall when cancellation is disabled or exit cleanup has started.
+        while let Some(cancel) = core_current_cancellation_wait() {
+            if cancel.pending() {
+                // SAFETY: the calling native thread owns the request. No signal
+                // has been consumed, output changed, or resource acquired.
+                unsafe { pthread_testcancel() };
+                // testcancel can return if a handler disabled cancellation;
+                // refresh admission instead of retaining the old descriptor.
+                continue;
+            }
+            // SAFETY: the originating sigwait entry retains the caller's set;
+            // the kernel validates it and the aligned, owned timeout. No Rust
+            // reference, allocation, lock or drop state spans this syscall.
+            match unsafe {
+                raw_syscall::sys_rt_sigtimedwait(
+                    set,
+                    std::ptr::null_mut(),
+                    std::ptr::from_ref(&slice).cast(),
+                    sigset_size,
+                )
+            } {
+                Err(libc::EAGAIN) => continue,
+                // An acquired signal is consumed: publish it even if a request
+                // raced completion. EINTR returns to sigwait's existing retry
+                // loop, which rechecks cancellation state after the handler.
+                result => return result,
+            }
+        }
+    }
+    // Hosted callers retain their asynchronous cancellation window. Internal
+    // and disabled/native callers retain the original single blocking syscall.
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_rt_sigtimedwait(
+                set,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                sigset_size,
+            )
+        })
+    }
+}
+
+/// Child-process cancellation points, including cancellation arriving while a
+/// native wait is parked. Capture the public caller before any shared frame.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_wait4(
+    pid: c_int,
+    status: *mut c_int,
+    options: c_int,
+    usage: *mut u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_child_window(
+            caller,
+            cancel_poll::ChildWait::Wait4 {
+                pid,
+                status,
+                options,
+                usage,
+            },
+        )
+    }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_waitid(
+    idtype: c_int,
+    id: u32,
+    info: *mut u8,
+    options: c_int,
+) -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_child_window(
+            caller,
+            cancel_poll::ChildWait::WaitId {
+                idtype,
+                id,
+                info,
+                options,
+            },
+        )
+        .map(|_| ())
+    }
+}
+
+#[inline(never)]
+unsafe fn cancellation_child_window(
+    caller: usize,
+    operation: cancel_poll::ChildWait,
+) -> Result<c_int, c_int> {
+    if operation.supports_slices()
+        && caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        match unsafe {
+            cancel_poll::wait_child(
+                operation,
+                cancel,
+                crate::signal_abi::supports_native_child_wait,
+            )
+        }? {
+            // Do not discard an acquired child event or reap it twice when a
+            // cancellation races the completed probe. Its output is committed.
+            cancel_poll::ChildWaitResult::Ready(result) => return Ok(result),
+            cancel_poll::ChildWaitResult::Cancel => unsafe { pthread_testcancel() },
+            cancel_poll::ChildWaitResult::Unsupported => {}
+        }
+    }
+    // Disabled cancellation, WNOHANG, pidfds, current-group selectors and
+    // deliverable signal handlers retain their original kernel behavior.
+    // A handler disabling cancellation may
+    // also make testcancel return; continue the original wait in that case.
+    unsafe { cancellation_window(caller, || operation.blocking()) }
+}
+
+/// Sleep cancellation point. Capture the exported entry's caller before the
+/// shared window, including aliases and C11's different result convention.
+/// Returns `0` on success or a positive `errno` on failure.
+#[inline(always)]
+pub(crate) unsafe extern "C-unwind" fn cancellation_point_nanosleep(
+    request: *const u8,
+    remaining: *mut u8,
+) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    // Linux measures nanosleep against MONOTONIC, independently of wall-clock
+    // adjustments. Keep the original syscall for hosted and unsupported paths.
+    unsafe {
+        cancellation_sleep_window_raw(caller, false, libc::CLOCK_MONOTONIC, 0, request, remaining)
+    }
+}
+
+/// Clock-selected sleep with native cancellation for the relative monotonic
+/// clocks and absolute CLOCK_MONOTONIC deadlines. Other clock/flag contracts
+/// retain the original syscall, including CPU clocks and settable deadlines.
+/// Returns `0` on success or a positive `errno` on failure.
+#[inline(always)]
+pub(crate) unsafe extern "C-unwind" fn cancellation_point_clock_nanosleep(
+    clock: c_int,
+    flags: c_int,
+    request: *const u8,
+    remaining: *mut u8,
+) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_sleep_window_raw(caller, true, clock, flags, request, remaining) }
+}
+
+#[inline(never)]
+unsafe extern "C-unwind" fn native_cancellation_sleep_window(
+    caller: usize,
+    clock: c_int,
+    flags: c_int,
+    request: *const u8,
+    remaining: *mut u8,
+    handled: *mut bool,
+) -> c_int {
+    let absolute = flags == libc::TIMER_ABSTIME;
+    let supported = (flags == 0 && matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC))
+        || (absolute && clock == libc::CLOCK_MONOTONIC);
+    if supported
+        && caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        let mut owned = raw_syscall::Timespec::default();
+        // SAFETY: import caller memory through fault-checked kernel copies.
+        // No reference is formed to a potentially unaligned or unreadable
+        // timespec; request and remaining may denote the same caller storage.
+        let imported = unsafe {
+            crate::io_abi::iov_snapshot::copy_user_bytes(
+                request,
+                std::ptr::from_mut(&mut owned).cast(),
+                std::mem::size_of::<raw_syscall::Timespec>(),
+            )
+        };
+        let result = imported.and_then(|()| {
+            // SAFETY: owned is initialized and aligned, and cancel belongs to
+            // this live native thread for the entire bounded sleep.
+            unsafe { cancel_poll::wait_sleep(&owned, absolute, !remaining.is_null(), cancel) }
+        });
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        match result {
+            Ok(cancel_poll::SleepResult::Complete) => {
+                unsafe { *handled = true };
+                return 0;
+            }
+            Ok(cancel_poll::SleepResult::Interrupted(left)) => {
+                unsafe { *handled = true };
+                if !absolute && !remaining.is_null() {
+                    // SAFETY: left is owned initialized storage. The copier
+                    // checks the caller destination through the kernel and
+                    // reports EFAULT only when an interruption needs output.
+                    if let Err(err) = unsafe {
+                        crate::io_abi::iov_snapshot::copy_user_bytes(
+                            std::ptr::from_ref(&left).cast(),
+                            remaining,
+                            std::mem::size_of::<raw_syscall::Timespec>(),
+                        )
+                    } {
+                        return err;
+                    }
+                }
+                return libc::EINTR;
+            }
+            Ok(cancel_poll::SleepResult::Unsupported) => {}
+            Err(error) => {
+                unsafe { *handled = true };
+                return error;
+            }
+        }
+    }
+    unsafe { *handled = false };
+    0
+}
+
+/// This frame owns no drop state. Hosted asynchronous cancellation must cross
+/// only the unchanged raw-syscall window; the native helper restores its signal
+/// mask before the cooperative cancellation check and remainder publication.
+/// Declared `extern "C-unwind"` end-to-end so `-C panic=abort` builds never
+/// synthesize a `panic_cannot_unwind` guard around `pthread_testcancel` or
+/// `pthread_setcanceltype`.
+#[inline(always)]
+unsafe extern "C-unwind" fn cancellation_sleep_window_raw(
+    caller: usize,
+    is_clock_nanosleep: bool,
+    clock: c_int,
+    flags: c_int,
+    request: *const u8,
+    remaining: *mut u8,
+) -> c_int {
+    let mut handled = false;
+    let native_errno = unsafe {
+        native_cancellation_sleep_window(caller, clock, flags, request, remaining, &mut handled)
+    };
+    if handled {
+        return native_errno;
+    }
+    let invoke_sleep_syscall = || -> c_int {
+        let res = if is_clock_nanosleep {
+            unsafe { raw_syscall::sys_clock_nanosleep(clock, flags, request, remaining) }
+        } else {
+            unsafe { raw_syscall::sys_nanosleep(request, remaining) }
+        };
+        match res {
+            Ok(()) => 0,
+            Err(e) => e,
+        }
+    };
+    if caller == 0 {
+        return invoke_sleep_syscall();
+    }
+    if core_current_thread_handle().is_some() {
+        if !address_is_inside_this_object(caller) {
+            unsafe { pthread_testcancel() };
+        }
+        return invoke_sleep_syscall();
+    }
+    let set_type = cancellation_window_hook(caller);
+    let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;
+    if let Some(set) = set_type {
+        unsafe { set(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, &mut old_type) };
+    }
+    let ret = invoke_sleep_syscall();
+    if let Some(set) = set_type
+        && old_type != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE
+    {
+        unsafe { set(old_type, std::ptr::null_mut()) };
+    }
+    ret
+}
+
+/// Suspend until a signal is handled, including cancellation arriving after a
+/// native thread parks. Capture the public caller before the shared wait frame.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_pause() -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_signal_window(caller, std::ptr::null(), raw_syscall::sys_pause) }
+}
+
+/// Like pause, with sigsuspend's temporary signal mask. Keep every frame before
+/// the shared window inlined so aliases retain the same caller admission.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sigsuspend(
+    mask: *const u8,
+    sigset_size: usize,
+) -> Result<(), c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_signal_window(caller, mask, || {
+            raw_syscall::sys_rt_sigsuspend(mask, sigset_size)
+        })
+    }
+}
+
+/// Signal suspension restores the original mask before cancellation cleanup,
+/// as observed with GNU sigsuspend. Reuse the atomic mask installation between
+/// bounded waits with an explicit original-mask policy. This frame owns no
+/// drop state across the hosted asynchronous-cancellation fallback.
+#[inline(never)]
+unsafe fn cancellation_signal_window(
+    caller: usize,
+    mask: *const u8,
+    blocking_syscall: impl FnOnce() -> Result<(), c_int>,
+) -> Result<(), c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            // SAFETY: cancellation acts before entering the temporary mask.
+            unsafe { pthread_testcancel() };
+        }
+        // SAFETY: the originating entry retains the kernel-validated mask;
+        // cancellation cleanup runs only after the original mask is restored.
+        let result = unsafe { cancel_poll::wait_signal(mask, cancel, pthread_testcancel) };
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    #[cfg(not(feature = "standalone"))]
+    if !mask.is_null()
+        && caller != 0
+        && core_current_thread_handle().is_none()
+        && !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && !address_is_inside_this_object(caller)
+        && let Some(host_suspend) = crate::host_resolve::host_sigsuspend_raw()
+        && crate::host_resolve::host_errno_location_raw().is_some()
+    {
+        // SAFETY: this is an external call on a hosted thread, with the original
+        // caller's kernel-validated mask. GNU owns both cancellation and signal-
+        // mask restoration. An ASYNC window around raw rt_sigsuspend instead
+        // leaves the temporary mask active during cleanup. No guard, TLS borrow
+        // or lock spans this C-unwind call; errno resolution is already warm.
+        return if unsafe { host_suspend(mask.cast()) } == 0 {
+            Ok(())
+        } else {
+            Err(crate::host_resolve::host_errno(libc::EINTR))
+        };
+    }
+    // Internal, disabled/native and unresolvable hosted paths retain their
+    // original syscall. Hosted pause does not install a temporary signal mask.
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
+/// Poll cancellation point, including requests arriving after a native thread
+/// has entered the kernel. Keep the caller capture in the exported ABI entry.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_poll(
+    fds: *mut u8,
+    nfds: usize,
+    timeout: c_int,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    let mut duration = libc::timespec {
+        tv_sec: (timeout.max(0) / 1000) as libc::time_t,
+        tv_nsec: ((timeout.max(0) % 1000) as libc::c_long) * 1_000_000,
+    };
+    let timeout_ptr = if timeout < 0 {
+        std::ptr::null()
+    } else {
+        (&mut duration as *mut libc::timespec).cast_const().cast()
+    };
+    unsafe {
+        cancellation_poll_window(caller, fds, nfds, timeout_ptr, std::ptr::null(), || {
+            raw_syscall::sys_poll(fds, nfds, timeout)
+        })
+    }
+}
+
+/// Ppoll cancellation point. The caller owns a writable timeout snapshot;
+/// `mask` names only the eight bytes consumed by the Linux kernel.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_ppoll(
+    fds: *mut u8,
+    nfds: usize,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_poll_window(caller, fds, nfds, timeout, mask, || {
+            raw_syscall::sys_ppoll(fds, nfds, timeout, mask, std::mem::size_of::<u64>())
+        })
+    }
+}
+
+/// select cancellation point, retaining the public caller through aliases.
+/// Native threads use bounded pselect6 waits; other paths retain the original
+/// architecture-specific syscall and timeval behavior.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_select(
+    nfds: c_int,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *mut u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    if let Some(result) = unsafe {
+        native_select_window(
+            caller,
+            nfds,
+            [readfds, writefds, exceptfds],
+            cancel_poll::SelectTimeout::Timeval(timeout),
+            std::ptr::null(),
+        )
+    } {
+        return result;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        unsafe {
+            cancellation_window(caller, || {
+                raw_syscall::sys_select(nfds, readfds, writefds, exceptfds, timeout)
+            })
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // Keep the existing select emulation on architectures without SYS_select.
+        let mut duration = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let pointer = if timeout.is_null() {
+            std::ptr::null()
+        } else {
+            // SAFETY: retain select's existing caller-owned timeval contract.
+            let value = unsafe { &*timeout.cast::<libc::timeval>() };
+            duration.tv_sec = value.tv_sec;
+            duration.tv_nsec = value.tv_usec * 1000;
+            std::ptr::from_mut(&mut duration).cast::<u8>().cast_const()
+        };
+        let result = unsafe {
+            cancellation_window(caller, || {
+                raw_syscall::sys_pselect6(
+                    nfds,
+                    readfds,
+                    writefds,
+                    exceptfds,
+                    pointer,
+                    std::ptr::null(),
+                )
+            })
+        };
+        if !timeout.is_null() {
+            // SAFETY: mirror the kernel's remainder into the original timeval.
+            let value = unsafe { &mut *timeout.cast::<libc::timeval>() };
+            value.tv_sec = duration.tv_sec;
+            value.tv_usec = duration.tv_nsec / 1000;
+        }
+        result
+    }
+}
+
+/// pselect cancellation point with an owned timeout and kernel-width mask.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_pselect(
+    nfds: c_int,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    if let Some(result) = unsafe {
+        native_select_window(
+            caller,
+            nfds,
+            [readfds, writefds, exceptfds],
+            cancel_poll::SelectTimeout::Timespec(timeout),
+            mask,
+        )
+    } {
+        return result;
+    }
+    let sig_data = [mask as usize, std::mem::size_of::<u64>()];
+    let sig_pointer = if mask.is_null() {
+        std::ptr::null()
+    } else {
+        sig_data.as_ptr().cast()
+    };
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_pselect6(nfds, readfds, writefds, exceptfds, timeout, sig_pointer)
+        })
+    }
+}
+
+#[inline(never)]
+unsafe fn native_select_window(
+    caller: usize,
+    nfds: c_int,
+    pointers: [*mut u8; 3],
+    timeout: cancel_poll::SelectTimeout,
+    mask: *const u8,
+) -> Option<Result<c_int, c_int>> {
+    let cancel = core_current_cancellation_wait()?;
+    if caller == 0 || address_is_inside_this_object(caller) {
+        return None;
+    }
+    if cancel.pending() {
+        // SAFETY: cancellation acts before any application output is modified.
+        unsafe { pthread_testcancel() };
+    }
+    // SAFETY: the originating ABI entry retains all pointers and the owned
+    // timeout. A blocked cancellation invokes testcancel under the wait mask.
+    let result = unsafe {
+        cancel_poll::wait_select(nfds, pointers, timeout, mask, cancel, pthread_testcancel)
+    };
+    if result.is_some() && cancel.pending() {
+        // Readiness has no ownership transfer, unlike edge-triggered epoll.
+        unsafe { pthread_testcancel() };
+    }
+    result
+}
+
+/// No resources are owned by this frame: hosted asynchronous cancellation
+/// must cross it without entering a Rust cleanup landing pad. The native
+/// adapter delivers cancellation during a wait under ppoll's temporary mask,
+/// then restores the original mask on every ordinary return.
+#[inline(never)]
+unsafe fn cancellation_poll_window(
+    caller: usize,
+    fds: *mut u8,
+    nfds: usize,
+    timeout: *const u8,
+    mask: *const u8,
+    blocking_syscall: impl FnOnce() -> Result<c_int, c_int>,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        // The descriptor observes requests without consuming them. Neither
+        // readiness nor timeout consumes application data or acquires a resource.
+        let result =
+            unsafe { cancel_poll::wait(fds, nfds, timeout, mask, cancel, pthread_testcancel) };
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
+/// Epoll cancellation point. Capture the caller before the out-of-line window
+/// so every public alias has the same native/hosted admission rules.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_epoll_pwait(
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: c_int,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_epoll_window(caller, epfd, events, maxevents, timeout, mask) }
+}
+
+/// Like the poll window, this frame owns no resources or cleanup state. A
+/// successful epoll wait has already consumed edge/one-shot notifications:
+/// publish those events before acting on a concurrent cancellation request.
+#[inline(never)]
+unsafe fn cancellation_epoll_window(
+    caller: usize,
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: c_int,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        // SAFETY: the original event buffer and mask remain live through the
+        // kernel wait. The descriptor belongs to this registered native thread.
+        let result = unsafe {
+            cancel_poll::wait_epoll(
+                epfd,
+                events,
+                maxevents,
+                timeout,
+                mask,
+                cancel,
+                pthread_testcancel,
+            )
+        };
+        if !matches!(result, Ok(ready) if ready > 0) && cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_epoll_pwait(
+                epfd,
+                events,
+                maxevents,
+                timeout,
+                mask,
+                std::mem::size_of::<u64>(),
+            )
+        })
+    }
+}
+
+/// Nanosecond epoll cancellation point. The raw caller timeout is imported
+/// only on the admitted native path; hosted and internal calls keep their
+/// original single-syscall behavior and kernel pointer validation.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_epoll_pwait2(
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_epoll2_window(caller, epfd, events, maxevents, timeout, mask) }
+}
+
+#[inline(never)]
+unsafe fn cancellation_epoll2_window(
+    caller: usize,
+    epfd: c_int,
+    events: *mut u8,
+    maxevents: c_int,
+    timeout: *const u8,
+    mask: *const u8,
+) -> Result<c_int, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        // Unlike ppoll's libc timeout copy, this API previously passed caller
+        // memory straight to the kernel. Preserve EFAULT for inaccessible
+        // sources and support unaligned ones without a Rust reference to either.
+        let mut owned = raw_syscall::Timespec::default();
+        let imported = if timeout.is_null() {
+            Ok(std::ptr::null())
+        } else {
+            // SAFETY: the destination is live, aligned, initialized storage.
+            // The shared copier validates the caller's source through Linux.
+            unsafe {
+                crate::io_abi::iov_snapshot::copy_user_bytes(
+                    timeout,
+                    std::ptr::from_mut(&mut owned).cast(),
+                    std::mem::size_of::<raw_syscall::Timespec>(),
+                )
+            }
+            .map(|()| std::ptr::from_mut(&mut owned).cast::<u8>().cast_const())
+        };
+        let result = match imported {
+            // SAFETY: the aligned timeout snapshot and original event/mask
+            // arguments remain in place until the adapter finishes or unwinds.
+            Ok(timeout) => unsafe {
+                cancel_poll::wait_epoll2(
+                    epfd,
+                    events,
+                    maxevents,
+                    timeout,
+                    mask,
+                    cancel,
+                    pthread_testcancel,
+                )
+            },
+            Err(error) => Err(error),
+        };
+        if !matches!(result, Ok(ready) if ready > 0) && cancel.pending() {
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_epoll_pwait2(
+                epfd,
+                events,
+                maxevents,
+                timeout,
+                mask,
+                std::mem::size_of::<u64>(),
+            )
+        })
+    }
+}
+
+/// Socket receive cancellation, including requests arriving after a native
+/// thread has parked. Capture the public caller through recv/from aliases and
+/// fortified entrypoints before entering the shared, out-of-line window.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_recvfrom(
+    fd: c_int,
+    buffer: *mut u8,
+    length: usize,
+    flags: c_int,
+    address: *mut u8,
+    address_length: *mut u32,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(
+            caller,
+            cancel_poll::ReceiveFrom {
+                fd,
+                buffer,
+                length,
+                flags,
+                address,
+                address_length,
+            },
+        )
+    }
+}
+
+/// Own no drop state across the unchanged hosted asynchronous window. Native
+/// cancellation happens only after the adapter restores the entry signal mask;
+/// a completed receive always returns its bytes and source-address publication.
+#[inline(never)]
+unsafe fn cancellation_receive_window(
+    caller: usize,
+    operation: cancel_poll::ReceiveFrom,
+) -> Result<isize, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            // SAFETY: no payload has been consumed or output written yet.
+            unsafe { pthread_testcancel() };
+        }
+        match unsafe {
+            cancel_poll::wait_receive(
+                operation,
+                cancel,
+                crate::signal_abi::supports_native_child_wait,
+            )
+        }? {
+            cancel_poll::ReceiveResult::Ready(received) => return Ok(received),
+            cancel_poll::ReceiveResult::Cancel => unsafe { pthread_testcancel() },
+            cancel_poll::ReceiveResult::Unsupported => {}
+        }
+    }
+    // Disabled, internal, hosted and unsupported socket contracts retain the
+    // original syscall. A returning testcancel also follows this path if a
+    // signal handler disabled cancellation while the entry mask was restored.
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_recvfrom(
+                operation.fd,
+                operation.buffer,
+                operation.length,
+                operation.flags,
+                operation.address,
+                operation.address_length,
+            )
+        })
+    }
+}
+
+/// A cancellation point that can wake an already-parked native thread. Keep
+/// every frame up to the exported entry inlined so admission uses its caller.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_futex_wait(
+    word: *mut u32,
+    operation: c_int,
+    expected: u32,
+    timeout: usize,
+    bitset: u32,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_futex_window(caller, word, operation, expected, timeout, bitset) }
+}
+
+/// Like cancellation_window, this frame owns no resources or drop state.
+/// Synchronization guards live in the exported caller and run during unwind.
+#[inline(never)]
+unsafe fn cancellation_futex_window(
+    caller: usize,
+    word: *mut u32,
+    operation: c_int,
+    expected: u32,
+    timeout: usize,
+    bitset: u32,
+) -> Result<isize, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+        && cancel_wait::supported(operation, timeout, bitset)
+    {
+        // SAFETY: all operation arguments and the owned cancellation descriptor
+        // remain valid through the wait. Cancellation is delivered afterwards.
+        let result = unsafe { cancel_wait::wait(word, operation, expected, timeout, cancel) };
+        if cancel.pending() {
+            // A post/signal may have selected us concurrently with cancellation.
+            // Give a peer a replacement wake before unwinding, so a semaphore
+            // token or condition signal is not stranded behind a sleeping peer.
+            // Extra wakes are harmless: both callers re-check their predicates.
+            let _ = unsafe {
+                raw_syscall::sys_futex(
+                    word,
+                    libc::FUTEX_WAKE | (operation & libc::FUTEX_PRIVATE_FLAG),
+                    1,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            unsafe { pthread_testcancel() };
+        }
+        return result;
+    }
+    // Hosted, disabled, internal, or unsupported waits retain their existing
+    // syscall semantics. Only the hosted path opens an asynchronous window.
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_futex(word, operation, expected, timeout, 0, bitset)
+        })
+    }
+}
+
+/// The asynchronous-cancel window around one blocking syscall.
+///
+/// Async-cancel safety: between switching to ASYNCHRONOUS and back, this
+/// thread executes only the tail of the host `pthread_setcanceltype`, the
+/// register moves that load the syscall arguments, the `syscall` instruction,
+/// and the call that restores the type. It takes no lock, allocates nothing,
+/// holds no `RefCell` borrow and writes no fl state, so a cancellation acting
+/// at any of those instructions leaves nothing half-updated. State the CALLER
+/// set up around the window (a semaphore waiter registration, a condvar
+/// wait's released mutex) is owned by `Drop` guards in C-unwind frames, which
+/// the forced unwind's cleanup phase runs. The one inherited hazard is glibc
+/// <= 2.40's: a cancel delivered after the syscall completed but before the
+/// type is restored discards that syscall's result (glibc BZ #12683, the race
+/// 2.41's redesign closed for its own wrappers).
+///
+/// Unwind safety: the forced unwind's innermost fl frame is this one, at the
+/// `syscall` (or at the call into glibc that acted on a pending request). The
+/// unwinder consults a frame's personality routine only when the frame has a
+/// language-specific data area, and Rust's personality treats an address
+/// outside every call site as "must not unwind". This function therefore stays
+/// out of line and owns nothing with a destructor (`blocking_syscall` must
+/// capture only plain values and `R` must not need dropping), so neither it
+/// nor the closure has an LSDA and the unwind passes through to the callers.
+#[inline(never)]
+unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() -> R) -> R {
+    // Explicit internal callers never introduce a cancellation point, including
+    // on hosted threads where address zero is outside this object's image.
+    if caller == 0 {
+        return blocking_syscall();
+    }
+    // Native threads keep cooperative requests outside the host's TCB. Deliver
+    // an already-pending request before the syscall can consume data, publish
+    // output or acquire a semaphore token. Internal libc I/O must still finish
+    // without unwinding through non-cancelling Rust callers. The shared native
+    // testcancel path preserves disabled cancellation and exit/cleanup guards.
+    // Native futex, poll, epoll, signal, child, supported socket receive and sleep points use
+    // their windows to observe a request arriving while parked; other syscalls
+    // remain pending-request cancellation points until they gain an interruptible
+    // native path.
+    // With no native threads, current_thread_handle exits at its atomic flag
+    // without a TID syscall, allocation or TLS initialization.
+    if core_current_thread_handle().is_some() {
+        if caller != 0 && !address_is_inside_this_object(caller) {
+            // SAFETY: the registered calling thread owns its cancellation state;
+            // this C-unwind frame holds no resources or partially applied syscall.
+            unsafe { pthread_testcancel() };
+        }
+        // An owned clone may inherit a cached HOST backend in host TLS. Its
+        // kernel-TID registration is authoritative: never mutate a host TCB's
+        // cancellation type on behalf of the native thread, even when disabled.
+        return blocking_syscall();
+    }
+    let set_type = cancellation_window_hook(caller);
+    let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;
+    if let Some(set) = set_type {
+        unsafe { set(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, &mut old_type) };
+    }
+    let ret = blocking_syscall();
+    if let Some(set) = set_type
+        && old_type != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE
+    {
+        unsafe { set(old_type, std::ptr::null_mut()) };
+    }
+    ret
+}
+
+/// The host `pthread_setcanceltype` when this call is a cancellation point
+/// that glibc can act on: the process is multi-threaded (or a thread has
+/// cancelled itself, see `pthread_cancel`), the thread is a host thread
+/// (only host threads are cancelled by glibc), and the exported entry point
+/// was called from outside fl's image.
+///
+/// Always inlined into the window, as it was before callers were told apart:
+/// out of line it cost every read/write a call even single-threaded (measured
+/// in the io_cancel_points self-A/B: write 1.030x, read 1.012x of the base).
+#[inline(always)]
+fn cancellation_window_hook(
+    caller: usize,
+) -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        return None;
+    }
+    if current_threading_backend() != THREAD_BACKEND_HOST {
+        return None;
+    }
+    if address_is_inside_this_object(caller) {
+        return None;
+    }
+    resolved_thread_setcanceltype_raw()
+}
+
+static OWN_IMAGE_START: AtomicUsize = AtomicUsize::new(0);
+static OWN_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether `addr` lies in fl's own loaded image. An image whose range cannot
+/// be read is cached as empty, so every caller then counts as outside (the
+/// behaviour before callers were told apart).
+#[inline(always)]
+pub(crate) fn address_is_inside_this_object(addr: usize) -> bool {
+    let mut end = OWN_IMAGE_END.load(Ordering::Acquire);
+    if end == 0 {
+        end = record_own_image_range();
+    }
+    (OWN_IMAGE_START.load(Ordering::Relaxed)..end).contains(&addr)
+}
+
+/// First use: read the image range from fl's own ELF header. Racing first
+/// calls compute the same range; the end is published last.
+#[cold]
+#[inline(never)]
+fn record_own_image_range() -> usize {
+    let (start, end) = crate::startup_abi::own_image_range().unwrap_or((usize::MAX, usize::MAX));
+    OWN_IMAGE_START.store(start, Ordering::Relaxed);
+    OWN_IMAGE_END.store(end, Ordering::Release);
+    end
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_testcancel() {
+    if core_current_thread_handle().is_none()
+        && !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_testcancel) = resolved_thread_testcancel_raw()
+    {
+        unsafe { host_testcancel() };
+        return;
+    }
+
+    if consume_pending_cancel_for_current_thread() {
+        // PTHREAD_CANCELED is typically defined as ((void *) -1)
+        unsafe { pthread_exit(!0usize as *mut std::ffi::c_void) };
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getattr_np(
+    thread: libc::pthread_t,
+    attr: *mut libc::pthread_attr_t,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+
+    // Initialize the attr struct with defaults, then fill in thread-specific info.
+    let ret = unsafe { pthread_attr_init(attr) };
+    if ret != 0 {
+        return ret;
+    }
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Look up managed thread metadata captured at native create time.
+    let thread_key = thread as usize;
+    let registry = THREAD_HANDLE_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(record) = registry.get(&thread_key) {
+        let handle_ptr = record.handle_raw as *mut ThreadHandle;
+        // SAFETY: registry only stores live handles from the core creator.
+        let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
+        let detach_state = if state == THREAD_DETACHED {
+            libc::PTHREAD_CREATE_DETACHED
+        } else {
+            record.detach_state
+        };
+        // SAFETY: pointer is non-null and aligned; we initialized it above.
+        unsafe {
+            (*data).detach_state = detach_state;
+            (*data).stack_size = (*handle_ptr).stack_size;
+            (*data).guard_size = (*handle_ptr).guard_size;
+            (*data).stack_addr = (*handle_ptr).stack_addr;
+        }
+        return 0;
+    }
+    drop(registry);
+
+    if is_managed_thread_handle(thread) && resolve_thread_tid(thread).is_some() {
+        let handle_ptr = thread as *mut ThreadHandle;
+        // SAFETY: a managed detached thread keeps its handle alive until it
+        // exits and self-cleans. `resolve_thread_tid(thread).is_some()` above
+        // established that the thread still appears live, so the handle fields
+        // remain readable here.
+        let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
+        let detach_state = if state == THREAD_DETACHED {
+            libc::PTHREAD_CREATE_DETACHED
+        } else {
+            libc::PTHREAD_CREATE_JOINABLE
+        };
+        unsafe {
+            (*data).detach_state = detach_state;
+            (*data).stack_size = (*handle_ptr).stack_size;
+            (*data).guard_size = (*handle_ptr).guard_size;
+            (*data).stack_addr = (*handle_ptr).stack_addr;
+        }
+        return 0;
+    }
+
+    if let Some(self_handle) = core_handle_for_tid(core_self_tid())
+        && self_handle == thread as *mut ThreadHandle
+    {
+        let handle_ptr = self_handle;
+        // SAFETY: `self_handle` comes from core TLS lookup for the current thread.
+        let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
+        let detach_state = if state == THREAD_DETACHED {
+            libc::PTHREAD_CREATE_DETACHED
+        } else {
+            libc::PTHREAD_CREATE_JOINABLE
+        };
+        // SAFETY: `handle_ptr` is the current thread's live handle.
+        unsafe {
+            (*data).detach_state = detach_state;
+            (*data).stack_size = (*handle_ptr).stack_size;
+            (*data).guard_size = (*handle_ptr).guard_size;
+            (*data).stack_addr = (*handle_ptr).stack_addr;
+        }
+        return 0;
+    }
+
+    // A thread the host glibc created: ask the host, which knows its stack
+    // block and guard exactly (glibc >= 2.42 guards stacks with
+    // MADV_GUARD_INSTALL, invisible in /proc/self/maps).
+    if !force_native_threading_enabled()
+        && host_thread_is_registered(thread_key)
+        && let Some((stack_addr, stack_size, guard_size, detach_state)) =
+            crate::host_resolve::host_thread_stack(thread)
+    {
+        unsafe {
+            (*data).detach_state = detach_state;
+            (*data).stack_size = stack_size;
+            (*data).guard_size = guard_size;
+            (*data).stack_addr = stack_addr;
+        }
+        return 0;
+    }
+
+    // Fallback: /proc/self/maps, for the main thread (not created by
+    // pthread_create) and for the calling thread when no registry knows it.
+    // Another thread's stack cannot be found from here without its stack
+    // pointer.
+    let calling = thread == native_pthread_self();
+    let probe_tid = if calling {
+        core_self_tid()
+    } else {
+        resolve_thread_tid(thread).unwrap_or(-1)
+    };
+    // SAFETY: getpid has no preconditions.
+    let main_thread = probe_tid == raw_syscall::sys_getpid();
+    if probe_tid > 0
+        && (calling || main_thread)
+        && let Some((stack_start, stack_size, guard_size)) =
+            stack_bounds_from_proc_maps(main_thread)
+    {
+        // The main thread is always joinable (it cannot be detached).
+        unsafe {
+            (*data).detach_state = libc::PTHREAD_CREATE_JOINABLE;
+            (*data).stack_size = stack_size;
+            (*data).guard_size = guard_size;
+            (*data).stack_addr = stack_start;
+        }
+        return 0;
+    }
+
+    libc::ESRCH
+}
+
+// ---------------------------------------------------------------------------
+// pthread spin locks — native AtomicI32 implementation
+//
+// POSIX spinlocks are trivially implemented with a single atomic word.
+// 0 = unlocked, 1 = locked. CAS spin loop with hint::spin_loop().
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_init(lock: *mut c_void, _pshared: c_int) -> c_int {
+    if lock.is_null() || !(lock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and properly aligned; caller owns the memory.
+    let atom = unsafe { &*(lock.cast::<AtomicI32>()) };
+    atom.store(0, Ordering::Release);
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_destroy(lock: *mut c_void) -> c_int {
+    if lock.is_null() || !(lock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and properly aligned; caller owns the memory.
+    let atom = unsafe { &*(lock.cast::<AtomicI32>()) };
+    // Destroying a locked spinlock is undefined, but we're lenient: just zero it.
+    atom.store(0, Ordering::Release);
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_lock(lock: *mut c_void) -> c_int {
+    if lock.is_null() || !(lock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and properly aligned; caller owns the memory.
+    let atom = unsafe { &*(lock.cast::<AtomicI32>()) };
+    loop {
+        match atom.compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return 0,
+            Err(_) => core::hint::spin_loop(),
+        }
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_trylock(lock: *mut c_void) -> c_int {
+    if lock.is_null() || !(lock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and properly aligned; caller owns the memory.
+    let atom = unsafe { &*(lock.cast::<AtomicI32>()) };
+    match atom.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed) {
+        Ok(_) => 0,
+        Err(_) => libc::EBUSY,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
+    if lock.is_null() || !(lock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and properly aligned; caller owns the memory.
+    let atom = unsafe { &*(lock.cast::<AtomicI32>()) };
+    atom.store(0, Ordering::Release);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// pthread barriers — native futex-based implementation
+//
+// Internal layout overlaid on the opaque barrier memory:
+//   word 0: magic (AtomicU32, validity sentinel)
+//   word 1: count (total threads needed)
+//   word 2-3: phase_arrived (AtomicU64, phase in upper 32 bits, arrived in lower 32)
+//
+// The phase and arrival count are packed into a single AtomicU64 so that the
+// last arriving thread can reset the counter and advance the phase in one
+// atomic CAS.  This eliminates the race window that existed when `arrived`
+// and `phase` were separate atomics: a new thread could arrive between the
+// counter reset and the phase advance, increment the reset counter, read the
+// stale phase, and then exit prematurely when the phase finally advanced.
+//
+// The kernel waits directly on the phase half of that packed word. A separate
+// phase mirror can lag behind a completed round or regress when an earlier
+// notifier resumes late, releasing later callers before their round is full.
+// Every user-space access remains a full-width AtomicU64 operation; only the
+// kernel reads the aligned 32-bit phase subword for its futex comparison.
+// ---------------------------------------------------------------------------
+
+const BARRIER_MAGIC: u32 = 0x4742_4152; // "GBAR"
+/// Magic of a `PTHREAD_PROCESS_SHARED` barrier (shared futexes).
+const BARRIER_PSHARED_MAGIC: u32 = 0x4742_4153; // "GBAS"
+
+/// PTHREAD_BARRIER_SERIAL_THREAD: returned to exactly one thread per barrier cycle.
+const PTHREAD_BARRIER_SERIAL_THREAD: c_int = -1;
+
+/// Pack a phase and arrival count into a single u64.
+#[inline(always)]
+const fn barrier_pack(phase: u32, arrived: u32) -> u64 {
+    ((phase as u64) << 32) | (arrived as u64)
+}
+
+/// Extract the phase (upper 32 bits) from the packed value.
+#[inline(always)]
+const fn barrier_phase(packed: u64) -> u32 {
+    (packed >> 32) as u32
+}
+
+/// Extract the arrival count (lower 32 bits) from the packed value.
+#[inline(always)]
+const fn barrier_arrived(packed: u64) -> u32 {
+    packed as u32
+}
+
+#[repr(C)]
+struct BarrierData {
+    magic: AtomicU32,
+    count: u32,
+    /// Packed: phase (upper 32) | arrived (lower 32).
+    phase_arrived: AtomicU64,
+}
+
+fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
+    if barrier.is_null() {
+        return None;
+    }
+    let ptr = barrier.cast::<BarrierData>();
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<BarrierData>()) {
+        return None;
+    }
+    Some(ptr)
+}
+
+unsafe fn futex_wait_u32(addr: *const u32, expected: u32, private: bool) -> c_int {
+    // SAFETY: Linux futex syscall with valid userspace address and null timeout.
+    match unsafe {
+        raw_syscall::sys_futex(
+            addr,
+            libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
+            expected,
+            0, // null timeout
+            0,
+            0,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+unsafe fn futex_wake_u32(addr: *const u32, count: i32, private: bool) -> c_int {
+    // SAFETY: Linux futex syscall with valid userspace address.
+    match unsafe {
+        raw_syscall::sys_futex(
+            addr,
+            libc::FUTEX_WAKE | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
+            count as u32,
+            0,
+            0,
+            0,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrier_init(
+    barrier: *mut c_void,
+    attr: *const c_void,
+    count: libc::c_uint,
+) -> c_int {
+    if count == 0 {
+        return libc::EINVAL;
+    }
+    if !attr.is_null() {
+        let word = unsafe { *(attr.cast::<c_int>()) };
+        if word & BARRIERATTR_VALID_BIT == 0 {
+            return libc::EINVAL;
+        }
+        if !matches!(
+            word & !BARRIERATTR_VALID_BIT,
+            libc::PTHREAD_PROCESS_PRIVATE | libc::PTHREAD_PROCESS_SHARED
+        ) {
+            return libc::EINVAL;
+        }
+    }
+    let pshared = !attr.is_null()
+        && unsafe { *(attr.cast::<c_int>()) } & !BARRIERATTR_VALID_BIT
+            == libc::PTHREAD_PROCESS_SHARED;
+    let Some(data) = barrier_data_ptr(barrier) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    unsafe {
+        (*data).magic.store(
+            if pshared {
+                BARRIER_PSHARED_MAGIC
+            } else {
+                BARRIER_MAGIC
+            },
+            Ordering::Release,
+        );
+        (*data).count = count;
+        (*data)
+            .phase_arrived
+            .store(barrier_pack(0, 0), Ordering::Release);
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int {
+    let Some(data) = barrier_data_ptr(barrier) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    unsafe {
+        // If any threads are currently blocked at the barrier, destruction is
+        // not permitted (POSIX says behaviour is undefined, but returning
+        // EBUSY is the quality-of-implementation choice made by glibc/musl).
+        let packed = (*data).phase_arrived.load(Ordering::Acquire);
+        if barrier_arrived(packed) > 0 {
+            return libc::EBUSY;
+        }
+        (*data).magic.store(0, Ordering::Release);
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
+    // SAFETY: the public ABI requires a live, initialized barrier. The no-op
+    // observer disappears from this monomorphization.
+    unsafe { barrier_wait_observed(barrier, |_| {}) }
+}
+
+/// Scheduling observations for deterministic barrier interleaving tests.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PthreadBarrierTestEvent {
+    Arrived { phase: u32, last: bool },
+    BeforeWait { phase: u32 },
+}
+
+/// Exercise the production wait algorithm with a caller-controlled schedule.
+///
+/// # Safety
+/// `barrier` must remain live and initialized until every wait has returned.
+/// The observer may pause its caller but must not mutate or destroy the barrier.
+#[doc(hidden)]
+pub unsafe fn pthread_barrier_wait_observed_for_tests(
+    barrier: *mut c_void,
+    observer: impl FnMut(PthreadBarrierTestEvent),
+) -> c_int {
+    // SAFETY: the caller supplies the same barrier lifetime as the public ABI.
+    unsafe { barrier_wait_observed(barrier, observer) }
+}
+
+/// Start a quiescent test barrier near phase wrap without billions of waits.
+///
+/// # Safety
+/// `barrier` must be initialized, with no concurrent or blocked users.
+#[doc(hidden)]
+pub unsafe fn pthread_barrier_set_phase_for_tests(barrier: *mut c_void, phase: u32) {
+    let data = barrier_data_ptr(barrier).expect("aligned test barrier");
+    // SAFETY: the caller owns this initialized barrier exclusively.
+    let bd = unsafe { &*data };
+    assert_eq!(barrier_arrived(bd.phase_arrived.load(Ordering::Relaxed)), 0);
+    bd.phase_arrived
+        .store(barrier_pack(phase, 0), Ordering::Relaxed);
+}
+
+#[inline(always)]
+unsafe fn barrier_wait_observed(
+    barrier: *mut c_void,
+    mut observer: impl FnMut(PthreadBarrierTestEvent),
+) -> c_int {
+    let Some(data) = barrier_data_ptr(barrier) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer is non-null and aligned; caller owns the memory.
+    let bd = unsafe { &*data };
+    let private = bd.magic.load(Ordering::Acquire) != BARRIER_PSHARED_MAGIC;
+    let count = bd.count;
+    // Cache the address before publishing completion. The kernel can compare
+    // the phase half without creating mixed-width Rust atomic accesses. Its
+    // offset is one word on little-endian targets and zero on big-endian ones.
+    let phase_word = bd
+        .phase_arrived
+        .as_ptr()
+        .cast::<u32>()
+        .wrapping_add(usize::from(cfg!(target_endian = "little")));
+
+    // Atomically increment the arrival count via CAS on the packed u64.
+    // This also captures the phase at the time of our arrival.
+    let mut cur = bd.phase_arrived.load(Ordering::Acquire);
+    let my_phase;
+    loop {
+        let phase = barrier_phase(cur);
+        let arrived = barrier_arrived(cur);
+        let new_arrived = arrived + 1;
+
+        if new_arrived == count {
+            // We are the last thread to arrive.  Atomically advance the phase
+            // and reset the counter to 0 in a single CAS so that no thread
+            // can observe the intermediate state.
+            let new_phase = phase.wrapping_add(1);
+            let desired = barrier_pack(new_phase, 0);
+            match bd.phase_arrived.compare_exchange_weak(
+                cur,
+                desired,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    observer(PthreadBarrierTestEvent::Arrived { phase, last: true });
+                    // The CAS already published the phase that the kernel
+                    // compares. A delayed wake cannot overwrite a newer one.
+                    // SAFETY: phase_word is the aligned phase subword of the
+                    // caller-owned barrier, retained until all waits return.
+                    unsafe { futex_wake_u32(phase_word, i32::MAX, private) };
+                    return PTHREAD_BARRIER_SERIAL_THREAD;
+                }
+                Err(actual) => {
+                    // CAS failed — another thread raced us; retry.
+                    cur = actual;
+                    continue;
+                }
+            }
+        } else {
+            // Not the last thread — just bump the arrival count.
+            let desired = barrier_pack(phase, new_arrived);
+            match bd.phase_arrived.compare_exchange_weak(
+                cur,
+                desired,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    my_phase = phase;
+                    observer(PthreadBarrierTestEvent::Arrived { phase, last: false });
+                    break;
+                }
+                Err(actual) => {
+                    cur = actual;
+                    continue;
+                }
+            }
+        }
+    }
+
+    // Wait until the phase advances past our arrival phase.
+    loop {
+        let phase = barrier_phase(bd.phase_arrived.load(Ordering::Acquire));
+        if phase != my_phase {
+            break;
+        }
+        observer(PthreadBarrierTestEvent::BeforeWait { phase: my_phase });
+        // SAFETY: phase_word is aligned and live. If completion races this
+        // syscall, the kernel observes the changed phase and refuses to sleep.
+        unsafe { futex_wait_u32(phase_word, my_phase, private) };
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// pthread_setname_np / pthread_getname_np — native via prctl raw syscall
+// ---------------------------------------------------------------------------
+
+/// PR_SET_NAME = 15 (from linux/prctl.h)
+const PR_SET_NAME: c_int = 15;
+/// PR_GET_NAME = 16 (from linux/prctl.h)
+const PR_GET_NAME: c_int = 16;
+
+fn thread_name_error_from_io(err: &std::io::Error) -> c_int {
+    match err.raw_os_error() {
+        Some(code) if code == libc::ENOENT => libc::ESRCH,
+        Some(code) => code,
+        None => match err.kind() {
+            std::io::ErrorKind::NotFound => libc::ESRCH,
+            std::io::ErrorKind::PermissionDenied => libc::EPERM,
+            _ => libc::EIO,
+        },
+    }
+}
+
+fn thread_comm_path(tid: i32) -> String {
+    format!("/proc/self/task/{tid}/comm")
+}
+
+fn set_other_thread_name_via_procfs(tid: i32, name: &[u8]) -> c_int {
+    if tid <= 0 {
+        return libc::ESRCH;
+    }
+    let path = thread_comm_path(tid);
+    let mut file = match OpenOptions::new().write(true).open(&path) {
+        Ok(file) => file,
+        Err(err) => return thread_name_error_from_io(&err),
+    };
+    if let Err(err) = file.write_all(name) {
+        return thread_name_error_from_io(&err);
+    }
+    0
+}
+
+fn get_other_thread_name_via_procfs(tid: i32, name: *mut std::ffi::c_char, len: usize) -> c_int {
+    if tid <= 0 {
+        return libc::ESRCH;
+    }
+    let path = thread_comm_path(tid);
+    let mut file = match OpenOptions::new().read(true).open(&path) {
+        Ok(file) => file,
+        Err(err) => return thread_name_error_from_io(&err),
+    };
+    let mut raw = [0_u8; 64];
+    let n = match file.read(&mut raw) {
+        Ok(n) => n,
+        Err(err) => return thread_name_error_from_io(&err),
+    };
+    if n == 0 {
+        return libc::ESRCH;
+    }
+    // `/proc/.../comm` returns "<name>\n". Strip trailing newline/NULs.
+    let mut end = n;
+    while end > 0 && (raw[end - 1] == b'\n' || raw[end - 1] == 0) {
+        end -= 1;
+    }
+    if end + 1 > len {
+        return libc::ERANGE;
+    }
+    // SAFETY: caller validated `name` and `len`; destination has room for payload + NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(raw.as_ptr().cast::<std::ffi::c_char>(), name, end);
+        *name.add(end) = 0;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setname_np(
+    _thread: libc::pthread_t,
+    name: *const std::ffi::c_char,
+) -> c_int {
+    if name.is_null() {
+        return libc::EINVAL;
+    }
+    let (len, terminated) = unsafe {
+        crate::util::scan_c_string(name, crate::malloc_abi::known_remaining(name as usize))
+    };
+    if !terminated {
+        return libc::EFAULT;
+    }
+    if len > 15 {
+        return libc::ERANGE;
+    }
+    if _thread != native_pthread_self() {
+        let Some(tid) = resolve_thread_tid(_thread) else {
+            return libc::ESRCH;
+        };
+        // SAFETY: scan_c_string observed `len` readable bytes before the terminator.
+        let name_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
+        return set_other_thread_name_via_procfs(tid, name_bytes);
+    }
+    // SAFETY: prctl(PR_SET_NAME) sets the calling thread's name.
+    match raw_syscall::sys_prctl(PR_SET_NAME, name as usize, 0, 0, 0) {
+        Ok(_) => 0,
+        Err(errno) => errno,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getname_np(
+    _thread: libc::pthread_t,
+    name: *mut std::ffi::c_char,
+    len: usize,
+) -> c_int {
+    if name.is_null() || len == 0 {
+        return libc::EINVAL;
+    }
+    if len < 16 {
+        return libc::ERANGE;
+    }
+    if _thread != native_pthread_self() {
+        let Some(tid) = resolve_thread_tid(_thread) else {
+            return libc::ESRCH;
+        };
+        return get_other_thread_name_via_procfs(tid, name, len);
+    }
+    // SAFETY: prctl(PR_GET_NAME) reads the calling thread's name into a buffer.
+    match raw_syscall::sys_prctl(PR_GET_NAME, name as usize, 0, 0, 0) {
+        Ok(_) => 0,
+        Err(errno) => errno,
+    }
+}
+
+// ===========================================================================
+// Batch: pthread extensions — Implemented (delegate to libc)
+// ===========================================================================
+
+/// `pthread_atfork` — register fork handlers.
+///
+/// Registers functions to be called before and after fork():
+/// - `prepare`: called in parent before fork
+/// - `parent`: called in parent after fork
+/// - `child`: called in child after fork
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_atfork(
+    prepare: Option<unsafe extern "C" fn()>,
+    parent: Option<unsafe extern "C" fn()>,
+    child: Option<unsafe extern "C" fn()>,
+) -> c_int {
+    register_atfork(prepare, parent, child, std::ptr::null_mut())
+}
+
+/// The GNU registration entry retains the calling DSO's token so finalizing
+/// that object can withdraw its callbacks before their code is unmapped.
+pub(crate) fn register_atfork(
+    prepare: Option<unsafe extern "C" fn()>,
+    parent: Option<unsafe extern "C" fn()>,
+    child: Option<unsafe extern "C" fn()>,
+    dso: *mut c_void,
+) -> c_int {
+    let handlers = AtforkHandlers {
+        prepare,
+        parent,
+        child,
+    };
+    let mut spill_lifetime = None;
+    let mut spare_chunk = None;
+    // Never allocate while holding the registry lock, and not at all for the
+    // first ATFORK_INLINE registrations. An allocator that registers fork
+    // handlers while initialising (jemalloc, mimalloc, a program's own malloc)
+    // is re-entered by any allocation here; with the lock held, its nested
+    // pthread_atfork blocked on the same non-recursive mutex forever. glibc
+    // keeps its first handlers in static storage for the same reason.
+    loop {
+        let grow = {
+            let _guard = lock_atfork_registry();
+            if ATFORK_HANDLERS
+                .find_spill_slot(AtforkSlot::is_empty)
+                .is_none()
+                && let Some(chunk) = spare_chunk.take()
+            {
+                ATFORK_HANDLERS.add_chunk(chunk);
+            }
+            match ATFORK_HANDLERS.try_push(handlers, dso as usize, &mut spill_lifetime) {
+                Ok(true) => return 0,
+                Ok(false) => {}
+                Err(error) => return error,
+            }
+            ATFORK_HANDLERS
+                .find_spill_slot(AtforkSlot::is_empty)
+                .is_none()
+        };
+        // Inline registrations still allocate nothing. Overflow snapshots
+        // share this liveness word; its allocation, like vector growth, must
+        // remain outside the registry lock in case malloc registers a handler.
+        if spill_lifetime.is_none() {
+            spill_lifetime = Some(Arc::new(AtomicBool::new(true)));
+        }
+        if grow && spare_chunk.is_none() {
+            spare_chunk = Some(Box::new(AtforkChunk::new()));
+        }
+    }
+}
+
+/// Fork handler triple registered by `pthread_atfork`.
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+struct AtforkHandlers {
+    prepare: Option<unsafe extern "C" fn()>,
+    parent: Option<unsafe extern "C" fn()>,
+    child: Option<unsafe extern "C" fn()>,
+}
+
+// SAFETY: Function pointers are Send+Sync (they're just code addresses).
+unsafe impl Send for AtforkHandlers {}
+
+/// Handlers kept inline, without any allocation, before spill chunks.
+const ATFORK_INLINE: usize = 32;
+const ATFORK_CHUNK: usize = 16;
+
+#[derive(Clone)]
+enum AtforkLifetime {
+    Inline(usize),
+    Spill(Arc<AtomicBool>),
+}
+
+#[derive(Clone)]
+struct AtforkEntry {
+    handlers: AtforkHandlers,
+    dso: usize,
+    id: usize,
+    lifetime: AtforkLifetime,
+}
+
+impl AtforkEntry {
+    fn active(&self) -> bool {
+        match &self.lifetime {
+            AtforkLifetime::Inline(index) => {
+                ATFORK_HANDLERS.inline[*index]
+                    .published
+                    .load(Ordering::Acquire)
+                    == self.id
+            }
+            AtforkLifetime::Spill(active) => active.load(Ordering::Acquire),
+        }
+    }
+
+    fn invalidate(&self) {
+        match &self.lifetime {
+            AtforkLifetime::Inline(index) => {
+                ATFORK_HANDLERS.inline[*index]
+                    .published
+                    .store(0, Ordering::Release);
+            }
+            AtforkLifetime::Spill(active) => active.store(false, Ordering::Release),
+        }
+    }
+}
+
+/// A fork can interrupt another thread between any two stores. Publish a slot
+/// only after its payload is complete, and withdraw it before moving that
+/// payload out. A child can then ignore an interrupted write instead of
+/// recovering a mutex protecting a half-mutated Vec or Option.
+#[repr(C, align(64))]
+struct AtforkSlot {
+    published: AtomicUsize,
+    value: UnsafeCell<std::mem::MaybeUninit<AtforkEntry>>,
+}
+
+// SAFETY: payload access is serialized by lock_atfork_registry. A child takes
+// over that lock only after other parent threads have vanished; the publication
+// word distinguishes initialized payloads from interrupted writes/removals.
+unsafe impl Sync for AtforkSlot {}
+
+impl AtforkSlot {
+    const fn new() -> Self {
+        Self {
+            published: AtomicUsize::new(0),
+            value: UnsafeCell::new(std::mem::MaybeUninit::uninit()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.published.load(Ordering::Acquire) == 0
+    }
+
+    fn entry(&self) -> Option<&AtforkEntry> {
+        if self.is_empty() {
+            return None;
+        }
+        // SAFETY: callers hold the registry guard. Publication follows full
+        // initialization, and removal withdraws the word before moving out.
+        Some(unsafe { (&*self.value.get()).assume_init_ref() })
+    }
+
+    fn publish(&self, entry: AtforkEntry) {
+        debug_assert!(self.is_empty());
+        let id = entry.id;
+        // SAFETY: callers hold the registry guard and selected an empty slot.
+        // An unpublished payload is never read or dropped, including a write
+        // interrupted in another parent thread at the instant of fork.
+        unsafe { (*self.value.get()).write(entry) };
+        self.published.store(id, Ordering::Release);
+    }
+
+    fn take(&self) -> AtforkEntry {
+        // Invalidate captured snapshots before withdrawing the registry slot.
+        self.entry().unwrap().invalidate();
+        self.published.store(0, Ordering::Release);
+        // SAFETY: the guard excludes other readers/writers, and entry() above
+        // established initialization. Child recovery ignores this slot from
+        // the withdrawal onward, even if this move has not completed.
+        unsafe { (*self.value.get()).assume_init_read() }
+    }
+}
+
+struct AtforkChunk {
+    slots: [AtforkSlot; ATFORK_CHUNK],
+    next: *mut AtforkChunk,
+}
+
+impl AtforkChunk {
+    const fn new() -> Self {
+        Self {
+            slots: [const { AtforkSlot::new() }; ATFORK_CHUNK],
+            next: std::ptr::null_mut(),
+        }
+    }
+}
+
+/// Slots and chunk links never move after publication. Vacated slots are
+/// reused; chunks retain peak capacity just as the previous spill Vec did.
+/// Monotonic IDs retain callback order and distinguish reused inline slots.
+struct AtforkRegistry {
+    inline: [AtforkSlot; ATFORK_INLINE],
+    spill: AtomicPtr<AtforkChunk>,
+    next_id: AtomicUsize,
+}
+
+impl AtforkRegistry {
+    const fn new() -> Self {
+        Self {
+            inline: [const { AtforkSlot::new() }; ATFORK_INLINE],
+            spill: AtomicPtr::new(std::ptr::null_mut()),
+            next_id: AtomicUsize::new(1),
+        }
+    }
+
+    /// Append without allocating; false asks the caller for a spill slot/token.
+    fn try_push(
+        &self,
+        handlers: AtforkHandlers,
+        dso: usize,
+        spill_lifetime: &mut Option<Arc<AtomicBool>>,
+    ) -> Result<bool, c_int> {
+        let inline = self.inline.iter().position(AtforkSlot::is_empty);
+        let spill = if inline.is_none() {
+            self.find_spill_slot(AtforkSlot::is_empty)
+        } else {
+            None
+        };
+        if inline.is_none() && (spill.is_none() || spill_lifetime.is_none()) {
+            return Ok(false);
+        }
+        let id = self
+            .next_id
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| libc::ENOMEM)?;
+        let (slot, lifetime) = if let Some(index) = inline {
+            (&self.inline[index], AtforkLifetime::Inline(index))
+        } else {
+            (
+                spill.unwrap(),
+                AtforkLifetime::Spill(spill_lifetime.take().unwrap()),
+            )
+        };
+        slot.publish(AtforkEntry {
+            handlers,
+            dso,
+            id,
+            lifetime,
+        });
+        Ok(true)
+    }
+
+    fn add_chunk(&self, chunk: Box<AtforkChunk>) {
+        let chunk = Box::into_raw(chunk);
+        // SAFETY: this fully initialized chunk is private until publication.
+        // The registry guard serializes writers of the immutable linked list.
+        unsafe { (*chunk).next = self.spill.load(Ordering::Relaxed) };
+        self.spill.store(chunk, Ordering::Release);
+    }
+
+    fn find_spill_slot(&self, matches: impl Fn(&AtforkSlot) -> bool) -> Option<&AtforkSlot> {
+        let mut chunk = self.spill.load(Ordering::Acquire);
+        while !chunk.is_null() {
+            // SAFETY: published chunks are fully initialized and never freed.
+            let current = unsafe { &*chunk };
+            if let Some(slot) = current.slots.iter().find(|slot| matches(slot)) {
+                return Some(slot);
+            }
+            chunk = current.next;
+        }
+        None
+    }
+
+    fn visit_slots(&self, mut visit: impl FnMut(&AtforkSlot)) {
+        for slot in &self.inline {
+            visit(slot);
+        }
+        let mut chunk = self.spill.load(Ordering::Acquire);
+        while !chunk.is_null() {
+            // SAFETY: published chunks are fully initialized and never freed.
+            let current = unsafe { &*chunk };
+            for slot in &current.slots {
+                visit(slot);
+            }
+            chunk = current.next;
+        }
+    }
+
+    fn len(&self) -> usize {
+        let mut length = 0;
+        self.visit_slots(|slot| length += usize::from(!slot.is_empty()));
+        length
+    }
+
+    fn append_snapshot(&self, entries: &mut Vec<AtforkEntry>) {
+        // The caller reserves outside the lock. Cloning liveness tokens
+        // only increments an Arc counter and cannot enter the allocator.
+        debug_assert!(entries.capacity() - entries.len() >= self.len());
+        self.visit_slots(|slot| {
+            if let Some(entry) = slot.entry() {
+                entries.push(entry.clone());
+            }
+        });
+    }
+
+    fn remove_one(&self, matches: impl Fn(&AtforkEntry) -> bool) -> Option<AtforkEntry> {
+        let matching = |slot: &AtforkSlot| slot.entry().is_some_and(&matches);
+        self.inline
+            .iter()
+            .find(|slot| matching(slot))
+            .or_else(|| self.find_spill_slot(matching))
+            .map(AtforkSlot::take)
+    }
+}
+
+/// Registry of atfork handlers.
+static ATFORK_HANDLERS: AtforkRegistry = AtforkRegistry::new();
+
+// No allocation, freeing, or user callback occurs while this lock is held.
+// It is NEVER held across host fork callbacks: a prepare callback can wait
+// for a different thread to register a handler. The child recovers ownership
+// using the PID and reads only atomically published slots/chunks above.
+static ATFORK_GATE_OWNER: AtomicI32 = AtomicI32::new(0);
+
+struct AtforkRegistryGuard {
+    process_id: i32,
+    _not_send_sync: std::marker::PhantomData<*mut ()>,
+}
+
+fn lock_atfork_registry() -> AtforkRegistryGuard {
+    let process_id = frankenlibc_core::syscall::sys_getpid();
+    let mut spins = 0u32;
+    loop {
+        let previous = ATFORK_GATE_OWNER.load(Ordering::Acquire);
+        if (previous == 0 || previous != process_id)
+            && ATFORK_GATE_OWNER
+                .compare_exchange(previous, process_id, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        {
+            break;
+        }
+        spins = spins.wrapping_add(1);
+        if spins & 0x3f == 0 {
+            frankenlibc_core::syscall::sys_sched_yield();
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+    AtforkRegistryGuard {
+        process_id,
+        _not_send_sync: std::marker::PhantomData,
+    }
+}
+
+impl Drop for AtforkRegistryGuard {
+    fn drop(&mut self) {
+        if self.process_id != frankenlibc_core::syscall::sys_getpid() {
+            // An inherited parent guard cannot release a child's new owner.
+            return;
+        }
+        ATFORK_GATE_OWNER.store(0, Ordering::Release);
+    }
+}
+
+fn unregister_atfork_matching(matches: impl Fn(&AtforkEntry) -> bool) {
+    if ATFORK_HANDLERS.next_id.load(Ordering::Acquire) == 1
+        && ATFORK_GATE_OWNER.load(Ordering::Acquire) == 0
+    {
+        return;
+    }
+    loop {
+        let removed = {
+            let _guard = lock_atfork_registry();
+            ATFORK_HANDLERS.remove_one(&matches)
+        };
+        let Some(removed) = removed else { break };
+        // Releasing the final spill token can call an interposed allocator.
+        // As with registration, no registry lock may span that operation.
+        drop(removed);
+    }
+}
+
+pub(crate) fn unregister_atfork(dso: *mut c_void) {
+    // GNU __cxa_finalize(NULL) runs process destructors but does not withdraw
+    // fork callbacks. A NULL registration has process lifetime, too.
+    if !dso.is_null() {
+        unregister_atfork_matching(|entry| entry.dso == dso as usize);
+    }
+}
+
+/// Native loaders also retire custom CRTs with no __cxa_finalize hook. The
+/// caller supplies the object's still-mapped address range before unmapping.
+pub(crate) fn unregister_atfork_range(start: usize, length: usize) {
+    unregister_atfork_matching(|entry| {
+        entry.dso != 0
+            && entry
+                .dso
+                .checked_sub(start)
+                .is_some_and(|offset| offset < length)
+    });
+}
+
+/// Called before fork (from our fork() wrapper) — runs prepare handlers in LIFO order.
+// Snapshot-and-release: never invoke user callbacks while holding ATFORK_HANDLERS.
+// A handler that transitively calls pthread_atfork would self-deadlock on the
+// non-recursive Mutex otherwise (bd-sq7ae).
+#[allow(dead_code)]
+pub(crate) fn run_atfork_prepare() -> AtforkSnapshot {
+    if ATFORK_HANDLERS.next_id.load(Ordering::Acquire) == 1
+        && ATFORK_GATE_OWNER.load(Ordering::Acquire) == 0
+    {
+        return AtforkSnapshot(Vec::new());
+    }
+    let mut snapshot = Vec::new();
+    loop {
+        let needed = {
+            let _guard = lock_atfork_registry();
+            if snapshot.capacity() >= ATFORK_HANDLERS.len() {
+                ATFORK_HANDLERS.append_snapshot(&mut snapshot);
+                break;
+            }
+            ATFORK_HANDLERS.len()
+        };
+        // An interposed allocator can itself register a fork handler.
+        // Snapshot allocation must remain outside the registry lock too.
+        snapshot.reserve_exact(needed);
+    }
+    snapshot.sort_unstable_by_key(|entry| entry.id);
+    for h in snapshot.iter().rev() {
+        if h.active()
+            && let Some(f) = h.handlers.prepare
+        {
+            // SAFETY: caller registered a valid function pointer.
+            unsafe { f() };
+        }
+    }
+    AtforkSnapshot(snapshot)
+}
+
+/// The handlers registered when a fork began, taken by [`run_atfork_prepare`]
+/// and run by [`run_atfork_parent`]/[`run_atfork_child`] without touching
+/// `ATFORK_HANDLERS` again. Child handlers can finalize a DSO or register new
+/// handlers, but those mutations must not change which registrations belong
+/// to this fork operation.
+// An earlier callback may finalize a DSO, invalidating callbacks already in
+// this snapshot. Check liveness without reacquiring an inherited child lock.
+// As with GNU atfork, callers must not dlclose code while it is executing;
+// these tokens suppress future calls, not an already-entered callback.
+pub(crate) struct AtforkSnapshot(Vec<AtforkEntry>);
+
+/// Called after fork in parent — runs parent handlers in registration order.
+#[allow(dead_code)]
+pub(crate) fn run_atfork_parent(snapshot: &AtforkSnapshot) {
+    for h in snapshot.0.iter() {
+        if h.active()
+            && let Some(f) = h.handlers.parent
+        {
+            // SAFETY: caller registered a valid function pointer.
+            unsafe { f() };
+        }
+    }
+}
+
+/// Called after fork in child — runs child handlers in registration order.
+#[allow(dead_code)]
+pub(crate) fn run_atfork_child(snapshot: &AtforkSnapshot) {
+    for h in snapshot.0.iter() {
+        if h.active()
+            && let Some(f) = h.handlers.child
+        {
+            // SAFETY: caller registered a valid function pointer.
+            unsafe { f() };
+        }
+    }
+}
+
+/// `pthread_attr_getguardsize` — get the guard size of a thread attributes object.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getguardsize(
+    attr: *const libc::pthread_attr_t,
+    guardsize: *mut usize,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if guardsize.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *guardsize = (*data).guard_size };
+    0
+}
+
+/// `pthread_attr_setguardsize` — set the guard size of a thread attributes object.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setguardsize(
+    attr: *mut libc::pthread_attr_t,
+    guardsize: usize,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: pointer is non-null and aligned.
+    unsafe { (*data).guard_size = guardsize };
+    0
+}
+
+/// GNU `pthread_attr_getaffinity_np` — get CPU affinity from thread attributes.
+/// Native implementation using extended attr registry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getaffinity_np(
+    attr: *const libc::pthread_attr_t,
+    cpusetsize: usize,
+    cpuset: *mut libc::cpu_set_t,
+) -> c_int {
+    if managed_attr_data_ptr_const(attr).is_none() || cpuset.is_null() || cpusetsize == 0 {
+        return libc::EINVAL;
+    }
+    let key = attr as usize;
+    let reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    if let Some(ext) = reg.get(&key)
+        && let Some((stored_size, ref mask_bytes)) = ext.affinity
+    {
+        let copy_len = cpusetsize.min(stored_size).min(mask_bytes.len());
+        // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
+        unsafe {
+            std::ptr::write_bytes(cpuset.cast::<u8>(), 0, cpusetsize);
+            std::ptr::copy_nonoverlapping(mask_bytes.as_ptr(), cpuset.cast::<u8>(), copy_len);
+        }
+        return 0;
+    }
+    // No affinity set: return all CPUs (all bits set).
+    // SAFETY: cpuset points to caller-owned memory.
+    unsafe { std::ptr::write_bytes(cpuset.cast::<u8>(), 0xFF, cpusetsize) };
+    0
+}
+
+/// GNU `pthread_attr_setaffinity_np` — set CPU affinity in thread attributes.
+/// Native implementation using extended attr registry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setaffinity_np(
+    attr: *mut libc::pthread_attr_t,
+    cpusetsize: usize,
+    cpuset: *const libc::cpu_set_t,
+) -> c_int {
+    if attr.is_null() || cpuset.is_null() || cpusetsize == 0 {
+        return libc::EINVAL;
+    }
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Copy the raw bytes of the cpu_set_t.
+    let mut mask_bytes = vec![0u8; cpusetsize];
+    // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(cpuset.cast::<u8>(), mask_bytes.as_mut_ptr(), cpusetsize);
+    }
+    let key = attr as usize;
+    let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    let ext = reg.entry(key).or_insert_with(|| ExtendedAttrData {
+        affinity: None,
+        sigmask: None,
+    });
+    ext.affinity = Some((cpusetsize, mask_bytes));
+    // SAFETY: data pointer is valid.
+    unsafe { (*data).flags |= 1 }; // bit 0: affinity set
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Thread attr: scheduling, stack, scope (native where possible, else GCT)
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_attr_getinheritsched` — get inherit-scheduler attribute.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getinheritsched(
+    attr: *const libc::pthread_attr_t,
+    inheritsched: *mut c_int,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if inheritsched.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *inheritsched = (*data).inherit_sched };
+    0
+}
+
+/// POSIX `pthread_attr_setinheritsched` — set inherit-scheduler attribute.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setinheritsched(
+    attr: *mut libc::pthread_attr_t,
+    inheritsched: c_int,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Valid values: PTHREAD_INHERIT_SCHED (0) or PTHREAD_EXPLICIT_SCHED (1).
+    if inheritsched != 0 && inheritsched != 1 {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and aligned.
+    unsafe { (*data).inherit_sched = inheritsched };
+    0
+}
+
+/// POSIX `pthread_attr_getschedparam` — get scheduling parameters.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getschedparam(
+    attr: *const libc::pthread_attr_t,
+    param: *mut libc::sched_param,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if param.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe {
+        std::ptr::write_bytes(param, 0, 1);
+        (*param).sched_priority = (*data).sched_priority;
+    }
+    0
+}
+
+/// POSIX `pthread_attr_setschedparam` — set scheduling parameters.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setschedparam(
+    attr: *mut libc::pthread_attr_t,
+    param: *const libc::sched_param,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if param.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { (*data).sched_priority = (*param).sched_priority };
+    0
+}
+
+/// POSIX `pthread_attr_getschedpolicy` — get scheduling policy.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getschedpolicy(
+    attr: *const libc::pthread_attr_t,
+    policy: *mut c_int,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if policy.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *policy = (*data).sched_policy };
+    0
+}
+
+/// POSIX `pthread_attr_setschedpolicy` — set scheduling policy.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setschedpolicy(
+    attr: *mut libc::pthread_attr_t,
+    policy: c_int,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Valid POSIX policies: SCHED_OTHER(0), SCHED_FIFO(1), SCHED_RR(2).
+    if !(0..=2).contains(&policy) {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and aligned.
+    unsafe { (*data).sched_policy = policy };
+    0
+}
+
+/// POSIX `pthread_attr_getscope` — get contention scope.
+/// Linux NPTL only supports PTHREAD_SCOPE_SYSTEM (1:1 model).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getscope(
+    attr: *const libc::pthread_attr_t,
+    scope: *mut c_int,
+) -> c_int {
+    if managed_attr_data_ptr_const(attr).is_none() || scope.is_null() {
+        return libc::EINVAL;
+    }
+    // Linux always uses PTHREAD_SCOPE_SYSTEM.
+    unsafe { *scope = PTHREAD_SCOPE_SYSTEM };
+    0
+}
+
+/// POSIX `pthread_attr_setscope` — set contention scope.
+/// Only PTHREAD_SCOPE_SYSTEM is supported on Linux.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setscope(
+    attr: *mut libc::pthread_attr_t,
+    scope: c_int,
+) -> c_int {
+    if managed_attr_data_ptr(attr).is_none() {
+        return libc::EINVAL;
+    }
+    // glibc: SYSTEM -> 0, PROCESS -> ENOTSUP (valid but unsupported on Linux),
+    // any other value -> EINVAL.
+    if scope == PTHREAD_SCOPE_SYSTEM {
+        0
+    } else if scope == PTHREAD_SCOPE_PROCESS {
+        libc::ENOTSUP
+    } else {
+        libc::EINVAL
+    }
+}
+
+/// POSIX `pthread_attr_getstack` — get stack address and size.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getstack(
+    attr: *const libc::pthread_attr_t,
+    stackaddr: *mut *mut c_void,
+    stacksize: *mut usize,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if stackaddr.is_null() || stacksize.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe {
+        *stackaddr = (*data).stack_addr as *mut c_void;
+        *stacksize = (*data).stack_size;
+    }
+    0
+}
+
+/// POSIX `pthread_attr_setstack` — set stack address and size.
+/// Native implementation using `PthreadAttrData` overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setstack(
+    attr: *mut libc::pthread_attr_t,
+    stackaddr: *mut c_void,
+    stacksize: usize,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if stackaddr.is_null() || stacksize < ATTR_MIN_STACK_SIZE {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointer is non-null and aligned.
+    unsafe {
+        (*data).stack_addr = stackaddr as usize;
+        (*data).stack_size = stacksize;
+        (*data).flags |= ATTR_FLAG_USER_STACK;
+    }
+    0
+}
+
+/// Deprecated `pthread_attr_getstackaddr` — get the high stack address.
+/// Native implementation using the managed attr overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getstackaddr(
+    attr: *const libc::pthread_attr_t,
+    stackaddr: *mut *mut c_void,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if stackaddr.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *stackaddr = (*data).stack_top() as *mut c_void };
+    0
+}
+
+/// Deprecated `pthread_attr_setstackaddr` — set the high stack address.
+/// Native implementation using the managed attr overlay.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setstackaddr(
+    attr: *mut libc::pthread_attr_t,
+    stackaddr: *mut c_void,
+) -> c_int {
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if stackaddr.is_null() {
+        return libc::EINVAL;
+    }
+    // GNU's deprecated API takes the high endpoint on downward-growing stacks;
+    // the managed overlay and pthread_attr_setstack use the low base. Do not
+    // reject a wrapped intermediate base: a later setstacksize can make it valid.
+    // SAFETY: pointer is non-null and aligned.
+    unsafe {
+        (*data).stack_addr = (stackaddr as usize).wrapping_sub((*data).stack_size);
+        (*data).flags |= ATTR_FLAG_USER_STACK;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Barrier attributes — native (simple int fields)
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_barrierattr_init` — initialize barrier attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrierattr_init(attr: *mut libc::pthread_barrierattr_t) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: attr is non-null; store default (private) pshared.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = BARRIERATTR_VALID_BIT | libc::PTHREAD_PROCESS_PRIVATE;
+    0
+}
+
+/// POSIX `pthread_barrierattr_destroy` — destroy barrier attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrierattr_destroy(
+    attr: *mut libc::pthread_barrierattr_t,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: attr is non-null; zero it.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = 0;
+    0
+}
+
+const BARRIERATTR_VALID_BIT: c_int = 1 << 8;
+
+/// POSIX `pthread_barrierattr_getpshared` — get barrier process-shared attribute.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrierattr_getpshared(
+    attr: *const libc::pthread_barrierattr_t,
+    pshared: *mut c_int,
+) -> c_int {
+    if attr.is_null() || pshared.is_null() {
+        return libc::EINVAL;
+    }
+    // SAFETY: both pointers are non-null.
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word & BARRIERATTR_VALID_BIT == 0 {
+        return libc::EINVAL;
+    }
+    unsafe {
+        *pshared = word & !BARRIERATTR_VALID_BIT;
+    }
+    0
+}
+
+/// POSIX `pthread_barrierattr_setpshared` — set barrier process-shared attribute.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrierattr_setpshared(
+    attr: *mut libc::pthread_barrierattr_t,
+    pshared: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    if pshared != libc::PTHREAD_PROCESS_PRIVATE && pshared != libc::PTHREAD_PROCESS_SHARED {
+        return libc::EINVAL;
+    }
+    // SAFETY: attr is non-null.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word & BARRIERATTR_VALID_BIT == 0 {
+        return libc::EINVAL;
+    }
+    *word = BARRIERATTR_VALID_BIT | pshared;
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Condvar attribute extensions — native (pshared field)
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_condattr_getpshared` — get condvar process-shared attribute.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_getpshared(
+    attr: *const libc::pthread_condattr_t,
+    pshared: *mut c_int,
+) -> c_int {
+    if attr.is_null() || pshared.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if !condattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *pshared = decode_condattr_pshared(word) };
+    0
+}
+
+/// POSIX `pthread_condattr_setpshared` — set condvar process-shared attribute.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_setpshared(
+    attr: *mut libc::pthread_condattr_t,
+    pshared: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if !condattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let clock_id = decode_condattr_clock(*word);
+    let Some(next_word) = encode_condattr(clock_id, pshared) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Mutex attribute extensions — native (protocol, pshared, robust)
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_mutexattr_getprotocol` — get mutex protocol.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_getprotocol(
+    attr: *const libc::pthread_mutexattr_t,
+    protocol: *mut c_int,
+) -> c_int {
+    if attr.is_null() || protocol.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *protocol = decode_mutexattr_protocol(word) };
+    0
+}
+
+/// POSIX `pthread_mutexattr_setprotocol` — set mutex protocol.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
+    attr: *mut libc::pthread_mutexattr_t,
+    protocol: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_mutexattr(
+        decode_mutexattr_type(*word),
+        protocol,
+        decode_mutexattr_pshared(*word),
+        decode_mutexattr_robust(*word),
+        decode_mutexattr_prioceiling(*word),
+    ) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+pub(crate) unsafe fn native_pthread_mutexattr_getprioceiling(
+    attr: *const libc::pthread_mutexattr_t,
+    prioceiling: *mut c_int,
+) -> c_int {
+    if attr.is_null() || prioceiling.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *prioceiling = decode_mutexattr_prioceiling(word) };
+    0
+}
+
+pub(crate) unsafe fn native_pthread_mutexattr_setprioceiling(
+    attr: *mut libc::pthread_mutexattr_t,
+    prioceiling: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_mutexattr(
+        decode_mutexattr_type(*word),
+        decode_mutexattr_protocol(*word),
+        decode_mutexattr_pshared(*word),
+        decode_mutexattr_robust(*word),
+        prioceiling,
+    ) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+/// POSIX `pthread_mutexattr_getpshared` — get mutex process-shared.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_getpshared(
+    attr: *const libc::pthread_mutexattr_t,
+    pshared: *mut c_int,
+) -> c_int {
+    if attr.is_null() || pshared.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *pshared = decode_mutexattr_pshared(word) };
+    0
+}
+
+/// POSIX `pthread_mutexattr_setpshared` — set mutex process-shared.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_setpshared(
+    attr: *mut libc::pthread_mutexattr_t,
+    pshared: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_mutexattr(
+        decode_mutexattr_type(*word),
+        decode_mutexattr_protocol(*word),
+        pshared,
+        decode_mutexattr_robust(*word),
+        decode_mutexattr_prioceiling(*word),
+    ) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+/// POSIX `pthread_mutexattr_getrobust` — get mutex robust attribute.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_getrobust(
+    attr: *const libc::pthread_mutexattr_t,
+    robust: *mut c_int,
+) -> c_int {
+    if attr.is_null() || robust.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *robust = decode_mutexattr_robust(word) };
+    0
+}
+
+/// POSIX `pthread_mutexattr_setrobust` — set mutex robust attribute.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_setrobust(
+    attr: *mut libc::pthread_mutexattr_t,
+    robust: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
+    if !mutexattr_word_valid(*word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_mutexattr(
+        decode_mutexattr_type(*word),
+        decode_mutexattr_protocol(*word),
+        decode_mutexattr_pshared(*word),
+        robust,
+        decode_mutexattr_prioceiling(*word),
+    ) else {
+        return libc::EINVAL;
+    };
+    *word = next_word;
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Rwlock attribute extensions — native
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_rwlockattr_getpshared` — get rwlock process-shared.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlockattr_getpshared(
+    attr: *const libc::pthread_rwlockattr_t,
+    pshared: *mut c_int,
+) -> c_int {
+    if attr.is_null() || pshared.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if !rwlockattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe {
+        *pshared = decode_rwlockattr_pshared(word);
+    }
+    0
+}
+
+/// POSIX `pthread_rwlockattr_setpshared` — set rwlock process-shared.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlockattr_setpshared(
+    attr: *mut libc::pthread_rwlockattr_t,
+    pshared: c_int,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if !rwlockattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    let Some(next_word) = encode_rwlockattr(pshared) else {
+        return libc::EINVAL;
+    };
+    // Preserve the kind field (bits 1-2) across a pshared change — re-encoding
+    // only rebuilds the validity + pshared bits.
+    let kind_bits = word & RWLOCKATTR_KIND_MASK;
+    // SAFETY: attr is non-null.
+    let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    *word = next_word | kind_bits;
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Timed/clock pthread operations — raw syscall via futex
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_mutex_timedlock` — lock with timeout.
+///
+/// Native implementation using futex CAS loop with absolute timeout.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_timedlock(
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    if mutex.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    if !absolute_timespec_valid(abstime) {
+        return libc::EINVAL;
+    }
+    // Adopt static initializers as lock/trylock do: glibc takes a timed lock on
+    // a PTHREAD_MUTEX_INITIALIZER mutex (a static C++ std::timed_mutex).
+    if !ensure_managed_default_mutex(mutex) {
+        return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        // SAFETY: abstime is non-null and validated above.
+        return unsafe { ext_mutex_lock(mutex, raw_type, Some(&*abstime), false) };
+    }
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: alignment validated by `mutex_word_ptr`.
+    let word = unsafe { &*word_ptr };
+
+    match read_mutex_type(mutex) {
+        PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let self_tid = core_cached_tid();
+            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
+                // SAFETY: alignment checked.
+                let owner = unsafe { &*owner_ptr };
+                if owner.load(Ordering::Acquire) == self_tid
+                    && self_tid != MUTEX_NO_OWNER
+                    && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
+                {
+                    // SAFETY: alignment checked.
+                    let count = unsafe { &*count_ptr };
+                    let cur = count.load(Ordering::Relaxed);
+                    if cur == u32::MAX {
+                        return libc::EAGAIN;
+                    }
+                    count.store(cur + 1, Ordering::Release);
+                    return 0;
+                }
+            }
+            let rc = timed_futex_lock_normal(word, abstime);
+            if rc != 0 {
+                return rc;
+            }
+            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
+                // SAFETY: alignment checked.
+                let owner = unsafe { &*owner_ptr };
+                owner.store(self_tid, Ordering::Release);
+            }
+            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
+                // SAFETY: alignment checked.
+                let count = unsafe { &*count_ptr };
+                count.store(1, Ordering::Release);
+            }
+            return 0;
+        }
+        PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let self_tid = core_cached_tid();
+            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
+                // SAFETY: alignment checked.
+                let owner = unsafe { &*owner_ptr };
+                if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                    return libc::EDEADLK;
+                }
+            }
+            let rc = timed_futex_lock_normal(word, abstime);
+            if rc != 0 {
+                return rc;
+            }
+            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
+                // SAFETY: alignment checked.
+                let owner = unsafe { &*owner_ptr };
+                owner.store(self_tid, Ordering::Release);
+            }
+            return 0;
+        }
+        _ => {}
+    }
+
+    timed_futex_lock_normal(word, abstime)
+}
+
+fn timed_futex_lock_normal(word: &AtomicI32, abstime: *const libc::timespec) -> c_int {
+    if word
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        return 0;
+    }
+
+    loop {
+        let observed = word.load(Ordering::Relaxed);
+        if observed == 0 {
+            if word
+                .compare_exchange(0, 2, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return 0;
+            }
+            continue;
+        }
+
+        if observed == 1 {
+            let _ = word.compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let rc = futex_wait_timed_private(word, 2, abstime);
+            if rc == 0 {
+                continue;
+            }
+            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+            if errno == libc::ETIMEDOUT {
+                return libc::ETIMEDOUT;
+            }
+            if errno == libc::EINTR || errno == libc::EAGAIN {
+                continue;
+            }
+            return if errno == 0 { libc::EAGAIN } else { errno };
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            std::thread::yield_now();
+        }
+    }
+}
+
+/// POSIX `pthread_mutex_consistent` — mark robust mutex as consistent.
+///
+/// Native implementation: clears the EOWNERDEAD state on a robust mutex.
+/// In our implementation, the lock word at offset 0 tracks state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    let (Some(type_ptr), Some(owner_ptr)) = (mutex_type_ptr(mutex), mutex_owner_ptr(mutex)) else {
+        return libc::EINVAL;
+    };
+    // Only the thread that acquired a robust mutex with EOWNERDEAD may repair it.
+    if raw_type & MUTEX_FLAG_ROBUST == 0
+        || raw_type & MUTEX_FLAG_INCONSISTENT == 0
+        || unsafe { &*owner_ptr }.load(Ordering::Acquire) != core_self_tid()
+    {
+        return libc::EINVAL;
+    }
+    // SAFETY: alignment checked in `mutex_type_ptr`.
+    unsafe { &*type_ptr }.fetch_and(!MUTEX_FLAG_INCONSISTENT, Ordering::AcqRel);
+    0
+}
+
+/// The type word of an initialised `PTHREAD_PRIO_PROTECT` mutex; `None` (EINVAL)
+/// for any other mutex, as glibc answers for them.
+fn prio_protect_type_word<'a>(mutex: *mut libc::pthread_mutex_t) -> Option<&'a AtomicI32> {
+    if !is_managed_mutex(mutex) {
+        return None;
+    }
+    // SAFETY: alignment checked in `mutex_type_ptr`; the storage is the caller's
+    // live mutex for the duration of the call.
+    let type_word = unsafe { &*mutex_type_ptr(mutex)? };
+    (type_word.load(Ordering::Acquire) & MUTEX_FLAG_PP != 0).then_some(type_word)
+}
+
+/// POSIX `pthread_mutex_getprioceiling`.
+///
+/// # Safety
+///
+/// `mutex` must point to mutex storage and `prioceiling` to writable memory.
+pub(crate) unsafe fn native_pthread_mutex_getprioceiling(
+    mutex: *mut libc::pthread_mutex_t,
+    prioceiling: *mut c_int,
+) -> c_int {
+    if mutex.is_null() || prioceiling.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(type_word) = prio_protect_type_word(mutex) else {
+        return libc::EINVAL;
+    };
+    let ceiling =
+        (type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+    // SAFETY: caller-provided output pointer, checked non-null.
+    unsafe { *prioceiling = ceiling };
+    0
+}
+
+/// POSIX `pthread_mutex_setprioceiling`: replaces the ceiling and reports the
+/// previous one through `old_ceiling` (if non-null).
+///
+/// # Safety
+///
+/// `mutex` must point to mutex storage; `old_ceiling` is null or writable.
+pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
+    mutex: *mut libc::pthread_mutex_t,
+    prioceiling: c_int,
+    old_ceiling: *mut c_int,
+) -> c_int {
+    if mutex.is_null() || !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&prioceiling) {
+        return libc::EINVAL;
+    }
+    let Some(type_word) = prio_protect_type_word(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let raw_type = type_word.load(Ordering::Acquire);
+    let tid = if raw_type & (MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST) != 0 {
+        core_self_tid()
+    } else {
+        core_cached_tid()
+    };
+    if m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER {
+        match raw_type & MUTEX_TYPE_MASK {
+            PTHREAD_MUTEX_ERRORCHECK_TYPE => return libc::EDEADLK,
+            PTHREAD_MUTEX_RECURSIVE_TYPE => {
+                let prev_ceil = (raw_type & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+                let rc = tpp_change_ceiling(tid, prev_ceil, prioceiling);
+                if rc != 0 {
+                    return rc;
+                }
+                let previous = type_word
+                    .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+                        Some(
+                            (word & !MUTEX_PRIOCEILING_MASK)
+                                | (prioceiling << MUTEX_PRIOCEILING_SHIFT),
+                        )
+                    })
+                    .unwrap_or_else(|word| word);
+                if !old_ceiling.is_null() {
+                    // SAFETY: caller-provided output pointer, checked non-null.
+                    unsafe {
+                        *old_ceiling =
+                            (previous & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+                    }
+                }
+                return 0;
+            }
+            _ => {}
+        }
+    }
+    // POSIX: locking the mutex in pthread_mutex_setprioceiling does not adhere
+    // to the priority protect protocol.
+    let lock_rc = ext_acquire(&m, raw_type, tid, None, false);
+    if lock_rc != 0 {
+        return lock_rc;
+    }
+    let previous = type_word
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+            Some((word & !MUTEX_PRIOCEILING_MASK) | (prioceiling << MUTEX_PRIOCEILING_SHIFT))
+        })
+        .unwrap_or_else(|word| word);
+    if !old_ceiling.is_null() {
+        // SAFETY: caller-provided output pointer, checked non-null.
+        unsafe {
+            *old_ceiling = (previous & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+        }
+    }
+    if m.word.swap(0, Ordering::Release) == 2 {
+        ext_futex_wake(m.word, raw_type, 1);
+    }
+    0
+}
+
+/// GNU `pthread_mutex_clocklock` — lock with specific clock timeout.
+///
+/// Native implementation: converts clock deadline to CLOCK_REALTIME and
+/// delegates to `pthread_mutex_timedlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutex_clocklock(
+    mutex: *mut libc::pthread_mutex_t,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
+    if mutex.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    // glibc (lll_futex_supported_clockid) accepts ONLY CLOCK_REALTIME and
+    // CLOCK_MONOTONIC for the clock-variant waits; any other clock (BOOTTIME,
+    // PROCESS_CPUTIME_ID, ...) is EINVAL even though clock_gettime accepts it.
+    // bd-44y7sl.
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
+    if clockid == libc::CLOCK_REALTIME {
+        return unsafe { pthread_mutex_timedlock(mutex, abstime) };
+    }
+    // Convert to CLOCK_REALTIME deadline.
+    let real_deadline = match clock_convert_to_realtime(clockid, abstime) {
+        Ok(deadline) => deadline,
+        Err(err) => return err,
+    };
+    unsafe { pthread_mutex_timedlock(mutex, &real_deadline) }
+}
+
+/// Shared timed rwlock path: preserve the requested clock, static initializer,
+/// process-sharing flag, and the existing reader/writer preference policy.
+unsafe fn pthread_rwlock_wait_common(
+    rwlock: *mut libc::pthread_rwlock_t,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+    write: bool,
+    before_wait: impl FnMut(usize, c_int),
+) -> c_int {
+    if rwlock.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
+    // A free rwlock is acquired even with a past deadline. Validate the
+    // nanoseconds before touching the lock, but do not reject negative seconds.
+    if !(0..1_000_000_000).contains(&unsafe { (*abstime).tv_nsec }) {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    let word = unsafe { &*word_ptr };
+    let private = rwlock_is_private(rwlock);
+    let preference = rwlock_writer_pref(rwlock);
+    if write {
+        futex_rwlock_timed_wrlock(word, abstime, clockid, private, preference)
+    } else {
+        futex_rwlock_timed_rdlock(word, abstime, clockid, private, preference, before_wait)
+    }
+}
+
+/// POSIX `pthread_rwlock_timedrdlock` — read lock with an absolute realtime deadline.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_timedrdlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, false, |_, _| {}) }
+}
+
+/// POSIX `pthread_rwlock_timedwrlock` — write lock with an absolute realtime deadline.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_timedwrlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, true, |_, _| {}) }
+}
+
+/// GNU `pthread_rwlock_clockrdlock` — clock-specific timed read lock.
+///
+/// The kernel waits against the specified clock; no epoch conversion occurs.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_clockrdlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, false, |_, _| {}) }
+}
+
+/// GNU `pthread_rwlock_clockwrlock` — clock-specific timed write lock.
+///
+/// Writer registration and timeout cleanup are shared with the realtime API.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_clockwrlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, true, |_, _| {}) }
+}
+
+/// GNU `pthread_cond_clockwait` — clock-specific timed condvar wait.
+///
+/// The requested clock selects the kernel's absolute futex deadline directly.
+/// Never convert between epochs or change the condition variable's stored
+/// clock: concurrent waits may choose different clocks on the same object.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_cond_clockwait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
+    if cond.is_null() || mutex.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
+    // SAFETY: the caller supplies a live timespec; negative seconds mean past.
+    if !(0..1_000_000_000).contains(&unsafe { (*abstime).tv_nsec }) {
+        return libc::EINVAL;
+    }
+    // SAFETY: the common path validates both synchronization objects and
+    // retains their normal cancellation, owner-death and relocking guards.
+    unsafe { cond_wait_common(cond, mutex, Some(&*abstime), Some(clockid)) }
+}
+
+// ---------------------------------------------------------------------------
+// Thread join extensions (GNU)
+// ---------------------------------------------------------------------------
+
+/// GNU `pthread_timedjoin_np` — join with timeout.
+///
+/// Native implementation: waits for thread completion using futex with timeout.
+/// Returns `ETIMEDOUT` if the thread hasn't finished by the deadline.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_timedjoin_np(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    abstime: *const libc::timespec,
+) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    // SAFETY: the common implementation retains the existing deadline/target
+    // validation and admits cancellation before any native join claim.
+    unsafe { pthread_timedjoin_for_caller(thread, retval, abstime, caller) }
+}
+
+unsafe fn pthread_timedjoin_for_caller(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    abstime: *const libc::timespec,
+    caller: usize,
+) -> c_int {
+    if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
+        if abstime.is_null() {
+            return unsafe { pthread_join_for_caller(thread, retval, caller) };
+        }
+        if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {
+            return unsafe { host_timedjoin(host_thread_handle(thread), retval, abstime) };
+        }
+    }
+
+    if abstime.is_null() {
+        // NULL timeout = blocking join.
+        return unsafe { native_pthread_join(thread, retval, caller) };
+    }
+    unsafe {
+        native_pthread_join_common(
+            thread,
+            retval,
+            caller,
+            Some((libc::CLOCK_REALTIME, abstime)),
+        )
+    }
+}
+
+/// GNU `pthread_tryjoin_np` — non-blocking join.
+///
+/// Native implementation: checks if thread is already finished and joins if so,
+/// otherwise returns `EBUSY`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_tryjoin_np(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+) -> c_int {
+    if !force_native_threading_enabled()
+        && !is_managed_thread_handle(thread)
+        && let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()
+    {
+        return unsafe { host_tryjoin(host_thread_handle(thread), retval) };
+    }
+
+    let thread_key = thread as usize;
+    let handle_ptr = thread as *mut ThreadHandle;
+    let my_tid = core_self_tid();
+
+    if let Some(my_handle) = core_handle_for_tid(my_tid)
+        && handle_ptr == my_handle
+    {
+        return libc::EDEADLK;
+    }
+    if my_tid > 0 && thread_key == my_tid as usize {
+        return libc::EDEADLK;
+    }
+
+    // Check if thread is finished without removing from registry.
+    {
+        let registry = THREAD_HANDLE_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match registry.get(&thread_key) {
+            Some(record) => {
+                let handle_ptr = record.handle_raw as *mut ThreadHandle;
+                // SAFETY: registry stores valid handles.
+                let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
+                match state {
+                    s if s == THREAD_FINISHED => {
+                        // Thread is done; proceed to join below.
+                    }
+                    s if s == THREAD_DETACHED || s == THREAD_JOINED => {
+                        return libc::EINVAL;
+                    }
+                    _ => {
+                        // STARTING or RUNNING — not finished yet.
+                        return libc::EBUSY;
+                    }
+                }
+            }
+            None => {
+                if is_detached_thread_handle(thread) {
+                    return libc::EINVAL;
+                }
+                return libc::ESRCH;
+            }
+        }
+    }
+
+    // Thread is FINISHED. Perform a full join.
+    unsafe { native_pthread_join(thread, retval, 0) }
+}
+
+/// GNU `pthread_clockjoin_np` — clock-specific timed join.
+///
+/// The kernel waits against the requested clock without epoch conversion.
+/// Cancellation and timeout leave the target available for a later join.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
+    if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
+        if abstime.is_null() {
+            return unsafe { pthread_join_for_caller(thread, retval, caller) };
+        }
+        if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {
+            return unsafe { host_clockjoin(host_thread_handle(thread), retval, clockid, abstime) };
+        }
+    }
+
+    if abstime.is_null() {
+        return unsafe { native_pthread_join(thread, retval, caller) };
+    }
+    unsafe { native_pthread_join_common(thread, retval, caller, Some((clockid, abstime))) }
+}
+
+// ---------------------------------------------------------------------------
+// Thread signals
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_kill` — send signal to thread.
+///
+/// Native implementation using `tgkill(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
+    // Validate signal number (0 is allowed for existence check).
+    if !(0..=64).contains(&sig) {
+        runtime_policy::record_semantic_deny(
+            "pthread_kill",
+            ApiFamily::Signal,
+            0,
+            0,
+            false,
+            libc::EINVAL,
+            "invalid_signal_number",
+        );
+        return libc::EINVAL;
+    }
+    match resolve_thread_tid(thread) {
+        Some(tid) => {
+            let pid = raw_syscall::sys_getpid();
+            match raw_syscall::sys_tgkill(pid, tid, sig) {
+                Ok(_) => 0,
+                Err(errno) => errno,
+            }
+        }
+        None => libc::ESRCH,
+    }
+}
+
+/// glibc reserved-namespace alias for [`pthread_kill`].
+///
+/// # Safety
+///
+/// Same as [`pthread_kill`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
+    unsafe { pthread_kill(thread, sig) }
+}
+
+/// GNU `pthread_sigqueue` — queue signal with value to thread.
+///
+/// Native implementation using `rt_tgsigqueueinfo(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_sigqueue(
+    thread: libc::pthread_t,
+    sig: c_int,
+    value: libc::sigval,
+) -> c_int {
+    // glibc refuses only its internal SIGCANCEL/SIGSETXID; the kernel judges
+    // the rest (signal 0 is an existence check, > 64 is EINVAL).
+    if frankenlibc_core::signal::glibc_reserved_signal(sig) {
+        return libc::EINVAL;
+    }
+    match resolve_thread_tid(thread) {
+        Some(tid) => {
+            let pid = raw_syscall::sys_getpid();
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() }; // ubs:ignore - siginfo_t storage is zeroed before all queued-signal fields are filled.
+            info.si_signo = sig;
+            info.si_errno = 0;
+            info.si_code = libc::SI_QUEUE;
+            // Encode sender identity and queued payload using the Linux queue
+            // siginfo layout instead of hard-coded byte offsets.
+            let info_words = (&mut info as *mut libc::siginfo_t).cast::<u32>();
+            let caller_uid = raw_syscall::sys_getuid();
+            let value_bits = value.sival_ptr as usize as u64;
+            unsafe {
+                *info_words.add(3) = pid as u32;
+                *info_words.add(4) = caller_uid;
+                if std::mem::size_of::<usize>() > 4 {
+                    // Linux aligns `sigval_t` to 8 bytes inside the SI_QUEUE
+                    // payload, leaving one 32-bit hole after `si_uid`.
+                    *info_words.add(6) = value_bits as u32;
+                    *info_words.add(7) = (value_bits >> 32) as u32;
+                } else {
+                    *info_words.add(5) = value_bits as u32;
+                }
+            }
+            match unsafe {
+                raw_syscall::sys_rt_tgsigqueueinfo(
+                    pid,
+                    tid,
+                    sig,
+                    &info as *const libc::siginfo_t as *const u8,
+                )
+            } {
+                Ok(_) => 0,
+                Err(errno) => errno,
+            }
+        }
+        None => libc::ESRCH,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thread affinity (get/set for running thread)
+// ---------------------------------------------------------------------------
+
+/// GNU `pthread_getaffinity_np` — get CPU affinity of running thread.
+///
+/// Native implementation using `sched_getaffinity(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getaffinity_np(
+    thread: libc::pthread_t,
+    cpusetsize: usize,
+    cpuset: *mut libc::cpu_set_t,
+) -> c_int {
+    if cpuset.is_null() {
+        return libc::EINVAL;
+    }
+    match resolve_thread_tid(thread) {
+        Some(tid) => {
+            match unsafe { raw_syscall::sys_sched_getaffinity(tid, cpusetsize, cpuset as *mut u8) }
+            {
+                Ok(filled) => {
+                    // Kernel may return fewer bytes than requested; zero the rest.
+                    let filled = filled as usize;
+                    if filled < cpusetsize {
+                        unsafe {
+                            std::ptr::write_bytes(
+                                (cpuset as *mut u8).add(filled),
+                                0,
+                                cpusetsize - filled,
+                            );
+                        }
+                    }
+                    0
+                }
+                Err(errno) => errno,
+            }
+        }
+        None => libc::ESRCH,
+    }
+}
+
+/// GNU `pthread_setaffinity_np` — set CPU affinity of running thread.
+///
+/// Native implementation using `sched_setaffinity(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setaffinity_np(
+    thread: libc::pthread_t,
+    cpusetsize: usize,
+    cpuset: *const libc::cpu_set_t,
+) -> c_int {
+    if cpuset.is_null() {
+        return libc::EINVAL;
+    }
+    match resolve_thread_tid(thread) {
+        Some(tid) => {
+            match unsafe {
+                raw_syscall::sys_sched_setaffinity(tid, cpusetsize, cpuset as *const u8)
+            } {
+                Ok(()) => 0,
+                Err(errno) => errno,
+            }
+        }
+        None => libc::ESRCH,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Concurrency (obsolete POSIX, kept for compat)
+// ---------------------------------------------------------------------------
+
+/// Obsolete POSIX `pthread_setconcurrency` — set concurrency level (no-op on Linux).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setconcurrency(level: c_int) -> c_int {
+    if level < 0 {
+        return libc::EINVAL;
+    }
+    PTHREAD_CONCURRENCY_LEVEL.store(level, Ordering::Release);
+    0
+}
+
+/// Obsolete POSIX `pthread_getconcurrency` — get concurrency level.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getconcurrency() -> c_int {
+    PTHREAD_CONCURRENCY_LEVEL.load(Ordering::Acquire)
+}
+
+/// Deprecated `pthread_yield` — yield processor (GNU extension, same as sched_yield).
+///
+/// Native implementation using `sched_yield(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_yield() -> c_int {
+    raw_syscall::sys_sched_yield();
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Thread lifecycle extensions
+// ---------------------------------------------------------------------------
+
+/// POSIX `pthread_exit` — terminate calling thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
+    let tid = core_self_tid();
+    if let Some(handle_ptr) = core_handle_for_tid(tid) {
+        // SAFETY: this thread owns the live handle until final teardown. The
+        // joiner reads retval only after the kernel clears the thread's tid.
+        unsafe {
+            (*handle_ptr).exit_started.store(1, Ordering::Relaxed);
+            *(*handle_ptr).retval.get() = retval as usize;
+        }
+        unsafe { continue_native_thread_exit() };
+    }
+
+    if !force_native_threading_enabled()
+        && let Some(host_exit) = resolved_thread_exit_raw()
+    {
+        unsafe { host_exit(retval) };
+    }
+
+    with_pthread_tls(|tls| tls.native_exit_started = true);
+    unsafe { continue_native_thread_exit() };
+}
+
+/// glibc reserved-namespace alias for [`pthread_exit`].
+///
+/// # Safety
+///
+/// Same as [`pthread_exit`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_exit(retval: *mut c_void) -> ! {
+    unsafe { pthread_exit(retval) }
+}
+
+/// GNU `pthread_getcpuclockid` — get CPU-time clock for a thread.
+///
+/// Native implementation using the Linux kernel per-thread CPUCLOCK formula:
+/// `clockid = (~tid << 3) | 6`
+/// (`CPUCLOCK_SCHED | CPUCLOCK_PERTHREAD_MASK` for thread CPU time).
+#[inline]
+fn thread_cpuclock_id_from_tid(tid: i32) -> libc::clockid_t {
+    ((!tid as libc::clockid_t) << 3) | 6
+}
+
+#[inline]
+fn validate_thread_cpuclockid(clockid: libc::clockid_t) -> Result<(), c_int> {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() }; // ubs:ignore - zeroed timespec is overwritten by clock_getres before use.
+    match unsafe {
+        raw_syscall::sys_clock_getres(clockid, &mut ts as *mut libc::timespec as *mut u8)
+    } {
+        Ok(()) => Ok(()),
+        Err(errno) => Err(if errno == libc::EINVAL {
+            libc::ESRCH
+        } else {
+            errno
+        }),
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getcpuclockid(
+    thread: libc::pthread_t,
+    clockid: *mut libc::clockid_t,
+) -> c_int {
+    if clockid.is_null() {
+        return libc::EINVAL;
+    }
+    match resolve_thread_tid(thread) {
+        Some(tid) => {
+            let cid = thread_cpuclock_id_from_tid(tid);
+            if let Err(errno) = validate_thread_cpuclockid(cid) {
+                return errno;
+            }
+            unsafe { *clockid = cid };
+            0
+        }
+        None => libc::ESRCH,
+    }
+}
+
+/// GNU `pthread_gettid_np` — get kernel TID for a thread.
+///
+/// Native implementation using `THREAD_HANDLE_REGISTRY` lookup.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_gettid_np(thread: libc::pthread_t) -> libc::pid_t {
+    resolve_thread_tid(thread).unwrap_or(-1) as libc::pid_t
+}
+
+/// GNU `pthread_attr_getsigmask_np` — get signal mask from thread attributes.
+/// Native implementation using extended attr registry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getsigmask_np(
+    attr: *const libc::pthread_attr_t,
+    sigmask: *mut libc::sigset_t,
+) -> c_int {
+    if managed_attr_data_ptr_const(attr).is_none() || sigmask.is_null() {
+        return libc::EINVAL;
+    }
+    let key = attr as usize;
+    let reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    if let Some(ext) = reg.get(&key)
+        && let Some(ref mask_bytes) = ext.sigmask
+    {
+        // SAFETY: sigmask points to caller-owned memory (sigset_t = 128 bytes on x86_64).
+        unsafe {
+            std::ptr::copy_nonoverlapping(mask_bytes.as_ptr(), sigmask.cast::<u8>(), 128);
+        }
+        return 0;
+    }
+    // No sigmask set: PTHREAD_ATTR_NO_SIGMASK_NP behavior — return -1.
+    // glibc returns PTHREAD_ATTR_NO_SIGMASK_NP (-1) to indicate "not set".
+    -1
+}
+
+/// GNU `pthread_attr_setsigmask_np` — set signal mask in thread attributes.
+/// Native implementation using extended attr registry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setsigmask_np(
+    attr: *mut libc::pthread_attr_t,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    let key = attr as usize;
+    if sigmask.is_null() {
+        // NULL sigmask clears the stored mask.
+        if let Ok(mut reg) = EXTENDED_ATTR_REGISTRY.lock()
+            && let Some(ext) = reg.get_mut(&key)
+        {
+            ext.sigmask = None;
+        }
+        // SAFETY: data pointer is valid.
+        unsafe { (*data).flags &= !2 }; // clear bit 1
+        return 0;
+    }
+    let mut mask_bytes = [0u8; 128];
+    // SAFETY: sigmask points to caller-owned sigset_t (128 bytes on x86_64).
+    unsafe {
+        std::ptr::copy_nonoverlapping(sigmask.cast::<u8>(), mask_bytes.as_mut_ptr(), 128);
+    }
+    let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    let ext = reg.entry(key).or_insert_with(|| ExtendedAttrData {
+        affinity: None,
+        sigmask: None,
+    });
+    ext.sigmask = Some(mask_bytes);
+    // SAFETY: data pointer is valid.
+    unsafe { (*data).flags |= 2 }; // bit 1: sigmask set
+    0
+}
+
+/// GNU `pthread_getattr_default_np` — get default thread attributes.
+/// Native implementation using global default attr state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getattr_default_np(attr: *mut libc::pthread_attr_t) -> c_int {
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    let defaults = match DEFAULT_THREAD_ATTR.lock() {
+        Ok(d) => d.clone(),
+        Err(_) => return libc::EINVAL,
+    };
+    // SAFETY: data pointer is non-null and aligned.
+    unsafe {
+        (*data).magic = MANAGED_ATTR_MAGIC;
+        (*data).detach_state = defaults.detach_state;
+        (*data).stack_size = defaults.stack_size;
+        (*data).guard_size = defaults.guard_size;
+        (*data).stack_addr = 0;
+        (*data).inherit_sched = defaults.inherit_sched;
+        (*data).sched_policy = defaults.sched_policy;
+        (*data).sched_priority = defaults.sched_priority;
+        (*data).flags = 0;
+        if defaults.extended.affinity.is_some() {
+            (*data).flags |= 1;
+        }
+        if defaults.extended.sigmask.is_some() {
+            (*data).flags |= 2;
+        }
+    }
+    let key = attr as usize;
+    let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    if defaults.extended.affinity.is_some() || defaults.extended.sigmask.is_some() {
+        reg.insert(key, defaults.extended.clone());
+    } else {
+        reg.remove(&key);
+    }
+    0
+}
+
+/// GNU `pthread_setattr_default_np` — set default thread attributes.
+/// Native implementation using global default attr state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setattr_default_np(attr: *const libc::pthread_attr_t) -> c_int {
+    let Some(data) = managed_attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    // A caller-owned stack cannot be shared by every future default thread.
+    // Reject it before mutating defaults rather than silently dropping the
+    // address and retaining only its size.
+    // SAFETY: the managed-attribute lookup validated this live overlay.
+    if unsafe { (*data).has_stack_address() } {
+        return libc::EINVAL;
+    }
+    let key = attr as usize;
+    let extended = {
+        let reg = match EXTENDED_ATTR_REGISTRY.lock() {
+            Ok(r) => r,
+            Err(_) => return libc::EINVAL,
+        };
+        reg.get(&key).cloned().unwrap_or(ExtendedAttrData {
+            affinity: None,
+            sigmask: None,
+        })
+    };
+    let mut defaults = match DEFAULT_THREAD_ATTR.lock() {
+        Ok(d) => d,
+        Err(_) => return libc::EINVAL,
+    };
+    // SAFETY: data pointer is non-null and aligned.
+    unsafe {
+        defaults.detach_state = (*data).detach_state;
+        defaults.stack_size = (*data).stack_size;
+        defaults.guard_size = (*data).guard_size;
+        defaults.inherit_sched = (*data).inherit_sched;
+        defaults.sched_policy = (*data).sched_policy;
+        defaults.sched_priority = (*data).sched_priority;
+    }
+    defaults.extended = extended;
+    DEFAULT_THREAD_ATTR_OVERRIDDEN.store(true, Ordering::Release);
+    0
+}
+
+// ===========================================================================
+// __pthread_* internal aliases — glibc exports these for internal use
+// ===========================================================================
+
+/// `__pthread_mutex_lock` — internal alias for pthread_mutex_lock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_lock(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_lock(m) }
+}
+
+/// `__pthread_mutex_unlock` — internal alias for pthread_mutex_unlock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_unlock(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_unlock(m) }
+}
+
+/// `__pthread_mutex_trylock` — internal alias for pthread_mutex_trylock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_trylock(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_trylock(m) }
+}
+
+/// `__pthread_mutex_init` — internal alias for pthread_mutex_init.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_init(
+    m: *mut libc::pthread_mutex_t,
+    attr: *const libc::pthread_mutexattr_t,
+) -> c_int {
+    unsafe { pthread_mutex_init(m, attr) }
+}
+
+/// `__pthread_mutex_destroy` — internal alias for pthread_mutex_destroy.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_destroy(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_destroy(m) }
+}
+
+/// `__pthread_mutexattr_init` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int {
+    unsafe { pthread_mutexattr_init(attr) }
+}
+
+/// `__pthread_mutexattr_destroy` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutexattr_destroy(
+    attr: *mut libc::pthread_mutexattr_t,
+) -> c_int {
+    unsafe { pthread_mutexattr_destroy(attr) }
+}
+
+/// `__pthread_mutexattr_settype` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutexattr_settype(
+    attr: *mut libc::pthread_mutexattr_t,
+    kind: c_int,
+) -> c_int {
+    unsafe { pthread_mutexattr_settype(attr, kind) }
+}
+
+/// `__pthread_rwlock_init` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_init(
+    rwlock: *mut libc::pthread_rwlock_t,
+    attr: *const libc::pthread_rwlockattr_t,
+) -> c_int {
+    unsafe { pthread_rwlock_init(rwlock, attr) }
+}
+
+/// `__pthread_rwlock_destroy` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_destroy(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    unsafe { pthread_rwlock_destroy(rwlock) }
+}
+
+/// `__pthread_rwlock_rdlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    unsafe { pthread_rwlock_rdlock(rwlock) }
+}
+
+/// `__pthread_rwlock_wrlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_wrlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    unsafe { pthread_rwlock_wrlock(rwlock) }
+}
+
+/// `__pthread_rwlock_unlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_unlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    unsafe { pthread_rwlock_unlock(rwlock) }
+}
+
+/// `__pthread_rwlock_tryrdlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_tryrdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    unsafe { pthread_rwlock_tryrdlock(rwlock) }
+}
+
+/// `__pthread_rwlock_trywrlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_trywrlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    unsafe { pthread_rwlock_trywrlock(rwlock) }
+}
+
+/// `__pthread_once` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_once(
+    once: *mut libc::pthread_once_t,
+    init: Option<unsafe extern "C-unwind" fn()>,
+) -> c_int {
+    unsafe { pthread_once(once, init) }
+}
+
+/// `__pthread_key_create` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_key_create(
+    key: *mut libc::pthread_key_t,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> c_int {
+    unsafe { pthread_key_create(key, dtor) }
+}
+
+/// `__pthread_getspecific` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
+    unsafe { pthread_getspecific(key) }
+}
+
+/// `__pthread_setspecific` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_setspecific(
+    key: libc::pthread_key_t,
+    value: *const c_void,
+) -> c_int {
+    unsafe { pthread_setspecific(key, value) }
+}
+
+/// Whether the calling thread's cancellation state lives in glibc's TCB.
+/// Native threads share the creating thread's TCB, so they must never be
+/// linked into glibc's per-thread cleanup chain.
+pub(crate) fn host_cancellation_thread() -> bool {
+    // A registered native identity is authoritative even if inherited compiler
+    // TLS still contains its creator's cached host-backend classification.
+    core_current_thread_handle().is_none() && current_threading_backend() == THREAD_BACKEND_HOST
+}
+
+pub(crate) type LegacyCleanupPush =
+    unsafe extern "C-unwind" fn(*mut c_void, *mut c_void, *mut c_void);
+pub(crate) type LegacyCleanupPop = unsafe extern "C-unwind" fn(*mut c_void, c_int);
+
+struct HostLegacyCleanup {
+    push: LegacyCleanupPush,
+    pop: LegacyCleanupPop,
+    push_defer: LegacyCleanupPush,
+    pop_restore: LegacyCleanupPop,
+}
+
+fn host_legacy_cleanup() -> Option<&'static HostLegacyCleanup> {
+    if !host_cancellation_thread() {
+        return None;
+    }
+    static FUNCTIONS: OnceLock<Option<HostLegacyCleanup>> = OnceLock::new();
+    FUNCTIONS
+        .get_or_init(|| {
+            // Resolve the whole family before linking a buffer: its matching
+            // pop must use the same chain. The raw resolver also finds GNU
+            // compatibility-only versions of push_defer and pop_restore.
+            let push = crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_push")?;
+            let pop = crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_pop")?;
+            let push_defer =
+                crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_push_defer")?;
+            let pop_restore =
+                crate::host_resolve::resolve_host_symbol_raw("_pthread_cleanup_pop_restore")?;
+            // SAFETY: these are the GNU cleanup-buffer entrypoints in the
+            // host libc image, never our interposed exports. Both the handler
+            // call and restoration of asynchronous cancellation can unwind.
+            Some(unsafe {
+                HostLegacyCleanup {
+                    push: std::mem::transmute::<usize, LegacyCleanupPush>(push),
+                    pop: std::mem::transmute::<usize, LegacyCleanupPop>(pop),
+                    push_defer: std::mem::transmute::<usize, LegacyCleanupPush>(push_defer),
+                    pop_restore: std::mem::transmute::<usize, LegacyCleanupPop>(pop_restore),
+                }
+            })
+        })
+        .as_ref()
+}
+
+pub(crate) fn host_legacy_cleanup_push(deferred: bool) -> Option<LegacyCleanupPush> {
+    let functions = host_legacy_cleanup()?;
+    Some(if deferred {
+        functions.push_defer
+    } else {
+        functions.push
+    })
+}
+
+pub(crate) fn host_legacy_cleanup_pop(restore: bool) -> Option<LegacyCleanupPop> {
+    let functions = host_legacy_cleanup()?;
+    Some(if restore {
+        functions.pop_restore
+    } else {
+        functions.pop
+    })
+}
+
+/// The public GNU pthread header puts four private pointer words after the
+/// machine jump buffer and its (pointer-aligned) saved-mask flag. The first
+/// two words hold our previous entry and the deferred region's saved type.
+/// They belong to libc; the application macro owns the surrounding stack
+/// buffer and invokes its own callback after we restore the jump context.
+#[cfg(target_arch = "x86_64")]
+const CANCEL_BUFFER_PRIVATE_WORD: usize = 9;
+#[cfg(target_arch = "aarch64")]
+const CANCEL_BUFFER_PRIVATE_WORD: usize = 23;
+
+// Both GNU buffer layouts are pointer-aligned on the supported downward-growing
+// stacks. Bit zero distinguishes a legacy callback buffer from a modern C jump
+// buffer. The head and each buffer's private previous link carry this tag; only
+// untagged addresses may be dereferenced. Host cleanup chains never see tags.
+const NATIVE_LEGACY_CLEANUP_TAG: usize = 1;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NativeLegacyCleanupBuffer {
+    routine: *mut c_void,
+    argument: *mut c_void,
+    cancel_type: c_int,
+    previous: usize,
+}
+
+const _: () = assert!(std::mem::size_of::<NativeLegacyCleanupBuffer>() == 32);
+const _: () =
+    assert!(std::mem::align_of::<NativeLegacyCleanupBuffer>() > NATIVE_LEGACY_CLEANUP_TAG);
+
+fn native_cleanup_head() -> usize {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: this is the calling native thread's live handle.
+        return unsafe { (*handle).cleanup_head.load(Ordering::Relaxed) };
+    }
+    with_pthread_tls(|tls| tls.native_cleanup_head)
+}
+
+fn set_native_cleanup_head(head: usize) {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: only this live handle's owner mutates its cleanup chain.
+        unsafe { (*handle).cleanup_head.store(head, Ordering::Relaxed) };
+    } else {
+        with_pthread_tls(|tls| tls.native_cleanup_head = head);
+    }
+}
+
+pub(crate) unsafe fn native_legacy_cleanup_push(
+    buf: *mut c_void,
+    routine: *mut c_void,
+    argument: *mut c_void,
+    deferred: bool,
+) {
+    let frame = buf.cast::<NativeLegacyCleanupBuffer>();
+    // SAFETY: the caller owns a live, aligned GNU legacy cleanup buffer.
+    // Initialize every field before publishing it in this native thread's
+    // owned chain. Its previous link may name either kind of cleanup buffer.
+    unsafe {
+        frame.write(NativeLegacyCleanupBuffer {
+            routine,
+            argument,
+            cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
+            previous: native_cleanup_head(),
+        });
+    }
+    set_native_cleanup_head(buf as usize | NATIVE_LEGACY_CLEANUP_TAG);
+    if deferred {
+        // Moving to DEFERRED cannot act on a pending asynchronous request.
+        unsafe {
+            pthread_setcanceltype(
+                PTHREAD_CANCEL_DEFERRED_TYPE,
+                std::ptr::addr_of_mut!((*frame).cancel_type),
+            );
+        }
+    }
+}
+
+pub(crate) unsafe fn native_legacy_cleanup_pop(buf: *mut c_void, execute: c_int, restore: bool) {
+    // SAFETY: this is a matching live legacy buffer. Copy its scalar fields
+    // before user code runs; no Rust reference, TLS borrow or lock may survive
+    // a handler which reenters libc or initiates an unwind.
+    let frame = unsafe { buf.cast::<NativeLegacyCleanupBuffer>().read() };
+    set_native_cleanup_head(frame.previous);
+    if restore && frame.cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
+        // GNU's C cleanup entrypoints reinstate a saved ASYNCHRONOUS type;
+        // they do not overwrite a deliberate type change in a region that
+        // started DEFERRED. This differs from the explicit setcanceltype call
+        // in the C++ cleanup class. A pending request can act here, after this
+        // buffer is removed and before an explicitly requested callback runs.
+        unsafe { pthread_setcanceltype(frame.cancel_type, std::ptr::null_mut()) };
+    }
+    if execute != 0 {
+        // SAFETY: push received the caller's live cleanup routine and argument.
+        let routine: unsafe extern "C-unwind" fn(*mut c_void) =
+            unsafe { std::mem::transmute(frame.routine) };
+        unsafe { routine(frame.argument) };
+    }
+}
+
+unsafe fn register_native_cleanup(buf: *mut c_void, deferred: bool) {
+    // SAFETY: the caller supplies the live __pthread_unwind_buf_t emitted by
+    // the public pthread_cleanup_push macro. Its private words remain valid
+    // until the matching pop or non-local cleanup transfer.
+    let private = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD) };
+    unsafe { private.write(native_cleanup_head()) };
+    set_native_cleanup_head(buf as usize);
+    if deferred {
+        let mut previous = PTHREAD_CANCEL_DEFERRED_TYPE;
+        // Moving to DEFERRED cannot act on a pending asynchronous request.
+        unsafe { pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED_TYPE, &mut previous) };
+        unsafe { private.add(1).write(previous as usize) };
+    }
+}
+
+unsafe fn unregister_native_cleanup(buf: *mut c_void, restore: bool) {
+    // SAFETY: this is the matching live buffer registered by the macro.
+    let private = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD) };
+    set_native_cleanup_head(unsafe { private.read() });
+    if restore {
+        let previous = unsafe { private.add(1).read() } as c_int;
+        // Remove the frame before restoring ASYNCHRONOUS: a pending request
+        // acts inside setcanceltype and must see only the enclosing handlers.
+        // As with the legacy GNU C cleanup pair, a saved DEFERRED type must
+        // leave a later explicit change to ASYNCHRONOUS intact.
+        if previous == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
+            unsafe { pthread_setcanceltype(previous, std::ptr::null_mut()) };
+        }
+    }
+}
+
+/// Transfer to one C jump buffer after its deeper frames have unwound.
+/// The experimental no-unwinder lane also drains legacy callbacks here; the
+/// ordinary lane runs them at the corresponding stack boundary below.
+/// No lock, Rust borrow, or owned temporary may span a callback or transfer.
+unsafe fn transfer_native_cleanup() -> ! {
+    loop {
+        let head = native_cleanup_head();
+        if head & NATIVE_LEGACY_CLEANUP_TAG != 0 {
+            let buf = (head & !NATIVE_LEGACY_CLEANUP_TAG) as *mut c_void;
+            // SAFETY: this is the owned chain's live legacy buffer. Removing
+            // it before its callback preserves reentrant push/pop behavior.
+            unsafe { native_legacy_cleanup_pop(buf, 1, false) };
+            continue;
+        }
+        if head != 0 {
+            let buf = head as *mut c_void;
+            // SAFETY: this untagged entry is a modern C jump buffer. Preserve
+            // its previous link's tag for the next cleanup after the longjmp.
+            let previous = unsafe { buf.cast::<usize>().add(CANCEL_BUFFER_PRIVATE_WORD).read() };
+            set_native_cleanup_head(previous);
+            unsafe { crate::setjmp_abi::longjmp(buf, 1) };
+        }
+        unsafe { finish_native_thread_exit() };
+    }
+}
+
+unsafe fn finish_native_thread_exit() -> ! {
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the current owner stored its return value before entering
+        // this chain; all handlers have completed before key destruction.
+        let retval = unsafe { *(*handle).retval.get() };
+        unsafe { core_exit_current_thread(handle, retval) };
+    }
+    // The initial thread can select the native backend without a clone-owned
+    // handle. Its ordinary TLS fallback is private because managed children
+    // keep all cleanup state in their own handles.
+    frankenlibc_core::pthread::tls::run_exiting_thread_key_destructors(core_self_tid());
+    raw_syscall::sys_exit_thread(0);
+}
+
+// Native lifecycle owns the exception object and cleanup destination. In
+// standalone builds (and in interpose processes where no external unwinder is
+// resident), FrankenLibC drives forced unwinding directly through
+// `owned_unwind_abi` with zero `libgcc_s.so.1` dependency. When an external
+// Itanium unwinder (`libgcc_s.so.1` / `libunwind`) is already resident in an
+// interposed process, we pair its `_Unwind_ForcedUnwind` and `_Unwind_GetCFA`
+// so personalities bound to that unwinder receive its opaque `_Unwind_Context`.
+#[repr(C, align(16))]
+struct NativeUnwindException {
+    exception_class: u64,
+    cleanup: unsafe extern "C" fn(c_int, *mut NativeUnwindException),
+    private: [usize; 2],
+}
+
+const _: () = {
+    assert!(
+        core::mem::size_of::<NativeUnwindException>()
+            == core::mem::size_of::<crate::owned_unwind_abi::UnwindException>()
+    );
+    assert!(
+        core::mem::align_of::<NativeUnwindException>()
+            == core::mem::align_of::<crate::owned_unwind_abi::UnwindException>()
+    );
+};
+
+type ForcedUnwindStopRawFn = unsafe extern "C-unwind" fn(
+    c_int,
+    c_int,
+    u64,
+    *mut NativeUnwindException,
+    *mut c_void,
+    *mut c_void,
+) -> c_int;
+
+type ForcedUnwindRawFn = unsafe extern "C-unwind" fn(
+    *mut NativeUnwindException,
+    ForcedUnwindStopRawFn,
+    *mut c_void,
+) -> c_int;
+
+type GetCfaRawFn = unsafe extern "C" fn(*mut c_void) -> usize;
+
+unsafe extern "C" fn owned_get_cfa_bridge(context: *mut c_void) -> usize {
+    // SAFETY: context was created by `owned_unwind_abi` for this stop callback.
+    unsafe { crate::owned_unwind_abi::owned_get_cfa_raw(context) }
+}
+
+unsafe extern "C-unwind" fn owned_forced_unwind_bridge(
+    exception: *mut NativeUnwindException,
+    stop: ForcedUnwindStopRawFn,
+    argument: *mut c_void,
+) -> c_int {
+    type OwnedStopFnPtr = unsafe extern "C-unwind" fn(
+        c_int,
+        c_int,
+        u64,
+        *mut crate::owned_unwind_abi::UnwindException,
+        *mut crate::owned_unwind_abi::UnwindContext,
+        *mut c_void,
+    ) -> c_int;
+    // SAFETY: NativeUnwindException and owned_unwind_abi::UnwindException share
+    // identical #[repr(C, align(16))] Itanium _Unwind_Exception layout, and
+    // UnwindContext is passed opaquely as *mut c_void to `stop`.
+    let stop_typed: crate::owned_unwind_abi::UnwindStopFn =
+        Some(unsafe { core::mem::transmute::<ForcedUnwindStopRawFn, OwnedStopFnPtr>(stop) });
+    unsafe {
+        crate::owned_unwind_abi::owned_forced_unwind_entry(
+            exception.cast::<crate::owned_unwind_abi::UnwindException>(),
+            stop_typed,
+            argument,
+        )
+    }
+}
+
+#[inline]
+unsafe fn resolve_forced_unwind_pair() -> (ForcedUnwindRawFn, GetCfaRawFn) {
+    #[cfg(not(feature = "standalone"))]
+    {
+        // Probe only already-loaded objects via RTLD_NEXT; never dlopen libgcc_s.so.1.
+        let forced = unsafe {
+            crate::host_resolve::host_dlvsym_next_raw(
+                c"_Unwind_ForcedUnwind".as_ptr(),
+                c"GCC_3.0".as_ptr(),
+            )
+        };
+        let get_cfa = unsafe {
+            crate::host_resolve::host_dlvsym_next_raw(
+                c"_Unwind_GetCFA".as_ptr(),
+                c"GCC_3.3".as_ptr(),
+            )
+        };
+        if !forced.is_null() && !get_cfa.is_null() {
+            // SAFETY: both symbols resolved from the resident platform unwinder.
+            return unsafe {
+                (
+                    core::mem::transmute::<*mut c_void, ForcedUnwindRawFn>(forced),
+                    core::mem::transmute::<*mut c_void, GetCfaRawFn>(get_cfa),
+                )
+            };
+        }
+    }
+    (owned_forced_unwind_bridge, owned_get_cfa_bridge)
+}
+
+unsafe extern "C" fn native_unwind_cleanup(_reason: c_int, _exception: *mut NativeUnwindException) {
+    // A language catch may observe cancellation only if it resumes unwinding.
+    // Consuming the foreign exception would abandon the thread exit protocol.
+    std::process::abort();
+}
+
+unsafe fn native_jump_buffer_stack_pointer(head: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the registered buffer is live; its machine context was
+        // captured by __sigsetjmp. x86-64 uses the process pointer guard.
+        let saved = unsafe { (head as *const usize).add(6).read() };
+        let guard: usize;
+        unsafe {
+            core::arch::asm!("mov {}, qword ptr fs:[0x30]", out(reg) guard,
+                            options(nostack, readonly, preserves_flags));
+        }
+        saved.rotate_right(17) ^ guard
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: this matches the native __sigsetjmp context in setjmp_abi.
+        let saved = unsafe { (head as *const usize).add(12).read() };
+        saved ^ crate::unistd_abi::__frankenlibc_pointer_guard.load(Ordering::Relaxed)
+    }
+}
+
+unsafe extern "C-unwind" fn native_unwind_stop(
+    version: c_int,
+    actions: c_int,
+    _exception_class: u64,
+    _exception: *mut NativeUnwindException,
+    context: *mut c_void,
+    argument: *mut c_void,
+) -> c_int {
+    if version != 1 {
+        return 2; // _URC_FATAL_PHASE2_ERROR
+    }
+    let at_end = actions & 16 != 0; // _UA_END_OF_STACK
+    let cfa = if at_end {
+        0
+    } else if !argument.is_null() {
+        // SAFETY: `continue_native_thread_exit` passes the matched `GetCfaRawFn`
+        // for the active unwinder via `argument`.
+        let get_cfa: GetCfaRawFn =
+            unsafe { core::mem::transmute::<*mut c_void, GetCfaRawFn>(argument) };
+        unsafe { get_cfa(context) }
+    } else {
+        unsafe { crate::owned_unwind_abi::owned_get_cfa_raw(context) }
+    };
+    loop {
+        let head = native_cleanup_head();
+        if head == 0 {
+            break;
+        }
+        if head & NATIVE_LEGACY_CLEANUP_TAG != 0 {
+            let address = head & !NATIVE_LEGACY_CLEANUP_TAG;
+            // A stop callback precedes its current frame's language cleanup.
+            // GNU's observable boundary includes equality with the buffer's
+            // start: a buffer at the frame's stack base runs before that
+            // frame's destructors, while one above it is reached on a later
+            // outward stop. Comparing the buffer's end changes this ordering.
+            if !at_end && cfa < address {
+                break;
+            }
+            // SAFETY: only the owner registered these live, aligned buffers.
+            // Unlink before invoking user code; a callback may push/pop either
+            // buffer kind and must not inherit a borrow of our thread state.
+            unsafe { native_legacy_cleanup_pop(address as *mut c_void, 1, false) };
+            continue;
+        }
+        if at_end || cfa >= unsafe { native_jump_buffer_stack_pointer(head) } {
+            // Every deeper language cleanup has run. This untagged plain C
+            // buffer resumes its macro and restarts the remaining chain.
+            unsafe { transfer_native_cleanup() };
+        }
+        break;
+    }
+    if at_end {
+        unsafe { finish_native_thread_exit() };
+    }
+    if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: the clone trampoline published its own stack pointer before
+        // enabling application signals or calling user code. The application's
+        // outer frame has CFA == boundary and must still run its personality;
+        // only the next frame crosses it. The synthetic clone frame has no
+        // valid caller and must never be submitted to the platform unwinder.
+        let boundary = unsafe { (*handle).unwind_stack_boundary.load(Ordering::Relaxed) };
+        if boundary != 0 && cfa > boundary {
+            unsafe { finish_native_thread_exit() };
+        }
+    }
+    0 // _URC_NO_REASON: allow this frame's language cleanup to run.
+}
+
+/// Start (or restart after a plain C cleanup callback) a native forced unwind.
+/// The exception lives in owned thread storage, never in an unwound frame.
+/// Declared `extern "C-unwind"` so `-C panic=abort` builds do not emit a
+/// `panic_cannot_unwind` terminate guard around `forced_unwind`.
+unsafe extern "C-unwind" fn continue_native_thread_exit() -> ! {
+    let storage = if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: only this native thread accesses its exception header.
+        unsafe {
+            (*handle)
+                .unwind_exception
+                .get()
+                .cast::<NativeUnwindException>()
+        }
+    } else {
+        // The cache keeps its cell address stable; release its borrow
+        // before entering any unwinder, personality, or application code.
+        with_pthread_tls(|tls| {
+            std::ptr::from_mut(&mut tls.native_unwind_exception).cast::<NativeUnwindException>()
+        })
+    };
+    let (forced_unwind, get_cfa) = unsafe { resolve_forced_unwind_pair() };
+    // SAFETY: both storage variants have 16-byte alignment and 32 bytes.
+    // A restarted chain has abandoned the previous cursor via longjmp.
+    unsafe {
+        storage.write(NativeUnwindException {
+            exception_class: u64::from_be_bytes(*b"FRNKCAN\0"),
+            cleanup: native_unwind_cleanup,
+            private: [0; 2],
+        });
+        forced_unwind(storage, native_unwind_stop, get_cfa as usize as *mut c_void);
+    }
+    // Returning means malformed unwind data or a violated unwind contract;
+    // never silently skip the remaining cleanup and report successful exit.
+    std::process::abort();
+}
+
+/// `__pthread_register_cancel` — C `pthread_cleanup_push` (built without
+/// `-fexceptions`) links its unwind buffer into the thread's cleanup chain
+/// here; a cancellation or `pthread_exit` then runs the handler. On host
+/// threads that chain is glibc's.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(register) = resolved_thread_register_cancel_raw()
+    {
+        unsafe { register(buf) };
+    } else if !buf.is_null() {
+        unsafe { register_native_cleanup(buf, false) };
+    }
+}
+
+/// `__pthread_unregister_cancel` — `pthread_cleanup_pop` counterpart of
+/// [`__pthread_register_cancel`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(unregister) = resolved_thread_unregister_cancel_raw()
+    {
+        unsafe { unregister(buf) };
+    } else if !buf.is_null() {
+        unsafe { unregister_native_cleanup(buf, false) };
+    }
+}
+
+/// `__pthread_register_cancel_defer` — `pthread_cleanup_push_defer_np`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(register) = resolved_thread_register_cancel_defer_raw()
+    {
+        unsafe { register(buf) };
+    } else if !buf.is_null() {
+        unsafe { register_native_cleanup(buf, true) };
+    }
+}
+
+/// `__pthread_unregister_cancel_restore` — `pthread_cleanup_pop_restore_np`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_unregister_cancel_restore(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()
+    {
+        unsafe { unregister(buf) };
+    } else if !buf.is_null() {
+        unsafe { unregister_native_cleanup(buf, true) };
+    }
+}
+
+/// glibc's `struct __pthread_cleanup_frame` (the `-fexceptions` C variant of
+/// `pthread_cleanup_push`, whose frame is run by a cleanup attribute).
+#[repr(C)]
+pub struct PthreadCleanupFrame {
+    cancel_routine: Option<unsafe extern "C-unwind" fn(*mut c_void)>,
+    cancel_arg: *mut c_void,
+    do_it: c_int,
+    cancel_type: c_int,
+}
+
+/// `__pthread_cleanup_routine` — run a `-fexceptions` cleanup frame's handler
+/// when it is popped with a nonzero `execute` or unwound through.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_cleanup_routine(frame: *mut PthreadCleanupFrame) {
+    if frame.is_null() {
+        return;
+    }
+    // SAFETY: the frame is the caller's live cleanup frame.
+    let frame = unsafe { &*frame };
+    if frame.do_it != 0
+        && let Some(routine) = frame.cancel_routine
+    {
+        unsafe { routine(frame.cancel_arg) };
+    }
+}
+
+/// `__pthread_get_minstack` — get minimum stack size for a given attr.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr_t) -> usize {
+    libc::PTHREAD_STACK_MIN
+}
+
+/// `__pthread_unwind_next` — continue a cancellation unwind to the next
+/// registered cleanup buffer (called from the C `pthread_cleanup_push`
+/// expansion after running a handler). Native handlers have already been
+/// removed before their jump transfer, so continuation uses the owned chain.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_unwind_next(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(unwind_next) = resolved_thread_unwind_next_raw()
+    {
+        unsafe { unwind_next(buf) };
+    } else if !host_cancellation_thread() {
+        unsafe { continue_native_thread_exit() };
+    }
+    std::process::abort();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
+
+    unsafe extern "C" fn noop_host_start(_arg: *mut c_void) -> *mut c_void {
+        std::ptr::null_mut()
+    }
+
+    fn alloc_mutex_ptr() -> *mut libc::pthread_mutex_t {
+        let boxed: Box<libc::pthread_mutex_t> = Box::new(unsafe { std::mem::zeroed() }); // ubs:ignore - POSIX mutex storage is initialized by pthread_mutex_init next.
+        Box::into_raw(boxed)
+    }
+
+    unsafe fn free_mutex_ptr(ptr: *mut libc::pthread_mutex_t) {
+        // SAFETY: pointer was returned by `Box::into_raw` in `alloc_mutex_ptr`.
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    // BURNED DOWN (bd-xh08pf), second pass on this module.
+    //
+    // `futex_mutex_roundtrip_and_trylock_busy` is RETIRED, not moved: it is
+    // already covered, better, by tests/pthread_abi_test.rs — see
+    // `mutex_trylock_succeeds_when_unlocked` (:512) and
+    // `mutex_trylock_fails_when_locked` (:524), plus the init/lock/unlock/
+    // destroy round trip at :459-504 and the NULL-mutex EINVAL arm at :479.
+    // Relocating it would have added a fourth copy of an assertion that already
+    // runs three times.
+    //
+    // `futex_mutex_contention_increments_wait_and_wake_counters` is RELOCATED to
+    // tests/pthread_abi_test.rs. Its counters were already exposed for exactly
+    // this purpose (`pthread_mutex_branch_counters_for_tests`, :2372), so the
+    // only change is how it waits: the original slept 10 ms and assumed the
+    // worker had reached the futex, which is the shape that makes this suite's
+    // timing tests fail under parallel load (bd-d3tvn3). It now polls for the
+    // wait-branch counter to move, bounded at 5 s, and fails loudly naming what
+    // it was waiting for. The relocated copy also states the limit the original
+    // left implicit: these counters are process-global, so `>= before + 1` can
+    // be satisfied by another test's contention — it is a smoke test for the
+    // futex path being reached, not an attribution.
+
+    // BURNED DOWN (bd-xh08pf), third pass — the last of this module's stranded
+    // tests. `host_thread_handoff_waiter_observes_parent_publication` is
+    // REPLACED by tests/pthread_host_thread_handoff_test.rs, for two reasons
+    // that only surface when you try to make it run.
+    //
+    // IT COULD NOT COMPILE. It moved an `Arc<HostThreadStartContext>` into
+    // `std::thread::spawn`, but that struct holds the caller's `*mut c_void`
+    // and has no `unsafe impl Send`/`Sync` — the file's only such impl is for
+    // `AtforkHandlers`. `Arc<T>: Send` needs `T: Send + Sync`, so this is
+    // E0277, "`*mut c_void` cannot be shared between threads safely".
+    // Deliberately NOT fixed by adding those impls: the type is correctly
+    // non-Send, because a real handoff never shares it as an `Arc` — the parent
+    // owns it and passes the child a raw address.
+    //
+    // AND IT COVERED THE WRONG HALF. It spawned the waiter and published
+    // immediately, so publication almost always landed before the waiter's
+    // first load: it returned on spin iteration 0 without ever spinning, let
+    // alone blocking. That is the same half every host-backed `pthread_create`
+    // in the suite already exercises. The blocking fallback — where the futex
+    // retry, the EAGAIN/EINTR handling and the volatile errno read live — was
+    // covered by nothing, which is what the replacement gates, using
+    // `HOST_THREAD_HANDOFF_FUTEX_WAITS` to prove which path ran.
+
+    // BURNED DOWN (bd-xh08pf). Three tests stood here —
+    // `pthread_cancel_validates_state_and_type_inputs`,
+    // `pthread_cancel_marks_pending_and_testcancel_consumes_when_enabled` and
+    // `pthread_cancel_self_async_consumes_immediately` — plus the
+    // `reset_cancel_state_for_tests` / `current_thread_pending_cancel` helpers
+    // they used. Dead, like everything in this block (see the comment below).
+    //
+    // TWO OF THEM COULD NOT HAVE PASSED, which is only visible once you try to
+    // make them run. Both assert past a call that terminates the thread:
+    // `pthread_testcancel` (:4437) is `if consume_pending_cancel_for_current_thread()
+    // { pthread_exit(PTHREAD_CANCELED) }`, so with a cancel pending and
+    // cancellation enabled it consumes the flag AND EXITS. The
+    // `assert!(!current_thread_pending_cancel())` after it is unreachable, and
+    // running it would have killed the libtest worker thread rather than
+    // failing. The async variant is the same shape, because `pthread_cancel`
+    // calls `pthread_testcancel` itself on an async self-cancel (:4335).
+    //
+    // Restated in tests/conformance_diff_pthread_cancel.rs as the property POSIX
+    // actually specifies and that is externally observable: a cancelled thread
+    // terminates with PTHREAD_CANCELED as its join value. Each scenario runs on
+    // its own fl-created thread and is observed through `pthread_join`, so the
+    // thread exiting is the expected outcome rather than a harness casualty.
+    // The threads must be fl-MANAGED because setcancelstate/testcancel/cancel
+    // all delegate to host glibc when the backend resolves to
+    // THREAD_BACKEND_HOST — testing them on a host-backed thread would compare
+    // glibc against glibc (bd-v0388t).
+    //
+    // The input-validation half IS compared against live glibc there, and can
+    // be, because both reject an out-of-range argument before touching any
+    // cancellation state — fl at :4343, ahead of its delegation branch.
+}
+
+// Test-only hook: integration tests in `tests/pthread_abi_test.rs` drive the
+// atfork runners directly to cover re-entrant registration (bd-sq7ae). The
+// inline `#[cfg(test)] mod tests` above is dead code because the parent module
+// is gated with `#[cfg(not(test))]` at the crate root — integration tests see
+// the crate compiled without `cfg(test)`, so this item is visible there.
+#[doc(hidden)]
+pub fn __test_run_atfork_prepare() {
+    let _ = run_atfork_prepare();
+}
+
+#[doc(hidden)]
+pub fn __test_run_atfork_phases(child: bool) {
+    let snapshot = run_atfork_prepare();
+    if child {
+        run_atfork_child(&snapshot);
+    } else {
+        run_atfork_parent(&snapshot);
+    }
+}
+
+#[doc(hidden)]
+pub fn __test_with_atfork_unpublished_slot(operation: fn()) {
+    let _guard = lock_atfork_registry();
+    let slot = ATFORK_HANDLERS
+        .inline
+        .iter()
+        .find(|slot| slot.is_empty())
+        .or_else(|| ATFORK_HANDLERS.find_spill_slot(AtforkSlot::is_empty))
+        .expect("test requires an unused registration slot");
+    // Pause a registrar partway through initializing an unpublished payload.
+    // Its child must neither read nor drop these incomplete bytes, and must
+    // be able to reuse the slot for a later complete registration.
+    let pending = unsafe { (*slot.value.get()).as_mut_ptr() };
+    unsafe { std::ptr::addr_of_mut!((*pending).dso).write(usize::MAX) };
+    operation();
+}
+
+#[doc(hidden)]
+pub fn __test_clone_for_fork(
+    host_fork: unsafe extern "C" fn() -> libc::pid_t,
+) -> Result<libc::pid_t, c_int> {
+    crate::process_abi::clone_for_fork(Some(host_fork))
+}
+
+#[doc(hidden)]
+pub fn __test_atfork_handlers_len() -> usize {
+    let _guard = lock_atfork_registry();
+    ATFORK_HANDLERS.len()
+}
+
+#[doc(hidden)]
+pub fn __test_atfork_handlers_clear() {
+    unregister_atfork_matching(|_| true);
+}
+
+/// Test-only hook (bd-rc0923-epic-eeuy4f.24): whether a cancellation point
+/// called from `addr` counts as called from inside this object, so that it
+/// opens no cancellation window (`cancellation_window_hook`).
+#[doc(hidden)]
+pub fn __test_address_is_inside_this_object(addr: usize) -> bool {
+    address_is_inside_this_object(addr)
+}
+
+/// Test-only hook (bd-rc0923-epic-eeuy4f.24): the handle `pthread_cancel`
+/// passes to glibc for `thread`, and whether `thread` is the calling thread.
+#[doc(hidden)]
+pub fn __test_host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
+    host_cancel_target(thread)
+}
+
+/// Replay the host-thread-handle reuse interleaving for the integration gate.
+///
+/// The resolver has already observed `stale_tid` when a replacement thread
+/// publishes `replacement_tid` under the same handle; pruning the stale
+/// observation must preserve the replacement.
+#[doc(hidden)]
+pub fn __test_host_thread_registry_replacement_survives_stale_prune(
+    thread: libc::pthread_t,
+    stale_tid: i32,
+    replacement_tid: i32,
+) -> Option<i32> {
+    let thread_key = thread as usize;
+    {
+        let mut registry = HOST_THREAD_TID_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.insert(thread_key, stale_tid);
+        registry.insert(thread_key, replacement_tid);
+    }
+    prune_registered_host_thread_tid_if_matches(thread_key, stale_tid);
+    let result = HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&thread_key)
+        .copied();
+    HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&thread_key);
+    result
+}
+
+/// Exposes the calling worker's scoped test override state to integration tests.
+#[doc(hidden)]
+pub fn __test_threading_force_native_override_state() -> (bool, usize) {
+    try_with_pthread_tls(|tls| {
+        (
+            tls.force_native_threading_override
+                .unwrap_or_else(global_force_native_threading_enabled),
+            tls.threading_test_override_depth,
+        )
+    })
+    .unwrap_or_else(|| (global_force_native_threading_enabled(), 0))
+}

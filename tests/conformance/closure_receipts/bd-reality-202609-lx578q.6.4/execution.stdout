@@ -1,0 +1,29 @@
+
+running 24 tests
+test backtrace_walk_reports_real_instruction_pointers ... ok
+test compiled_test_binary_eh_frame_has_lookupable_fde ... ok
+test forced_unwind_executes_rust_drop_frames_until_stop_boundary ... ok
+test frame_registration_records_and_removes_fde_sources ... ok
+test get_cfa_handles_null_and_live_backtrace_frames ... ok
+test get_ip_info_marks_return_addresses_after_instruction ... ok
+test leb128_decoders_cover_signed_and_unsigned_boundaries ... ok
+test live_loaded_eh_frame_catalog_returns_well_formed_ranges ... ok
+test loaded_eh_frame_catalog_accepts_gnu_header_inside_load_segment ... ok
+test loaded_eh_frame_catalog_fails_closed_without_gnu_header ... ok
+test loaded_eh_frame_catalog_rejects_malformed_ranges ... ok
+test loaded_eh_frame_catalog_spans_split_text_and_header_loads ... ok
+test minimal_throw_catch_fixture_has_phase1_personality_lsda_metadata ... ok
+test phase1_search_distinguishes_no_handler_and_fatal_personality_results ... ok
+test phase1_search_invokes_personality_with_lsda_context ... ok
+test phase2_cleanup_classifies_continue_and_fatal_for_owned_cursor ... ok
+test phase2_cleanup_records_install_context_for_owned_cursor ... ok
+test rsp_cfa_landing_pad_install_allows_arbitrary_rbp ... ok
+test synthetic_cfi_expressions_fail_closed_during_row_evaluation ... ok
+test synthetic_eh_frame_fde_lookup_fails_closed_on_bad_cfi ... ok
+test synthetic_x86_64_cfi_row_advances_frame_pointer_cursor ... ok
+test unsupported_lsda_pointer_encoding_fails_closed ... ok
+test x86_64_landing_pad_install_descriptor_uses_validated_frame_cursor ... ok
+test x86_64_landing_pad_install_reports_bad_contexts ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+

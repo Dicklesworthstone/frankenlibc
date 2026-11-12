@@ -1,0 +1,8 @@
+
+running 3 tests
+test copy_reloc_and_got_stdio_c_fixtures_bind_and_work_in_strict_and_hardened ... ok
+test libgcc_denied_cpp_rust_and_posix_cleanup_destructors_run_lifo_on_exit_and_cancel ... ok
+test release_dynsym_exports_224_byte_io_2_1_objects_at_glibc_2_2_5 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 118.39s
+

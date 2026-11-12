@@ -1,0 +1,54 @@
+[1m[92m   Compiling[0m serde_core v1.0.228
+[1m[92m   Compiling[0m proc-macro2 v1.0.106
+[1m[92m   Compiling[0m typenum v1.20.0
+[1m[92m   Compiling[0m zmij v1.0.21
+[1m[92m   Compiling[0m quote v1.0.45
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m serde_json v1.0.149
+[1m[92m   Compiling[0m const-oid v0.10.2
+[1m[92m   Compiling[0m cpufeatures v0.3.0
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m serde v1.0.228
+[1m[92m   Compiling[0m syn v2.0.117
+[1m[92m   Compiling[0m hybrid-array v0.4.10
+[1m[92m   Compiling[0m crypto-common v0.2.1
+[1m[92m   Compiling[0m block-buffer v0.12.0
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m digest v0.11.2
+[1m[92m   Compiling[0m sha2 v0.11.0
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m memchr v2.8.0
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m shlex v1.3.0
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m find-msvc-tools v0.1.9
+[1m[92m   Compiling[0m clap_builder v4.6.0
+[1m[92m   Compiling[0m cc v1.2.60
+[1m[92m   Compiling[0m serde_derive v1.0.228
+[1m[92m   Compiling[0m clap_derive v4.6.1
+[1m[92m   Compiling[0m clap v4.6.1
+[1m[92m   Compiling[0m blake3 v1.8.4
+[1m[92m   Compiling[0m libc v0.2.185
+[1m[92m   Compiling[0m frankenlibc-membrane v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-membrane)
+[1m[92m   Compiling[0m stdio-synth v0.1.0 (/data/projects/frankenlibc/tools/stdio_synth)
+[1m[92m   Compiling[0m libm v0.2.16
+[1m[92m   Compiling[0m parking_lot_core v0.9.12
+[1m[92m   Compiling[0m arrayvec v0.7.6
+[1m[92m   Compiling[0m arrayref v0.3.9
+[1m[92m   Compiling[0m constant_time_eq v0.4.2
+[1m[92m   Compiling[0m frankenlibc-core v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-core)
+[1m[92m   Compiling[0m smallvec v1.15.1
+[1m[92m   Compiling[0m scopeguard v1.2.0
+[1m[92m   Compiling[0m lock_api v0.4.14
+[1m[33mwarning[0m: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/target/wave4_standalone_unwind/release/build/frankenlibc-core/9a1209d67f667ffe/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+[1m[92m   Compiling[0m md-5 v0.11.0
+[1m[92m   Compiling[0m frankenlibc-abi v0.1.0 (/data/projects/frankenlibc/crates/frankenlibc-abi)
+[1m[92m   Compiling[0m parking_lot v0.12.5
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1m 55s

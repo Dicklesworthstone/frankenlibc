@@ -35065,6 +35065,388 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.6.4",
+      "title": "Export release _IO_2_1_stdin_/stdout_/stderr_ ABI objects, implement owned _Unwind_ForcedUnwind/_Unwind_GetCFA, and fix nested cleanup cancel-type",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "pthread-cancel",
+        "reality-check-202611",
+        "standalone",
+        "stdio-abi",
+        "unwind"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.6"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Owned DWARF _Unwind_ForcedUnwind + _Unwind_GetCFA + RSP-based CFA landing pad install + nested cleanup cancel-type restoration"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "scripts/check_stdio_native.sh --globals-only and scripts/check_owned_unwinder_e2e.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "frankenlibc.owned_unwind.v1 JSONL trace events"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "tests/conformance/libc_map_export_golden.v1.json and tests/conformance/host_delegation_census.v1.json"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/libc_map_export_golden.v1.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-abi --features owned-unwind-stub --test owned_unwind_abi_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/check_stdio_native.sh and scripts/check_owned_unwinder_e2e.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-abi/src/owned_unwind_abi.rs"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "tests/conformance/libc_map_export_golden.v1.json"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/libc_map_export_golden.v1.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 5,
+        "complete": 5,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.6.4",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-abi --features owned-unwind-stub --test owned_unwind_abi_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_stdio_native.sh --globals-only",
+          "bash scripts/check_owned_unwinder_e2e.sh"
+        ],
+        "expected_assertions": [
+          "Release _IO_2_1_stdin_/stdout_/stderr_ exported at GLIBC_2.2.5 (224B OBJECT), owned _Unwind_ForcedUnwind/_Unwind_GetCFA implemented with RSP-based CFA landing pad install, and nested cleanup cancel-type restored to (0,0,0)"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/build_elf.rs",
+          "crates/frankenlibc-abi/src/io_internal_abi.rs",
+          "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+          "crates/frankenlibc-abi/src/pthread_abi.rs",
+          "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "crates/frankenlibc-abi/version_scripts/libc.map",
+          "scripts/check_semantic_contract_drift.sh",
+          "crates/frankenlibc-abi/tests/owned_unwind_abi_test.rs",
+          "target/closure_receipts/wave4_20261112/bd-reality-202609-lx578q.6.4/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca.",
+        "result_receipts": [
+          "target/closure_receipts/wave4_20261112/bd-reality-202609-lx578q.6.4/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Export 224-byte release _IO_2_1_stdin_/stdout_/stderr_ ABI objects at GLIBC_2.2.5 with copy-relocation-safe GOT resolution, implement owned DWARF _Unwind_ForcedUnwind and _Unwind_GetCFA with RSP-based CFA landing-pad installation, and restore nested pthread_cleanup_push_defer_np cancellation types",
+          "acceptance_sha256": "6a672c280c87c2b4fd2e20ea12a9ed1d3ab8d699cdd24fda03a82ad6db3e5ba3",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/build_elf.rs",
+            "crates/frankenlibc-abi/src/io_internal_abi.rs",
+            "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+            "crates/frankenlibc-abi/src/pthread_abi.rs",
+            "crates/frankenlibc-abi/src/stdio_abi.rs",
+            "crates/frankenlibc-abi/version_scripts/libc.map",
+            "scripts/check_semantic_contract_drift.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/owned_unwind_abi_test.rs"
+          ],
+          "source": {
+            "commit": "e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/build_elf.rs": "3a1835bac2aa90a5a98fc7ff959a87c2b37fff246e41deea1c05ddea6a1826e4",
+              "crates/frankenlibc-abi/src/io_internal_abi.rs": "fc7dd47d08058c96cb9142f71f30b971dfb7bd1092f7e60f783ea40837d8bf6d",
+              "crates/frankenlibc-abi/src/owned_unwind_abi.rs": "60f526110bcf0d89b7f8cd28748c37d4cb69d1b5344fbf4178d9b05756597435",
+              "crates/frankenlibc-abi/src/pthread_abi.rs": "3d534e0fcce7f8757a90020d0ddf7cbb79fb15a0b11d4881fd38a78db8129a0a",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+              "crates/frankenlibc-abi/tests/owned_unwind_abi_test.rs": "2889ffa26f15df2b1ae20eb22a9471f84210f62e6afeeda2e60d62ff95e1deb6",
+              "crates/frankenlibc-abi/version_scripts/libc.map": "295ab0a4c499c2f1dc601809646c79a6b872635c4d61a79d796938c4abb0d78d",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_semantic_contract_drift.sh": "a09cb38ca398a3071d5b28a60fa73c3a93ba67bd8f9d2c241b80b3c179463167"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default",
+              "owned-unwind-stub"
+            ]
+          },
+          "not_before": "2026-11-12T01:35:00+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-abi",
+              "--features",
+              "owned-unwind-stub",
+              "--test",
+              "owned_unwind_abi_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/61a2e0b4e3f5605e/out/owned_unwind_abi_test-61a2e0b4e3f5605e"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "get_cfa_handles_null_and_live_backtrace_frames",
+              "rsp_cfa_landing_pad_install_allows_arbitrary_rbp",
+              "forced_unwind_executes_rust_drop_frames_until_stop_boundary"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.6.5",
+      "title": "[RC-202609 tests] Verify release _IO_2_1_std* copy-relocation binding, libgcc_s-free forced-unwind RAII destructors, and nested cleanup cancel-type",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "reality-check-202611",
+        "standalone",
+        "stdio-abi",
+        "unwind",
+        "verification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.6.4"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Copy-relocated (-fno-pie -no-pie) and GOT (-fPIE -pie) _IO_2_1_std*_ LD_DEBUG=bindings E2E + libgcc_s-denied C++/Rust/POSIX forced-unwind LIFO E2E"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "wave4_stdio_unwind_e2e_test and stub_guard_test"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "frankenlibc.owned_unwind.v1 JSONL trace events verified"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-abi --test wave4_stdio_unwind_e2e_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-abi/tests/wave4_stdio_unwind_e2e_test.rs"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-abi/tests/wave4_stdio_unwind_e2e_test.rs"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 3,
+        "complete": 3,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.6.5",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-abi --test wave4_stdio_unwind_e2e_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "cargo test -p frankenlibc-harness --test stub_guard_test -- --test-threads=1"
+        ],
+        "expected_assertions": [
+          "224-byte _IO_2_1_std*_ OBJECTs exported in release .dynsym, R_X86_64_COPY and R_X86_64_GLOB_DAT C fixtures bind to libfrankenlibc_abi.so and pass freopen/fwrite/fflush in strict+hardened, and libgcc_s-denied multi-frame C++ + Rust + POSIX cleanup unwinds in exact 303 202 101 404 LIFO order"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+          "crates/frankenlibc-abi/src/pthread_abi.rs",
+          "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "crates/frankenlibc-harness/tests/stub_guard_test.rs",
+          "scripts/check_semantic_contract_drift.sh",
+          "crates/frankenlibc-abi/tests/wave4_stdio_unwind_e2e_test.rs",
+          "target/closure_receipts/wave4_20261112/bd-reality-202609-lx578q.6.5/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca.",
+        "result_receipts": [
+          "target/closure_receipts/wave4_20261112/bd-reality-202609-lx578q.6.5/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Verify release .dynsym 224-byte _IO_2_1_std*_ OBJECT exports, copy-relocated and GOT-bound C stdio fixtures under LD_DEBUG=bindings in strict and hardened modes, and libgcc_s-denied multi-frame C++ RAII + Rust Drop + POSIX cleanup LIFO unwinding on pthread_exit and pthread_cancel",
+          "acceptance_sha256": "01906840d897613ea344c2d0c891c5339bcc0acfdd149911ca2102f5cc18cfcd",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
+            "crates/frankenlibc-abi/src/pthread_abi.rs",
+            "crates/frankenlibc-abi/src/stdio_abi.rs",
+            "crates/frankenlibc-harness/tests/stub_guard_test.rs",
+            "scripts/check_semantic_contract_drift.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/wave4_stdio_unwind_e2e_test.rs"
+          ],
+          "source": {
+            "commit": "e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/owned_unwind_abi.rs": "60f526110bcf0d89b7f8cd28748c37d4cb69d1b5344fbf4178d9b05756597435",
+              "crates/frankenlibc-abi/src/pthread_abi.rs": "3d534e0fcce7f8757a90020d0ddf7cbb79fb15a0b11d4881fd38a78db8129a0a",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+              "crates/frankenlibc-abi/tests/wave4_stdio_unwind_e2e_test.rs": "94485df5673c5d6a491f4e354ba94f7b1a2fdfda555391066d05443c94600c10",
+              "crates/frankenlibc-harness/tests/stub_guard_test.rs": "cae8e7651445bf3d31dd9a947962993caa6e464833cb15db67a08e36cadaa57b",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_semantic_contract_drift.sh": "a09cb38ca398a3071d5b28a60fa73c3a93ba67bd8f9d2c241b80b3c179463167"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-12T01:35:00+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/92507db8a7fc9965/out/wave4_stdio_unwind_e2e_test-92507db8a7fc9965",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "wave4_stdio_unwind_e2e_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-hz3-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/92507db8a7fc9965/out/wave4_stdio_unwind_e2e_test-92507db8a7fc9965"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "release_dynsym_exports_224_byte_io_2_1_objects_at_glibc_2_2_5",
+              "copy_reloc_and_got_stdio_c_fixtures_bind_and_work_in_strict_and_hardened",
+              "libgcc_denied_cpp_rust_and_posix_cleanup_destructors_run_lifo_on_exit_and_cancel"
+            ]
+          }
+        }
+      }
     }
-  ]
+  ],
+  "result_receipts": {
+    "bd-reality-202609-lx578q.6.4": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.4/receipt.json",
+    "bd-reality-202609-lx578q.6.5": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.5/receipt.json"
+  }
 }

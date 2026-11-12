@@ -1,0 +1,1150 @@
+#![cfg(feature = "owned-unwind-stub")]
+
+use frankenlibc_abi::owned_unwind_abi::{
+    __deregister_frame, __deregister_frame_info, __register_frame, __register_frame_info,
+    _Unwind_Backtrace, _Unwind_ForcedUnwind, _Unwind_GetCFA, _Unwind_GetDataRelBase, _Unwind_GetGR,
+    _Unwind_GetIP, _Unwind_GetIPInfo, _Unwind_GetLanguageSpecificData, _Unwind_GetRegionStart,
+    _Unwind_GetTextRelBase, _Unwind_SetGR, _Unwind_SetIP, OwnedContextInstallError,
+    OwnedLandingPadInstall, OwnedLandingPadInstallInput, OwnedPhase1SearchOutcome,
+    OwnedPhase2CleanupOutcome, OwnedProgramHeaderForTests, OwnedUnwindDecodeError, UnwindContext,
+    UnwindException, owned_decode_sleb128_for_tests, owned_decode_uleb128_for_tests,
+    owned_evaluate_cfi_row_for_tests, owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
+    owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
+    owned_loaded_eh_frame_ranges_for_tests, owned_loaded_eh_frame_ranges_from_phdrs_for_tests,
+    owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
+    owned_prepare_landing_pad_install_for_tests, owned_summarize_eh_frame_for_tests,
+    owned_validate_cfi_program_for_tests,
+};
+use std::ffi::c_void;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const URC_NO_REASON: i32 = 0;
+const URC_FATAL_PHASE1_ERROR: i32 = 3;
+const URC_HANDLER_FOUND: i32 = 6;
+const URC_INSTALL_CONTEXT: i32 = 7;
+const URC_CONTINUE_UNWIND: i32 = 8;
+const UA_SEARCH_PHASE: i32 = 1;
+const UA_CLEANUP_PHASE: i32 = 2;
+const UA_HANDLER_FRAME: i32 = 4;
+const TEST_PT_LOAD: u32 = 1;
+const TEST_PT_GNU_EH_FRAME: u32 = 0x6474_e550;
+const TEST_EXCEPTION_CLASS: u64 = 0x4652_4b4e_432b_2b00;
+const TEST_LANDING_PAD: usize = 0x5eed_baad;
+static TEST_LSDA: [u8; 4] = [0x01, 0x02, 0x03, 0x04];
+
+unsafe extern "C" fn collect_frame_ip(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
+    let frames = unsafe { &mut *(arg.cast::<Vec<usize>>()) };
+    let ip = unsafe { _Unwind_GetIP(ctx) };
+    if ip != 0 {
+        frames.push(ip);
+    }
+    URC_NO_REASON
+}
+
+unsafe extern "C" fn collect_frame_ip_info(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
+    let frames = unsafe { &mut *(arg.cast::<Vec<(usize, i32)>>()) };
+    let mut ip_before_insn = -1;
+    let ip = unsafe { _Unwind_GetIPInfo(ctx, &mut ip_before_insn) };
+    if ip != 0 {
+        frames.push((ip, ip_before_insn));
+    }
+    URC_NO_REASON
+}
+
+#[inline(never)]
+fn walk_from_inner(frames: &mut Vec<usize>) -> i32 {
+    unsafe { _Unwind_Backtrace(Some(collect_frame_ip), (frames as *mut Vec<usize>).cast()) }
+}
+
+#[inline(never)]
+fn walk_from_outer(frames: &mut Vec<usize>) -> i32 {
+    walk_from_inner(frames)
+}
+
+#[test]
+fn backtrace_walk_reports_real_instruction_pointers() {
+    let mut frames = Vec::new();
+    let reason = walk_from_outer(&mut frames);
+
+    assert_eq!(reason, 5, "walk should finish with _URC_END_OF_STACK");
+    assert!(
+        frames.len() >= 2,
+        "frame-pointer walk should discover real caller frames, got {frames:?}"
+    );
+    assert!(
+        frames.iter().all(|ip| *ip != 0),
+        "reported instruction pointers must be nonzero: {frames:?}"
+    );
+}
+
+#[test]
+fn get_ip_info_marks_return_addresses_after_instruction() {
+    let mut frames = Vec::new();
+    let reason = unsafe {
+        _Unwind_Backtrace(
+            Some(collect_frame_ip_info),
+            (&mut frames as *mut Vec<(usize, i32)>).cast(),
+        )
+    };
+
+    assert_eq!(reason, 5, "walk should finish with _URC_END_OF_STACK");
+    assert!(
+        frames.iter().all(|(_, before)| *before == 0),
+        "normal frame-pointer return addresses should be reported as after-instruction IPs: {frames:?}"
+    );
+}
+
+#[test]
+fn frame_registration_records_and_removes_fde_sources() {
+    let mut fake_fde = 0usize;
+    let mut fake_object = 0usize;
+    let fde = (&mut fake_fde as *mut usize).cast::<c_void>();
+    let object = (&mut fake_object as *mut usize).cast::<c_void>();
+
+    assert!(!owned_frame_is_registered_for_tests(fde.cast_const()));
+    assert!(owned_frame_object_for_tests(fde.cast_const()).is_null());
+
+    unsafe { __register_frame(fde) };
+    assert!(owned_frame_is_registered_for_tests(fde.cast_const()));
+    assert!(owned_frame_object_for_tests(fde.cast_const()).is_null());
+
+    unsafe { __register_frame_info(fde, object) };
+    assert!(owned_frame_is_registered_for_tests(fde.cast_const()));
+    assert_eq!(owned_frame_object_for_tests(fde.cast_const()), object);
+
+    let removed = unsafe { __deregister_frame_info(fde) };
+    assert_eq!(removed, object);
+    assert!(!owned_frame_is_registered_for_tests(fde.cast_const()));
+    assert!(owned_frame_object_for_tests(fde.cast_const()).is_null());
+
+    unsafe { __register_frame(fde) };
+    assert!(owned_frame_is_registered_for_tests(fde.cast_const()));
+
+    unsafe { __deregister_frame(fde) };
+    assert!(!owned_frame_is_registered_for_tests(fde.cast_const()));
+}
+
+#[test]
+fn loaded_eh_frame_catalog_accepts_gnu_header_inside_load_segment() {
+    let object_base = 0x1000_0000usize;
+    let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        object_base,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x4000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x1800, 0x80),
+        ],
+    );
+
+    assert_eq!(ranges.len(), 1);
+    let range = ranges[0];
+    assert_eq!(range.object_base, object_base);
+    assert_eq!(range.load_start, object_base + 0x1000);
+    assert_eq!(range.load_end, object_base + 0x5000);
+    assert_eq!(range.eh_frame_hdr_start, object_base + 0x1800);
+    assert_eq!(range.eh_frame_hdr_len, 0x80);
+}
+
+#[test]
+fn loaded_eh_frame_catalog_spans_split_text_and_header_loads() {
+    let object_base = 0x1100_0000usize;
+    let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        object_base,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x2000),
+            phdr(TEST_PT_LOAD, 0x6000, 0x1000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x6800, 0x80),
+        ],
+    );
+
+    assert_eq!(ranges.len(), 1);
+    let range = ranges[0];
+    assert_eq!(range.load_start, object_base + 0x1000);
+    assert_eq!(range.load_end, object_base + 0x7000);
+    assert_eq!(range.eh_frame_hdr_start, object_base + 0x6800);
+}
+
+#[test]
+fn loaded_eh_frame_catalog_fails_closed_without_gnu_header() {
+    let ranges = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        0x2000_0000,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x4000),
+            phdr(0x6474_e551, 0x1800, 0x80),
+        ],
+    );
+
+    assert!(ranges.is_empty());
+}
+
+#[test]
+fn loaded_eh_frame_catalog_rejects_malformed_ranges() {
+    let outside_load = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        0x3000_0000,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x1000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x2800, 0x80),
+        ],
+    );
+    let empty_header = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        0x3000_0000,
+        &[
+            phdr(TEST_PT_LOAD, 0x1000, 0x1000),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x1800, 0),
+        ],
+    );
+    let overflowing_header = owned_loaded_eh_frame_ranges_from_phdrs_for_tests(
+        usize::MAX - 0x10,
+        &[
+            phdr(TEST_PT_LOAD, 0, 0x10),
+            phdr(TEST_PT_GNU_EH_FRAME, 0x20, 0x80),
+        ],
+    );
+
+    assert!(outside_load.is_empty());
+    assert!(empty_header.is_empty());
+    assert!(overflowing_header.is_empty());
+}
+
+#[test]
+fn live_loaded_eh_frame_catalog_returns_well_formed_ranges() {
+    let ranges = owned_loaded_eh_frame_ranges_for_tests();
+    assert!(
+        !ranges.is_empty(),
+        "standalone dl_iterate_phdr must discover at least one loaded PT_GNU_EH_FRAME range"
+    );
+    for range in ranges {
+        assert!(range.load_start < range.load_end);
+        assert!(range.eh_frame_hdr_len > 0);
+        assert!(range.load_start <= range.eh_frame_hdr_start);
+        let eh_frame_hdr_end = range
+            .eh_frame_hdr_start
+            .checked_add(range.eh_frame_hdr_len)
+            .expect("catalog range should not overflow");
+        assert!(eh_frame_hdr_end <= range.load_end);
+    }
+}
+
+#[test]
+fn leb128_decoders_cover_signed_and_unsigned_boundaries() {
+    assert_eq!(
+        owned_decode_uleb128_for_tests(&[0xe5, 0x8e, 0x26], 0),
+        Ok((624485, 3))
+    );
+    assert_eq!(
+        owned_decode_sleb128_for_tests(&[0x9b, 0xf1, 0x59], 0),
+        Ok((-624485, 3))
+    );
+    assert_eq!(
+        owned_decode_uleb128_for_tests(&[0x80], 0),
+        Err(OwnedUnwindDecodeError::Truncated)
+    );
+}
+
+#[test]
+fn synthetic_eh_frame_fde_lookup_fails_closed_on_bad_cfi() {
+    let section_addr = 0x400000usize;
+    let pc_begin = 0x401234usize;
+    let pc_range = 0x40usize;
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &[0x41, 0x0e, 0x10]);
+
+    let fde = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, pc_begin + 1)
+        .expect("synthetic FDE should decode")
+        .expect("IP should resolve to the synthetic FDE");
+    assert_eq!(fde.pc_begin, pc_begin);
+    assert_eq!(fde.pc_end, pc_begin + pc_range);
+    assert_eq!(fde.cie_offset, 0);
+    assert_eq!(
+        owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, pc_begin + pc_range),
+        Ok(None)
+    );
+    assert_eq!(
+        owned_validate_cfi_program_for_tests(&[0x2c]),
+        Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(0x2c))
+    );
+
+    let bad_cfi = synthetic_eh_frame(section_addr, pc_begin, pc_range, &[0x2c]);
+    assert_eq!(
+        owned_find_fde_for_ip_for_tests(&bad_cfi, section_addr, pc_begin + 1),
+        Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(0x2c))
+    );
+}
+
+#[test]
+fn synthetic_x86_64_cfi_row_advances_frame_pointer_cursor() {
+    let section_addr = 0x420000usize;
+    let pc_begin = 0x421000usize;
+    let pc_range = 0x40usize;
+    let common_frame_pointer_cfi = [0x41, 0x86, 0x02, 0x0e, 0x10, 0x43, 0x0d, 0x06];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &common_frame_pointer_cfi);
+
+    let entry = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin)
+        .expect("entry row should decode")
+        .expect("entry row should resolve");
+    assert_eq!(entry.cfa_register, 7);
+    assert_eq!(entry.cfa_offset, 8);
+    assert_eq!(entry.return_address_register, 16);
+    assert_eq!(entry.saved_rip_offset, Some(-8));
+    assert_eq!(entry.saved_rbp_offset, None);
+
+    let after_push = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin + 1)
+        .expect("post-push row should decode")
+        .expect("post-push row should resolve");
+    assert_eq!(after_push.cfa_register, 7);
+    assert_eq!(after_push.cfa_offset, 16);
+    assert_eq!(after_push.saved_rip_offset, Some(-8));
+    assert_eq!(after_push.saved_rbp_offset, Some(-16));
+
+    let after_frame_pointer =
+        owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin + 4)
+            .expect("frame-pointer row should decode")
+            .expect("frame-pointer row should resolve");
+    assert_eq!(after_frame_pointer.cfa_register, 6);
+    assert_eq!(after_frame_pointer.cfa_offset, 16);
+    assert_eq!(after_frame_pointer.saved_rip_offset, Some(-8));
+    assert_eq!(after_frame_pointer.saved_rbp_offset, Some(-16));
+}
+
+#[test]
+fn synthetic_cfi_expressions_fail_closed_during_row_evaluation() {
+    let section_addr = 0x430000usize;
+    let pc_begin = 0x431000usize;
+    let pc_range = 0x20usize;
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &[0x10, 0x10, 0x01, 0x00]);
+
+    assert_eq!(
+        owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin),
+        Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(0x10))
+    );
+}
+
+#[test]
+fn phase1_search_invokes_personality_with_lsda_context() {
+    let section_addr = 0x500000usize;
+    let pc_begin = 0x502000usize;
+    let pc_range = 0x80usize;
+    let eh_frame = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        handler_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+
+    let fde = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, pc_begin + 4)
+        .expect("personality FDE should decode")
+        .expect("IP should resolve");
+    assert_eq!(
+        fde.personality,
+        Some(handler_personality as *const () as usize)
+    );
+    assert_eq!(
+        fde.language_specific_data,
+        Some(TEST_LSDA.as_ptr() as usize)
+    );
+
+    let outcome = owned_phase1_search_for_tests(
+        &eh_frame,
+        section_addr,
+        &[pc_begin + 4],
+        TEST_EXCEPTION_CLASS,
+    )
+    .expect("phase1 search should decode");
+    assert_eq!(
+        outcome,
+        OwnedPhase1SearchOutcome::HandlerFound {
+            frame_index: 0,
+            ip: pc_begin + 4,
+            region_start: pc_begin,
+            language_specific_data: TEST_LSDA.as_ptr() as usize,
+        }
+    );
+}
+
+#[test]
+fn phase1_search_distinguishes_no_handler_and_fatal_personality_results() {
+    let section_addr = 0x510000usize;
+    let pc_begin = 0x512000usize;
+    let pc_range = 0x40usize;
+    let no_handler = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        continue_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase1_search_for_tests(&no_handler, section_addr, &[pc_begin + 1], 0)
+            .expect("no-handler search should decode"),
+        OwnedPhase1SearchOutcome::NoHandler
+    );
+
+    let fatal = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        fatal_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase1_search_for_tests(&fatal, section_addr, &[pc_begin + 1], 0)
+            .expect("fatal search should decode"),
+        OwnedPhase1SearchOutcome::Fatal {
+            frame_index: 0,
+            code: URC_INSTALL_CONTEXT,
+        }
+    );
+}
+
+#[test]
+fn phase2_cleanup_records_install_context_for_owned_cursor() {
+    assert_eq!(unsafe { _Unwind_GetGR(std::ptr::null_mut(), 0) }, 0);
+    assert_eq!(unsafe { _Unwind_GetGR(std::ptr::null_mut(), -1) }, 0);
+
+    let section_addr = 0x530000usize;
+    let pc_begin = 0x532000usize;
+    let pc_range = 0x40usize;
+    let eh_frame = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        install_context_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+
+    let outcome =
+        owned_phase2_cleanup_for_tests(&eh_frame, section_addr, pc_begin + 1, TEST_EXCEPTION_CLASS)
+            .expect("phase2 cleanup should decode");
+    assert!(
+        matches!(outcome, OwnedPhase2CleanupOutcome::InstallRequested { .. }),
+        "expected install request, got {outcome:?}"
+    );
+    let OwnedPhase2CleanupOutcome::InstallRequested {
+        frame_index,
+        ip,
+        general_register_0,
+        general_register_1,
+    } = outcome
+    else {
+        return;
+    };
+    assert_eq!(frame_index, 0);
+    assert_eq!(ip, TEST_LANDING_PAD);
+    assert_ne!(general_register_0, 0);
+    assert_eq!(general_register_1, 0x55aa);
+}
+
+#[test]
+fn phase2_cleanup_classifies_continue_and_fatal_for_owned_cursor() {
+    let section_addr = 0x540000usize;
+    let pc_begin = 0x542000usize;
+    let pc_range = 0x40usize;
+    let no_handler = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        continue_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase2_cleanup_for_tests(&no_handler, section_addr, pc_begin + 1, 0)
+            .expect("continue cleanup should decode"),
+        OwnedPhase2CleanupOutcome::ContinueUnwind
+    );
+
+    let fatal = synthetic_personality_eh_frame(
+        section_addr,
+        pc_begin,
+        pc_range,
+        phase2_fatal_personality as *const () as usize,
+        TEST_LSDA.as_ptr() as usize,
+    );
+    assert_eq!(
+        owned_phase2_cleanup_for_tests(&fatal, section_addr, pc_begin + 1, 0)
+            .expect("fatal cleanup should decode"),
+        OwnedPhase2CleanupOutcome::Fatal {
+            frame_index: 0,
+            code: URC_FATAL_PHASE1_ERROR,
+        }
+    );
+}
+
+#[test]
+fn x86_64_landing_pad_install_descriptor_uses_validated_frame_cursor() {
+    let section_addr = 0x550000usize;
+    let pc_begin = 0x551000usize;
+    let pc_range = 0x40usize;
+    let common_frame_pointer_cfi = [0x41, 0x86, 0x02, 0x0e, 0x10, 0x43, 0x0d, 0x06];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &common_frame_pointer_cfi);
+
+    let install = owned_prepare_landing_pad_install_for_tests(
+        &eh_frame,
+        section_addr,
+        OwnedLandingPadInstallInput {
+            call_site_ip: pc_begin + 4,
+            landing_pad_ip: TEST_LANDING_PAD,
+            frame_pointer: 0x7000,
+            stack_pointer: 0x6000,
+            general_register_0: 0x1111,
+            general_register_1: 0x2222,
+        },
+    )
+    .expect("valid x86_64 handler cursor should produce install descriptor");
+
+    assert_eq!(
+        install,
+        OwnedLandingPadInstall {
+            ip: TEST_LANDING_PAD,
+            stack_pointer: 0x6000,
+            frame_pointer: 0x7000,
+            general_register_0: 0x1111,
+            general_register_1: 0x2222,
+        }
+    );
+}
+
+#[test]
+fn x86_64_landing_pad_install_reports_bad_contexts() {
+    let section_addr = 0x560000usize;
+    let pc_begin = 0x561000usize;
+    let pc_range = 0x40usize;
+    let common_frame_pointer_cfi = [0x41, 0x86, 0x02, 0x0e, 0x10, 0x43, 0x0d, 0x06];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, pc_range, &common_frame_pointer_cfi);
+
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: 0,
+                frame_pointer: 0x7000,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::NullLandingPad)
+    );
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::MissingPhysicalCursor)
+    );
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0x7003,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::MisalignedFramePointer)
+    );
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &eh_frame,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin + 4,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0x7000,
+                stack_pointer: 0x8000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::StackPointerEscapesHandlerFrame)
+    );
+
+    let unsupported_cfa = synthetic_eh_frame(section_addr, pc_begin, pc_range, &[0x0c, 0x0c, 0x08]);
+    assert_eq!(
+        owned_prepare_landing_pad_install_for_tests(
+            &unsupported_cfa,
+            section_addr,
+            OwnedLandingPadInstallInput {
+                call_site_ip: pc_begin,
+                landing_pad_ip: TEST_LANDING_PAD,
+                frame_pointer: 0x7000,
+                stack_pointer: 0x6000,
+                general_register_0: 0,
+                general_register_1: 0,
+            },
+        ),
+        Err(OwnedContextInstallError::UnsupportedCfaRegister(12))
+    );
+}
+
+#[test]
+fn unsupported_lsda_pointer_encoding_fails_closed() {
+    let section_addr = 0x520000usize;
+    let pc_begin = 0x522000usize;
+    let bad = synthetic_bad_lsda_encoding_eh_frame(
+        section_addr,
+        pc_begin,
+        0x30,
+        handler_personality as *const () as usize,
+    );
+
+    assert_eq!(
+        owned_phase1_search_for_tests(&bad, section_addr, &[pc_begin + 1], TEST_EXCEPTION_CLASS),
+        Err(OwnedUnwindDecodeError::UnsupportedPointerEncoding(0x70))
+    );
+}
+
+#[test]
+fn minimal_throw_catch_fixture_has_phase1_personality_lsda_metadata() {
+    let root = workspace_root();
+    let fixture = root.join("tests/conformance/fixtures/unwind/minimal_throw_catch.cpp");
+    let binary = root.join("target/conformance/minimal_throw_catch");
+    std::fs::create_dir_all(binary.parent().expect("target/conformance parent"))
+        .expect("create target/conformance");
+    let status = Command::new("g++")
+        .current_dir(&root)
+        .arg("-o")
+        .arg(&binary)
+        .arg(&fixture)
+        .arg("-static-libgcc")
+        .arg("-static-libstdc++")
+        .status()
+        .expect("run g++ for minimal_throw_catch fixture");
+    assert!(status.success(), "g++ failed with status {status}");
+
+    let (eh_frame, section_addr) =
+        elf_section(&binary, ".eh_frame").expect("minimal fixture should contain .eh_frame");
+    let summary = owned_summarize_eh_frame_for_tests(&eh_frame, section_addr)
+        .expect("minimal fixture .eh_frame should decode");
+    assert!(summary.fde_count > 0, "minimal fixture should have FDEs");
+    assert!(
+        summary.personality_fde_count > 0,
+        "minimal fixture should include personality-backed FDEs"
+    );
+    assert!(
+        summary.lsda_fde_count > 0,
+        "minimal fixture should include LSDA-backed FDEs"
+    );
+}
+
+#[test]
+fn compiled_test_binary_eh_frame_has_lookupable_fde() {
+    let exe = std::env::current_exe().expect("current test binary path");
+    let (eh_frame, section_addr) =
+        elf_section(&exe, ".eh_frame").expect("current test binary should contain .eh_frame");
+    let first = owned_first_fde_for_tests(&eh_frame, section_addr)
+        .expect("compiled .eh_frame should parse")
+        .expect("compiled .eh_frame should contain at least one FDE");
+    let found = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, first.pc_begin)
+        .expect("compiled FDE lookup should parse")
+        .expect("first FDE start should resolve");
+
+    assert_eq!(found, first);
+    assert!(found.pc_end > found.pc_begin);
+
+    let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, first.pc_begin)
+        .expect("compiled FDE CFI should evaluate")
+        .expect("first FDE start should produce a row");
+    assert_eq!(row.return_address_register, 16);
+    assert_eq!(row.saved_rip_offset, Some(-8));
+    assert!(
+        matches!(row.cfa_register, 6 | 7),
+        "compiled row should use x86_64 RBP/RSP as CFA register, got {row:?}"
+    );
+    assert!(
+        row.cfa_offset >= core::mem::size_of::<usize>() as isize,
+        "compiled row should carry a caller-frame CFA offset, got {row:?}"
+    );
+}
+
+fn phdr(p_type: u32, p_vaddr: usize, p_memsz: usize) -> OwnedProgramHeaderForTests {
+    OwnedProgramHeaderForTests {
+        p_type,
+        p_vaddr,
+        p_memsz,
+    }
+}
+
+fn synthetic_eh_frame(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    cfi: &[u8],
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let cie_offset = bytes.len();
+    let mut cie_body = Vec::new();
+    cie_body.extend_from_slice(&0u32.to_le_bytes());
+    cie_body.push(1);
+    cie_body.extend_from_slice(b"zR\0");
+    encode_uleb(1, &mut cie_body);
+    encode_sleb(-8, &mut cie_body);
+    cie_body.push(16);
+    encode_uleb(1, &mut cie_body);
+    cie_body.push(0x1b);
+    cie_body.extend_from_slice(&[0x0c, 0x07, 0x08, 0x90, 0x01]);
+    bytes.extend_from_slice(&(cie_body.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&cie_body);
+
+    let fde_offset = bytes.len();
+    let cie_pointer_field = fde_offset + 4;
+    let pc_field = fde_offset + 8;
+    let pc_delta = (pc_begin as isize - (section_addr + pc_field) as isize) as i32;
+    let mut fde_body = Vec::new();
+    fde_body.extend_from_slice(&((cie_pointer_field - cie_offset) as u32).to_le_bytes());
+    fde_body.extend_from_slice(&pc_delta.to_le_bytes());
+    fde_body.extend_from_slice(&(pc_range as i32).to_le_bytes());
+    encode_uleb(0, &mut fde_body);
+    fde_body.extend_from_slice(cfi);
+    bytes.extend_from_slice(&(fde_body.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&fde_body);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes
+}
+
+fn synthetic_personality_eh_frame(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    personality: usize,
+    lsda: usize,
+) -> Vec<u8> {
+    synthetic_personality_eh_frame_with_lsda_encoding(
+        section_addr,
+        pc_begin,
+        pc_range,
+        personality,
+        lsda,
+        0x00,
+    )
+}
+
+fn synthetic_bad_lsda_encoding_eh_frame(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    personality: usize,
+) -> Vec<u8> {
+    synthetic_personality_eh_frame_with_lsda_encoding(
+        section_addr,
+        pc_begin,
+        pc_range,
+        personality,
+        TEST_LSDA.as_ptr() as usize,
+        0x70,
+    )
+}
+
+fn synthetic_personality_eh_frame_with_lsda_encoding(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    personality: usize,
+    lsda: usize,
+    lsda_encoding: u8,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let cie_offset = bytes.len();
+    let mut cie_body = Vec::new();
+    cie_body.extend_from_slice(&0u32.to_le_bytes());
+    cie_body.push(1);
+    cie_body.extend_from_slice(b"zPLR\0");
+    encode_uleb(1, &mut cie_body);
+    encode_sleb(-8, &mut cie_body);
+    cie_body.push(16);
+    let augmentation_len_offset = cie_body.len();
+    encode_uleb(0, &mut cie_body);
+    let augmentation_start = cie_body.len();
+    cie_body.push(0x00);
+    cie_body.extend_from_slice(&personality.to_le_bytes());
+    cie_body.push(lsda_encoding);
+    cie_body.push(0x1b);
+    let augmentation_len = cie_body.len() - augmentation_start;
+    cie_body[augmentation_len_offset] = augmentation_len as u8;
+    cie_body.extend_from_slice(&[0x0c, 0x07, 0x08]);
+    bytes.extend_from_slice(&(cie_body.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&cie_body);
+
+    let fde_offset = bytes.len();
+    let cie_pointer_field = fde_offset + 4;
+    let pc_field = fde_offset + 8;
+    let pc_delta = (pc_begin as isize - (section_addr + pc_field) as isize) as i32;
+    let mut fde_body = Vec::new();
+    fde_body.extend_from_slice(&((cie_pointer_field - cie_offset) as u32).to_le_bytes());
+    fde_body.extend_from_slice(&pc_delta.to_le_bytes());
+    fde_body.extend_from_slice(&(pc_range as i32).to_le_bytes());
+    let augmentation_len_offset = fde_body.len();
+    encode_uleb(0, &mut fde_body);
+    let augmentation_start = fde_body.len();
+    if lsda_encoding == 0x00 {
+        fde_body.extend_from_slice(&lsda.to_le_bytes());
+    } else {
+        fde_body.push(0);
+    }
+    let augmentation_len = fde_body.len() - augmentation_start;
+    fde_body[augmentation_len_offset] = augmentation_len as u8;
+    fde_body.extend_from_slice(&[0x0c, 0x07, 0x08]);
+    bytes.extend_from_slice(&(fde_body.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&fde_body);
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes
+}
+
+unsafe extern "C" fn handler_personality(
+    version: i32,
+    actions: i32,
+    exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    ctx: *mut UnwindContext,
+) -> i32 {
+    let lsda = unsafe { _Unwind_GetLanguageSpecificData(ctx) };
+    let region_start = unsafe { _Unwind_GetRegionStart(ctx) };
+    let text_rel = unsafe { _Unwind_GetTextRelBase(ctx) };
+    let data_rel = unsafe { _Unwind_GetDataRelBase(ctx) };
+    if version == 1
+        && actions == UA_SEARCH_PHASE
+        && exception_class == TEST_EXCEPTION_CLASS
+        && !lsda.is_null()
+        && region_start != 0
+        && text_rel == 0
+        && data_rel == 0
+    {
+        URC_HANDLER_FOUND
+    } else {
+        URC_FATAL_PHASE1_ERROR
+    }
+}
+
+unsafe extern "C" fn continue_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    _ctx: *mut UnwindContext,
+) -> i32 {
+    URC_CONTINUE_UNWIND
+}
+
+unsafe extern "C" fn install_context_personality(
+    version: i32,
+    actions: i32,
+    exception_class: u64,
+    exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    ctx: *mut UnwindContext,
+) -> i32 {
+    if version != 1
+        || actions != (UA_CLEANUP_PHASE | UA_HANDLER_FRAME)
+        || exception_class != TEST_EXCEPTION_CLASS
+        || exception.is_null()
+    {
+        return URC_FATAL_PHASE1_ERROR;
+    }
+
+    unsafe { _Unwind_SetGR(ctx, 0, exception as usize) };
+    unsafe { _Unwind_SetGR(ctx, 1, 0x55aa) };
+    unsafe { _Unwind_SetGR(ctx, 99, 0xfeed) };
+    unsafe { _Unwind_SetGR(ctx, -1, 0xbeef) };
+    unsafe { _Unwind_SetIP(ctx, TEST_LANDING_PAD) };
+
+    if unsafe { _Unwind_GetGR(ctx, 0) } == exception as usize
+        && unsafe { _Unwind_GetGR(ctx, 1) } == 0x55aa
+        && unsafe { _Unwind_GetGR(ctx, 99) } == 0
+        && unsafe { _Unwind_GetGR(ctx, -1) } == 0
+        && unsafe { _Unwind_GetGR(std::ptr::null_mut(), 0) } == 0
+        && unsafe { _Unwind_GetIP(ctx) } == TEST_LANDING_PAD
+    {
+        URC_INSTALL_CONTEXT
+    } else {
+        URC_FATAL_PHASE1_ERROR
+    }
+}
+
+unsafe extern "C" fn phase2_fatal_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    _ctx: *mut UnwindContext,
+) -> i32 {
+    URC_FATAL_PHASE1_ERROR
+}
+
+unsafe extern "C" fn fatal_personality(
+    _version: i32,
+    _actions: i32,
+    _exception_class: u64,
+    _exception: *mut frankenlibc_abi::owned_unwind_abi::UnwindException,
+    _ctx: *mut UnwindContext,
+) -> i32 {
+    URC_INSTALL_CONTEXT
+}
+
+fn encode_uleb(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn encode_sleb(mut value: isize, out: &mut Vec<u8>) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        let done = (value == 0 && byte & 0x40 == 0) || (value == -1 && byte & 0x40 != 0);
+        out.push(if done { byte } else { byte | 0x80 });
+        if done {
+            break;
+        }
+    }
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+fn elf_section(path: &std::path::Path, name: &str) -> Option<(Vec<u8>, usize)> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.get(0..4)? != b"\x7fELF" || *bytes.get(4)? != 2 || *bytes.get(5)? != 1 {
+        return None;
+    }
+
+    let section_headers = read_u64_le(&bytes, 0x28)? as usize;
+    let section_header_size = read_u16_le(&bytes, 0x3a)? as usize;
+    let section_count = read_u16_le(&bytes, 0x3c)? as usize;
+    let section_names_index = read_u16_le(&bytes, 0x3e)? as usize;
+    let names_header =
+        section_headers.checked_add(section_names_index.checked_mul(section_header_size)?)?;
+    let names_offset = read_u64_le(&bytes, names_header + 0x18)? as usize;
+    let names_size = read_u64_le(&bytes, names_header + 0x20)? as usize;
+    let names = bytes.get(names_offset..names_offset.checked_add(names_size)?)?;
+
+    for index in 0..section_count {
+        let header = section_headers.checked_add(index.checked_mul(section_header_size)?)?;
+        let name_offset = read_u32_le(&bytes, header)? as usize;
+        let section_name = c_string_at(names, name_offset)?;
+        if section_name != name {
+            continue;
+        }
+        let addr = read_u64_le(&bytes, header + 0x10)? as usize;
+        let offset = read_u64_le(&bytes, header + 0x18)? as usize;
+        let size = read_u64_le(&bytes, header + 0x20)? as usize;
+        return Some((bytes.get(offset..offset.checked_add(size)?)?.to_vec(), addr));
+    }
+
+    None
+}
+
+fn c_string_at(bytes: &[u8], offset: usize) -> Option<&str> {
+    let tail = bytes.get(offset..)?;
+    let end = tail.iter().position(|byte| *byte == 0)?;
+    std::str::from_utf8(&tail[..end]).ok()
+}
+
+fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(
+        bytes.get(offset..offset + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(
+        bytes.get(offset..offset + 4)?.try_into().ok()?,
+    ))
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(
+        bytes.get(offset..offset + 8)?.try_into().ok()?,
+    ))
+}
+
+#[test]
+fn get_cfa_handles_null_and_live_backtrace_frames() {
+    assert_eq!(unsafe { _Unwind_GetCFA(std::ptr::null_mut()) }, 0);
+
+    unsafe extern "C" fn collect_cfas(ctx: *mut UnwindContext, arg: *mut c_void) -> i32 {
+        let out = unsafe { &mut *(arg.cast::<Vec<usize>>()) };
+        let cfa = unsafe { _Unwind_GetCFA(ctx) };
+        if cfa != 0 {
+            out.push(cfa);
+        }
+        URC_NO_REASON
+    }
+
+    let mut cfas = Vec::new();
+    let reason =
+        unsafe { _Unwind_Backtrace(Some(collect_cfas), (&mut cfas as *mut Vec<usize>).cast()) };
+    assert_eq!(reason, 5);
+    assert!(cfas.len() >= 2, "expected multiple frames, got {cfas:?}");
+    for pair in cfas.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "outer frame CFA must be >= inner frame CFA on downward-growing x86_64 stack: {cfas:?}"
+        );
+    }
+}
+
+#[test]
+fn rsp_cfa_landing_pad_install_allows_arbitrary_rbp() {
+    let section_addr = 0x540000usize;
+    let pc_begin = 0x542000usize;
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, 0x40, &[]);
+    let mut stack_words = [0usize; 8];
+    // CIE default rule in synthetic_eh_frame is CFA = %rsp + 8, RA = *(CFA - 8) = *(%rsp).
+    stack_words[0] = pc_begin + 4;
+    std::hint::black_box(&stack_words);
+    let sp = stack_words.as_mut_ptr() as usize;
+    let prepared = owned_prepare_landing_pad_install_for_tests(
+        &eh_frame,
+        section_addr,
+        OwnedLandingPadInstallInput {
+            call_site_ip: pc_begin + 4,
+            landing_pad_ip: TEST_LANDING_PAD,
+            frame_pointer: 0x1111_2222_3333_4444,
+            stack_pointer: sp,
+            general_register_0: 0xaa,
+            general_register_1: 0xbb,
+        },
+    )
+    .expect("RSP-based CFA without saved rbp must validate");
+    assert_eq!(
+        prepared,
+        OwnedLandingPadInstall {
+            ip: TEST_LANDING_PAD,
+            frame_pointer: 0x1111_2222_3333_4444,
+            stack_pointer: sp,
+            general_register_0: 0xaa,
+            general_register_1: 0xbb,
+        }
+    );
+}
+
+#[test]
+fn forced_unwind_executes_rust_drop_frames_until_stop_boundary() {
+    struct ForcedStopState {
+        boundary_sp: usize,
+        stop_calls: usize,
+        events: Vec<u32>,
+    }
+
+    struct DropRecorder(*mut Vec<u32>, u32);
+    impl Drop for DropRecorder {
+        fn drop(&mut self) {
+            unsafe { (*self.0).push(self.1) };
+        }
+    }
+
+    unsafe extern "C" fn cleanup_noop(_reason: i32, _exc: *mut UnwindException) {}
+
+    unsafe extern "C-unwind" fn stop_at_boundary(
+        version: i32,
+        actions: i32,
+        _exc_class: u64,
+        _exc: *mut UnwindException,
+        ctx: *mut UnwindContext,
+        arg: *mut c_void,
+    ) -> i32 {
+        assert_eq!(version, 1);
+        assert_ne!(actions & 8, 0, "_UA_FORCE_UNWIND must be set");
+        assert_ne!(actions & 2, 0, "_UA_CLEANUP_PHASE must be set");
+        let state = unsafe { &mut *(arg.cast::<ForcedStopState>()) };
+        state.stop_calls += 1;
+        let cfa = unsafe { _Unwind_GetCFA(ctx) };
+        if (actions & 16) != 0 || cfa > state.boundary_sp {
+            // Reached our caller boundary; exit the worker thread cleanly.
+            state.events.push(999);
+            unsafe { libc::pthread_exit(std::ptr::null_mut()) };
+        }
+        URC_NO_REASON
+    }
+
+    #[inline(never)]
+    unsafe extern "C-unwind" fn inner_frame(
+        exc: *mut UnwindException,
+        state: *mut ForcedStopState,
+    ) {
+        let _g2 = DropRecorder(unsafe { &raw mut (*state).events }, 20);
+        std::hint::black_box(&_g2);
+        let _ = unsafe { _Unwind_ForcedUnwind(exc, Some(stop_at_boundary), state.cast()) };
+    }
+
+    #[inline(never)]
+    unsafe extern "C-unwind" fn outer_frame(
+        exc: *mut UnwindException,
+        state: *mut ForcedStopState,
+    ) {
+        let _g1 = DropRecorder(unsafe { &raw mut (*state).events }, 10);
+        std::hint::black_box(&_g1);
+        unsafe { inner_frame(exc, state) };
+    }
+
+    struct WorkerBox {
+        exc: UnwindException,
+        state: ForcedStopState,
+    }
+
+    #[inline(never)]
+    extern "C" fn thread_entry(arg: *mut c_void) -> *mut c_void {
+        let wb = unsafe { &mut *(arg.cast::<WorkerBox>()) };
+        let anchor = 0usize;
+        std::hint::black_box(&anchor);
+        wb.state.boundary_sp = (&raw const anchor) as usize;
+        unsafe { outer_frame(&raw mut wb.exc, &raw mut wb.state) };
+        std::ptr::null_mut()
+    }
+
+    let mut wb = Box::new(WorkerBox {
+        exc: UnwindException {
+            exception_class: 0,
+            exception_cleanup: Some(cleanup_noop),
+            private_1: 0,
+            private_2: 0,
+        },
+        state: ForcedStopState {
+            boundary_sp: 0,
+            stop_calls: 0,
+            events: Vec::new(),
+        },
+    });
+    let mut tid: libc::pthread_t = 0;
+    let rc = unsafe {
+        libc::pthread_create(
+            &mut tid,
+            std::ptr::null(),
+            thread_entry,
+            (&raw mut *wb).cast::<c_void>(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { libc::pthread_join(tid, std::ptr::null_mut()) }, 0);
+    assert!(wb.state.stop_calls >= 2);
+    assert_eq!(
+        wb.state.events,
+        vec![20, 10, 999],
+        "forced unwind must drop inner then outer RAII guards in LIFO order before boundary stop"
+    );
+}
