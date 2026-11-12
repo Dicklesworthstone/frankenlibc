@@ -1349,6 +1349,36 @@ fn snprintf_records_ffi_pcc_gate_when_runtime_ready() {
 
 #[test]
 fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
+    const CHILD: &str = "FRANKENLIBC_STRICT_STDIO_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        // This contract is specific to strict mode. A fresh exec also keeps
+        // its stdout write and mode initialization isolated from other tests.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "strict_hot_stdio_writes_skip_runtime_policy_gate",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "strict")
+            .output()
+            .expect("run isolated strict stdio contract");
+        let child_stdout = String::from_utf8_lossy(&output.stdout);
+        let child_stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "strict stdio child failed:\nstdout={child_stdout}\nstderr={child_stderr}"
+        );
+        assert!(
+            child_stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored;")),
+            "strict stdio child did not execute its exact test:\n{child_stdout}\n{child_stderr}"
+        );
+        return;
+    }
+
     signal_runtime_ready_for_tests();
 
     let stream = unsafe { tmpfile() };
@@ -1378,7 +1408,7 @@ fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
 }
 
 #[test]
-fn io_2_1_aliases_resolve_to_native_stdio_storage() {
+fn io_2_1_objects_resolve_to_native_stdio_storage() {
     init_host_stdio_streams_for_tests();
 
     let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
@@ -1387,9 +1417,14 @@ fn io_2_1_aliases_resolve_to_native_stdio_storage() {
     let stdin_global = unsafe { std::ptr::addr_of_mut!(stdin).read() };
     let stdout_global = unsafe { std::ptr::addr_of_mut!(stdout).read() };
     let stderr_global = unsafe { std::ptr::addr_of_mut!(stderr).read() };
-    let io_stdin = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDIN).read() };
-    let io_stdout = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDOUT).read() };
-    let io_stderr = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDERR).read() };
+    let io_stdin = std::ptr::addr_of_mut!(IO_2_1_STDIN).cast::<c_void>();
+    let io_stdout = std::ptr::addr_of_mut!(IO_2_1_STDOUT).cast::<c_void>();
+    let io_stderr = std::ptr::addr_of_mut!(IO_2_1_STDERR).cast::<c_void>();
+
+    assert_eq!(
+        std::mem::size_of::<frankenlibc_abi::io_internal_abi::StandardFile>(),
+        224
+    );
 
     assert_eq!(stdin_global, stdin_ptr);
     assert_eq!(stdout_global, stdout_ptr);
@@ -1404,6 +1439,20 @@ fn io_2_1_aliases_resolve_to_native_stdio_storage() {
     assert_eq!(verify_native_file(stdin_ptr), Some(0));
     assert_eq!(verify_native_file(stdout_ptr), Some(1));
     assert_eq!(verify_native_file(stderr_ptr), Some(2));
+
+    // C callers read FILE fields directly, including through the data object
+    // rather than its pointer cell. The same public header must be mutable
+    // through the registry's separately stored private NativeFile state.
+    let mut registry = frankenlibc_abi::io_internal_abi::native_stream_registry();
+    for (fd, object) in [io_stdin, io_stdout, io_stderr].into_iter().enumerate() {
+        let native = registry.get_mut(fd).expect("standard native state");
+        let original = native.offset();
+        native.set_offset(123 + fd as i64);
+        // SAFETY: each object is a live GNU FILE; its _offset is at byte144.
+        let visible = unsafe { object.cast::<u8>().add(144).cast::<i64>().read() };
+        assert_eq!(visible, 123 + fd as i64);
+        native.set_offset(original);
+    }
 }
 
 #[test]

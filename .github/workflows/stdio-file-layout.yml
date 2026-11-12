@@ -9,6 +9,10 @@ on:
       - 'crates/frankenlibc-abi/src/fortify_abi.rs'
       - 'crates/frankenlibc-abi/src/wchar_abi.rs'
       - 'crates/frankenlibc-abi/src/isoc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/stdio_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/io_internal_native_file_test.rs'
+      - 'crates/frankenlibc-abi/tests/native_file_layout_test.rs'
+      - 'crates/frankenlibc-abi/version_scripts/libc.map'
       - 'crates/frankenlibc-abi/tests/conformance_diff_stdio_printf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs'
       - 'crates/frankenlibc-abi/tests/conformance_diff_fgetpos.rs'
@@ -23,6 +27,7 @@ on:
       - 'crates/frankenlibc-core/src/stdio/**'
       - 'crates/frankenlibc-core/src/mntent/**'
       - 'tests/integration/fixture_stdio.c'
+      - 'tests/integration/fixture_stdio_globals.c'
       - 'tests/integration/fixture_stdio_file_layout.c'
       - 'tests/integration/fixture_stdio_positions.c'
       - 'tests/integration/fixture_stdio_lifetime.c'
@@ -68,61 +73,6 @@ jobs:
       FRANKENLIBC_TEST_PRESERVE_FILES: '1'
     steps:
       - uses: actions/checkout@v4
-      # Temporary: execute the preserved stdio candidate without activating it on main.
-      # Remove this step when the exact candidate files are landed or rejected.
-      - name: Overlay immutable stdio candidate for runtime validation
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/stdio-layout
-          git rev-parse HEAD > artifacts/stdio-layout/candidate-base-commit.txt
-          python3 - <<'PY'
-          import base64
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-          from urllib.request import Request, urlopen
-
-          # Preserved tree: c6149d5a056f1741399c3cacd264b444b3803fa4.
-          # Overlay only these files so the checkout retains subsequent main fixes.
-          files = [
-              ("crates/frankenlibc-abi/src/io_internal_abi.rs", "5ece590b6447814e1a9709c42959ce3aab3d5b75", 0o644),
-              ("crates/frankenlibc-abi/src/stdio_abi.rs", "b67f306135aad055d4b54d0b473632019873f06b", 0o644),
-              ("crates/frankenlibc-abi/tests/io_internal_native_file_test.rs", "c9ed0b2d43486fa7d63793111c7f9eb3589218e8", 0o644),
-              ("crates/frankenlibc-abi/tests/stdio_abi_test.rs", "e56ec125c8e291f7c41b0224ab8b52a7fec84e97", 0o644),
-              ("crates/frankenlibc-abi/version_scripts/libc.map", "dbaa09a7b3daeae6ff1454f735ea32198bed7004", 0o644),
-              ("scripts/check_stdio_native.sh", "9398a3db4951bc97fdd8d4e62c16e83c94c4a3dd", 0o755),
-              ("tests/integration/fixture_stdio_globals.c", "2f39adf6be58be2b939f7eb3411b2d06fbf2d9fe", 0o644),
-              ("tests/integration/fixture_stdio_lifetime.c", "e55133143e4e74b494d4cebbca3d76afdc4ae3ce", 0o644),
-          ]
-          verified = []
-          for name, expected, mode in files:
-              url = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{expected}"
-              request = Request(url, headers={
-                  "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
-                  "Accept": "application/vnd.github+json",
-                  "User-Agent": "frankenlibc-agent (+https://github.com/Dicklesworthstone/frankenlibc)",
-              })
-              with urlopen(request, timeout=30) as response:
-                  blob = json.load(response)
-              assert blob["encoding"] == "base64", name
-              data = base64.b64decode(blob["content"])
-              actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
-              assert actual == expected == blob["sha"], f"blob mismatch: {name}"
-              verified.append((name, data, mode, expected))
-          for name, data, mode, expected in verified:
-              path = Path(name)
-              path.write_bytes(data)
-              path.chmod(mode)
-              print(f"{expected}  {name}")
-          Path("artifacts/stdio-layout/candidate-blobs.txt").write_text(
-              "".join(f"{expected}  {name}\n" for name, _, _, expected in verified)
-          )
-          PY
-          git diff --check
-          git diff --binary > artifacts/stdio-layout/candidate.patch
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
@@ -141,7 +91,7 @@ jobs:
           path: artifacts/stdio-toolchain/
           retention-days: 1
       # END STDIO BOOTSTRAP
-      - name: Build candidate ABI and optimized C caller
+      - name: Build deployed ABI and optimized C caller
         id: build
         run: |
           set -euo pipefail

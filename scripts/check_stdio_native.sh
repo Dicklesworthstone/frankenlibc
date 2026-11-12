@@ -180,28 +180,31 @@ check_pointer_cell() {
 
 check_file_object() {
   local symbol="$1"
-  local pointer_size
-  pointer_size="$(( $(getconf LONG_BIT) / 8 ))"
-  nm -D --defined-only --print-size "${LIB}" | awk -v sym="${symbol}" -v width="${pointer_size}" '
+  # Supported LP64 GNU targets have a 216-byte FILE plus an 8-byte vtable.
+  # Hybrid builds use unversioned interposition; the standalone version script
+  # assigns GLIBC_2.2.5. Both must export the exact 224-byte GLOBAL object.
+  readelf --dyn-syms --wide "${LIB}" | awk -v sym="${symbol}" '
     {
-      name = $NF
-      sub(/@.*/, "", name)
-      if (name == sym) {
-        size = $2
-        sub(/^0+/, "", size)
-        if (size == width) {
-          print "FAIL: " sym " must not be a pointer-sized FILE alias" > "/dev/stderr"
-          invalid = 1
-        }
+      name = $8
+      base = name
+      sub(/@.*/, "", base)
+      if (base == sym) {
+        found++
+        version_ok = name == sym || name == sym "@GLIBC_2.2.5" || name == sym "@@GLIBC_2.2.5"
+        if ($3 == 224 && $4 == "OBJECT" && $5 == "GLOBAL" && $7 != "UND" && version_ok) valid++
       }
     }
-    END { exit invalid }
+    END {
+      if (found != 1 || valid != 1) {
+        print "FAIL: " sym " must be a GLOBAL 224-byte FILE object (GLIBC_2.2.5 when versioned)" > "/dev/stderr"
+        exit 1
+      }
+    }
   '
 }
 
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  # stdin/out/err are pointer cells. _IO_2_1_* are FILE objects in glibc,
-  # not aliases of those cells; the hybrid preload need not export them.
+  # stdin/out/err are pointer cells; _IO_2_1_* are exact-size FILE objects.
   check_pointer_cell "stdin"
   check_pointer_cell "stdout"
   check_pointer_cell "stderr"
@@ -215,14 +218,22 @@ if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
     -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl -lm -pthread
 fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  for style in copy got; do
+  for style in copy pie-copy got; do
     link_flags=(-fno-pic -no-pie)
     if [[ "${style}" == got ]]; then
       link_flags=(-fPIC -pie)
+    elif [[ "${style}" == pie-copy ]]; then
+      link_flags=(-fPIE -pie)
     fi
     cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
       "${link_flags[@]}" "${ROOT}/tests/integration/fixture_stdio_globals.c" \
       -o "${BIN_DIR}/fixture_stdio_globals.${style}.bin" -ldl
+    if [[ "${style}" != got ]]; then
+      for symbol in _IO_2_1_stdin_ _IO_2_1_stdout_ _IO_2_1_stderr_; do
+        readelf --relocs --wide "${BIN_DIR}/fixture_stdio_globals.${style}.bin" \
+          | awk -v sym="${symbol}" '$3 ~ /_COPY$/ && index($5, sym) == 1 { found = 1 } END { exit !found }'
+      done
+    fi
   done
 fi
 
@@ -254,7 +265,8 @@ run_case() {
   stdout_file="${OUT_DIR}/${name}.${mode}.stdout.log"
   stderr_file="${OUT_DIR}/${name}.${mode}.stderr.log"
   start_ns="$(date +%s%N)"
-  FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" \
+  timeout --kill-after=2s 30s env FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" \
+    FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" \
     "${bin}" >"${stdout_file}" 2>"${stderr_file}"
   end_ns="$(date +%s%N)"
   latency_ns="$((end_ns - start_ns))"
@@ -285,7 +297,7 @@ if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
   run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "hardened" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
 fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  for style in copy got; do
+  for style in copy pie-copy got; do
     name="fixture_stdio_globals.${style}"
     bin="${BIN_DIR}/${name}.bin"
     host_provider="$(env -u LD_PRELOAD ldd "${bin}" | awk '$1 == "libc.so.6" { print $3 }')"
@@ -303,12 +315,21 @@ if [[ "${GNU_ONLY}" -eq 0 ]]; then
         exit 1
       fi
     done
+    provider_status=0
+    env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" \
+      "${bin}" >"${OUT_DIR}/${name}.provider-negative.stdout.log" \
+      2>"${OUT_DIR}/${name}.provider-negative.stderr.log" || provider_status=$?
+    if [[ "${provider_status}" -ne 1 ]] ||
+       ! grep -q '^FAIL: wrong stdio provider for ' "${OUT_DIR}/${name}.provider-negative.stderr.log"; then
+      echo "FAIL: ${name} accepted an omitted-preload provider control" >&2
+      exit 1
+    fi
   done
 fi
 
 if [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"pointer_cell_symbols":"pass","link_styles":["copy","got"],"candidate_processes":4,"live_GNU_processes":2,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
+{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"pointer_cell_symbols":"pass","file_object_symbols":"pass","link_styles":["copy","pie-copy","got"],"candidate_processes":6,"live_GNU_processes":3,"provider_negative_controls":3,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
 JSON
   echo "check_stdio_native --globals-only: PASS (provider-bound FILE semantics in both modes; full stdio gate not run)"
   exit 0

@@ -92,6 +92,7 @@ pub mod file_flags {
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct _IO_FILE_Layout {
     _flags: c_int,
     _padding0: c_int,
@@ -125,6 +126,47 @@ struct _IO_FILE_Layout {
     _mode: c_int,
     _unused2: [u8; 20],
 }
+
+/// The complete GNU data-symbol ABI for a standard stream.
+///
+/// An executable COPY relocation reserves exactly this prefix, so private
+/// Rust state must never follow it in the exported object's contract. The
+/// corresponding native registry slot owns that state separately.
+#[repr(C)]
+pub struct StandardFile {
+    header: _IO_FILE_Layout,
+    vtable: *mut _IO_jump_t,
+}
+
+impl StandardFile {
+    pub(crate) const fn new(fd: c_int) -> Self {
+        let mut header = _IO_FILE_Layout::new(fd);
+        header._flags = GLIBC_IO_MAGIC
+            | glibc_flag_bits::LINKED
+            | glibc_flag_bits::IS_FILEBUF
+            | if fd == 0 {
+                glibc_flag_bits::NO_WRITES
+            } else if fd == 1 {
+                glibc_flag_bits::NO_READS
+            } else {
+                glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED
+            };
+        header._old_offset = -1;
+        header._offset = -1;
+        // The static lock exists before any constructor. Native operations
+        // use the same lock through their registry-owned private state.
+        header._lock = ptr::addr_of!(STD_STREAM_LOCKS[fd as usize])
+            .cast_mut()
+            .cast();
+        Self {
+            header,
+            vtable: ptr::addr_of_mut!(_IO_file_jumps),
+        }
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<StandardFile>() == 224);
+const _: () = assert!(std::mem::offset_of!(StandardFile, vtable) == 216);
 
 impl _IO_FILE_Layout {
     const fn new(fd: c_int) -> Self {
@@ -696,6 +738,10 @@ pub struct NativeFile {
     _io_file: _IO_FILE_Layout,
     pub vtable: *mut _IO_jump_t,
     _frankenlibc_state: NativeFileState,
+    /// Standard streams publish their GNU prefix in an exact-size ELF object
+    /// (possibly COPY-relocated into the executable). Dynamic files retain
+    /// their in-place prefix, represented by a null pointer here.
+    standard_object: *mut StandardFile,
 }
 
 /// Magic value identifying a [`NativeFile`] struct: "FKLC".
@@ -863,6 +909,7 @@ impl NativeFile {
             // Set vtable to our native trampolines for indirect vtable dispatch.
             vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
             _frankenlibc_state: NativeFileState::new(fd, flags, buf_mode),
+            standard_object: ptr::null_mut(),
         };
         file.sync_lock_ptr();
         file
@@ -873,6 +920,7 @@ impl NativeFile {
             _io_file: _IO_FILE_Layout::new(fd),
             vtable: ptr::addr_of_mut!(_IO_file_jumps),
             _frankenlibc_state: NativeFileState::new_std(slot_index),
+            standard_object: ptr::null_mut(),
         };
         file.sync_lock_ptr();
         file
@@ -888,6 +936,7 @@ impl NativeFile {
             _io_file: io_file,
             vtable: ptr::null_mut(),
             _frankenlibc_state: NativeFileState::empty_slot(),
+            standard_object: ptr::null_mut(),
         }
     };
 
@@ -904,9 +953,53 @@ impl NativeFile {
             _io_file: _IO_FILE_Layout::new(-1), // Memory streams have no fd
             vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
             _frankenlibc_state: NativeFileState::new_with_backing(backing, flags, buf_mode),
+            standard_object: ptr::null_mut(),
         };
         file.sync_lock_ptr();
         file
+    }
+
+    #[inline]
+    fn header(&self) -> &_IO_FILE_Layout {
+        if self.standard_object.is_null() {
+            &self._io_file
+        } else {
+            // SAFETY: only standard registry slots install this pointer. It
+            // names a process-lifetime GNU object, selected before publication.
+            unsafe { &(*self.standard_object).header }
+        }
+    }
+
+    #[inline]
+    fn header_mut(&mut self) -> &mut _IO_FILE_Layout {
+        if self.standard_object.is_null() {
+            &mut self._io_file
+        } else {
+            // SAFETY: the caller holds the same FILE/registry synchronization
+            // as for an in-place header. The selected object never moves.
+            unsafe { &mut (*self.standard_object).header }
+        }
+    }
+
+    /// Address callers may dereference as a GNU FILE, excluding private state.
+    #[inline]
+    pub fn handle_ptr(&self) -> *mut c_void {
+        if self.standard_object.is_null() {
+            ptr::from_ref(self).cast_mut().cast()
+        } else {
+            self.standard_object.cast()
+        }
+    }
+
+    fn publish_standard_object(&mut self, object: *mut StandardFile) {
+        // SAFETY: install_std_streams holds the registry mutex before the
+        // object is published to native callers. Only the 224-byte ABI prefix
+        // is initialized, never memory following a COPY-relocated object.
+        unsafe {
+            (*object).header = self._io_file;
+            (*object).vtable = self.vtable;
+        }
+        self.standard_object = object;
     }
 
     fn with_locked<R>(&self, f: impl FnOnce(&NativeFileLocked) -> R) -> R {
@@ -925,22 +1018,23 @@ impl NativeFile {
         let base = base.cast::<c_char>();
         let pos = pos.cast::<c_char>();
         let end = end.cast::<c_char>();
-        self._io_file._IO_buf_base = base;
-        self._io_file._IO_buf_end = end;
-        self._io_file._IO_read_base = base;
-        self._io_file._IO_read_ptr = pos;
-        self._io_file._IO_read_end = end;
-        self._io_file._IO_write_base = base;
-        self._io_file._IO_write_ptr = pos;
-        self._io_file._IO_write_end = end;
+        let header = self.header_mut();
+        header._IO_buf_base = base;
+        header._IO_buf_end = end;
+        header._IO_read_base = base;
+        header._IO_read_ptr = pos;
+        header._IO_read_end = end;
+        header._IO_write_base = base;
+        header._IO_write_ptr = pos;
+        header._IO_write_end = end;
         // A published window is a real buffer again.
         if !base.is_null() {
-            self._io_file._flags &= !NO_VISIBLE_BUFFER;
+            header._flags &= !NO_VISIBLE_BUFFER;
         }
     }
 
     fn sync_lock_ptr(&mut self) {
-        self._io_file._lock = self._frankenlibc_state.lock_ptr();
+        self.header_mut()._lock = self._frankenlibc_state.lock_ptr();
     }
 
     pub fn invalidate(&mut self) {
@@ -981,10 +1075,14 @@ impl NativeFile {
     }
 
     fn reset_unlocked_fields(&mut self) {
-        self._io_file = _IO_FILE_Layout::new(-1);
-        self._io_file._flags = 0;
+        *self.header_mut() = _IO_FILE_Layout::new(-1);
+        self.header_mut()._flags = 0;
         self.sync_lock_ptr();
         self.vtable = ptr::null_mut();
+        if !self.standard_object.is_null() {
+            // SAFETY: this standard slot retains its process-lifetime object.
+            unsafe { (*self.standard_object).vtable = ptr::null_mut() };
+        }
         self._frankenlibc_state
             .orientation
             .store(0, Ordering::Relaxed);
@@ -997,23 +1095,23 @@ impl NativeFile {
 
     #[inline]
     pub fn fd(&self) -> i32 {
-        self._io_file._fileno
+        self.header()._fileno
     }
 
     #[inline]
     pub fn set_fd(&mut self, fd: i32) {
-        self._io_file._fileno = fd;
+        self.header_mut()._fileno = fd;
     }
 
     #[inline]
     pub fn offset(&self) -> i64 {
-        self._io_file._offset
+        self.header()._offset
     }
 
     #[inline]
     pub fn set_offset(&mut self, offset: i64) {
-        self._io_file._offset = offset;
-        self._io_file._old_offset = offset as libc::off_t;
+        self.header_mut()._offset = offset;
+        self.header_mut()._old_offset = offset as libc::off_t;
     }
 
     #[inline]
@@ -1037,17 +1135,17 @@ impl NativeFile {
 
     #[inline]
     pub fn buffer_base(&self) -> *mut u8 {
-        self._io_file._IO_buf_base.cast::<u8>()
+        self.header()._IO_buf_base.cast::<u8>()
     }
 
     #[inline]
     pub fn buffer_pos(&self) -> *mut u8 {
-        self._io_file._IO_write_ptr.cast::<u8>()
+        self.header()._IO_write_ptr.cast::<u8>()
     }
 
     #[inline]
     pub fn buffer_end(&self) -> *mut u8 {
-        self._io_file._IO_buf_end.cast::<u8>()
+        self.header()._IO_buf_end.cast::<u8>()
     }
 
     #[inline]
@@ -1080,19 +1178,19 @@ impl NativeFile {
 
     #[inline]
     pub fn lock_ptr(&self) -> *mut c_void {
-        self._io_file._lock
+        self.header()._lock
     }
 
     /// Get the `_chain` pointer for linked-list traversal.
     #[inline]
-    pub fn chain(&self) -> *mut NativeFile {
-        self._io_file._chain.cast::<NativeFile>()
+    pub fn chain(&self) -> *mut c_void {
+        self.header()._chain.cast()
     }
 
     /// Set the `_chain` pointer for linked-list maintenance.
     #[inline]
-    pub fn set_chain(&mut self, next: *mut NativeFile) {
-        self._io_file._chain = next.cast::<_IO_FILE_Layout>();
+    pub fn set_chain(&mut self, next: *mut c_void) {
+        self.header_mut()._chain = next.cast::<_IO_FILE_Layout>();
     }
 
     /// Returns `true` if this struct has the correct magic value.
@@ -1104,33 +1202,33 @@ impl NativeFile {
     /// Returns `true` if the EOF flag is set.
     #[inline]
     pub fn is_eof(&self) -> bool {
-        self._io_file._flags & GLIBC_IO_EOF_SEEN != 0
+        self.header()._flags & GLIBC_IO_EOF_SEEN != 0
     }
 
     /// Returns `true` if the error flag is set.
     #[inline]
     pub fn is_error(&self) -> bool {
-        self._io_file._flags & GLIBC_IO_ERR_SEEN != 0
+        self.header()._flags & GLIBC_IO_ERR_SEEN != 0
     }
 
     /// Set the EOF flag.
     #[inline]
     pub fn set_eof(&mut self) {
-        self._io_file._flags |= GLIBC_IO_EOF_SEEN;
+        self.header_mut()._flags |= GLIBC_IO_EOF_SEEN;
         self.with_locked_mut(|state| state.eof = true);
     }
 
     /// Set the error flag.
     #[inline]
     pub fn set_error(&mut self) {
-        self._io_file._flags |= GLIBC_IO_ERR_SEEN;
+        self.header_mut()._flags |= GLIBC_IO_ERR_SEEN;
         self.with_locked_mut(|state| state.error = true);
     }
 
     /// Clear both EOF and error flags (for `clearerr`).
     #[inline]
     pub fn clear_errors(&mut self) {
-        self._io_file._flags &= !(GLIBC_IO_EOF_SEEN | GLIBC_IO_ERR_SEEN);
+        self.header_mut()._flags &= !(GLIBC_IO_EOF_SEEN | GLIBC_IO_ERR_SEEN);
         self.with_locked_mut(|state| {
             state.eof = false;
             state.error = false;
@@ -1140,7 +1238,7 @@ impl NativeFile {
     /// Clear only the EOF flag without disturbing the error bit.
     #[inline]
     pub fn clear_eof(&mut self) {
-        self._io_file._flags &= !GLIBC_IO_EOF_SEEN;
+        self.header_mut()._flags &= !GLIBC_IO_EOF_SEEN;
         self.with_locked_mut(|state| state.eof = false);
     }
 
@@ -1559,8 +1657,10 @@ impl NativeStreamRegistry {
     /// Recognize occupied AND closed handles without dereferencing the caller's
     /// pointer. Closed handles must never be misrouted to host glibc.
     fn handle_slot(&self, file: *const c_void) -> Option<usize> {
-        self.slots()
-            .position(|slot| ptr::eq(&slot.file as *const NativeFile as *const c_void, file))
+        self.slots().position(|slot| {
+            ptr::eq(slot.file.handle_ptr(), file)
+                || ptr::eq(&slot.file as *const NativeFile as *const c_void, file)
+        })
     }
 
     fn occupy_slot(slot: &mut StreamSlot, file: NativeFile) {
@@ -1569,7 +1669,7 @@ impl NativeStreamRegistry {
         // SAFETY: callers hold the registry mutex, and all slabs have stable
         // addresses before this FILE becomes visible in the linked list.
         unsafe {
-            slot.file.set_chain(native_file_list().cast::<NativeFile>());
+            slot.file.set_chain(native_file_list());
             publish_native_file_list((&mut slot.file as *mut NativeFile).cast());
         }
     }
@@ -1624,9 +1724,9 @@ impl NativeStreamRegistry {
     /// This links stdin/stdout/stderr via _chain and sets _IO_list_all.
     fn ensure_stdio_chain_linked(&mut self) {
         // Get stable pointers to the stdio streams now that registry is in its final location.
-        let stdin_ptr: *mut NativeFile = &mut self.slots[0].file;
-        let stdout_ptr: *mut NativeFile = &mut self.slots[1].file;
-        let stderr_ptr: *mut NativeFile = &mut self.slots[2].file;
+        let stdin_ptr = self.slots[0].file.handle_ptr();
+        let stdout_ptr = self.slots[1].file.handle_ptr();
+        let stderr_ptr = self.slots[2].file.handle_ptr();
 
         // Link stdio streams: stderr -> stdout -> stdin -> NULL
         self.slots[0].file.set_chain(ptr::null_mut()); // stdin: end of chain
@@ -1680,25 +1780,25 @@ impl NativeStreamRegistry {
             return false;
         }
         // Unlink from _chain list.
-        let file_ptr: *mut NativeFile = &mut slot.file;
+        let file_ptr = slot.file.handle_ptr().cast::<_IO_FILE_Layout>();
         // SAFETY: _IO_list_all is protected by the registry mutex.
         unsafe {
-            let mut prev: *mut NativeFile = ptr::null_mut();
-            let mut curr = native_file_list().cast::<NativeFile>();
+            let mut prev: *mut _IO_FILE_Layout = ptr::null_mut();
+            let mut curr = native_file_list().cast::<_IO_FILE_Layout>();
             while !curr.is_null() {
                 if curr == file_ptr {
                     // Found it. Unlink.
-                    let next = (*curr).chain();
+                    let next = (*curr)._chain;
                     if prev.is_null() {
                         // Unlinking the head.
                         publish_native_file_list(next.cast::<c_void>());
                     } else {
-                        (*prev).set_chain(next);
+                        (*prev)._chain = next;
                     }
                     break;
                 }
                 prev = curr;
-                curr = (*curr).chain();
+                curr = (*curr)._chain;
             }
         }
         *slot = StreamSlot::empty();
@@ -1870,6 +1970,16 @@ pub(crate) fn native_stdio_slot_addr_lockfree(fd: usize) -> usize {
     NATIVE_STDIO_SLOT_ADDR[fd].load(Ordering::Acquire)
 }
 
+/// Private standard-stream state is always in the native registry, even when
+/// its public GNU object is COPY-relocated elsewhere. Never cast the public
+/// 224-byte object to the larger NativeFile type to obtain this state.
+pub(crate) fn native_stdio_private_slot_addr_lockfree(fd: usize) -> usize {
+    if native_stdio_slot_addr_lockfree(fd) == 0 {
+        return 0;
+    }
+    NATIVE_SLOTS_FILE_BASE.load(Ordering::Acquire) + fd * NATIVE_SLOT_STRIDE
+}
+
 /// Access the global stream registry.
 ///
 /// On first access, initializes the stdio chain links and bloom filter.
@@ -1878,6 +1988,10 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
 
     if !STD_STREAMS_INSTALLED.load(std::sync::atomic::Ordering::Acquire) {
         guard.install_std_streams();
+        for index in 0..3 {
+            let object = stdio_abi::standard_stdio_object(index as c_int);
+            guard.slots[index].file.publish_standard_object(object);
+        }
         STD_STREAMS_INSTALLED.store(true, std::sync::atomic::Ordering::Release);
     }
 
@@ -1896,7 +2010,7 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
         // the lock-free compare stays semantically identical to the locked scan.
         for (index, slot_addr) in NATIVE_STDIO_SLOT_ADDR.iter().enumerate() {
             let addr = match guard.get_mut(index) {
-                Some(file) => file as *mut NativeFile as usize,
+                Some(file) => file.handle_ptr() as usize,
                 None => 0,
             };
             slot_addr.store(addr, Ordering::Relaxed);
@@ -1921,7 +2035,7 @@ pub fn native_stdio_stream_ptr(fd: c_int) -> *mut c_void {
     let Some(file) = registry.get_mut(index) else {
         return ptr::null_mut();
     };
-    file as *mut NativeFile as *mut c_void
+    file.handle_ptr()
 }
 
 /// Single-lock variant: does `stream` point at one of the three native std
@@ -1969,7 +2083,7 @@ pub fn bench_native_stdio_fd_for_ptr_locked(stream: *const c_void) -> Option<c_i
         (2, libc::STDERR_FILENO),
     ] {
         if let Some(file) = registry.get_mut(index)
-            && file as *mut NativeFile as *const c_void == stream
+            && ptr::eq(file.handle_ptr(), stream)
         {
             return Some(fd);
         }
@@ -2130,13 +2244,13 @@ pub(crate) const IO_BUF_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout
 /// `ptr` must be a live handle from [`register_stdio_handle`] or a memory
 /// stream registered with a native handle.
 pub(crate) unsafe fn reset_stdio_handle_header(ptr: *mut c_void, fd: c_int, glibc_flags: i32) {
-    let file = ptr.cast::<NativeFile>();
-    // SAFETY: caller guarantees `ptr` is a live NativeFile.
+    let file = ptr.cast::<_IO_FILE_Layout>();
+    // SAFETY: caller guarantees a live GNU FILE header. A standard stream may
+    // be a 224-byte COPY relocation with no trailing NativeFile state.
     unsafe {
-        (*file)._io_file._flags =
-            GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
-        (*file)._io_file._fileno = fd;
-        (*file)._io_file._mode = 0;
+        (*file)._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
+        (*file)._fileno = fd;
+        (*file)._mode = 0;
     }
 }
 
@@ -2168,6 +2282,11 @@ pub fn might_be_native_file(ptr: *mut c_void) -> bool {
         return false;
     }
     if is_native_slot_ptr_lockfree(ptr) {
+        return true;
+    }
+    if STDIO_CHAIN_INITIALIZED.load(Ordering::Acquire)
+        && native_stdio_fd_for_addr(ptr as usize).is_some()
+    {
         return true;
     }
     NATIVE_FILE_BLOOM_INITIALIZED.load(Ordering::Acquire)
@@ -3852,7 +3971,7 @@ pub unsafe extern "C" fn _IO_iter_file(iter: *mut c_void) -> *mut c_void {
     };
     let mut reg = native_stream_registry();
     match reg.get_mut(slot) {
-        Some(file) => file as *mut NativeFile as *mut c_void,
+        Some(file) => file.handle_ptr(),
         None => ptr::null_mut(),
     }
 }

@@ -6,9 +6,10 @@
 #include <string.h>
 #include <unistd.h>
 
-/* Refer directly to all four objects so the non-PIC build exercises actual
+/* Refer directly to the cells and FILE objects so the non-PIC build exercises actual
  * executable COPY relocations, including chain-head updates after startup. */
 extern FILE *_IO_list_all;
+extern FILE _IO_2_1_stdin_, _IO_2_1_stdout_, _IO_2_1_stderr_;
 
 static void fail(const char *message) {
     ssize_t written = write(STDERR_FILENO, message, strlen(message));
@@ -33,6 +34,7 @@ struct native_api {
     void (*release)(void *);
     void *(*head)(void);
     FILE **cells[3];
+    FILE *objects[3];
     FILE **list;
 };
 
@@ -62,6 +64,9 @@ static struct native_api native_api(void *handle) {
     api.cells[0] = dlsym(handle, "stdin");
     api.cells[1] = dlsym(handle, "stdout");
     api.cells[2] = dlsym(handle, "stderr");
+    api.objects[0] = symbol(handle, "_IO_2_1_stdin_", base);
+    api.objects[1] = symbol(handle, "_IO_2_1_stdout_", base);
+    api.objects[2] = symbol(handle, "_IO_2_1_stderr_", base);
     api.list = dlsym(handle, "_IO_list_all");
     CHECK(api.list);
     for (unsigned i = 0; i < 3; ++i) {
@@ -157,10 +162,13 @@ static void check_flush_all(int (*flush)(FILE *)) {
     CHECK(fclose(host) == 0);
 }
 
-static void check_host(FILE ***cells, FILE **values, FILE **saved) {
+static void check_host(FILE ***cells, FILE **values, FILE **saved, const FILE *headers) {
     for (unsigned i = 0; i < 4; ++i) CHECK(*cells[i] == values[i]);
     CHECK(stdin == saved[0] && stdout == saved[1] && stderr == saved[2]);
     CHECK(_IO_list_all == values[3]);
+    CHECK(memcmp(&_IO_2_1_stdin_, &headers[0], sizeof(FILE)) == 0);
+    CHECK(memcmp(&_IO_2_1_stdout_, &headers[1], sizeof(FILE)) == 0);
+    CHECK(memcmp(&_IO_2_1_stderr_, &headers[2], sizeof(FILE)) == 0);
 }
 
 static void local_lifetime(const char *library) {
@@ -174,6 +182,7 @@ static void local_lifetime(const char *library) {
     CHECK(lseek(fd, 0, SEEK_CUR) == 0);
     const char *names[] = { "stdin", "stdout", "stderr", "_IO_list_all" };
     FILE **cells[4], *values[4], *saved[] = { stdin, stdout, stderr };
+    FILE headers[] = { _IO_2_1_stdin_, _IO_2_1_stdout_, _IO_2_1_stderr_ };
     for (unsigned i = 0; i < 4; ++i) {
         cells[i] = dlsym(RTLD_DEFAULT, names[i]);
         CHECK(cells[i]);
@@ -182,13 +191,17 @@ static void local_lifetime(const char *library) {
     for (unsigned cycle = 0; cycle < 3; ++cycle) {
         void *handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
         CHECK(handle);
-        check_host(cells, values, saved);
+        check_host(cells, values, saved, headers);
         struct native_api api = native_api(handle);
+        for (unsigned i = 0; i < 3; ++i) {
+            CHECK(*api.cells[i] == api.objects[i]);
+            CHECK(api.objects[i] != saved[i]);
+        }
         exercise_native(&api, 0);
-        check_host(cells, values, saved);
+        check_host(cells, values, saved, headers);
         CHECK(lseek(fd, 0, SEEK_CUR) == 0);
         CHECK(dlclose(handle) == 0);
-        check_host(cells, values, saved);
+        check_host(cells, values, saved, headers);
     }
     CHECK(fflush(NULL) == 0);
     CHECK(lseek(fd, 0, SEEK_CUR) == (off_t)(sizeof pending - 1));
@@ -204,7 +217,7 @@ static void local_lifetime(const char *library) {
     struct native_api api = native_api(handle);
     check_flush_all(api.flush);
     CHECK(dlclose(handle) == 0);
-    check_host(cells, values, saved);
+    check_host(cells, values, saved, headers);
     CHECK(fclose(host) == 0);
 }
 
@@ -212,6 +225,7 @@ static void preload_lifetime(const char *library) {
     /* These direct reads precede any ABI call: constructor COPY publication
      * cannot wait for a later printf/fflush to initialize the visible cells. */
     CHECK(stdin && stdout && stderr && _IO_list_all);
+    CHECK(stdin == &_IO_2_1_stdin_ && stdout == &_IO_2_1_stdout_ && stderr == &_IO_2_1_stderr_);
     CHECK((stdin->_flags & 0xffff0000u) == 0xfbad0000u && stdin->_fileno == 0);
     CHECK((stdout->_flags & 0xffff0000u) == 0xfbad0000u && stdout->_fileno == 1);
     CHECK((stderr->_flags & 0xffff0000u) == 0xfbad0000u && stderr->_fileno == 2);

@@ -12,8 +12,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* These are FILE objects, NOT FILE * variables.  A preload implementation
- * may supply its own FILE storage without interposing these glibc internals. */
+/* These symbols contain FILE followed by its vtable, not FILE * variables.
+ * The same objects must back both direct references and public pointer cells. */
 extern FILE _IO_2_1_stdin_;
 extern FILE _IO_2_1_stdout_;
 extern FILE _IO_2_1_stderr_;
@@ -69,14 +69,18 @@ static int check_provider(void) {
         }
     }
     const char *objects[] = {"_IO_2_1_stdin_", "_IO_2_1_stdout_", "_IO_2_1_stderr_"};
+    FILE *visible_objects[] = {&_IO_2_1_stdin_, &_IO_2_1_stdout_, &_IO_2_1_stderr_};
     for (size_t i = 0; i < 3; ++i) {
         void *object = dlsym(handle, objects[i]);
         Dl_info info;
         const ElfW(Sym) *entry = NULL;
-        if (object != NULL &&
-            (dladdr1(object, &info, (void **)&entry, RTLD_DL_SYMENT) == 0 ||
-             entry == NULL || entry->st_size < sizeof(FILE))) {
-            fprintf(stderr, "FAIL: %s must be a FILE object, not a pointer cell\n", objects[i]);
+        if (object == NULL ||
+            dladdr1(object, &info, (void **)&entry, RTLD_DL_SYMENT) == 0 ||
+            entry == NULL || entry->st_size != sizeof(FILE) + sizeof(void *) ||
+            !same_file(info.dli_fname, expected) ||
+            dlsym(RTLD_DEFAULT, objects[i]) != visible_objects[i] ||
+            *visible_cells[i] != visible_objects[i]) {
+            fprintf(stderr, "FAIL: wrong provider/size/binding for %s FILE object\n", objects[i]);
             dlclose(handle);
             return 1;
         }
@@ -177,13 +181,24 @@ int main(void) {
             return 1;
         }
     }
-    /* Correctly declared host objects have distinct addresses from the public
-     * pointer cells. Do not require native storage to equal host storage. */
+    /* Pointer cells and the exact-size objects have separate addresses. Both
+     * a COPY-relocated executable and a GOT-bound executable see one header. */
     if ((void *)&stdin == (void *)&_IO_2_1_stdin_ ||
         (void *)&stdout == (void *)&_IO_2_1_stdout_ ||
         (void *)&stderr == (void *)&_IO_2_1_stderr_) return 1;
+    if (stdin != &_IO_2_1_stdin_ || stdout != &_IO_2_1_stdout_ ||
+        stderr != &_IO_2_1_stderr_ ||
+        fileno(&_IO_2_1_stdin_) != STDIN_FILENO ||
+        fileno(&_IO_2_1_stdout_) != STDOUT_FILENO ||
+        fileno(&_IO_2_1_stderr_) != STDERR_FILENO ||
+        _IO_2_1_stderr_._chain != &_IO_2_1_stdout_ ||
+        _IO_2_1_stdout_._chain != &_IO_2_1_stdin_ ||
+        _IO_2_1_stdin_._chain != NULL) {
+        fprintf(stderr, "FAIL: standard FILE objects/pointers/chain disagree\n");
+        return 1;
+    }
 
-    if (setvbuf(stdout, user_buf, _IOFBF, sizeof(user_buf)) != 0) {
+    if (setvbuf(&_IO_2_1_stdout_, user_buf, _IOFBF, sizeof(user_buf)) != 0) {
         fprintf(stderr, "FAIL: setvbuf(stdout,_IOFBF,user_buf) failed\n");
         return 1;
     }
@@ -200,8 +215,8 @@ int main(void) {
         return 1;
     }
 
-    if (check_buffering(stdout, STDOUT_FILENO, 0) != 0 ||
-        check_buffering(stderr, STDERR_FILENO, 1) != 0) return 1;
+    if (check_buffering(&_IO_2_1_stdout_, STDOUT_FILENO, 0) != 0 ||
+        check_buffering(&_IO_2_1_stderr_, STDERR_FILENO, 1) != 0) return 1;
     if (check_redirected_globals() != 0) return 1;
     if (fprintf(stdout, "fixture_stdio_globals: PASS\n") < 0 || fflush(stdout) != 0) {
         return 1;

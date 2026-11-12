@@ -2631,9 +2631,11 @@ GLIBC_2.2.5 {
         _IO_sgetn;
         _IO_seekoff;
         _IO_seekpos;
-        /* _IO_2_1_{stdin,stdout,stderr}_ are now exported (bd-9chy.10).
-           They point to the same NativeFile storage as stdin/stdout/stderr.
-           With NativeFile managing the _IO_list chain (bd-9chy.50), these are safe. */
+        /* Exact-size FILE-plus-vtable objects; private state stays in the
+           native registry so executable COPY relocations remain valid. */
+        _IO_2_1_stdin_;
+        _IO_2_1_stdout_;
+        _IO_2_1_stderr_;
 
         /* GNU old regex API */
         re_set_syntax;

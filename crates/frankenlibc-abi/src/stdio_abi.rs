@@ -2821,33 +2821,17 @@ fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
     }
     let addr = stream as usize;
 
-    // In standalone mode, only match sentinel addresses (no host glibc FILE* comparison).
-    #[cfg(feature = "standalone")]
     {
-        return match addr {
-            STDIN_SENTINEL => Some(STDIN_SENTINEL),
-            STDOUT_SENTINEL => Some(STDOUT_SENTINEL),
-            STDERR_SENTINEL => Some(STDERR_SENTINEL),
-            _ => None,
-        };
-    }
-
-    #[cfg(not(feature = "standalone"))]
-    {
-        // Check the 3 sentinel ADDRESSES first (cheap integer compares): fl's own
-        // stdin/stdout/stderr are sentinels, so the hot stdout/stderr write path
-        // resolves here with ZERO `native_stream_registry` locks. Previously each
-        // branch's `|| stream == native_stdio_stream_ptr(fd)` took that std::sync
-        // mutex (a stdout write paid the STDIN-branch lock; a non-std stream paid all
-        // 3). Byte-identical ptr->id mapping. (bd-hqo6b6 hot-path; cc/BoldFalcon)
+        // Internal sentinel IDs remain cheap aliases. Public standard streams
+        // use real GNU objects, matched by the published lock-free table below.
         match addr {
             STDIN_SENTINEL => return Some(STDIN_SENTINEL),
             STDOUT_SENTINEL => return Some(STDOUT_SENTINEL),
             STDERR_SENTINEL => return Some(STDERR_SENTINEL),
             _ => {}
         }
-        // Non-sentinel pointer: a single locked check against the 3 native FILE slots
-        // (was up to 3 separate locked calls).
+        // Only the first access may initialize the native registry; ordinary
+        // calls compare the three stable public object addresses without a lock.
         match io_internal_abi::native_stdio_fd_for_ptr(stream) {
             Some(libc::STDIN_FILENO) => Some(STDIN_SENTINEL),
             Some(libc::STDOUT_FILENO) => Some(STDOUT_SENTINEL),
@@ -3988,17 +3972,17 @@ unsafe fn stream_write_fd(caller: usize, fd: c_int, buf: *const c_void, count: u
 /// Global `stdin` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static mut stdin: *mut c_void = STDIN_SENTINEL as *mut c_void;
+pub static mut stdin: *mut c_void = core::ptr::addr_of_mut!(IO_2_1_STDIN).cast();
 
 /// Global `stdout` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static mut stdout: *mut c_void = STDOUT_SENTINEL as *mut c_void;
+pub static mut stdout: *mut c_void = core::ptr::addr_of_mut!(IO_2_1_STDOUT).cast();
 
 /// Global `stderr` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
+pub static mut stderr: *mut c_void = core::ptr::addr_of_mut!(IO_2_1_STDERR).cast();
 
 // ELF data symbols remain interposable even with -Bsymbolic-functions. A
 // locally dlopened copy must initialize its own cells, not the host's cells
@@ -4015,6 +3999,15 @@ core::arch::global_asm!(
     ".globl __frankenlibc_stderr_storage",
     ".hidden __frankenlibc_stderr_storage",
     ".set __frankenlibc_stderr_storage, stderr",
+    ".globl __frankenlibc_stdin_object",
+    ".hidden __frankenlibc_stdin_object",
+    ".set __frankenlibc_stdin_object, _IO_2_1_stdin_",
+    ".globl __frankenlibc_stdout_object",
+    ".hidden __frankenlibc_stdout_object",
+    ".set __frankenlibc_stdout_object, _IO_2_1_stdout_",
+    ".globl __frankenlibc_stderr_object",
+    ".hidden __frankenlibc_stderr_object",
+    ".set __frankenlibc_stderr_object, _IO_2_1_stderr_",
 );
 
 #[cfg(not(debug_assertions))]
@@ -4025,6 +4018,12 @@ unsafe extern "C" {
     static mut OWNED_STDOUT: *mut c_void;
     #[link_name = "__frankenlibc_stderr_storage"]
     static mut OWNED_STDERR: *mut c_void;
+    #[link_name = "__frankenlibc_stdin_object"]
+    static mut OWNED_STDIN_OBJECT: io_internal_abi::StandardFile;
+    #[link_name = "__frankenlibc_stdout_object"]
+    static mut OWNED_STDOUT_OBJECT: io_internal_abi::StandardFile;
+    #[link_name = "__frankenlibc_stderr_object"]
+    static mut OWNED_STDERR_OBJECT: io_internal_abi::StandardFile;
 }
 
 #[inline]
@@ -4042,6 +4041,26 @@ fn owned_stdio_cell(fd: c_int) -> *mut *mut c_void {
         core::ptr::addr_of_mut!(OWNED_STDERR),
     ];
     cells[fd as usize]
+}
+
+/// Choose the single ABI-visible header for a standard stream. In an
+/// interposed process, ELF resolves the public address to an executable's
+/// COPY relocation when present. A local dlopen must instead use this DSO's
+/// hidden storage and leave the host's objects untouched.
+pub(crate) fn standard_stdio_object(fd: c_int) -> *mut io_internal_abi::StandardFile {
+    #[cfg(not(debug_assertions))]
+    if !stdio_symbols_are_interposed() {
+        return [
+            core::ptr::addr_of_mut!(OWNED_STDIN_OBJECT),
+            core::ptr::addr_of_mut!(OWNED_STDOUT_OBJECT),
+            core::ptr::addr_of_mut!(OWNED_STDERR_OBJECT),
+        ][fd as usize];
+    }
+    [
+        core::ptr::addr_of_mut!(IO_2_1_STDIN),
+        core::ptr::addr_of_mut!(IO_2_1_STDOUT),
+        core::ptr::addr_of_mut!(IO_2_1_STDERR),
+    ][fd as usize]
 }
 
 /// True only when the native stdio functions own process-wide lookup. A
@@ -4087,27 +4106,20 @@ pub(crate) fn stdio_symbols_are_interposed() -> bool {
     }
 }
 
-// glibc internal `_IO_2_1_{stdin,stdout,stderr}_` mirrors.
-//
-// These names are not pointer cells in glibc; they are the actual `_IO_FILE_plus`
-// objects backing the public `stdin/stdout/stderr` pointer variables. Release
-// builds therefore must not export them as aliases to the 8-byte pointer cells:
-// that creates an ABI lie which makes preloaded processes treat a pointer value
-// as a FILE header during dynamic-loader/libc startup.
-//
-// Debug/test builds do not export the libc symbol surface, so they keep local
-// pointer mirrors with the same runtime values for unit-test coverage only.
-#[cfg(debug_assertions)]
+// GNU's standard stream symbols are FILE-plus-vtable objects, never FILE*
+// pointer cells. Private native state lives in registry slots, so copying the
+// exact 224-byte exported object into an executable cannot truncate it.
+#[cfg_attr(not(debug_assertions), unsafe(export_name = "_IO_2_1_stdin_"))]
 #[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDIN: *mut c_void = STDIN_SENTINEL as *mut c_void;
+pub static mut IO_2_1_STDIN: io_internal_abi::StandardFile = io_internal_abi::StandardFile::new(0);
 
-#[cfg(debug_assertions)]
+#[cfg_attr(not(debug_assertions), unsafe(export_name = "_IO_2_1_stdout_"))]
 #[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDOUT: *mut c_void = STDOUT_SENTINEL as *mut c_void;
+pub static mut IO_2_1_STDOUT: io_internal_abi::StandardFile = io_internal_abi::StandardFile::new(1);
 
-#[cfg(debug_assertions)]
+#[cfg_attr(not(debug_assertions), unsafe(export_name = "_IO_2_1_stderr_"))]
 #[allow(non_upper_case_globals)]
-pub static mut IO_2_1_STDERR: *mut c_void = STDERR_SENTINEL as *mut c_void;
+pub static mut IO_2_1_STDERR: io_internal_abi::StandardFile = io_internal_abi::StandardFile::new(2);
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 #[cfg_attr(feature = "standalone", allow(dead_code))]
@@ -4213,21 +4225,14 @@ unsafe fn sync_copy_relocated_stdio_symbol(
 
 /// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
 ///
-/// In standalone mode, stdio globals are already set to sentinel values that map
-/// directly to the stream registry entries, so no host delegation is needed.
+/// Both hybrid and standalone modes publish real GNU-layout objects. Hybrid
+/// interposition additionally synchronizes executable pointer-cell copies.
 #[allow(clippy::needless_return)]
 pub(crate) fn init_host_stdio_streams() {
     if HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire) {
         return;
     }
 
-    // In standalone mode, globals are pre-set to sentinels - just mark as ready.
-    #[cfg(feature = "standalone")]
-    {
-        HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
-    }
-
-    #[cfg(not(feature = "standalone"))]
     {
         let interposed = stdio_symbols_are_interposed();
         ensure_host_libio_exit_safe();
@@ -4251,12 +4256,7 @@ pub(crate) fn init_host_stdio_streams() {
                     stdout = stdout_ptr;
                     stderr = stderr_ptr;
                 }
-                #[cfg(debug_assertions)]
-                {
-                    IO_2_1_STDIN = stdin_ptr;
-                    IO_2_1_STDOUT = stdout_ptr;
-                    IO_2_1_STDERR = stderr_ptr;
-                }
+
                 #[cfg(not(debug_assertions))]
                 {
                     if can_sync_copy_relocations {
@@ -18154,7 +18154,7 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
 /// valid while the stream is open -- the caller's contract for the `FILE *`.
 fn native_file_unlocked_registry(slot: usize) -> Option<&'static io_internal_abi::NativeFile> {
     if slot < 3 {
-        let addr = io_internal_abi::native_stdio_slot_addr_lockfree(slot);
+        let addr = io_internal_abi::native_stdio_private_slot_addr_lockfree(slot);
         if addr != 0 {
             // SAFETY: reserved std slots 0..3 live in static storage and never move.
             return Some(unsafe { &*(addr as *const io_internal_abi::NativeFile) });
