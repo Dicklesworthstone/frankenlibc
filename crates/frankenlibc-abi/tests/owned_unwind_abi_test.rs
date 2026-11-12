@@ -8,12 +8,12 @@ use frankenlibc_abi::owned_unwind_abi::{
     OwnedPhase1SearchOutcome, OwnedPhase2CleanupOutcome, OwnedProgramHeaderForTests,
     OwnedUnwindDecodeError, UnwindContext, owned_decode_sleb128_for_tests,
     owned_decode_uleb128_for_tests, owned_evaluate_cfi_row_for_tests,
-    owned_find_fde_for_ip_for_tests, owned_first_fde_for_tests,
-    owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
+    owned_evaluate_dwarf_expression_for_tests, owned_find_fde_for_ip_for_tests,
+    owned_first_fde_for_tests, owned_frame_is_registered_for_tests, owned_frame_object_for_tests,
     owned_loaded_eh_frame_ranges_for_tests, owned_loaded_eh_frame_ranges_from_phdrs_for_tests,
     owned_phase1_search_for_tests, owned_phase2_cleanup_for_tests,
-    owned_prepare_landing_pad_install_for_tests, owned_summarize_eh_frame_for_tests,
-    owned_validate_cfi_program_for_tests,
+    owned_prepare_landing_pad_install_for_tests, owned_recover_cfi_registers_for_tests,
+    owned_summarize_eh_frame_for_tests, owned_validate_cfi_program_for_tests,
 };
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -346,6 +346,83 @@ fn signal_cie_does_not_poison_ordinary_fde_lookup() {
         .expect("ordinary FDE should remain reachable after signal metadata");
     assert!(!ordinary.signal_frame);
     assert_eq!(ordinary.pc_begin, ordinary_pc);
+}
+
+#[test]
+fn dwarf_expressions_recover_cfa_addresses_and_register_values() {
+    let words = [0x11usize, 0x1234, 0x5678, 0x22, 0x33, 0x44];
+    let base = words.as_ptr() as usize;
+    let mut registers = [0; 32];
+    registers[7] = base;
+    assert_eq!(
+        owned_evaluate_dwarf_expression_for_tests(&[0x77, 0x08, 0x06], registers, &words, None),
+        Ok(words[1]),
+        "DW_OP_breg7 + deref must read the saved word from the current stack"
+    );
+    assert_eq!(
+        owned_evaluate_dwarf_expression_for_tests(&[0x23, 0x08], registers, &words, Some(base)),
+        Ok(base + 8),
+        "register expressions begin with the current CFA on their evaluation stack"
+    );
+    let cfi = [
+        0x0f, 0x02, 0x77, 0x18, // CFA = RSP + 24.
+        0x10, 0x03, 0x02, 0x77, 0x08, // RBX is stored at RSP + 8.
+        0x16, 0x0c, 0x02, 0x23, 0x08, // R12's value is CFA + 8.
+    ];
+    let eh_frame = synthetic_eh_frame(0x42b000, 0x42c000, 0x20, &cfi);
+    let (caller, interrupted) =
+        owned_recover_cfi_registers_for_tests(&eh_frame, 0x42b000, 0x42c000, registers, &words)
+            .expect("all three expression CFI rules should recover a live bounded frame");
+    assert_eq!(caller[3], words[1]);
+    assert_eq!(caller[7], base + 24);
+    assert_eq!(caller[12], base + 32);
+    assert_eq!(caller[16], words[2]);
+    assert!(!interrupted);
+}
+
+#[test]
+fn dwarf_expression_evaluation_fails_closed_on_bad_programs_and_memory() {
+    let words = [0x1234usize, 0x5678];
+    let mut registers = [0; 32];
+    registers[7] = words.as_ptr() as usize;
+    for (program, expected) in [
+        (&[0x22][..], OwnedUnwindDecodeError::MalformedExpression),
+        (&[0x77][..], OwnedUnwindDecodeError::Truncated),
+        (
+            &[0x92, 0x20, 0x00][..],
+            OwnedUnwindDecodeError::MalformedExpression,
+        ),
+        (
+            &[0x2f, 0x00, 0x00][..],
+            OwnedUnwindDecodeError::UnsupportedDwarfOpcode(0x2f),
+        ),
+        (
+            &[0x77, 0x10, 0x06][..],
+            OwnedUnwindDecodeError::InvalidStackAddress,
+        ),
+        (
+            &[0x77, 0x78, 0x06][..],
+            OwnedUnwindDecodeError::InvalidStackAddress,
+        ),
+        (&[0x30; 33][..], OwnedUnwindDecodeError::ExpressionLimit),
+        (&[0x96; 129][..], OwnedUnwindDecodeError::ExpressionLimit),
+        (&[0x96; 257][..], OwnedUnwindDecodeError::ExpressionLimit),
+    ] {
+        assert_eq!(
+            owned_evaluate_dwarf_expression_for_tests(program, registers, &words, None),
+            Err(expected)
+        );
+    }
+    assert_eq!(
+        owned_evaluate_dwarf_expression_for_tests(
+            &[0x11, 0x78, 0x10, 0x10, 0x22],
+            registers,
+            &words,
+            None
+        ),
+        Ok(8),
+        "signed constants use the target word's arithmetic representation"
+    );
 }
 
 #[test]

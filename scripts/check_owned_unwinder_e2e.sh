@@ -224,7 +224,7 @@ for variant in frame_pointer omit_frame_pointer; do
     exit 1
   fi
 
-  for case_name in ordinary forced rethrow end negative missing_fde boundary; do
+  for case_name in ordinary forced rethrow signal signal_altstack end negative missing_fde boundary; do
     if [[ "${case_name}" != missing_fde && "${case_name}" != boundary ]]; then
       echo "Running ${variant}/${case_name} host reference"
       "${HOST_BIN}" "${case_name}" > "${OUT_DIR}/host_${variant}_${case_name}.log"
@@ -296,6 +296,8 @@ entries = {
     "ordinary": "minimal_throw_catch_entry",
     "forced": "owned_forced_unwind_entry",
     "rethrow": "owned_forced_unwind_rethrow_entry",
+    "signal": "owned_signal_unwind_entry",
+    "signal_altstack": "owned_signal_unwind_entry",
     "end": "owned_forced_unwind_end_entry",
     "negative": "owned_unwind_negative_entry",
     "missing_fde": "owned_unwind_missing_fde_entry",
@@ -303,9 +305,13 @@ entries = {
 }
 entry_name = entries[case_name]
 entry = getattr(fixture, entry_name)
-entry.argtypes = []
 entry.restype = ctypes.c_int
-result = entry()
+if case_name in ("signal", "signal_altstack"):
+    entry.argtypes = [ctypes.c_int]
+    result = entry(int(case_name == "signal_altstack"))
+else:
+    entry.argtypes = []
+    result = entry()
 if result != 0:
     raise SystemExit(f"{entry_name} returned {result}")
 reject_host_unwinder("after executing fixture")
@@ -339,6 +345,9 @@ cat > "${SUMMARY_FILE}" <<EOF
     "owned_resume_without_phase1_rerun": "pass",
     "owned_forced_stop_before_personality": "pass",
     "owned_forced_catch_rethrow_preserves_state": "pass",
+    "owned_signal_frame_cfi_and_interrupted_gprs": "pass",
+    "owned_signal_frame_ip_info": "pass",
+    "owned_signal_altstack_transition": "pass",
     "owned_forced_cfa_matches_suspended_stack": "pass",
     "owned_forced_terminal_callback": "pass",
     "owned_stop_error_normalization": "pass",

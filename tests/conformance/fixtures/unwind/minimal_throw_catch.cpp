@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <signal.h>
+#include <ucontext.h>
 #include <unwind.h>
 
 class TestException : public std::exception {
@@ -38,6 +40,8 @@ struct Observations {
     unsigned rethrows;
     unsigned boundary_equal_seen;
     unsigned boundary_stops;
+    unsigned signal_deliveries;
+    unsigned signal_contexts;
     unsigned failures;
     uintptr_t seed;
     uintptr_t frame_sp[guard_count];
@@ -46,12 +50,15 @@ struct Observations {
     unsigned stopped_after_installs[max_stops];
     uintptr_t target_sp;
     uintptr_t boundary_sp;
+    uintptr_t signal_registers[17];
     bool forced;
     bool stop_at_target;
     bool terminal_cleanup;
     bool stop_only_at_end;
     bool allow_stop_rewind;
     bool stop_at_boundary;
+    bool signal_mode;
+    bool signal_altstack;
     _Unwind_Reason_Code stop_result;
     _Unwind_Reason_Code returned;
 };
@@ -59,6 +66,12 @@ struct Observations {
 static Observations observed;
 static _Unwind_Exception forced_exception;
 static std::jmp_buf destination;
+static sigjmp_buf signal_destination;
+alignas(16) static unsigned char alternate_signal_stack[128 * 1024];
+// The potentially-unwinding indirect call must remain visible to the C++
+// compiler. A direct call to libc's noexcept raise declaration has no cleanup
+// landing pad at the interrupted call site.
+static int (*volatile deliver_signal)(int) = raise;
 
 __attribute__((always_inline)) inline uintptr_t stack_pointer() {
     uintptr_t result;
@@ -141,6 +154,20 @@ _Unwind_Reason_Code forced_stop(int version, _Unwind_Action actions,
     }
     const uintptr_t sp = _Unwind_GetCFA(context);
     const uintptr_t ip = _Unwind_GetIP(context);
+    const bool interrupted_context = observed.signal_mode && ip == observed.signal_registers[16];
+    if (interrupted_context) {
+        ++observed.signal_contexts;
+        int before = 0;
+        if (_Unwind_GetIPInfo(context, &before) != ip || before != 1 ||
+            sp != observed.signal_registers[7] || observed.signal_contexts != 1) {
+            ++observed.failures;
+        }
+        for (int reg = 0; reg < 17; ++reg) {
+            if (_Unwind_GetGR(context, reg) != observed.signal_registers[reg]) {
+                ++observed.failures;
+            }
+        }
+    }
 #ifdef FRANKENLIBC_UNWIND_FIXTURE_TRACE
     std::fprintf(stderr, "stop=%u actions=%d ip=%p sp=%p target=%p\n",
                  observed.stop_calls, actions, (void*)ip, (void*)sp, (void*)observed.target_sp);
@@ -161,7 +188,8 @@ _Unwind_Reason_Code forced_stop(int version, _Unwind_Action actions,
     }
     if (sp == 0 || ip == 0 || observed.stop_calls == max_stops ||
         (observed.stop_calls != 0 &&
-         ((sp < observed.stopped_sp[observed.stop_calls - 1] && !observed.allow_stop_rewind) ||
+         ((sp < observed.stopped_sp[observed.stop_calls - 1] &&
+           !observed.allow_stop_rewind && !interrupted_context) ||
           (sp == observed.stopped_sp[observed.stop_calls - 1] &&
            observed.event_count != observed.stopped_after_guards[observed.stop_calls - 1] + 1 &&
            observed.cleanup_installs != observed.stopped_after_installs[observed.stop_calls - 1] + 1)))) {
@@ -192,6 +220,9 @@ _Unwind_Reason_Code forced_stop(int version, _Unwind_Action actions,
             ++observed.failures;
         }
         _Unwind_DeleteException(exception);
+        if (observed.signal_mode) {
+            siglongjmp(signal_destination, 1);
+        }
         std::longjmp(destination, 1);
     }
     if (observed.stop_at_target && sp > observed.target_sp) {
@@ -199,6 +230,31 @@ _Unwind_Reason_Code forced_stop(int version, _Unwind_Action actions,
         return _URC_FATAL_PHASE2_ERROR;
     }
     return observed.stop_only_at_end ? _URC_NO_REASON : observed.stop_result;
+}
+
+void signal_unwind_handler(int signum, siginfo_t*, void* raw_context) {
+    ++observed.signal_deliveries;
+    if (signum != SIGUSR1 || raw_context == nullptr) {
+        ++observed.failures;
+        return;
+    }
+    const auto* context = static_cast<const ucontext_t*>(raw_context);
+    constexpr int indices[17] = {
+        REG_RAX, REG_RDX, REG_RCX, REG_RBX, REG_RSI, REG_RDI, REG_RBP, REG_RSP,
+        REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15, REG_RIP
+    };
+    for (unsigned reg = 0; reg < 17; ++reg) {
+        observed.signal_registers[reg] = static_cast<uintptr_t>(context->uc_mcontext.gregs[indices[reg]]);
+    }
+    if (observed.signal_altstack) {
+        const uintptr_t sp = stack_pointer();
+        const uintptr_t base = reinterpret_cast<uintptr_t>(alternate_signal_stack);
+        if (sp < base || sp >= base + sizeof(alternate_signal_stack)) {
+            ++observed.failures;
+        }
+    }
+    observed.returned = _Unwind_ForcedUnwind(&forced_exception, forced_stop, &observed);
+    ++observed.failures;
 }
 
 // Recursive calls deliberately share return PCs. Handler/cleanup identity must
@@ -216,6 +272,9 @@ __attribute__((noinline)) void guarded_frames(unsigned depth, bool forced) {
     observed.frame_sp[depth] = stack_pointer();
     if (depth != 0) {
         guarded_frames(depth - 1, forced);
+    } else if (observed.signal_mode) {
+        deliver_signal(SIGUSR1);
+        ++observed.failures;
     } else if (forced) {
         observed.returned = _Unwind_ForcedUnwind(&forced_exception, forced_stop, &observed);
         ++observed.failures; // A successful forced cleanup leaves through stop.
@@ -225,11 +284,11 @@ __attribute__((noinline)) void guarded_frames(unsigned depth, bool forced) {
 }
 
 int report(const char* label, bool result) {
-    std::printf("%s: %s guards=%u search=%u cleanup=%u installs=%u stops=%u end=%u delete=%u rethrow=%u failures=%u\n",
+    std::printf("%s: %s guards=%u search=%u cleanup=%u installs=%u stops=%u end=%u delete=%u rethrow=%u signal=%u interrupted=%u failures=%u\n",
                 result ? "PASS" : "FAIL", label, observed.event_count,
                 observed.search_calls, observed.cleanup_calls, observed.cleanup_installs,
                 observed.stop_calls, observed.end_calls, observed.deletes,
-                observed.rethrows, observed.failures);
+                observed.rethrows, observed.signal_deliveries, observed.signal_contexts, observed.failures);
     return result ? 0 : 1;
 }
 
@@ -352,6 +411,43 @@ extern "C" int owned_forced_unwind_entry() {
                   observed.failures == 0 && guards_match() &&
                   observed.deletes == 1 && observed.end_calls == 0 &&
                   observed.stop_calls == 2 * guard_count + 1 && personality_checks(true));
+}
+
+extern "C" int owned_signal_unwind_entry(int alternate_stack) {
+    reset_observations(true);
+    observed.signal_mode = true;
+    observed.signal_altstack = alternate_stack != 0;
+    observed.stop_at_target = true;
+    observed.target_sp = stack_pointer();
+    struct sigaction action{}, previous_action{};
+    stack_t previous_stack{};
+    action.sa_sigaction = signal_unwind_handler;
+    action.sa_flags = SA_SIGINFO | (alternate_stack ? SA_ONSTACK : 0);
+    sigemptyset(&action.sa_mask);
+    if (alternate_stack) {
+        stack_t stack{};
+        stack.ss_sp = alternate_signal_stack;
+        stack.ss_size = sizeof(alternate_signal_stack);
+        if (sigaltstack(&stack, &previous_stack) != 0) {
+            return report("install alternate signal stack", false);
+        }
+    }
+    if (sigaction(SIGUSR1, &action, &previous_action) != 0) {
+        if (alternate_stack) { sigaltstack(&previous_stack, nullptr); }
+        return report("install signal action", false);
+    }
+    if (sigsetjmp(signal_destination, 1) == 0) {
+        guarded_frames(guard_count - 1, true);
+        ++observed.failures;
+    }
+    if (sigaction(SIGUSR1, &previous_action, nullptr) != 0 ||
+        (alternate_stack && sigaltstack(&previous_stack, nullptr) != 0)) {
+        ++observed.failures;
+    }
+    return report(alternate_stack ? "signal unwind across alternate stack" : "signal unwind across interrupted frame",
+                  observed.failures == 0 && guards_match() &&
+                  observed.signal_deliveries == 1 && observed.signal_contexts == 1 &&
+                  observed.deletes == 1 && observed.end_calls == 0 && personality_checks(true));
 }
 
 __attribute__((noinline)) static void forced_catching_frame() {
@@ -524,6 +620,12 @@ extern "C" int owned_unwind_negative_entry() {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "signal") == 0) {
+        return owned_signal_unwind_entry(0);
+    }
+    if (argc == 2 && std::strcmp(argv[1], "signal_altstack") == 0) {
+        return owned_signal_unwind_entry(1);
+    }
     if (argc == 2 && std::strcmp(argv[1], "forced") == 0) {
         return owned_forced_unwind_entry();
     }

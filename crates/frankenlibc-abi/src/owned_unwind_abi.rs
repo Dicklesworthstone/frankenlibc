@@ -88,6 +88,9 @@ const X86_64_DWARF_RSP: usize = 7;
 const X86_64_DWARF_RIP: usize = 16;
 const MAX_TRACKED_DWARF_REGISTERS: usize = 32;
 const UNSET_DWARF_REGISTER: usize = usize::MAX;
+const MAX_DWARF_EXPRESSION_BYTES: usize = 256;
+const MAX_DWARF_EXPRESSION_STACK: usize = 32;
+const MAX_DWARF_EXPRESSION_STEPS: usize = 128;
 
 type UnwindPersonalityFn = unsafe extern "C" fn(
     version: c_int,
@@ -108,6 +111,10 @@ pub enum OwnedUnwindDecodeError {
     UnsupportedPointerEncoding(u8),
     UnsupportedCfiOpcode(u8),
     UnsupportedSignalFrame,
+    UnsupportedDwarfOpcode(u8),
+    MalformedExpression,
+    ExpressionLimit,
+    InvalidStackAddress,
     MissingCie,
     MissingFde,
     MalformedRecord,
@@ -167,13 +174,22 @@ enum CfiRegisterRule {
     Offset(isize),
     ValOffset(isize),
     Register(usize),
+    Expression(CfiExpression),
+    ValExpression(CfiExpression),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CfiExpression {
+    start: usize,
+    len: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct CfiEvaluationState {
     pc: usize,
     cfa_register: usize,
     cfa_offset: isize,
+    cfa_expression: Option<CfiExpression>,
     register_rules: [CfiRegisterRule; MAX_TRACKED_DWARF_REGISTERS],
 }
 
@@ -267,6 +283,7 @@ pub struct OwnedLandingPadInstallInput {
 #[repr(C)]
 pub struct UnwindContext {
     ip: UnwindWord,
+    ip_before_instruction: bool,
     frame_index: usize,
     frame_pointer: UnwindWord,
     stack_pointer: UnwindWord,
@@ -315,6 +332,7 @@ struct CapturedUnwindCursor {
 #[derive(Clone, Copy)]
 struct UnwindCursor {
     ip: usize,
+    ip_before_instruction: bool,
     registers: [usize; MAX_UNWIND_GR],
 }
 
@@ -331,6 +349,7 @@ impl UnwindCursor {
         registers[X86_64_DWARF_RIP] = capture.ip;
         Self {
             ip: capture.ip,
+            ip_before_instruction: false,
             registers,
         }
     }
@@ -339,9 +358,18 @@ impl UnwindCursor {
         self.registers[X86_64_DWARF_RSP]
     }
 
+    fn lookup_ip(self) -> usize {
+        if self.ip_before_instruction {
+            self.ip
+        } else {
+            frame_lookup_ip(self.ip)
+        }
+    }
+
     fn context(self, frame_index: usize, fde: Option<OwnedFdeRecord>) -> UnwindContext {
         UnwindContext {
             ip: self.ip,
+            ip_before_instruction: self.ip_before_instruction,
             frame_index,
             frame_pointer: self.registers[X86_64_DWARF_RBP],
             stack_pointer: self.stack_pointer(),
@@ -421,6 +449,7 @@ pub unsafe extern "C" fn _Unwind_Backtrace(
         if instruction_pointer != 0 {
             let mut context = UnwindContext {
                 ip: instruction_pointer,
+                ip_before_instruction: false,
                 frame_index,
                 frame_pointer,
                 stack_pointer,
@@ -520,7 +549,8 @@ pub unsafe extern "C" fn _Unwind_GetIPInfo(
         // SAFETY: the caller provided the optional out-pointer defined by the
         // unwinder ABI; a non-null pointer is expected to reference writable
         // storage for one c_int.
-        unsafe { ip_before_insn.write(0) };
+        let before = !ctx.is_null() && unsafe { (*ctx).ip_before_instruction };
+        unsafe { ip_before_insn.write(c_int::from(before)) };
     }
     // SAFETY: mirrors _Unwind_GetIP's opaque-context handling.
     unsafe { _Unwind_GetIP(ctx) }
@@ -1275,20 +1305,13 @@ fn owned_frame_state(
     if cursor.ip == 0 {
         return Ok(None);
     }
-    let ip = frame_lookup_ip(cursor.ip);
+    let ip = cursor.lookup_ip();
     let Some(record) = find_registered_fde_record_for_ip(ip)? else {
         // A live PC without unwind metadata is an unsupported frame, not
         // proof that every outer destructor has run. Only a recovered zero
         // return address is an observed stack end.
         return Err(OwnedUnwindDecodeError::MissingFde);
     };
-    if record.fde.signal_frame {
-        // Signal trampolines restore interrupted PCs, not return addresses.
-        // Keep that marker while scanning shared-object CIEs, but do not
-        // silently apply normal IP-1 or register rules to a selected signal
-        // frame until signal-context recovery is implemented.
-        return Err(OwnedUnwindDecodeError::UnsupportedSignalFrame);
-    }
     let state = evaluate_cfi_state(&record.eh_frame, record.fde, ip)?;
     Ok(Some((record.fde, state)))
 }
@@ -1297,41 +1320,75 @@ fn unwind_caller(
     cursor: UnwindCursor,
     fde: OwnedFdeRecord,
     state: CfiEvaluationState,
+    bounds: &mut UnwindStackBounds,
+) -> Result<UnwindCursor, OwnedUnwindDecodeError> {
+    // Expression operands refer to the copied EH-frame bytes. Reacquire them
+    // only after the stop/personality callback has elected to continue. This
+    // keeps owned buffers off discarded landing-pad stacks and lets a native
+    // boundary stop before any attempt to read its unsupported caller state.
+    let caller = if state.has_expressions() {
+        let record = find_registered_fde_record_for_ip(cursor.lookup_ip())?
+            .ok_or(OwnedUnwindDecodeError::MissingFde)?;
+        if record.fde != fde
+            || evaluate_cfi_state(&record.eh_frame, fde, cursor.lookup_ip())? != state
+        {
+            return Err(OwnedUnwindDecodeError::MalformedRecord);
+        }
+        unwind_caller_with_metadata(cursor, fde, state, *bounds, &record.eh_frame)?
+    } else {
+        unwind_caller_with_metadata(cursor, fde, state, *bounds, &[])?
+    };
+    if fde.signal_frame {
+        // A kernel signal context can resume another stack (SA_ONSTACK).
+        // Only this explicit CIE marker permits a discontinuity; subsequent
+        // ordinary frames again obey a bounded, monotonically growing SP.
+        *bounds = UnwindStackBounds::new(caller).ok_or(OwnedUnwindDecodeError::Overflow)?;
+    }
+    Ok(caller)
+}
+
+fn unwind_caller_with_metadata(
+    cursor: UnwindCursor,
+    fde: OwnedFdeRecord,
+    state: CfiEvaluationState,
     bounds: UnwindStackBounds,
+    eh_frame: &[u8],
 ) -> Result<UnwindCursor, OwnedUnwindDecodeError> {
     if fde.return_address_register != X86_64_DWARF_RIP {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
-    let base = cursor
-        .registers
-        .get(state.cfa_register)
-        .copied()
-        .ok_or(OwnedUnwindDecodeError::MalformedRecord)?;
-    let cfa =
-        checked_add_signed_usize(base, state.cfa_offset).ok_or(OwnedUnwindDecodeError::Overflow)?;
-    if cfa <= cursor.stack_pointer()
-        || cfa > bounds.end
+    let cfa = if let Some(expression) = state.cfa_expression {
+        evaluate_dwarf_expression(eh_frame, expression, &cursor.registers, bounds, None)?
+    } else {
+        let base = cursor
+            .registers
+            .get(state.cfa_register)
+            .copied()
+            .ok_or(OwnedUnwindDecodeError::MalformedRecord)?;
+        checked_add_signed_usize(base, state.cfa_offset).ok_or(OwnedUnwindDecodeError::Overflow)?
+    };
+    if cfa == 0
+        || cfa == cursor.stack_pointer()
+        || (!fde.signal_frame && (cfa < cursor.stack_pointer() || cfa > bounds.end))
         || !cfa.is_multiple_of(core::mem::align_of::<usize>())
     {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
     let mut caller = cursor;
-    // Only SysV nonvolatile GPRs and the return address survive a call. Read
-    // every rule from the original cursor, so DW_CFA_register dependencies
-    // are simultaneous and cannot depend on the order of this loop.
-    for register in [3, X86_64_DWARF_RBP, 12, 13, 14, 15, X86_64_DWARF_RIP] {
+    // Ordinary calls preserve the SysV nonvolatile registers. Signals save the
+    // entire interrupted machine context, including volatile GPRs and SP.
+    // Every rule reads the original cursor, not earlier loop assignments.
+    for register in 0..=X86_64_DWARF_RIP {
+        if !fde.signal_frame && !matches!(register, 3 | 6 | 12..=16) {
+            continue;
+        }
         caller.registers[register] = match state.register_rule(register) {
             CfiRegisterRule::Undefined => 0,
             CfiRegisterRule::SameValue => cursor.registers[register],
             CfiRegisterRule::Offset(offset) => {
                 let address = checked_add_signed_usize(cfa, offset)
                     .ok_or(OwnedUnwindDecodeError::Overflow)?;
-                if !bounds.contains_word(address) {
-                    return Err(OwnedUnwindDecodeError::MalformedRecord);
-                }
-                // SAFETY: the compiler's CFI names an aligned saved register
-                // in the bounded current-thread stack interval.
-                unsafe { (address as *const usize).read() }
+                read_stack_word(address, bounds)?
             }
             CfiRegisterRule::ValOffset(offset) => {
                 checked_add_signed_usize(cfa, offset).ok_or(OwnedUnwindDecodeError::Overflow)?
@@ -1340,10 +1397,37 @@ fn unwind_caller(
                 .registers
                 .get(source)
                 .ok_or(OwnedUnwindDecodeError::MalformedRecord)?,
+            CfiRegisterRule::Expression(expression) => {
+                let address = evaluate_dwarf_expression(
+                    eh_frame,
+                    expression,
+                    &cursor.registers,
+                    bounds,
+                    Some(cfa),
+                )?;
+                read_stack_word(address, bounds)?
+            }
+            CfiRegisterRule::ValExpression(expression) => evaluate_dwarf_expression(
+                eh_frame,
+                expression,
+                &cursor.registers,
+                bounds,
+                Some(cfa),
+            )?,
         };
+    }
+    if fde.signal_frame
+        && !matches!(
+            state.register_rule(X86_64_DWARF_RSP),
+            CfiRegisterRule::SameValue | CfiRegisterRule::Undefined
+        )
+        && caller.registers[X86_64_DWARF_RSP] != cfa
+    {
+        return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
     caller.registers[X86_64_DWARF_RSP] = cfa;
     caller.ip = caller.registers[X86_64_DWARF_RIP];
+    caller.ip_before_instruction = fde.signal_frame;
     Ok(caller)
 }
 
@@ -1351,7 +1435,7 @@ fn owned_phase2_cleanup(
     exception: *mut UnwindException,
     mut cursor: UnwindCursor,
 ) -> UnwindReasonCode {
-    let Some(bounds) = UnwindStackBounds::new(cursor) else {
+    let Some(mut bounds) = UnwindStackBounds::new(cursor) else {
         return URC_FATAL_PHASE2_ERROR;
     };
     // SAFETY: all entries reject null exceptions; the header outlives every
@@ -1405,8 +1489,6 @@ fn owned_phase2_cleanup(
             }
         } else if cursor.stack_pointer() == destination {
             actions |= UA_HANDLER_FRAME;
-        } else if cursor.stack_pointer() > destination {
-            return URC_FATAL_PHASE2_ERROR;
         }
         if let Err(error) = frame_result {
             trace_owned_unwind(format_args!("phase2 decode {error:?} ip={:#x}", cursor.ip));
@@ -1459,7 +1541,7 @@ fn owned_phase2_cleanup(
             // The selected handler must install its context in phase two.
             return URC_FATAL_PHASE2_ERROR;
         }
-        cursor = match unwind_caller(cursor, fde, state, bounds) {
+        cursor = match unwind_caller(cursor, fde, state, &mut bounds) {
             Ok(caller) => caller,
             Err(_) => return URC_FATAL_PHASE2_ERROR,
         };
@@ -1483,7 +1565,7 @@ fn owned_phase1_search(
     exception: *mut UnwindException,
     mut cursor: UnwindCursor,
 ) -> Result<Option<usize>, ()> {
-    let bounds = UnwindStackBounds::new(cursor).ok_or(())?;
+    let mut bounds = UnwindStackBounds::new(cursor).ok_or(())?;
     // SAFETY: the raise entry rejected a null exception pointer.
     let exception_class = unsafe { (*exception).exception_class };
     for frame_index in 0..MAX_BACKTRACE_FRAMES {
@@ -1504,7 +1586,7 @@ fn owned_phase1_search(
                 _ => return Err(()),
             }
         }
-        cursor = unwind_caller(cursor, fde, state, bounds).map_err(|_| ())?;
+        cursor = unwind_caller(cursor, fde, state, &mut bounds).map_err(|_| ())?;
     }
     Err(())
 }
@@ -1519,7 +1601,7 @@ unsafe extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
         return URC_END_OF_STACK;
     };
     let mut cursor = UnwindCursor::captured(capture);
-    let Some(bounds) = UnwindStackBounds::new(cursor) else {
+    let Some(mut bounds) = UnwindStackBounds::new(cursor) else {
         return URC_FATAL_PHASE1_ERROR;
     };
     for frame_index in 0..MAX_BACKTRACE_FRAMES {
@@ -1544,7 +1626,7 @@ unsafe extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
         if reason != URC_NO_REASON {
             return reason;
         }
-        cursor = match unwind_caller(cursor, fde, state, bounds) {
+        cursor = match unwind_caller(cursor, fde, state, &mut bounds) {
             Ok(cursor) => cursor,
             Err(error) => {
                 trace_owned_unwind(format_args!(
@@ -1862,6 +1944,7 @@ fn registered_eh_frame_len(fde: usize) -> Result<usize, OwnedUnwindDecodeError> 
 fn context_for_fde(ip: usize, frame_index: usize, fde: OwnedFdeRecord) -> UnwindContext {
     UnwindContext {
         ip,
+        ip_before_instruction: false,
         frame_index,
         frame_pointer: 0,
         stack_pointer: 0,
@@ -2381,6 +2464,29 @@ fn evaluate_cfi_row(
     ip: usize,
 ) -> Result<OwnedCfiRow, OwnedUnwindDecodeError> {
     let state = evaluate_cfi_state(eh_frame, fde, ip)?;
+    // This diagnostic projection has no live register/stack context and can
+    // represent only constant offsets. Runtime expression recovery uses the
+    // complete state below instead of inventing an offset for an expression.
+    if state.cfa_expression.is_some() {
+        return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(
+            DW_CFA_DEF_CFA_EXPRESSION,
+        ));
+    }
+    for rule in state.register_rules {
+        match rule {
+            CfiRegisterRule::Expression(_) => {
+                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(
+                    DW_CFA_EXPRESSION,
+                ));
+            }
+            CfiRegisterRule::ValExpression(_) => {
+                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(
+                    DW_CFA_VAL_EXPRESSION,
+                ));
+            }
+            _ => {}
+        }
+    }
     Ok(OwnedCfiRow {
         pc: ip,
         cfa_register: state.cfa_register,
@@ -2422,7 +2528,7 @@ fn evaluate_cfi_state(
         &mut state,
         &initial_state,
     )?;
-    if state.cfa_register == UNSET_DWARF_REGISTER {
+    if state.cfa_register == UNSET_DWARF_REGISTER && state.cfa_expression.is_none() {
         return Err(OwnedUnwindDecodeError::MalformedRecord);
     }
 
@@ -2545,19 +2651,39 @@ fn apply_cfi_program(
                 cursor = after_offset;
                 state.cfa_register = register;
                 state.cfa_offset = usize_to_isize(offset)?;
+                state.cfa_expression = None;
             }
             DW_CFA_DEF_CFA_REGISTER => {
+                if state.cfa_expression.is_some() {
+                    return Err(OwnedUnwindDecodeError::MalformedRecord);
+                }
                 let (register, next) = decode_uleb128(input, cursor)?;
                 cursor = next;
                 state.cfa_register = register;
             }
             DW_CFA_DEF_CFA_OFFSET => {
+                if state.cfa_expression.is_some() {
+                    return Err(OwnedUnwindDecodeError::MalformedRecord);
+                }
                 let (offset, next) = decode_uleb128(input, cursor)?;
                 cursor = next;
                 state.cfa_offset = usize_to_isize(offset)?;
             }
-            DW_CFA_DEF_CFA_EXPRESSION | DW_CFA_EXPRESSION | DW_CFA_VAL_EXPRESSION => {
-                return Err(OwnedUnwindDecodeError::UnsupportedCfiOpcode(opcode));
+            DW_CFA_DEF_CFA_EXPRESSION => {
+                let (expression, next) = read_cfi_expression(input, cursor, end)?;
+                cursor = next;
+                state.cfa_expression = Some(expression);
+            }
+            DW_CFA_EXPRESSION | DW_CFA_VAL_EXPRESSION => {
+                let (register, after_register) = decode_uleb128(input, cursor)?;
+                let (expression, next) = read_cfi_expression(input, after_register, end)?;
+                cursor = next;
+                let rule = if opcode == DW_CFA_EXPRESSION {
+                    CfiRegisterRule::Expression(expression)
+                } else {
+                    CfiRegisterRule::ValExpression(expression)
+                };
+                set_register_rule(state, register, rule);
             }
             DW_CFA_OFFSET_EXTENDED_SF => {
                 let (register, after_register) = decode_uleb128(input, cursor)?;
@@ -2571,8 +2697,12 @@ fn apply_cfi_program(
                 cursor = after_offset;
                 state.cfa_register = register;
                 state.cfa_offset = scale_signed_cfi_offset(offset, fde.data_alignment_factor)?;
+                state.cfa_expression = None;
             }
             DW_CFA_DEF_CFA_OFFSET_SF => {
+                if state.cfa_expression.is_some() {
+                    return Err(OwnedUnwindDecodeError::MalformedRecord);
+                }
                 let (offset, next) = decode_sleb128(input, cursor)?;
                 cursor = next;
                 state.cfa_offset = scale_signed_cfi_offset(offset, fde.data_alignment_factor)?;
@@ -2622,6 +2752,298 @@ fn advance_cfi_location(
     }
     state.pc = next_pc;
     Ok(false)
+}
+
+fn read_cfi_expression(
+    input: &[u8],
+    cursor: usize,
+    end: usize,
+) -> Result<(CfiExpression, usize), OwnedUnwindDecodeError> {
+    let (len, start) = decode_uleb128(input, cursor)?;
+    if len > MAX_DWARF_EXPRESSION_BYTES {
+        return Err(OwnedUnwindDecodeError::ExpressionLimit);
+    }
+    let next = skip_bytes(start, len, end)?;
+    Ok((CfiExpression { start, len }, next))
+}
+
+fn read_stack_word(
+    address: usize,
+    bounds: UnwindStackBounds,
+) -> Result<usize, OwnedUnwindDecodeError> {
+    if !bounds.contains_word(address) {
+        return Err(OwnedUnwindDecodeError::InvalidStackAddress);
+    }
+    // SAFETY: compiler CFI identifies a saved word in the bounded live stack
+    // segment. Expression arithmetic alone cannot authorize other memory.
+    Ok(unsafe { (address as *const usize).read() })
+}
+
+struct DwarfExpressionStack {
+    words: [usize; MAX_DWARF_EXPRESSION_STACK],
+    len: usize,
+}
+
+impl DwarfExpressionStack {
+    fn push(&mut self, word: usize) -> Result<(), OwnedUnwindDecodeError> {
+        let slot = self
+            .words
+            .get_mut(self.len)
+            .ok_or(OwnedUnwindDecodeError::ExpressionLimit)?;
+        *slot = word;
+        self.len += 1;
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Result<usize, OwnedUnwindDecodeError> {
+        self.len = self
+            .len
+            .checked_sub(1)
+            .ok_or(OwnedUnwindDecodeError::MalformedExpression)?;
+        Ok(self.words[self.len])
+    }
+
+    fn peek(&self, depth: usize) -> Result<usize, OwnedUnwindDecodeError> {
+        let index = self
+            .len
+            .checked_sub(depth + 1)
+            .ok_or(OwnedUnwindDecodeError::MalformedExpression)?;
+        Ok(self.words[index])
+    }
+}
+
+/// Bounded DWARF 5 sections 2.5.1 / 6.4.2 expression evaluation. Address
+/// dereferences stay inside the current stack segment. Calls, branches, TLS,
+/// typed expressions and other debug-section dependencies fail closed.
+fn evaluate_dwarf_expression(
+    input: &[u8],
+    expression: CfiExpression,
+    registers: &[usize; MAX_UNWIND_GR],
+    bounds: UnwindStackBounds,
+    initial_cfa: Option<usize>,
+) -> Result<usize, OwnedUnwindDecodeError> {
+    if expression.len > MAX_DWARF_EXPRESSION_BYTES {
+        return Err(OwnedUnwindDecodeError::ExpressionLimit);
+    }
+    let end = expression
+        .start
+        .checked_add(expression.len)
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    let program = input
+        .get(expression.start..end)
+        .ok_or(OwnedUnwindDecodeError::Truncated)?;
+    let mut stack = DwarfExpressionStack {
+        words: [0; MAX_DWARF_EXPRESSION_STACK],
+        len: 0,
+    };
+    // Register expression/value-expression rules start with CFA on the stack;
+    // a CFA expression has no pre-existing CFA and starts with an empty stack.
+    if let Some(cfa) = initial_cfa {
+        stack.push(cfa)?;
+    }
+    let mut cursor = 0;
+    let mut steps = 0;
+    while cursor < program.len() {
+        steps += 1;
+        if steps > MAX_DWARF_EXPRESSION_STEPS {
+            return Err(OwnedUnwindDecodeError::ExpressionLimit);
+        }
+        let (opcode, next) = read_u8(program, cursor)?;
+        cursor = next;
+        match opcode {
+            0x03 | 0x0e => {
+                let (value, next) = read_u64(program, cursor)?;
+                cursor = next;
+                stack
+                    .push(usize::try_from(value).map_err(|_| OwnedUnwindDecodeError::Overflow)?)?;
+            }
+            0x06 => {
+                let address = stack.pop()?;
+                stack.push(read_stack_word(address, bounds)?)?;
+            }
+            0x08 | 0x09 => {
+                let (value, next) = read_u8(program, cursor)?;
+                cursor = next;
+                stack.push(if opcode == 0x09 {
+                    (value as i8 as isize) as usize
+                } else {
+                    value as usize
+                })?;
+            }
+            0x0a | 0x0b => {
+                let (value, next) = read_u16(program, cursor)?;
+                cursor = next;
+                stack.push(if opcode == 0x0b {
+                    (value as i16 as isize) as usize
+                } else {
+                    value as usize
+                })?;
+            }
+            0x0c | 0x0d => {
+                let (value, next) = read_u32(program, cursor)?;
+                cursor = next;
+                stack.push(if opcode == 0x0d {
+                    (value as i32 as isize) as usize
+                } else {
+                    value as usize
+                })?;
+            }
+            0x0f => {
+                let (value, next) = read_i64(program, cursor)?;
+                cursor = next;
+                stack.push(
+                    isize::try_from(value).map_err(|_| OwnedUnwindDecodeError::Overflow)? as usize,
+                )?;
+            }
+            0x10 => {
+                let (value, next) = decode_uleb128(program, cursor)?;
+                cursor = next;
+                stack.push(value)?;
+            }
+            0x11 => {
+                let (value, next) = decode_sleb128(program, cursor)?;
+                cursor = next;
+                stack.push(value as usize)?;
+            }
+            0x12 => stack.push(stack.peek(0)?)?,
+            0x13 => {
+                stack.pop()?;
+            }
+            0x14 => stack.push(stack.peek(1)?)?,
+            0x15 => {
+                let (depth, next) = read_u8(program, cursor)?;
+                cursor = next;
+                stack.push(stack.peek(depth as usize)?)?;
+            }
+            0x16 => {
+                let right = stack.pop()?;
+                let left = stack.pop()?;
+                stack.push(right)?;
+                stack.push(left)?;
+            }
+            0x1f | 0x20 => {
+                let word = stack.pop()?;
+                stack.push(if opcode == 0x1f {
+                    word.wrapping_neg()
+                } else {
+                    !word
+                })?;
+            }
+            0x23 => {
+                let (addend, next) = decode_uleb128(program, cursor)?;
+                cursor = next;
+                let left = stack.pop()?;
+                stack.push(left.wrapping_add(addend))?;
+            }
+            0x1a | 0x1c | 0x1e | 0x21 | 0x22 | 0x24..=0x27 | 0x29..=0x2e => {
+                let right = stack.pop()?;
+                let left = stack.pop()?;
+                let word = match opcode {
+                    0x1a => left & right,
+                    0x1c => left.wrapping_sub(right),
+                    0x1e => left.wrapping_mul(right),
+                    0x21 => left | right,
+                    0x22 => left.wrapping_add(right),
+                    0x24..=0x26 => {
+                        let shift = u32::try_from(right)
+                            .map_err(|_| OwnedUnwindDecodeError::MalformedExpression)?;
+                        if shift >= usize::BITS {
+                            return Err(OwnedUnwindDecodeError::MalformedExpression);
+                        }
+                        match opcode {
+                            0x24 => left << shift,
+                            0x25 => left >> shift,
+                            _ => ((left as isize) >> shift) as usize,
+                        }
+                    }
+                    0x27 => left ^ right,
+                    0x29 => usize::from(left == right),
+                    0x2a => usize::from((left as isize) >= (right as isize)),
+                    0x2b => usize::from((left as isize) > (right as isize)),
+                    0x2c => usize::from((left as isize) <= (right as isize)),
+                    0x2d => usize::from((left as isize) < (right as isize)),
+                    _ => usize::from(left != right),
+                };
+                stack.push(word)?;
+            }
+            0x30..=0x4f => stack.push((opcode - 0x30) as usize)?,
+            0x70..=0x8f | 0x92 => {
+                let register = if opcode == 0x92 {
+                    let (register, next) = decode_uleb128(program, cursor)?;
+                    cursor = next;
+                    register
+                } else {
+                    (opcode - 0x70) as usize
+                };
+                let (offset, next) = decode_sleb128(program, cursor)?;
+                cursor = next;
+                let base = *registers
+                    .get(register)
+                    .ok_or(OwnedUnwindDecodeError::MalformedExpression)?;
+                stack.push(
+                    checked_add_signed_usize(base, offset)
+                        .ok_or(OwnedUnwindDecodeError::Overflow)?,
+                )?;
+            }
+            0x96 => {}
+            other => return Err(OwnedUnwindDecodeError::UnsupportedDwarfOpcode(other)),
+        }
+    }
+    stack.pop()
+}
+
+#[doc(hidden)]
+pub fn owned_evaluate_dwarf_expression_for_tests(
+    expression: &[u8],
+    registers: [usize; MAX_UNWIND_GR],
+    stack_words: &[usize],
+    initial_cfa: Option<usize>,
+) -> Result<usize, OwnedUnwindDecodeError> {
+    let start = stack_words.as_ptr() as usize;
+    let end = start
+        .checked_add(core::mem::size_of_val(stack_words))
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    evaluate_dwarf_expression(
+        expression,
+        CfiExpression {
+            start: 0,
+            len: expression.len(),
+        },
+        &registers,
+        UnwindStackBounds { start, end },
+        initial_cfa,
+    )
+}
+
+#[doc(hidden)]
+pub fn owned_recover_cfi_registers_for_tests(
+    eh_frame: &[u8],
+    section_addr: usize,
+    ip: usize,
+    mut registers: [usize; MAX_UNWIND_GR],
+    stack_words: &[usize],
+) -> Result<([usize; MAX_UNWIND_GR], bool), OwnedUnwindDecodeError> {
+    let fde = find_fde_for_ip(eh_frame, section_addr, ip, false)?
+        .ok_or(OwnedUnwindDecodeError::MissingFde)?;
+    let state = evaluate_cfi_state(eh_frame, fde, ip)?;
+    let start = stack_words.as_ptr() as usize;
+    let end = start
+        .checked_add(core::mem::size_of_val(stack_words))
+        .ok_or(OwnedUnwindDecodeError::Overflow)?;
+    registers[X86_64_DWARF_RSP] = start;
+    registers[X86_64_DWARF_RIP] = ip;
+    let caller = unwind_caller_with_metadata(
+        UnwindCursor {
+            ip,
+            ip_before_instruction: true,
+            registers,
+        },
+        fde,
+        state,
+        UnwindStackBounds { start, end },
+        eh_frame,
+    )?;
+    Ok((caller.registers, caller.ip_before_instruction))
 }
 
 fn set_register_offset(
@@ -2690,11 +3112,23 @@ fn cfi_rule_offset(rule: CfiRegisterRule) -> Option<isize> {
         CfiRegisterRule::Undefined
         | CfiRegisterRule::SameValue
         | CfiRegisterRule::ValOffset(_)
-        | CfiRegisterRule::Register(_) => None,
+        | CfiRegisterRule::Register(_)
+        | CfiRegisterRule::Expression(_)
+        | CfiRegisterRule::ValExpression(_) => None,
     }
 }
 
 impl CfiEvaluationState {
+    fn has_expressions(&self) -> bool {
+        self.cfa_expression.is_some()
+            || self.register_rules.iter().any(|rule| {
+                matches!(
+                    rule,
+                    CfiRegisterRule::Expression(_) | CfiRegisterRule::ValExpression(_)
+                )
+            })
+    }
+
     fn new(pc: usize) -> Self {
         // SysV nonvolatile registers not mentioned by a CIE/FDE retain their
         // value. The return address must have an explicit recovery rule.
@@ -2704,6 +3138,7 @@ impl CfiEvaluationState {
             pc,
             cfa_register: UNSET_DWARF_REGISTER,
             cfa_offset: 0,
+            cfa_expression: None,
             register_rules,
         }
     }
