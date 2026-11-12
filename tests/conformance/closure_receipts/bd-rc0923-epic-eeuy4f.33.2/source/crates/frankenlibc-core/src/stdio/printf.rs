@@ -1,0 +1,5776 @@
+//! printf formatting engine.
+//!
+//! Clean-room spec-first implementation of the POSIX printf format string
+//! interpreter. Parses format directives and renders typed arguments to
+//! byte buffers with full width/precision/flag support.
+//!
+//! Reference: POSIX.1-2024 fprintf, ISO C11 7.21.6.1
+//!
+//! Design invariant: all formatting is bounded — no allocation can grow
+//! unboundedly from a single format specifier. Maximum expansion per
+//! specifier is `width + precision + 64` bytes (sign + prefix + digits).
+
+use crate::{ArtifactHashMap, artifact_hash_map};
+use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+const MAX_FLOAT_PRECISION: usize = 65_535;
+
+// ---------------------------------------------------------------------------
+// Format spec types
+// ---------------------------------------------------------------------------
+
+/// Short-append that stays out of the interposed `memcpy`.
+///
+/// `Vec::extend_from_slice` lowers to `copy_nonoverlapping`, which in a process
+/// running frankenlibc resolves to fl's OWN exported `memcpy` -- a full ABI entry
+/// with its membrane prologue, for a handful of bytes. Counted on the deployed
+/// `snprintf("%d %s %.3f")` against live glibc: after the same fix landed on the
+/// ABI side, FIVE `memcpy` calls still remained on the path, about 350 Ir, and
+/// every one of them is a digit run, a sign, a prefix or an exponent -- none of
+/// them long.
+///
+/// See the impl for why the cut is eight here and sixteen on the ABI side.
+///
+/// A trait rather than a free function so the call sites keep method syntax and
+/// work unchanged whether `buf` is a `Vec<u8>` or a `&mut Vec<u8>`.
+pub(crate) trait PushBytes {
+    fn push_bytes(&mut self, src: &[u8]);
+}
+
+impl PushBytes for Vec<u8> {
+    #[inline(always)]
+    fn push_bytes(&mut self, src: &[u8]) {
+        let n = src.len();
+        if n == 0 {
+            return;
+        }
+        if self.try_reserve(n).is_err() {
+            note_render_alloc_failure();
+            return;
+        }
+        // NO `unsafe` HERE, and that is a constraint rather than a preference:
+        // `frankenlibc-core` is the safe-implementations crate and denies it, so
+        // the ABI side's overlapping power-of-two moves cannot be reused. A
+        // reserved-then-pushed byte loop is the safe equivalent that still does
+        // not emit a `memcpy` call -- the per-iteration capacity check is what
+        // keeps LLVM's loop-idiom recogniser from rewriting it into one.
+        //
+        // That costs a few instructions per byte, so the cut is EIGHT, not the
+        // sixteen the ABI side uses: below it a digit run, sign, prefix or
+        // exponent beats a ~66 Ir interposed `memcpy` entry comfortably; above it
+        // the byte loop starts losing to a real block copy.
+        if n > 8 {
+            self.extend_from_slice(src);
+            return;
+        }
+        for &b in src {
+            self.push(b);
+        }
+    }
+}
+
+/// Flags parsed from a printf format directive.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FormatFlags {
+    pub left_justify: bool, // '-'
+    pub force_sign: bool,   // '+'
+    pub space_sign: bool,   // ' '
+    pub alt_form: bool,     // '#'
+    pub zero_pad: bool,     // '0'
+    pub group: bool,        // '\'' (POSIX thousands grouping)
+    pub i18n: bool,         // 'I' (GNU alternative-digit flag)
+}
+
+/// Width specification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Width {
+    None,
+    Fixed(usize),
+    FromArg, // '*'
+    FromArgPosition(usize),
+}
+
+impl Width {
+    pub fn uses_arg(self) -> bool {
+        matches!(self, Self::FromArg | Self::FromArgPosition(_))
+    }
+
+    pub fn position(self) -> Option<usize> {
+        match self {
+            Self::FromArgPosition(position) => Some(position),
+            _ => None,
+        }
+    }
+}
+
+/// Precision specification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Precision {
+    None,
+    Fixed(usize),
+    FromArg, // '.*'
+    FromArgPosition(usize),
+}
+
+impl Precision {
+    pub fn uses_arg(self) -> bool {
+        matches!(self, Self::FromArg | Self::FromArgPosition(_))
+    }
+
+    pub fn position(self) -> Option<usize> {
+        match self {
+            Self::FromArgPosition(position) => Some(position),
+            _ => None,
+        }
+    }
+}
+
+/// Length modifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LengthMod {
+    None,
+    Hh,   // 'hh'
+    H,    // 'h'
+    L,    // 'l'
+    Ll,   // 'll'
+    Z,    // 'z'
+    T,    // 't'
+    J,    // 'j'
+    BigL, // 'L'
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum PrintfHandler {
+    Invalid = 0,
+    SignedDecimal,
+    UnsignedOctal,
+    UnsignedDecimal,
+    UnsignedHexLower,
+    UnsignedHexUpper,
+    FloatFixed,
+    FloatExp,
+    FloatGeneral,
+    FloatHex,
+    Character,
+    String,
+    Pointer,
+    StoreCount,
+    LiteralPercent,
+    /// C23 `%b` / `%B` (glibc 2.35+).
+    UnsignedBinaryLower,
+    UnsignedBinaryUpper,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ArgCategory {
+    None = 0,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    Pointer,
+    String,
+    Store,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueArgKind {
+    Gp,
+    Fp,
+    /// x86-64 SysV class X87 — a `long double` vararg.
+    ///
+    /// Unlike [`Self::Fp`] this is passed in MEMORY: a sixteen-byte,
+    /// sixteen-byte aligned slot in the overflow area, never in an SSE
+    /// register. It needs its own class because an extractor that treats it as
+    /// `Fp` reads the wrong bytes AND leaves the caller's sixteen stack bytes
+    /// unconsumed, which shifts every argument after it — a corrupted argument
+    /// stream rather than one wrong number. bd-longdouble-varargs-43usjw.
+    X87,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FloatFormatKind {
+    Fixed,
+    Exp,
+    General,
+    Hex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnsignedFormatKind {
+    Decimal,
+    Octal,
+    HexLower,
+    HexUpper,
+    BinaryLower,
+    BinaryUpper,
+}
+
+impl UnsignedFormatKind {
+    fn int_base(self) -> (u64, bool) {
+        match self {
+            Self::Decimal => (10, false),
+            Self::Octal => (8, false),
+            Self::HexLower => (16, false),
+            Self::HexUpper => (16, true),
+            Self::BinaryLower | Self::BinaryUpper => (2, false),
+        }
+    }
+
+    fn alt_prefix(self) -> &'static [u8] {
+        match self {
+            Self::Decimal => b"",
+            Self::Octal => b"0",
+            Self::HexLower => b"0x",
+            Self::HexUpper => b"0X",
+            Self::BinaryLower => b"0b",
+            Self::BinaryUpper => b"0B",
+        }
+    }
+
+    fn formatted_prefix(
+        self,
+        value: u64,
+        alt_form: bool,
+        first_digit_is_zero: bool,
+    ) -> &'static [u8] {
+        if !alt_form || value == 0 {
+            return b"";
+        }
+        match self {
+            Self::Octal if first_digit_is_zero => b"",
+            _ => self.alt_prefix(),
+        }
+    }
+
+    fn preserves_single_zero_when_suppressed(self, alt_form: bool) -> bool {
+        alt_form && matches!(self, Self::Octal)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RawValueRenderKind {
+    SignedInt,
+    UnsignedInt(UnsignedFormatKind),
+    Float(FloatFormatKind),
+    Character,
+    Pointer,
+}
+
+impl RawValueRenderKind {
+    fn unsigned_kind(self) -> Option<UnsignedFormatKind> {
+        match self {
+            Self::UnsignedInt(kind) => Some(kind),
+            _ => None,
+        }
+    }
+
+    fn int_base(self) -> Option<(u64, bool)> {
+        self.unsigned_kind().map(UnsignedFormatKind::int_base)
+    }
+
+    fn alt_prefix(self) -> Option<&'static [u8]> {
+        self.unsigned_kind().map(UnsignedFormatKind::alt_prefix)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PrintfRoute {
+    handler: PrintfHandler,
+    length_mask: u8,
+    flag_mask: u8,
+    arg_category: ArgCategory,
+}
+
+impl PrintfRoute {
+    fn is_valid(self) -> bool {
+        !matches!(self.handler, PrintfHandler::Invalid)
+    }
+
+    fn accepts_length(self, length: LengthMod) -> bool {
+        match length {
+            LengthMod::None => true,
+            LengthMod::Hh => self.length_mask & 0b0000_0001 != 0,
+            LengthMod::H => self.length_mask & 0b0000_0010 != 0,
+            LengthMod::L => self.length_mask & 0b0000_0100 != 0,
+            LengthMod::Ll => self.length_mask & 0b0000_1000 != 0,
+            LengthMod::J => self.length_mask & 0b0001_0000 != 0,
+            LengthMod::Z => self.length_mask & 0b0010_0000 != 0,
+            LengthMod::T => self.length_mask & 0b0100_0000 != 0,
+            LengthMod::BigL => self.length_mask & 0b1000_0000 != 0,
+        }
+    }
+
+    fn sanitize_flags(self, flags: &mut FormatFlags) {
+        if self.flag_mask & 0b0000_0001 == 0 {
+            flags.left_justify = false;
+        }
+        if self.flag_mask & 0b0000_0010 == 0 {
+            flags.force_sign = false;
+        }
+        if self.flag_mask & 0b0000_0100 == 0 {
+            flags.space_sign = false;
+        }
+        if self.flag_mask & 0b0000_1000 == 0 {
+            flags.alt_form = false;
+        }
+        if self.flag_mask & 0b0001_0000 == 0 {
+            flags.zero_pad = false;
+        }
+    }
+
+    fn value_arg_kind(self) -> Option<ValueArgKind> {
+        match self.arg_category {
+            ArgCategory::None => None,
+            ArgCategory::Float => Some(ValueArgKind::Fp),
+            ArgCategory::SignedInt
+            | ArgCategory::UnsignedInt
+            | ArgCategory::Pointer
+            | ArgCategory::String
+            | ArgCategory::Store => Some(ValueArgKind::Gp),
+        }
+    }
+
+    fn raw_render_kind(self) -> Option<RawValueRenderKind> {
+        match self.handler {
+            PrintfHandler::SignedDecimal => Some(RawValueRenderKind::SignedInt),
+            PrintfHandler::UnsignedDecimal => {
+                Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::Decimal))
+            }
+            PrintfHandler::UnsignedOctal => {
+                Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::Octal))
+            }
+            PrintfHandler::UnsignedHexLower => Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::HexLower,
+            )),
+            PrintfHandler::UnsignedHexUpper => Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::HexUpper,
+            )),
+            PrintfHandler::UnsignedBinaryLower => Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::BinaryLower,
+            )),
+            PrintfHandler::UnsignedBinaryUpper => Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::BinaryUpper,
+            )),
+            PrintfHandler::FloatFixed => Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)),
+            PrintfHandler::FloatExp => Some(RawValueRenderKind::Float(FloatFormatKind::Exp)),
+            PrintfHandler::FloatGeneral => {
+                Some(RawValueRenderKind::Float(FloatFormatKind::General))
+            }
+            PrintfHandler::FloatHex => Some(RawValueRenderKind::Float(FloatFormatKind::Hex)),
+            PrintfHandler::Character => Some(RawValueRenderKind::Character),
+            PrintfHandler::Pointer => Some(RawValueRenderKind::Pointer),
+            PrintfHandler::String
+            | PrintfHandler::StoreCount
+            | PrintfHandler::LiteralPercent
+            | PrintfHandler::Invalid => None,
+        }
+    }
+
+    fn is_string_arg(self) -> bool {
+        matches!(self.arg_category, ArgCategory::String)
+    }
+
+    fn is_literal_percent(self) -> bool {
+        matches!(self.handler, PrintfHandler::LiteralPercent)
+    }
+
+    fn is_store_count(self) -> bool {
+        matches!(self.handler, PrintfHandler::StoreCount)
+    }
+}
+
+mod generated_printf_tables {
+    include!(concat!(
+        env!("OUT_DIR"),
+        "/stdio_synth/synth/printf_table.rs"
+    ));
+}
+
+use generated_printf_tables::PRINTF_TABLE;
+
+/// A parsed printf format specifier.
+#[derive(Debug, Clone, Copy)]
+pub struct FormatSpec {
+    pub flags: FormatFlags,
+    pub width: Width,
+    pub precision: Precision,
+    pub length: LengthMod,
+    pub conversion: u8,
+    pub value_position: Option<usize>,
+    route: Option<PrintfRoute>,
+}
+
+impl FormatSpec {
+    pub fn new(
+        flags: FormatFlags,
+        width: Width,
+        precision: Precision,
+        length: LengthMod,
+        conversion: u8,
+        value_position: Option<usize>,
+    ) -> Self {
+        let route = if conversion == b'm' {
+            None
+        } else {
+            printf_route(conversion)
+        };
+        Self {
+            flags,
+            width,
+            precision,
+            length,
+            conversion,
+            value_position,
+            route,
+        }
+    }
+
+    pub fn uses_positional_args(&self) -> bool {
+        self.value_position.is_some()
+            || self.width.position().is_some()
+            || self.precision.position().is_some()
+    }
+
+    pub fn consumes_value_arg(&self) -> bool {
+        self.value_arg_kind().is_some()
+    }
+
+    pub fn value_arg_kind(&self) -> Option<ValueArgKind> {
+        if self.conversion == b'm' {
+            return None;
+        }
+        let kind = self.route().and_then(PrintfRoute::value_arg_kind)?;
+        // The route is keyed on the conversion character alone, so it cannot
+        // see the `L` length modifier — and `L` is exactly what moves a float
+        // argument out of an SSE register and onto a sixteen-byte stack slot.
+        // `L` on a non-float conversion (`%Ld`) is a glibc no-op and must stay
+        // Gp, which is why this tests the route's answer rather than the
+        // length alone.
+        if matches!(kind, ValueArgKind::Fp) && self.length == LengthMod::BigL {
+            return Some(ValueArgKind::X87);
+        }
+        Some(kind)
+    }
+
+    pub fn positional_width_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
+        self.width
+            .position()
+            .map(|position| (position, ValueArgKind::Gp))
+    }
+
+    pub fn positional_precision_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
+        self.precision
+            .position()
+            .map(|position| (position, ValueArgKind::Gp))
+    }
+
+    pub fn positional_value_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
+        // Short-circuit on the POSITION first. `Option::zip` evaluates its
+        // argument eagerly, so the previous `self.value_position.zip(
+        // self.value_arg_kind())` computed `value_arg_kind` — and through it
+        // `route()` — for every spec of every format, even though almost no
+        // format uses positional (`%1$s`) arguments and the result was then
+        // discarded.
+        //
+        // This is on the hot path twice per call: `positional_printf_arg_plan`
+        // runs it for every spec, and that plan is computed both by
+        // `count_printf_args` during argument extraction and again at the top of
+        // `render_segments`. A flat perf profile of a three-conversion format
+        // put `positional_printf_arg_plan` at 15.74% self time, the single
+        // largest entry, ahead of `render_segments` itself (bd-ntb9fq).
+        //
+        // Identical result: `a.zip(b)` is `Some((a?, b?))`, only lazier.
+        let position = self.value_position?;
+        Some((position, self.value_arg_kind()?))
+    }
+
+    /// Does this spec consume a floating-point-typed value argument?
+    ///
+    /// True for `%f` and `%Lf` alike — they differ in HOW the argument is
+    /// passed, not in whether one is consumed, and a caller counting arguments
+    /// must see both. Callers that need to tell them apart use
+    /// [`Self::value_arg_is_x87`].
+    pub fn value_arg_is_float(&self) -> bool {
+        matches!(
+            self.value_arg_kind(),
+            Some(ValueArgKind::Fp | ValueArgKind::X87)
+        )
+    }
+
+    /// Is the value argument class X87 — a `long double`, passed in memory?
+    pub fn value_arg_is_x87(&self) -> bool {
+        matches!(self.value_arg_kind(), Some(ValueArgKind::X87))
+    }
+
+    pub fn value_arg_is_gp(&self) -> bool {
+        matches!(self.value_arg_kind(), Some(ValueArgKind::Gp))
+    }
+
+    pub fn value_arg_is_string(&self) -> bool {
+        self.route().is_some_and(PrintfRoute::is_string_arg)
+    }
+
+    pub fn is_literal_percent(&self) -> bool {
+        self.route().is_some_and(PrintfRoute::is_literal_percent)
+    }
+
+    pub fn is_errno_message(&self) -> bool {
+        self.conversion == b'm'
+    }
+
+    /// An unregistered conversion consumes its `*` operands, but no value.
+    pub fn is_unknown_conversion(&self) -> bool {
+        self.conversion != b'm' && self.route().is_none()
+    }
+
+    /// GNU prints an unknown directive in normalized form, with resolved
+    /// width/precision and without its length or positional markers. It does
+    /// not pad a value, and must not advance the value-argument cursor.
+    pub fn render_unknown_conversion(&self, buf: &mut Vec<u8>) {
+        buf.push(b'%');
+        for (enabled, byte) in [
+            (self.flags.alt_form, b'#'),
+            (self.flags.group, b'\''),
+            (self.flags.force_sign, b'+'),
+            (self.flags.space_sign, b' '),
+            (self.flags.left_justify, b'-'),
+            (self.flags.zero_pad, b'0'),
+            (self.flags.i18n, b'I'),
+        ] {
+            if enabled {
+                buf.push(byte);
+            }
+        }
+        let mut digits = [0u8; 64];
+        if let Width::Fixed(width) = self.width
+            && width != 0
+        {
+            let n = render_decimal(width as u64, &mut digits);
+            buf.push_bytes(&digits[64 - n..]);
+        }
+        if let Precision::Fixed(precision) = self.precision {
+            buf.push(b'.');
+            let n = render_decimal(precision as u64, &mut digits);
+            buf.push_bytes(&digits[64 - n..]);
+        }
+        buf.push(self.conversion);
+    }
+
+    pub fn stores_count(&self) -> bool {
+        self.route().is_some_and(PrintfRoute::is_store_count)
+    }
+
+    fn raw_render_kind(&self) -> Option<RawValueRenderKind> {
+        self.route().and_then(PrintfRoute::raw_render_kind)
+    }
+
+    fn int_base(&self) -> (u64, bool) {
+        self.raw_render_kind()
+            .and_then(RawValueRenderKind::int_base)
+            .unwrap_or((10, false))
+    }
+
+    /// True when no flags, width, or precision are set: the bare `%d`/`%u`
+    /// conversion whose output is just the (optionally `-`-signed) digits, with
+    /// no prefix or padding. Lets the integer formatters skip the entire
+    /// prefix/precision/width/justify pipeline on the overwhelmingly common
+    /// case. A few branch tests in exchange for ~15 skipped operations.
+    /// No flags, no width, no precision. Says nothing about the CONVERSION, so
+    /// a caller must also establish that the spec is an integer one — `%s` with
+    /// no flags satisfies this predicate too. Public because `render_segments`
+    /// in the ABI crate uses it to decide whether a segment can skip the
+    /// resolve-and-dispatch chain (bd-ntb9fq).
+    pub fn is_bare_integer(&self) -> bool {
+        let f = &self.flags;
+        !f.left_justify
+            && !f.force_sign
+            && !f.space_sign
+            && !f.alt_form
+            && !f.zero_pad
+            && !f.group
+            && matches!(self.width, Width::None)
+            && matches!(self.precision, Precision::None)
+    }
+
+    fn alt_prefix(&self) -> &'static [u8] {
+        if !self.flags.alt_form {
+            return b"";
+        }
+        self.raw_render_kind()
+            .and_then(RawValueRenderKind::alt_prefix)
+            .unwrap_or(b"")
+    }
+
+    pub fn render_value_arg(&self, raw: u64, buf: &mut Vec<u8>) -> bool {
+        match self.raw_render_kind() {
+            Some(RawValueRenderKind::SignedInt) => {
+                let val = match self.length {
+                    LengthMod::Hh => (raw as i8) as i64,
+                    LengthMod::H => (raw as i16) as i64,
+                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => {
+                        raw as i64
+                    }
+                    _ => (raw as i32) as i64,
+                };
+                format_signed(val, self, buf);
+                true
+            }
+            Some(RawValueRenderKind::UnsignedInt(_)) => {
+                let val = match self.length {
+                    LengthMod::Hh => (raw as u8) as u64,
+                    LengthMod::H => (raw as u16) as u64,
+                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => {
+                        raw
+                    }
+                    _ => (raw as u32) as u64,
+                };
+                format_unsigned(val, self, buf);
+                true
+            }
+            Some(RawValueRenderKind::Float(_)) => {
+                format_float(f64::from_bits(raw), self, buf);
+                true
+            }
+            Some(RawValueRenderKind::Character) => {
+                format_char(raw as u8, self, buf);
+                true
+            }
+            Some(RawValueRenderKind::Pointer) => {
+                format_pointer(raw as usize, self, buf);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Render a `long double` value argument from its ten significant bytes.
+    ///
+    /// [`Self::render_value_arg`] takes the argument as a `u64`, which cannot
+    /// hold an 80-bit x87 value, so `%Lf` rendered the `f64` ROUNDING of its
+    /// argument: `%.25Lf` of pi produced `3.1415926535897931159979635` where
+    /// glibc produces `3.1415926535897932385128090`, and `%Lf` of `1e400` —
+    /// an ordinary finite `long double` — produced `inf`. Handed the bytes
+    /// instead, the value reaches `float128`'s exact formatter intact.
+    ///
+    /// Returns false without writing anything when the spec is not a `long
+    /// double` float conversion, so a caller that has misclassified an argument
+    /// falls back rather than printing from the wrong bytes.
+    ///
+    /// With the `'` flag under a grouping locale, %Lf/%LF/%Lg/%LG render
+    /// without width, group the integer part, then pad (see `format_float`).
+    pub fn render_long_double_arg(&self, bytes: &[u8; 10], buf: &mut Vec<u8>) -> bool {
+        self.render_extended_arg(buf, |spec| crate::float128::format_x87(bytes, spec))
+    }
+
+    /// Render an IEEE binary128 argument with the same locale and field rules
+    /// as the x87 long-double path. The caller supplies the bits without an
+    /// intermediate, lossy conversion to `f64`.
+    pub fn render_binary128_arg(&self, bits: u128, buf: &mut Vec<u8>) -> bool {
+        self.render_extended_arg(buf, |spec| crate::float128::format_binary128(bits, spec))
+    }
+
+    fn render_extended_arg(
+        &self,
+        buf: &mut Vec<u8>,
+        render: impl Fn(&crate::float128::FmtSpec) -> Vec<u8>,
+    ) -> bool {
+        if !self.value_arg_is_x87() {
+            return false;
+        }
+        if let Some(g) = NumericGrouping::for_spec(self)
+            && matches!(self.conversion, b'f' | b'F' | b'g' | b'G')
+        {
+            let bare = crate::float128::FmtSpec {
+                conv: self.conversion,
+                precision: match self.precision {
+                    Precision::Fixed(p) => Some(p),
+                    _ => None,
+                },
+                width: 0,
+                left: false,
+                plus: self.flags.force_sign,
+                space: self.flags.space_sign,
+                alt: self.flags.alt_form,
+                zero: false,
+            };
+            let mut rendered = render(&bare);
+            // The radix first: it may be the very byte the separator is.
+            let mut uncounted = 0;
+            if let Some(dp) = DecimalPoint::active() {
+                dp.replace_in(&mut rendered);
+                uncounted += dp.len - 1;
+            }
+            let (sign, body) = match rendered.first() {
+                Some(&s @ (b'-' | b'+' | b' ')) => (Some(s), &rendered[1..]),
+                _ => (None, &rendered[..]),
+            };
+            uncounted += g.uncounted_in_float(body);
+            pad_float_body(buf, sign, &g.group_leading_digits(body), uncounted, self);
+            return true;
+        }
+        let spec = crate::float128::FmtSpec {
+            conv: self.conversion,
+            // Width and precision have already been resolved from `*` arguments
+            // by the time a renderer sees the spec; anything still unresolved is
+            // treated as absent, which is what the default arms below mean.
+            precision: match self.precision {
+                Precision::Fixed(p) => Some(p),
+                _ => None,
+            },
+            width: match self.width {
+                Width::Fixed(w) => w,
+                _ => 0,
+            },
+            left: self.flags.left_justify,
+            plus: self.flags.force_sign,
+            space: self.flags.space_sign,
+            alt: self.flags.alt_form,
+            zero: self.flags.zero_pad,
+        };
+        let start = buf.len();
+        buf.extend_from_slice(&render(&spec));
+        if let Some(dp) = DecimalPoint::active() {
+            dp.localize(buf, start);
+        }
+        true
+    }
+
+    fn route(&self) -> Option<PrintfRoute> {
+        if self.conversion == b'm' {
+            None
+        } else {
+            self.route.or_else(|| printf_route(self.conversion))
+        }
+    }
+}
+
+/// Does any spec reference an explicit argument position (`%1$s`, `%*2$d`)?
+///
+/// Plain field reads, no closure and no allocation — deliberately cheaper than
+/// building the plan just to discover there is nothing to plan. Almost no real
+/// format uses positional arguments, so this is the answer nearly every time.
+fn any_positional_spec(segments: &[FormatSegment<'_>]) -> bool {
+    segments.iter().any(|seg| match seg {
+        FormatSegment::Spec(spec) => {
+            spec.value_position.is_some()
+                || spec.width.position().is_some()
+                || spec.precision.position().is_some()
+        }
+        _ => false,
+    })
+}
+
+pub fn positional_printf_arg_plan(segments: &[FormatSegment<'_>]) -> Option<Vec<ValueArgKind>> {
+    // Bail before the closure and the `Vec` when nothing is positional. This
+    // function is the hot path's largest self-time entry (15.74% on a flat perf
+    // profile of a three-conversion format) and it runs TWICE per printf call:
+    // `count_printf_args` builds the plan during argument extraction, and
+    // `render_segments` builds it again to decide whether positional handling is
+    // needed. For a non-positional format both calls did the full walk with a
+    // capturing closure only to return `None`. bd-ntb9fq.
+    if !any_positional_spec(segments) {
+        return None;
+    }
+
+    let mut any_positional = false;
+    let mut plan: Vec<Option<ValueArgKind>> = Vec::new();
+
+    let mut assign = |position: usize, kind: ValueArgKind| {
+        if position == 0 {
+            return;
+        }
+        any_positional = true;
+        let slot = position - 1;
+        if slot >= plan.len() {
+            plan.resize(slot + 1, None);
+        }
+        if plan[slot].is_none() {
+            plan[slot] = Some(kind);
+        }
+    };
+
+    for seg in segments {
+        if let FormatSegment::Spec(spec) = seg {
+            if let Some((position, kind)) = spec.positional_width_arg_kind() {
+                assign(position, kind);
+            }
+            if let Some((position, kind)) = spec.positional_precision_arg_kind() {
+                assign(position, kind);
+            }
+            if let Some((position, kind)) = spec.positional_value_arg_kind() {
+                assign(position, kind);
+            }
+        }
+    }
+
+    any_positional.then(|| {
+        plan.into_iter()
+            .map(|kind| kind.unwrap_or(ValueArgKind::Gp))
+            .collect()
+    })
+}
+
+/// Argument count for an already-parsed format, using the recorded
+/// `any_positional` flag so the common (non-positional) path never builds or
+/// walks a plan. Prefer this over [`count_printf_args`] when you hold the
+/// `FormatSegments` rather than a bare slice. bd-ntb9fq.
+pub fn count_printf_args_of(segments: &FormatSegments<'_>) -> usize {
+    if segments.any_positional() {
+        return count_printf_args(segments.as_slice());
+    }
+    // Field read, not a walk — the count was accumulated during parsing. The
+    // walk it replaces was 3.48% of the fused shapes' instructions.
+    // `sequential_args_matches_the_walk` pins the two against each other so this
+    // cannot drift from `count_printf_args_sequential`.
+    segments.sequential_args
+}
+
+pub fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
+    if let Some(plan) = positional_printf_arg_plan(segments) {
+        return plan.len();
+    }
+    count_printf_args_sequential(segments)
+}
+
+/// The ordinary left-to-right argument count, with no positional handling.
+fn count_printf_args_sequential(segments: &[FormatSegment<'_>]) -> usize {
+    let mut needed = 0usize;
+    for seg in segments {
+        if let FormatSegment::Spec(spec) = seg {
+            if spec.width.uses_arg() {
+                needed += 1;
+            }
+            if spec.precision.uses_arg() {
+                needed += 1;
+            }
+            if spec.consumes_value_arg() {
+                needed += 1;
+            }
+        }
+    }
+    needed
+}
+
+// ---------------------------------------------------------------------------
+// Format argument types (for safe rendering)
+// ---------------------------------------------------------------------------
+
+/// Typed argument value for safe formatting.
+///
+/// String arguments are handled out-of-band (as byte slices) since they
+/// cannot be owned by this fixed-size enum.
+#[derive(Debug, Clone, Copy)]
+pub enum FormatArg {
+    SignedInt(i64),
+    UnsignedInt(u64),
+    Float(f64),
+    Char(u8),
+    Pointer(usize),
+    /// For `%m` extension (strerror(errno)).
+    Errno,
+}
+
+// ---------------------------------------------------------------------------
+// Segment: parsed pieces of a format string
+// ---------------------------------------------------------------------------
+
+/// A segment of a parsed format string.
+#[derive(Debug, Clone, Copy)]
+pub enum FormatSegment<'a> {
+    /// Literal bytes to emit verbatim.
+    Literal(&'a [u8]),
+    /// A `%%` escape (emit a single '%').
+    Percent,
+    /// A conversion specifier requiring an argument.
+    Spec(FormatSpec),
+}
+
+/// Inline capacity before spilling to the heap. Most format strings have only a
+/// handful of segments (a few literals interleaved with conversions), so 8
+/// inline slots keep the common multi-segment case (e.g. `"%s: %d\n"`)
+/// allocation-free. `FormatSegment` is `Copy`, so the inline array needs no
+/// `unsafe`/`MaybeUninit`.
+// Inline capacity of `FormatSegments` before `push` spills to a heap `Vec`.
+//
+// A format of n conversions separated by literal text parses to n specs plus
+// roughly n-1 literals, so this bounds the format at about five conversions
+// before it allocates. The conversion ladder's measured superlinearity in fl
+// (per-step increments 50.966, 60.643, 67.733 ns/conversion, against glibc's
+// flat 18.440, 18.245, 19.485) has its largest step exactly where the segment
+// count crosses this constant: ladder_4s is 7 segments and inline, ladder_6s is
+// 11 and spills. fl's own malloc+free is ~142ns against glibc's ~8.55ns, so one
+// spill is expensive relative to the work it wraps. bd-mh2ev3.
+//
+// MEASURED AT 16 AND REVERTED TO 8. Raising it was tested against exactly the
+// prediction registered beforehand, and lost on both counts:
+//   - `ladder_6s` (11 segments) STOPS spilling at 16 and did not improve —
+//     2.773 base against 2.930 / 2.867 candidate. So the spill was not the
+//     superlinear cost, and bd-mh2ev3's hypothesis is dead.
+//   - every already-inline shape got SLOWER by 10-19%, e.g. `ladder_4s`
+//     2.610 -> 3.095 / 3.129 and `ladder_2s` 3.028 -> 3.597 / 3.549.
+// `FormatSegments::new` initialises this array on EVERY printf call, so the
+// per-call write cost of a bigger array swamps any saved allocation. That is
+// the bd-5pagbr result in reverse (shrinking `FormatSegment` 37.5% measured
+// 7-9% slower), and it is now measured in both directions: this array's size is
+// load-bearing and 8 is not an accident. Do not raise it again without a
+// measurement, and do not lower it either.
+const INLINE_SEGMENTS: usize = 8;
+
+/// Parsed printf segments with a no-heap fast path for small formats.
+#[derive(Debug, Clone)]
+pub struct FormatSegments<'a> {
+    inline: [FormatSegment<'a>; INLINE_SEGMENTS],
+    inline_len: usize,
+    heap: Option<Vec<FormatSegment<'a>>>,
+    /// Set when a pushed spec references an explicit argument position
+    /// (`%1$s`, `%*2$d`). Recorded HERE, once, because the alternative is
+    /// re-deriving it by walking every segment on every call — and that walk
+    /// happens twice per printf (argument extraction and rendering both ask).
+    /// A flat perf profile still put that walk at 10.63% self time after the
+    /// plan itself was short-circuited. bd-ntb9fq.
+    any_positional: bool,
+    /// Sequential argument count, accumulated during `push` for exactly the same
+    /// reason as `any_positional` above.
+    ///
+    /// `count_printf_args_of` walked every segment on every call to sum how many
+    /// arguments the format consumes. That walk measured **3.48% of the fused
+    /// shapes' instructions** on a counted profile — a second traversal of a
+    /// structure the parser had just finished building. For the non-positional
+    /// case, which is nearly all real formats, the answer is fully determined at
+    /// push time.
+    ///
+    /// Positional formats still take the walk: their count is the highest
+    /// referenced position rather than a running total, so it cannot be
+    /// accumulated incrementally.
+    sequential_args: usize,
+    /// Whether any spec consumes a `long double`, accumulated for the same
+    /// reason as the two fields above.
+    ///
+    /// The argument extractor has to know this before it reads anything,
+    /// because a `long double` vararg is class X87 and passed in MEMORY —
+    /// `next_arg` cannot read it, and reading it as a double leaves sixteen
+    /// stack bytes unconsumed, which corrupts every following conversion. The
+    /// first version of that check walked the segments on every call, which is
+    /// precisely the traversal `any_positional` (10.63% self time) and
+    /// `sequential_args` (3.48% of instructions) were introduced to remove.
+    /// Unlike those two, this one cannot even short-circuit on the common
+    /// case: it returns false only after visiting every segment.
+    has_long_double: bool,
+    /// A directive glibc rejects outright, failing the whole call with
+    /// -1/EINVAL instead of printing it literally: one cut off by the end of
+    /// the format (`"a%"`, `"%5"`, `"%l"`) or a C23 `wN` length with an
+    /// unsupported N (`%w7d`). An unknown conversion byte (`%y`) is still
+    /// printed literally, as glibc does.
+    invalid_directive: bool,
+    raw: &'a [u8],
+}
+
+impl<'a> FormatSegments<'a> {
+    pub fn new() -> Self {
+        Self {
+            inline: [FormatSegment::Percent; INLINE_SEGMENTS],
+            inline_len: 0,
+            heap: None,
+            any_positional: false,
+            sequential_args: 0,
+            has_long_double: false,
+            invalid_directive: false,
+            raw: &[],
+        }
+    }
+
+    pub fn raw(&self) -> &'a [u8] {
+        self.raw
+    }
+
+    pub fn as_slice(&self) -> &[FormatSegment<'a>] {
+        match &self.heap {
+            Some(heap) => heap.as_slice(),
+            None => &self.inline[..self.inline_len],
+        }
+    }
+
+    /// Does any spec in this format reference an explicit argument position?
+    ///
+    /// Recorded during `push`, so this is a field read rather than a walk.
+    pub fn any_positional(&self) -> bool {
+        self.any_positional
+    }
+
+    /// Whether the format has a directive that fails the whole call with
+    /// EINVAL (see the field). Field read, recorded during parsing.
+    pub fn invalid_directive(&self) -> bool {
+        self.invalid_directive
+    }
+
+    /// Whether any spec consumes a `long double`. Field read, not a walk — see
+    /// the field's own note for why that matters here.
+    pub fn has_long_double(&self) -> bool {
+        self.has_long_double
+    }
+
+    pub fn push(&mut self, segment: FormatSegment<'a>) {
+        if let FormatSegment::Spec(spec) = &segment {
+            if spec.value_position.is_some()
+                || spec.width.position().is_some()
+                || spec.precision.position().is_some()
+            {
+                self.any_positional = true;
+            }
+            // Same accumulation `count_printf_args_sequential` performs, done once
+            // here instead of on every call that asks.
+            if spec.width.uses_arg() {
+                self.sequential_args += 1;
+            }
+            if spec.precision.uses_arg() {
+                self.sequential_args += 1;
+            }
+            if spec.consumes_value_arg() {
+                self.sequential_args += 1;
+            }
+            // Length first: a plain enum comparison, where `value_arg_is_float`
+            // resolves the spec's route.
+            if spec.length == LengthMod::BigL && spec.value_arg_is_float() {
+                self.has_long_double = true;
+            }
+        }
+        if let Some(heap) = &mut self.heap {
+            heap.push(segment);
+            return;
+        }
+
+        if self.inline_len < INLINE_SEGMENTS {
+            self.inline[self.inline_len] = segment;
+            self.inline_len += 1;
+            return;
+        }
+
+        // Inline slots exhausted — spill the inline run plus this segment to the
+        // heap (rare: formats with more than INLINE_SEGMENTS segments).
+        let mut heap = Vec::with_capacity(INLINE_SEGMENTS * 2);
+        heap.extend_from_slice(&self.inline[..self.inline_len]);
+        heap.push(segment);
+        self.heap = Some(heap);
+    }
+}
+
+impl<'a> Default for FormatSegments<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> Deref for FormatSegments<'a> {
+    type Target = [FormatSegment<'a>];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+pub struct FormatSegmentsIntoIter<'a> {
+    inline: [FormatSegment<'a>; INLINE_SEGMENTS],
+    inline_len: usize,
+    idx: usize,
+    heap: Option<std::vec::IntoIter<FormatSegment<'a>>>,
+}
+
+impl<'a> Iterator for FormatSegmentsIntoIter<'a> {
+    type Item = FormatSegment<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(iter) = &mut self.heap {
+            return iter.next();
+        }
+        if self.idx < self.inline_len {
+            let seg = self.inline[self.idx];
+            self.idx += 1;
+            Some(seg)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> IntoIterator for FormatSegments<'a> {
+    type Item = FormatSegment<'a>;
+    type IntoIter = FormatSegmentsIntoIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        FormatSegmentsIntoIter {
+            inline: self.inline,
+            inline_len: self.inline_len,
+            idx: 0,
+            heap: self.heap.map(IntoIterator::into_iter),
+        }
+    }
+}
+
+impl<'segments, 'a> IntoIterator for &'segments FormatSegments<'a> {
+    type Item = &'segments FormatSegment<'a>;
+    type IntoIter = std::slice::Iter<'segments, FormatSegment<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
+    }
+}
+
+/// Whether a format string uses implicit, explicit, or mixed argument numbering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatPositionalMode {
+    None,
+    Implicit,
+    Explicit,
+    Mixed,
+}
+
+/// First-use validation artifact for a parsed printf format string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatStringCertificate {
+    pub format_hash: u64,
+    pub positional_mode: FormatPositionalMode,
+    pub directive_count: usize,
+    pub malformed_directive_count: usize,
+    pub percent_escape_count: usize,
+    pub writeback_directive_count: usize,
+}
+
+impl FormatStringCertificate {
+    pub fn valid_for_render(self) -> bool {
+        self.malformed_directive_count == 0
+            && !matches!(self.positional_mode, FormatPositionalMode::Mixed)
+    }
+}
+
+/// Observable cache telemetry for first-use format validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatStringCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub entries: usize,
+}
+
+#[expect(
+    dead_code,
+    reason = "format-string certificate caching is staged for follow-up integration into printf rendering"
+)]
+fn stable_format_hash(fmt: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for byte in fmt {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn format_string_certificate_cache()
+-> &'static Mutex<ArtifactHashMap<Vec<u8>, FormatStringCertificate>> {
+    static CACHE: OnceLock<Mutex<ArtifactHashMap<Vec<u8>, FormatStringCertificate>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(artifact_hash_map()))
+}
+
+fn format_string_cache_hits() -> &'static AtomicU64 {
+    static HITS: AtomicU64 = AtomicU64::new(0);
+    &HITS
+}
+
+fn format_string_cache_misses() -> &'static AtomicU64 {
+    static MISSES: AtomicU64 = AtomicU64::new(0);
+    &MISSES
+}
+
+#[expect(
+    dead_code,
+    reason = "format-string certificate caching is staged for follow-up integration into printf rendering"
+)]
+fn store_format_string_certificate(fmt: &[u8], certificate: FormatStringCertificate) {
+    let mut cache = format_string_certificate_cache()
+        .lock()
+        .expect("format-string certificate cache mutex poisoned");
+    if cache.contains_key(fmt) {
+        format_string_cache_hits().fetch_add(1, Ordering::Relaxed);
+    } else {
+        cache.insert(fmt.to_vec(), certificate);
+        format_string_cache_misses().fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn format_string_cache_stats() -> FormatStringCacheStats {
+    let cache = format_string_certificate_cache()
+        .lock()
+        .expect("format-string certificate cache mutex poisoned");
+    FormatStringCacheStats {
+        hits: format_string_cache_hits().load(Ordering::Relaxed),
+        misses: format_string_cache_misses().load(Ordering::Relaxed),
+        entries: cache.len(),
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    dead_code,
+    reason = "test-only cache reset helper is kept for focused printf cache tests"
+)]
+fn reset_format_string_cache_for_tests() {
+    let mut cache = format_string_certificate_cache()
+        .lock()
+        .expect("format-string certificate cache mutex poisoned");
+    cache.clear();
+    format_string_cache_hits().store(0, Ordering::Relaxed);
+    format_string_cache_misses().store(0, Ordering::Relaxed);
+}
+
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+/// Parse a single format specifier starting after the '%' character.
+///
+/// `fmt` points to the first byte AFTER '%'. Returns `(spec, bytes_consumed)`
+/// where `bytes_consumed` counts from `fmt[0]`. Returns `None` if malformed.
+pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
+    parse_format_spec_checked(fmt, &mut false)
+}
+
+/// [`parse_format_spec`], also setting `invalid` for a malformed directive
+/// that glibc rejects with EINVAL rather than printing literally (cut off by
+/// the end of the format, or an unsupported C23 `wN`).
+#[inline]
+fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSpec, usize)> {
+    // The common fused-logging case is a bare one-byte conversion (`%s`,
+    // `%d`, `%u`, ...).  It has no positional index, flags, width, precision,
+    // or length modifier, so parsing those empty grammars once per conversion
+    // is pure overhead.  Keep this deliberately narrow: every decorated
+    // directive continues through the general parser below.
+    if let Some(&conversion) = fmt.first()
+        && matches!(
+            conversion,
+            b'd' | b'i' | b'u' | b'o' | b'x' | b'X' | b'c' | b's' | b'p' | b'n'
+        )
+    {
+        return Some((
+            FormatSpec::new(
+                FormatFlags::default(),
+                Width::None,
+                Precision::None,
+                LengthMod::None,
+                conversion,
+                None,
+            ),
+            1,
+        ));
+    }
+
+    let mut pos = 0;
+    let len = fmt.len();
+    let value_position = if let Some((position, consumed)) = parse_positional_index(fmt) {
+        pos += consumed;
+        Some(position)
+    } else {
+        None
+    };
+
+    // --- flags ---
+    let mut flags = FormatFlags::default();
+    while pos < len {
+        match fmt[pos] {
+            b'-' => flags.left_justify = true,
+            b'+' => flags.force_sign = true,
+            b' ' => flags.space_sign = true,
+            b'#' => flags.alt_form = true,
+            b'0' => flags.zero_pad = true,
+            // POSIX thousands-grouping flag: applied with LC_NUMERIC's
+            // separator and grouping (`set_numeric_grouping`); under the C
+            // locale both are empty and it is a no-op, as in glibc.
+            b'\'' => flags.group = true,
+            b'I' => flags.i18n = true,
+            _ => break,
+        }
+        pos += 1;
+    }
+    // POSIX: '+' overrides ' '; '-' overrides '0'.
+    if flags.force_sign {
+        flags.space_sign = false;
+    }
+    if flags.left_justify {
+        flags.zero_pad = false;
+    }
+
+    // --- width ---
+    let width = if pos < len && fmt[pos] == b'*' {
+        pos += 1;
+        if let Some((position, consumed)) = parse_positional_index(&fmt[pos..]) {
+            pos += consumed;
+            Width::FromArgPosition(position)
+        } else {
+            Width::FromArg
+        }
+    } else {
+        let start = pos;
+        while pos < len && fmt[pos].is_ascii_digit() {
+            pos += 1;
+        }
+        if pos > start {
+            Width::Fixed(parse_decimal(&fmt[start..pos]))
+        } else {
+            Width::None
+        }
+    };
+
+    // --- precision ---
+    let precision = if pos < len && fmt[pos] == b'.' {
+        pos += 1;
+        if pos < len && fmt[pos] == b'*' {
+            pos += 1;
+            if let Some((position, consumed)) = parse_positional_index(&fmt[pos..]) {
+                pos += consumed;
+                Precision::FromArgPosition(position)
+            } else {
+                Precision::FromArg
+            }
+        } else {
+            let start = pos;
+            while pos < len && fmt[pos].is_ascii_digit() {
+                pos += 1;
+            }
+            Precision::Fixed(if pos > start {
+                parse_decimal(&fmt[start..pos])
+            } else {
+                0
+            })
+        }
+    } else {
+        Precision::None
+    };
+
+    // --- length modifier ---
+    let length = if pos < len {
+        match fmt[pos] {
+            b'h' => {
+                pos += 1;
+                if pos < len && fmt[pos] == b'h' {
+                    pos += 1;
+                    LengthMod::Hh
+                } else {
+                    LengthMod::H
+                }
+            }
+            b'l' => {
+                pos += 1;
+                if pos < len && fmt[pos] == b'l' {
+                    pos += 1;
+                    LengthMod::Ll
+                } else {
+                    LengthMod::L
+                }
+            }
+            b'z' => {
+                pos += 1;
+                LengthMod::Z
+            }
+            b't' => {
+                pos += 1;
+                LengthMod::T
+            }
+            b'j' => {
+                pos += 1;
+                LengthMod::J
+            }
+            b'L' | b'q' => {
+                pos += 1;
+                LengthMod::BigL
+            }
+            b'w' => {
+                // C23 `wN` / `wfN` (glibc 2.39): the width of intN_t /
+                // int_fastN_t, mapped to the LP64 modifier of the same size.
+                // int_fast16/32/64_t are `long` in glibc. Other N are invalid.
+                pos += 1;
+                let fast = pos < len && fmt[pos] == b'f';
+                if fast {
+                    pos += 1;
+                }
+                let digits_start = pos;
+                while pos < len && fmt[pos].is_ascii_digit() {
+                    pos += 1;
+                }
+                match (fast, &fmt[digits_start..pos]) {
+                    (_, b"8") => LengthMod::Hh,
+                    (false, b"16") => LengthMod::H,
+                    (false, b"32") => LengthMod::None,
+                    (false, b"64") | (true, b"16" | b"32" | b"64") => LengthMod::L,
+                    _ => {
+                        *invalid = true;
+                        return None;
+                    }
+                }
+            }
+            _ => LengthMod::None,
+        }
+    } else {
+        LengthMod::None
+    };
+
+    // --- conversion specifier ---
+    if pos >= len {
+        *invalid = true;
+        return None;
+    }
+    let raw_conversion = fmt[pos];
+    pos += 1;
+
+    // `%S` and `%C` are SVID aliases for `%ls` and `%lc` — wide-string and
+    // wide-char conversions. Normalise them to (s|c, length `L`) so they route
+    // through the shared string/char paths with wide handling. An explicit
+    // length modifier on `S`/`C` is meaningless and overridden to `L`.
+    let (conversion, length) = match raw_conversion {
+        b'S' => (b's', LengthMod::L),
+        b'C' => (b'c', LengthMod::L),
+        other => (other, length),
+    };
+
+    // glibc accepts the historical uppercase `L` spelling on the integer
+    // conversions as `ll`, and on `s`/`c` as the wide `l` form. Normalize
+    // those aliases before route validation so they consume their argument
+    // rather than being rejected as an invalid directive. `L` remains a true
+    // long-double modifier only for floating conversions; it is not a blanket
+    // alias (for example, `%Ln` stays invalid).
+    let length = match (length, conversion) {
+        (LengthMod::BigL, b'd' | b'i' | b'o' | b'u' | b'x' | b'X' | b'b' | b'B') => LengthMod::Ll,
+        (LengthMod::BigL, b's' | b'c') => LengthMod::L,
+        (length, _) => length,
+    };
+
+    let route = if conversion == b'm' {
+        None
+    } else {
+        let route = printf_route(conversion);
+        if let Some(route) = route {
+            if !route.accepts_length(length) {
+                return None;
+            }
+            route.sanitize_flags(&mut flags);
+        }
+        // Preserve unknown directives too: their width and precision operands
+        // still consume arguments. Turning `%*Q` into a literal makes the next
+        // `%s` dereference the width as a pointer (bd-rc0923-epic-eeuy4f.33.3).
+        route
+    };
+
+    Some((
+        FormatSpec {
+            flags,
+            width,
+            precision,
+            length,
+            conversion,
+            value_position,
+            route,
+        },
+        pos,
+    ))
+}
+
+fn printf_route(conversion: u8) -> Option<PrintfRoute> {
+    let route = PRINTF_TABLE[conversion as usize];
+    if !route.is_valid() { None } else { Some(route) }
+}
+
+/// Iterate over segments of a printf format string.
+///
+/// Yields `FormatSegment::Literal` for literal runs and `FormatSegment::Spec`
+/// for each `%`-directive. `%%` yields `FormatSegment::Percent`.
+/// Index of the first `%` in `hay`, or `None`. Word-at-a-time (SWAR) scan: eight
+/// bytes per iteration via the classic zero-byte detection trick, replacing the
+/// per-byte literal scan in the format parser — a real win for the long literal
+/// runs typical of structured logging (`"…service=auth request_id=… %s …"`).
+/// Byte-for-byte equivalent to `hay.iter().position(|&b| b == b'%')`.
+#[inline]
+fn find_percent(hay: &[u8]) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    const NEEDLE: u64 = 0x2525_2525_2525_2525; // '%' (0x25) broadcast to every byte
+    let mut i = 0;
+    while i + 8 <= hay.len() {
+        // SAFETY-free: bounded slice; LE so the lowest-address byte is least sig.
+        let w = u64::from_le_bytes([
+            hay[i],
+            hay[i + 1],
+            hay[i + 2],
+            hay[i + 3],
+            hay[i + 4],
+            hay[i + 5],
+            hay[i + 6],
+            hay[i + 7],
+        ]);
+        let x = w ^ NEEDLE; // a zero byte exactly where a '%' sits
+        let m = x.wrapping_sub(ONES) & !x & HIGHS; // high bit set per zero byte
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    while i < hay.len() {
+        if hay[i] == b'%' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
+    let mut segments = FormatSegments::new();
+    segments.raw = fmt;
+    let mut pos = 0;
+    let len = fmt.len();
+
+    while pos < len {
+        // Find the next '%' or end of string (SWAR scan over the literal run).
+        let start = pos;
+        pos += find_percent(&fmt[pos..]).unwrap_or(len - pos);
+        if pos > start {
+            segments.push(FormatSegment::Literal(&fmt[start..pos]));
+        }
+        if pos >= len {
+            break;
+        }
+        // Skip the '%'.
+        pos += 1;
+        if pos >= len {
+            // Trailing '%' with nothing after: glibc fails the call (EINVAL).
+            segments.invalid_directive = true;
+            segments.push(FormatSegment::Literal(&fmt[pos - 1..pos]));
+            break;
+        }
+        if fmt[pos] == b'%' {
+            segments.push(FormatSegment::Percent);
+            pos += 1;
+            continue;
+        }
+        if let Some((spec, consumed)) =
+            parse_format_spec_checked(&fmt[pos..], &mut segments.invalid_directive)
+        {
+            pos += consumed;
+            segments.push(FormatSegment::Spec(spec));
+        } else {
+            // A known conversion with an unsupported length retains the
+            // existing literal fallback; malformed directives were flagged
+            // above. Unknown conversions are parsed specs, not this fallback.
+            segments.push(FormatSegment::Literal(&fmt[pos - 1..pos]));
+        }
+    }
+    segments
+}
+
+// ---------------------------------------------------------------------------
+// LC_NUMERIC grouping for the `'` flag
+// ---------------------------------------------------------------------------
+
+/// The active LC_NUMERIC `thousands_sep`: its bytes in the low seven bytes,
+/// its length in the top byte. Zero (empty): the `'` flag groups nothing.
+static GROUPING_SEPARATOR: AtomicU64 = AtomicU64::new(0);
+
+/// The active LC_NUMERIC `grouping` in glibc's form: group sizes counted from
+/// the right, the last one repeating; a size of `CHAR_MAX` ends grouping. Up
+/// to eight sizes, zero-terminated. Zero (empty): no grouping.
+static GROUPING_RULE: AtomicU64 = AtomicU64::new(0);
+
+/// Install LC_NUMERIC's `thousands_sep` and `grouping` for the `'` flag.
+///
+/// Called by the locale layer whenever LC_NUMERIC changes. The C locale's
+/// empty separator and grouping disable grouping, as in glibc; so does a
+/// separator longer than seven bytes, which no locale uses.
+pub fn set_numeric_grouping(separator: &[u8], grouping: &[u8]) {
+    let (sep, rule) = pack_grouping(separator, grouping);
+    GROUPING_RULE.store(rule, Ordering::Relaxed);
+    GROUPING_SEPARATOR.store(sep, Ordering::Relaxed);
+}
+
+/// `(separator, rule)` in the packed forms of [`GROUPING_SEPARATOR`] and
+/// [`GROUPING_RULE`].
+fn pack_grouping(separator: &[u8], grouping: &[u8]) -> (u64, u64) {
+    let mut rule = 0u64;
+    for (i, &size) in grouping.iter().take(8).enumerate() {
+        if size == 0 {
+            break;
+        }
+        rule |= u64::from(size) << (8 * i);
+    }
+    let mut sep = 0u64;
+    if !separator.is_empty() && separator.len() <= 7 {
+        for (i, &b) in separator.iter().enumerate() {
+            sep |= u64::from(b) << (8 * i);
+        }
+        sep |= (separator.len() as u64) << 56;
+    }
+    (sep, rule)
+}
+
+/// `decimal_point` in the packed form of [`DECIMAL_POINT`].
+fn pack_decimal_point(decimal_point: &[u8]) -> u64 {
+    let mut packed = 0u64;
+    if decimal_point != b"." && !decimal_point.is_empty() && decimal_point.len() <= 7 {
+        for (i, &b) in decimal_point.iter().enumerate() {
+            packed |= u64::from(b) << (8 * i);
+        }
+        packed |= (decimal_point.len() as u64) << 56;
+    }
+    packed
+}
+
+// A thread's own LC_NUMERIC, selected by uselocale: `[decimal_point,
+// separator, rule]` packed as the globals; `None` follows the global locale.
+// `ANY_THREAD_NUMERIC` keeps programs that never call uselocale off the TLS.
+std::thread_local! {
+    static THREAD_NUMERIC: core::cell::Cell<Option<[u64; 3]>> =
+        const { core::cell::Cell::new(None) };
+}
+static ANY_THREAD_NUMERIC: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Make this thread's numeric formatting follow `uselocale`'s LC_NUMERIC
+/// instead of the global locale's.
+pub fn set_thread_numeric(decimal_point: &[u8], separator: &[u8], grouping: &[u8]) {
+    let (sep, rule) = pack_grouping(separator, grouping);
+    let words = [pack_decimal_point(decimal_point), sep, rule];
+    ANY_THREAD_NUMERIC.store(true, Ordering::Relaxed);
+    let _ = THREAD_NUMERIC.try_with(|cell| cell.set(Some(words)));
+}
+
+/// Return this thread to the global locale's numeric formatting.
+pub fn clear_thread_numeric() {
+    if ANY_THREAD_NUMERIC.load(Ordering::Relaxed) {
+        let _ = THREAD_NUMERIC.try_with(|cell| cell.set(None));
+    }
+}
+
+/// The numeric settings in effect for this thread: `[decimal_point,
+/// separator, rule]`.
+#[inline]
+fn numeric_words() -> [u64; 3] {
+    if ANY_THREAD_NUMERIC.load(Ordering::Relaxed)
+        && let Ok(Some(words)) = THREAD_NUMERIC.try_with(core::cell::Cell::get)
+    {
+        return words;
+    }
+    [
+        DECIMAL_POINT.load(Ordering::Relaxed),
+        GROUPING_SEPARATOR.load(Ordering::Relaxed),
+        GROUPING_RULE.load(Ordering::Relaxed),
+    ]
+}
+
+/// The active LC_NUMERIC `decimal_point` when it is not ".": bytes in the low
+/// seven bytes, length in the top byte. Zero: "." (the C locale's).
+static DECIMAL_POINT: AtomicU64 = AtomicU64::new(0);
+
+/// Install LC_NUMERIC's `decimal_point`, the radix character every float
+/// conversion prints (glibc: `%f`, `%e`, `%g` and `%a` alike). "." or an
+/// unrepresentable (over seven bytes) value restores the C radix.
+pub fn set_numeric_decimal_point(decimal_point: &[u8]) {
+    DECIMAL_POINT.store(pack_decimal_point(decimal_point), Ordering::Relaxed);
+}
+
+/// Whether floats print the C locale's "." radix, so a renderer that writes
+/// "." itself (the ABI's direct `%f` path) may run.
+#[inline]
+pub fn numeric_radix_is_dot() -> bool {
+    numeric_words()[0] == 0
+}
+
+/// The LC_NUMERIC radix when it is ONE byte other than "." (de_DE's ','),
+/// for the float parsers; see `stdlib::conversion::c_radix_copy`.
+#[inline]
+pub fn numeric_radix_byte() -> Option<u8> {
+    let packed = numeric_words()[0];
+    ((packed >> 56) == 1).then_some(packed as u8)
+}
+
+/// A radix character other than ".".
+#[derive(Clone, Copy)]
+struct DecimalPoint {
+    bytes: [u8; 7],
+    len: usize,
+}
+
+impl DecimalPoint {
+    #[inline]
+    fn active() -> Option<Self> {
+        let packed = numeric_words()[0];
+        if packed == 0 {
+            return None;
+        }
+        let mut bytes = [0u8; 7];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (packed >> (8 * i)) as u8;
+        }
+        Some(Self {
+            bytes,
+            len: (packed >> 56) as usize,
+        })
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    /// Replace the rendered radix "." (a float has at most one) in `body`.
+    fn replace_in(&self, body: &mut Vec<u8>) {
+        if let Some(at) = body.iter().position(|&b| b == b'.') {
+            body.splice(at..=at, self.as_bytes().iter().copied());
+        }
+    }
+
+    /// `replace_in` for a float already emitted, padded, at `buf[start..]`. A
+    /// multi-byte radix gives back as many padding spaces as it adds, so the
+    /// field keeps its width.
+    fn localize(&self, buf: &mut Vec<u8>, start: usize) {
+        let Some(at) = buf[start..].iter().position(|&b| b == b'.') else {
+            return;
+        };
+        buf.splice(start + at..=start + at, self.as_bytes().iter().copied());
+        let mut extra = self.len - 1;
+        while extra > 0 && buf.len() > start && buf[start] == b' ' {
+            buf.remove(start);
+            extra -= 1;
+        }
+        while extra > 0 && buf.last() == Some(&b' ') {
+            buf.pop();
+            extra -= 1;
+        }
+    }
+}
+
+/// The separator and grouping sizes the `'` flag applies, if any.
+#[derive(Clone, Copy)]
+struct NumericGrouping {
+    separator: [u8; 7],
+    separator_len: usize,
+    rule: [u8; 8],
+}
+
+impl NumericGrouping {
+    /// The active grouping, when `spec` asks for it and the locale has one.
+    fn for_spec(spec: &FormatSpec) -> Option<Self> {
+        if !spec.flags.group {
+            return None;
+        }
+        let [_, sep, rule] = numeric_words();
+        let separator_len = (sep >> 56) as usize;
+        // A first size of CHAR_MAX (either signedness) means no grouping.
+        if separator_len == 0 || rule == 0 || matches!(rule as u8, 0x7f | 0xff) {
+            return None;
+        }
+        let mut separator = [0u8; 7];
+        for (i, b) in separator.iter_mut().enumerate() {
+            *b = (sep >> (8 * i)) as u8;
+        }
+        Some(Self {
+            separator,
+            separator_len,
+            rule: rule.to_le_bytes(),
+        })
+    }
+
+    fn separator(&self) -> &[u8] {
+        &self.separator[..self.separator_len]
+    }
+
+    /// Number of groups in an `n`-digit run (at least 1).
+    fn group_count(&self, n: usize) -> usize {
+        let mut count = 1usize;
+        let mut remaining = n;
+        let mut size = 0usize;
+        let mut index = 0;
+        while remaining > 0 {
+            match self.rule.get(index) {
+                Some(&next) if next != 0 => {
+                    if matches!(next, 0x7f | 0xff) {
+                        break;
+                    }
+                    size = usize::from(next);
+                    index += 1;
+                }
+                _ => {}
+            }
+            if size == 0 || remaining <= size {
+                break;
+            }
+            count += 1;
+            remaining -= size;
+        }
+        count
+    }
+
+    /// Sizes of the groups of an `n`-digit run, rightmost first.
+    fn group_sizes(&self, n: usize) -> Vec<usize> {
+        let mut sizes = Vec::new();
+        let mut remaining = n;
+        let mut size = 0usize;
+        let mut index = 0;
+        while remaining > 0 {
+            match self.rule.get(index) {
+                Some(&next) if next != 0 => {
+                    if matches!(next, 0x7f | 0xff) {
+                        // CHAR_MAX: no further grouping.
+                        break;
+                    }
+                    size = usize::from(next);
+                    index += 1;
+                }
+                // End of the rule: the last size repeats.
+                _ => {}
+            }
+            if remaining <= size {
+                break;
+            }
+            sizes.push(size);
+            remaining -= size;
+        }
+        sizes.push(remaining);
+        sizes
+    }
+
+    /// Length of `digits` once grouped.
+    fn grouped_len(&self, digits: usize) -> usize {
+        digits + (self.group_count(digits) - 1) * self.separator_len
+    }
+
+    /// Append `digits` with the separator between groups.
+    fn push_grouped(&self, buf: &mut Vec<u8>, digits: &[u8]) {
+        if digits.len() <= 64 {
+            let mut stack_sizes = [0usize; 64];
+            let mut count = 0usize;
+            let mut remaining = digits.len();
+            let mut size = 0usize;
+            let mut index = 0;
+            while remaining > 0 {
+                match self.rule.get(index) {
+                    Some(&next) if next != 0 => {
+                        if matches!(next, 0x7f | 0xff) {
+                            break;
+                        }
+                        size = usize::from(next);
+                        index += 1;
+                    }
+                    _ => {}
+                }
+                if size == 0 || remaining <= size {
+                    break;
+                }
+                stack_sizes[count] = size;
+                count += 1;
+                remaining -= size;
+            }
+            stack_sizes[count] = remaining;
+            count += 1;
+            let mut at = 0;
+            for (i, &group_size) in stack_sizes[..count].iter().rev().enumerate() {
+                if i > 0 {
+                    buf.push_bytes(self.separator());
+                }
+                buf.push_bytes(&digits[at..at + group_size]);
+                at += group_size;
+            }
+            return;
+        }
+        let sizes = self.group_sizes(digits.len());
+        let mut at = 0;
+        for (i, &size) in sizes.iter().rev().enumerate() {
+            if i > 0 {
+                buf.push_bytes(self.separator());
+            }
+            buf.push_bytes(&digits[at..at + size]);
+            at += size;
+        }
+    }
+
+    /// `body` with its leading run of digits (the integer part of a rendered
+    /// float) grouped; the rest -- point, fraction, exponent -- as it was.
+    fn group_leading_digits(&self, body: &[u8]) -> Vec<u8> {
+        let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
+        let mut out = Vec::with_capacity((body.len() + digits).max(64));
+        self.push_grouped(&mut out, &body[..digits]);
+        out.extend_from_slice(&body[digits..]);
+        out
+    }
+
+    /// Bytes a grouped float's field width does not count: glibc lays floats
+    /// out in wide characters, so each multi-byte separator counts as one.
+    /// (Integers count bytes; glibc differs between the two, and so must we.)
+    fn uncounted_in_float(&self, body: &[u8]) -> usize {
+        let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
+        (self.group_count(digits) - 1) * (self.separator_len - 1)
+    }
+}
+
+/// Emit a float's `sign` and already-grouped `body` under `spec`'s width,
+/// justification and zero padding (the padding itself is never grouped).
+/// `uncounted` bytes of `body` do not count toward the width: the extra bytes
+/// of multi-byte separators and radix, each of which glibc counts as one.
+fn pad_float_body(
+    buf: &mut Vec<u8>,
+    sign: Option<u8>,
+    body: &[u8],
+    uncounted: usize,
+    spec: &FormatSpec,
+) {
+    let content_len = sign.is_some() as usize + body.len() - uncounted;
+    let pad_total = resolve_width(spec).saturating_sub(content_len);
+    // Zero padding does not apply to inf/nan, which reach here only via %Lf.
+    let zero_pad = spec.flags.zero_pad && body.first().is_some_and(u8::is_ascii_digit);
+    if !spec.flags.left_justify && !zero_pad {
+        pad(buf, b' ', pad_total);
+    }
+    if let Some(s) = sign {
+        buf.push(s);
+    }
+    if !spec.flags.left_justify && zero_pad {
+        pad(buf, b'0', pad_total);
+    }
+    buf.push_bytes(body);
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Renderers
+// ---------------------------------------------------------------------------
+
+/// Render a signed integer to `buf` according to `spec`.
+pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let negative = value < 0;
+    let abs = if negative {
+        (value as i128).unsigned_abs() as u64
+    } else {
+        value as u64
+    };
+
+    let (base, uppercase) = spec.int_base();
+    let mut digits = [0u8; 64];
+    let digit_count = render_digits(abs, base, uppercase, &mut digits);
+    let digit_slice = &digits[64 - digit_count..];
+
+    // Fast path: a bare `%d`/`%i` (base 10, no flags/width/precision) emits an
+    // optional '-' followed by the digits — nothing else. Skips the entire
+    // prefix/precision/width/justify pipeline below. Parity-identical: with no
+    // flags the only sign possible is '-' for a negative value.
+    if base == 10 && spec.is_bare_integer() {
+        if negative {
+            buf.push(b'-');
+        }
+        buf.push_bytes(digit_slice);
+        return;
+    }
+
+    // Determine sign character.
+    let sign = if negative {
+        Some(b'-')
+    } else if spec.flags.force_sign {
+        Some(b'+')
+    } else if spec.flags.space_sign {
+        Some(b' ')
+    } else {
+        None
+    };
+
+    // Precision: minimum digits (pad with zeros).
+    let precision = match spec.precision {
+        Precision::Fixed(p) => p,
+        _ => 1, // default: at least 1 digit
+    };
+    let zero_prefix_count = precision.saturating_sub(digit_count);
+
+    // Alternate form prefix.
+    let prefix = spec.alt_prefix();
+
+    // The `'` flag groups the significant digits (in any base, as glibc does);
+    // precision and padding zeros stay ungrouped.
+    let grouping = NumericGrouping::for_spec(spec);
+    let digits_len = grouping.map_or(digit_count, |g| g.grouped_len(digit_count));
+
+    // Total content width.
+    let content_len = sign.is_some() as usize + prefix.len() + zero_prefix_count + digits_len;
+
+    // Handle explicit precision 0 with value 0: no digits emitted.
+    let suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
+
+    let effective_content = if suppress_zero {
+        sign.is_some() as usize + prefix.len()
+    } else {
+        content_len
+    };
+
+    let width = resolve_width(spec);
+    let pad_total = width.saturating_sub(effective_content);
+
+    let has_precision = !matches!(spec.precision, Precision::None);
+    let zero_pad = spec.flags.zero_pad && !has_precision;
+
+    // Emit.
+    if !spec.flags.left_justify && !zero_pad {
+        pad(buf, b' ', pad_total);
+    }
+    if let Some(s) = sign {
+        buf.push(s);
+    }
+    buf.push_bytes(prefix);
+    if !spec.flags.left_justify && zero_pad {
+        pad(buf, b'0', pad_total);
+    }
+    if !suppress_zero {
+        pad(buf, b'0', zero_prefix_count);
+        match grouping {
+            Some(g) => g.push_grouped(buf, digit_slice),
+            None => buf.push_bytes(digit_slice),
+        }
+    }
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+/// Render an unsigned integer to `buf` according to `spec`.
+pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let (base, uppercase) = spec.int_base();
+    let mut digits = [0u8; 64];
+    let digit_count = render_digits(value, base, uppercase, &mut digits);
+    let digit_slice = &digits[64 - digit_count..];
+
+    // Fast path: a bare `%u` (base 10, no flags/width/precision) emits just the
+    // digits — base 10 has no alternate-form prefix, so there is nothing else
+    // to compute. Skips the prefix/precision/width/justify pipeline below.
+    if base == 10 && spec.is_bare_integer() {
+        buf.push_bytes(digit_slice);
+        return;
+    }
+
+    let unsigned_kind = spec
+        .raw_render_kind()
+        .and_then(RawValueRenderKind::unsigned_kind);
+
+    let precision = match spec.precision {
+        Precision::Fixed(p) => p,
+        _ => 1,
+    };
+    let zero_prefix_count = precision.saturating_sub(digit_count);
+
+    // For octal with # flag: only add "0" prefix if precision doesn't already
+    // ensure a leading zero. Per C11 7.21.6.1: "For o conversion, it increases
+    // the precision, if and only if necessary, to force the first digit to be zero"
+    let first_digit_is_zero = zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
+    let prefix: &[u8] = unsigned_kind
+        .map(|kind| kind.formatted_prefix(value, spec.flags.alt_form, first_digit_is_zero))
+        .unwrap_or(b"");
+
+    // Grouping as in `format_signed`.
+    let grouping = NumericGrouping::for_spec(spec);
+    let digits_len = grouping.map_or(digit_count, |g| g.grouped_len(digit_count));
+    let content_len = prefix.len() + zero_prefix_count + digits_len;
+
+    let mut suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
+    // POSIX: For 'o' conversion with '#', if the value and precision are both 0, a single 0 is printed.
+    if suppress_zero
+        && unsigned_kind
+            .is_some_and(|kind| kind.preserves_single_zero_when_suppressed(spec.flags.alt_form))
+    {
+        suppress_zero = false;
+    }
+
+    let effective_content = if suppress_zero {
+        prefix.len()
+    } else {
+        content_len
+    };
+
+    let width = resolve_width(spec);
+    let pad_total = width.saturating_sub(effective_content);
+
+    let has_precision = !matches!(spec.precision, Precision::None);
+    let zero_pad = spec.flags.zero_pad && !has_precision;
+
+    if !spec.flags.left_justify && !zero_pad {
+        pad(buf, b' ', pad_total);
+    }
+    buf.push_bytes(prefix);
+    if !spec.flags.left_justify && zero_pad {
+        pad(buf, b'0', pad_total);
+    }
+    if !suppress_zero {
+        pad(buf, b'0', zero_prefix_count);
+        match grouping {
+            Some(g) => g.push_grouped(buf, digit_slice),
+            None => buf.push_bytes(digit_slice),
+        }
+    }
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+/// Render a floating-point value to `buf` according to `spec`.
+///
+/// Minimal `core::fmt::Write` sink appending UTF-8 bytes to a `Vec<u8>`, so
+/// float digit generation can write straight into the output buffer instead of
+/// through a temporary heap `String`.
+struct VecWriter<'a>(&'a mut Vec<u8>);
+
+impl core::fmt::Write for VecWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// Supports `%f`/`%F`, `%e`/`%E`, and `%g`/`%G` conversions.
+/// Uses Rust's digit generation for nearest mode and the exact shared float
+/// engine for directed modes, then applies POSIX width/flag rules.
+pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let start = buf.len();
+    format_float_with_dot(value, spec, buf);
+    // The grouped path substitutes the radix itself, before grouping: the
+    // separator can be "." (de_DE), which a later search would find first.
+    if let Some(dp) = DecimalPoint::active()
+        && float_grouping(spec).is_none()
+    {
+        dp.localize(buf, start);
+    }
+}
+
+/// The grouping the `'` flag applies to a float `spec`: the integer part of
+/// %f/%F/%g/%G (never %e/%a, whose integer part is one digit or hex).
+fn float_grouping(spec: &FormatSpec) -> Option<NumericGrouping> {
+    NumericGrouping::for_spec(spec).filter(|_| {
+        matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(
+                FloatFormatKind::Fixed | FloatFormatKind::General
+            ))
+        )
+    })
+}
+
+/// Precision past which a finite double's %f/%e/%a rendering is exact and every
+/// further digit is '0' (see [`format_float_huge_precision`]).
+const EXACT_FLOAT_DIGITS: usize = 1_100;
+
+/// [`format_float_with_dot`] for `precision > EXACT_FLOAT_DIGITS`: render the
+/// unpadded body at EXACT_FLOAT_DIGITS, splice in the `precision -
+/// EXACT_FLOAT_DIGITS` zeros where the fraction ends (before the exponent for
+/// %e and %g's exponent form, before 'p' for %a; %g without `#` drops trailing
+/// zeros, so it needs none), then apply the field width.
+fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, buf: &mut Vec<u8>) {
+    let conv = spec.conversion.to_ascii_lowercase();
+    let inner_flags = FormatFlags {
+        left_justify: false,
+        zero_pad: false,
+        ..spec.flags
+    };
+    let inner = FormatSpec::new(
+        inner_flags,
+        Width::None,
+        Precision::Fixed(EXACT_FLOAT_DIGITS),
+        spec.length,
+        spec.conversion,
+        None,
+    );
+    let mut body = Vec::new();
+    format_float_with_dot(value, &inner, &mut body);
+    let splice = match conv {
+        b'f' | b'e' | b'a' => true,
+        b'g' => spec.flags.alt_form,
+        _ => false,
+    };
+    if splice {
+        let extra = precision - EXACT_FLOAT_DIGITS;
+        let marker: &[u8] = if conv == b'a' { b"pP" } else { b"eE" };
+        let at = match conv {
+            b'f' => body.len(),
+            _ => body
+                .iter()
+                .rposition(|b| marker.contains(b))
+                .unwrap_or(body.len()),
+        };
+        // Fail the call rather than abort when the memory is not there.
+        if body.try_reserve(extra).is_ok() {
+            body.splice(at..at, core::iter::repeat_n(b'0', extra));
+        } else {
+            note_render_alloc_failure();
+        }
+    }
+    let pad_total = resolve_width(spec).saturating_sub(body.len());
+    if pad_total == 0 {
+        buf.extend_from_slice(&body);
+    } else if spec.flags.left_justify {
+        buf.extend_from_slice(&body);
+        pad(buf, b' ', pad_total);
+    } else if spec.flags.zero_pad {
+        // Zeros go after the sign (and %a's "0x").
+        let mut pre = usize::from(matches!(body.first(), Some(b'-' | b'+' | b' ')));
+        if conv == b'a'
+            && body[pre..].len() >= 2
+            && body[pre] == b'0'
+            && matches!(body[pre + 1], b'x' | b'X')
+        {
+            pre += 2;
+        }
+        buf.extend_from_slice(&body[..pre]);
+        pad(buf, b'0', pad_total);
+        buf.extend_from_slice(&body[pre..]);
+    } else {
+        pad(buf, b' ', pad_total);
+        buf.extend_from_slice(&body);
+    }
+}
+
+/// Finite nearest-mode fixed digits, without padding or a temporary String.
+/// Callers retain precision-zero, grouping and directed-rounding semantics.
+#[inline]
+fn format_fixed_nearest(value: f64, precision: usize, buf: &mut Vec<u8>, flags: FormatFlags) {
+    use core::fmt::Write as _;
+    let abs = value.abs();
+    if value.is_sign_negative() {
+        buf.push(b'-');
+    } else if flags.force_sign {
+        buf.push(b'+');
+    } else if flags.space_sign {
+        buf.push(b' ');
+    }
+    // Exact integral values need only integer digits and fractional zeros.
+    if is_integral_f64(abs) && abs < 18446744073709551616.0 {
+        let _ = write!(VecWriter(buf), "{}", abs as u64);
+        buf.push(b'.');
+        buf.extend(core::iter::repeat_n(b'0', precision));
+        return;
+    }
+    // A dyadic terminating within `precision` bits also has exact scaled
+    // digits. The bounds keep the integer product inside u128.
+    if precision <= 19 {
+        let scale = f64::from_bits((1023u64 + precision as u64) << 52);
+        let scaled = abs * scale;
+        if is_integral_f64(scaled)
+            && scaled < 18446744073709551616.0
+            && let Some(digits) = (scaled as u128).checked_mul(5u128.pow(precision as u32))
+        {
+            let mut tmp = [0u8; 40];
+            let ds = decimal_digits_u128(digits, &mut tmp);
+            if ds.len() > precision {
+                let point = ds.len() - precision;
+                buf.push_bytes(&ds[..point]);
+                buf.push(b'.');
+                buf.push_bytes(&ds[point..]);
+            } else {
+                buf.push(b'0');
+                buf.push(b'.');
+                buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
+                buf.push_bytes(ds);
+            }
+            return;
+        }
+    }
+    if let Some(scaled) = rounded_scaled_fixed(value, precision) {
+        push_fixed_scaled_u128(buf, scaled, precision);
+        return;
+    }
+    let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
+}
+
+/// [`format_float`] with the C locale's "." radix.
+fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let precision = match spec.precision {
+        Precision::Fixed(p) => p,
+        Precision::None => 6, // POSIX default
+        Precision::FromArg | Precision::FromArgPosition(_) => 6,
+    };
+    // Beyond EXACT_FLOAT_DIGITS every further digit is a zero: a double's exact
+    // decimal expansion has at most 1074 fractional digits (%f) and 767
+    // significant digits (%e), and %a at most 13 hex digits. Render at that
+    // precision and splice the remaining zeros in, so `%.2000000f` prints all
+    // 2000000 digits as glibc does instead of stopping at the 65535 cap below.
+    if precision > EXACT_FLOAT_DIGITS && value.is_finite() {
+        format_float_huge_precision(value, spec, precision, buf);
+        return;
+    }
+    // Rust's core::fmt stores precision as u16 internally and panics with
+    // "Formatting argument out of range" for precision >= 65536. Cap to
+    // 65535 to prevent a process abort from any adversarial `%.99999f`-style
+    // format string. Formats above this already panic with today's code, so
+    // capping loses no currently-working behavior. (bd-h7ede)
+    let precision = precision.min(MAX_FLOAT_PRECISION);
+
+    // Handle special values.
+    if value.is_nan() || value.is_infinite() {
+        let negative = value.is_sign_negative();
+        let sign_prefix: &[u8] = if negative {
+            b"-"
+        } else if spec.flags.force_sign {
+            b"+"
+        } else if spec.flags.space_sign {
+            b" "
+        } else {
+            b""
+        };
+        let label: &[u8] = if value.is_nan() {
+            if spec.conversion.is_ascii_uppercase() {
+                b"NAN"
+            } else {
+                b"nan"
+            }
+        } else if spec.conversion.is_ascii_uppercase() {
+            b"INF"
+        } else {
+            b"inf"
+        };
+        let total_len = sign_prefix.len() + label.len();
+        let width = resolve_width(spec);
+        let pad_total = width.saturating_sub(total_len);
+        if !spec.flags.left_justify {
+            pad(buf, b' ', pad_total);
+        }
+        buf.push_bytes(sign_prefix);
+        buf.push_bytes(label);
+        if spec.flags.left_justify {
+            pad(buf, b' ', pad_total);
+        }
+        return;
+    }
+
+    let negative = value.is_sign_negative();
+    let abs = value.abs();
+    let nearest =
+        crate::float128::RoundingMode::current() == crate::float128::RoundingMode::Nearest;
+
+    // Grouped floats are rendered by the general path below.
+    let grouping = float_grouping(spec);
+
+    // Fixed-point %f with precision>=1 can render into the output buffer,
+    // including when a field width is present. Apply padding afterwards so a
+    // padded conversion does not allocate a temporary digit String.
+    // Alt-form is a no-op once the fractional point is present; precision zero
+    // retains the general path's distinct pre-rounding rule.
+    if nearest
+        && precision >= 1
+        && grouping.is_none()
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Fixed))
+        )
+    {
+        let start = buf.len();
+        format_fixed_nearest(value, precision, buf, spec.flags);
+        let content_end = buf.len();
+        let pad_total = resolve_width(spec).saturating_sub(content_end - start);
+        if pad_total != 0 {
+            let byte = if spec.flags.zero_pad && !spec.flags.left_justify {
+                b'0'
+            } else {
+                b' '
+            };
+            pad(buf, byte, pad_total);
+            // A failed fallible reserve leaves the unpadded result in place
+            // and records ENOMEM for the caller, just as the general path does.
+            let added = buf.len() - content_end;
+            if !spec.flags.left_justify && added != 0 {
+                let sign_len =
+                    usize::from(negative || spec.flags.force_sign || spec.flags.space_sign);
+                let insertion = start + if spec.flags.zero_pad { sign_len } else { 0 };
+                let digits = content_end - insertion;
+                // Move only the digits, never the potentially enormous pad.
+                // Small indexed moves stay out of the interposed memmove,
+                // using the same eight-byte cutoff as PushBytes above.
+                if digits <= 8 {
+                    for i in (0..digits).rev() {
+                        buf[insertion + added + i] = buf[insertion + i];
+                    }
+                } else {
+                    buf.copy_within(insertion..content_end, insertion + added);
+                }
+                // The appended region already contains `byte`; only the old
+                // digit positions inside the new padding need replacement.
+                for i in 0..digits.min(added) {
+                    buf[insertion + i] = byte;
+                }
+            }
+        }
+        return;
+    }
+
+    // Fast path: `%g`/`%G` with no field width and no `#` alt-form — render straight
+    // into `buf` with no per-call String (`format_g`'s !alt_form body is exactly
+    // `render_pct_g` + a `%G` uppercase fold; its `try_format_g_fixed_scaled` probe is
+    // byte-identical to `render_pct_g`, so routing every value through
+    // `render_pct_g_into` gives the same bytes without the heap allocation). At width 0
+    // there is no padding, so this is byte-identical to the general path below.
+    if nearest
+        && resolve_width(spec) == 0
+        && grouping.is_none()
+        && !spec.flags.alt_form
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::General))
+        )
+    {
+        if negative {
+            buf.push(b'-');
+        } else if spec.flags.force_sign {
+            buf.push(b'+');
+        } else if spec.flags.space_sign {
+            buf.push(b' ');
+        }
+        let start = buf.len();
+        crate::stdlib::ecvt::render_pct_g_into(abs, precision, buf);
+        if spec.conversion.is_ascii_uppercase() {
+            buf[start..].make_ascii_uppercase();
+        }
+        return;
+    }
+
+    // Fast path: `%e`/`%E` with no field width and no `#` alt-form — render straight into
+    // `buf` with no per-call String (mirrors the `%f`/`%g` fast paths). `format_e`'s
+    // !alt_form body is exactly `render_pct_e` + a `%E` uppercase fold (the only lowercase
+    // byte it emits is the `'e'`), so `render_pct_e_into` gives byte-identical output
+    // without the heap allocation. At width 0 there is no padding = byte-identical to the
+    // general path below.
+    if nearest
+        && resolve_width(spec) == 0
+        && !spec.flags.alt_form
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Exp))
+        )
+    {
+        if negative {
+            buf.push(b'-');
+        } else if spec.flags.force_sign {
+            buf.push(b'+');
+        } else if spec.flags.space_sign {
+            buf.push(b' ');
+        }
+        let start = buf.len();
+        crate::stdlib::ecvt::render_pct_e_into(abs, precision, buf);
+        if spec.conversion.is_ascii_uppercase() {
+            buf[start..].make_ascii_uppercase();
+        }
+        return;
+    }
+
+    // Fast path: `%a`/`%A` (hex float) with no field width — render straight into `buf`
+    // via `render_pct_a_into`, skipping the general path's `format_a` String + copy.
+    // `render_pct_a_into` emits the correct case (`0X`/`P`/`A-F`) and honours `#`
+    // (alt_form forces the point), so unlike `%e`/`%g` this needs no alt-form exclusion
+    // or uppercase fold. At width 0 there is no padding — byte-identical to the general
+    // path below.
+    if nearest
+        && resolve_width(spec) == 0
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Hex))
+        )
+    {
+        if negative {
+            buf.push(b'-');
+        } else if spec.flags.force_sign {
+            buf.push(b'+');
+        } else if spec.flags.space_sign {
+            buf.push(b' ');
+        }
+        render_pct_a_into(
+            abs,
+            hex_float_precision(spec),
+            spec.conversion.is_ascii_uppercase(),
+            spec.flags.alt_form,
+            buf,
+        );
+        return;
+    }
+
+    // Generate digit string.
+    let body = if !nearest {
+        let exact = crate::float128::FmtSpec {
+            conv: spec.conversion,
+            precision: if spec.conversion.eq_ignore_ascii_case(&b'a') {
+                hex_float_precision(spec)
+            } else {
+                Some(precision)
+            },
+            width: 0,
+            left: false,
+            plus: false,
+            space: false,
+            alt: spec.flags.alt_form,
+            zero: false,
+        };
+        let mut body = String::from_utf8(crate::float128::format_binary64(value, &exact))
+            .expect("exact float output is ASCII");
+        if negative {
+            body.remove(0);
+        }
+        body
+    } else {
+        match spec.raw_render_kind() {
+            Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
+                format_f(abs, precision, spec.flags.alt_form)
+            }
+            Some(RawValueRenderKind::Float(FloatFormatKind::Exp)) => format_e(
+                abs,
+                precision,
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            Some(RawValueRenderKind::Float(FloatFormatKind::General)) => format_g(
+                abs,
+                precision,
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
+                abs,
+                hex_float_precision(spec),
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            _ => format_f(abs, precision, spec.flags.alt_form),
+        }
+    };
+
+    let sign = if negative {
+        Some(b'-')
+    } else if spec.flags.force_sign {
+        Some(b'+')
+    } else if spec.flags.space_sign {
+        Some(b' ')
+    } else {
+        None
+    };
+
+    if let Some(g) = grouping {
+        let mut body = body.into_bytes();
+        let mut uncounted = 0;
+        if let Some(dp) = DecimalPoint::active() {
+            dp.replace_in(&mut body);
+            uncounted += dp.len - 1;
+        }
+        uncounted += g.uncounted_in_float(&body);
+        pad_float_body(buf, sign, &g.group_leading_digits(&body), uncounted, spec);
+        return;
+    }
+
+    let content_len = sign.is_some() as usize + body.len();
+    let width = resolve_width(spec);
+    let pad_total = width.saturating_sub(content_len);
+
+    let hex_zero_prefix_len = if spec.flags.zero_pad
+        && spec
+            .raw_render_kind()
+            .is_some_and(|kind| kind == RawValueRenderKind::Float(FloatFormatKind::Hex))
+        && (body.starts_with("0x") || body.starts_with("0X"))
+    {
+        2
+    } else {
+        0
+    };
+
+    if !spec.flags.left_justify && !spec.flags.zero_pad {
+        pad(buf, b' ', pad_total);
+    }
+    if let Some(s) = sign {
+        buf.push(s);
+    }
+    if hex_zero_prefix_len > 0 {
+        buf.push_bytes(&body.as_bytes()[..hex_zero_prefix_len]);
+    }
+    if !spec.flags.left_justify && spec.flags.zero_pad {
+        pad(buf, b'0', pad_total);
+    }
+    buf.push_bytes(&body.as_bytes()[hex_zero_prefix_len..]);
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+/// Render a string argument to `buf` according to `spec`.
+///
+/// `s` is the raw byte content (may not be NUL-terminated).
+/// Precision truncates the string if set.
+pub fn format_str(s: &[u8], spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let max_len = match spec.precision {
+        Precision::Fixed(p) => p,
+        _ => s.len(),
+    };
+    let effective = &s[..s.len().min(max_len)];
+    let width = resolve_width(spec);
+    let pad_total = width.saturating_sub(effective.len());
+
+    if !spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+    buf.push_bytes(effective);
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+/// Render a character to `buf` according to `spec`.
+pub fn format_char(c: u8, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let width = resolve_width(spec);
+    let pad_total = width.saturating_sub(1);
+
+    if !spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+    buf.push(c);
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+/// Render a pointer to `buf` as `0x...` hex.
+pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    if addr == 0 {
+        let s = b"(nil)";
+        let width = resolve_width(spec);
+        let pad_total = width.saturating_sub(s.len());
+        if !spec.flags.left_justify {
+            pad(buf, b' ', pad_total);
+        }
+        buf.push_bytes(s);
+        if spec.flags.left_justify {
+            pad(buf, b' ', pad_total);
+        }
+        return;
+    }
+
+    // glibc renders a non-NULL pointer like `%#x` of its value, honouring the
+    // `0` flag, precision and width — but UNLIKE %x it also applies the
+    // `+`/space sign flags (e.g. `%020p` -> "0x000000000000001234",
+    // `%+p` -> "+0x1234"). Build the "0x…" body with the unsigned-hex
+    // formatter (alt form, sign flags cleared, cached Pointer route reset), then
+    // place the sign and field padding around it. (fl previously honoured only
+    // width + left-justify, ignoring the zero and sign flags.)
+    let sign: &[u8] = if spec.flags.force_sign {
+        b"+"
+    } else if spec.flags.space_sign {
+        b" "
+    } else {
+        b""
+    };
+    let mut hexspec = *spec;
+    hexspec.conversion = b'x';
+    hexspec.flags.alt_form = true;
+    hexspec.flags.force_sign = false;
+    hexspec.flags.space_sign = false;
+    hexspec.route = None;
+    let width = resolve_width(spec);
+
+    if spec.flags.zero_pad && !spec.flags.left_justify && matches!(spec.precision, Precision::None)
+    {
+        // Zero-pad: the sign sits at the front, then a zero-filled body whose
+        // field width accounts for the sign.
+        hexspec.width = Width::Fixed(width.saturating_sub(sign.len()));
+        buf.push_bytes(sign);
+        format_unsigned(addr as u64, &hexspec, buf);
+    } else {
+        // Space-pad / left-justify / precision: render the bare body, then place
+        // the sign and pad with spaces outside it.
+        hexspec.width = Width::None;
+        hexspec.flags.zero_pad = false;
+        let mut body = Vec::new();
+        format_unsigned(addr as u64, &hexspec, &mut body);
+        let pad_total = width.saturating_sub(sign.len() + body.len());
+        if spec.flags.left_justify {
+            buf.push_bytes(sign);
+            buf.push_bytes(&body);
+            pad(buf, b' ', pad_total);
+        } else {
+            pad(buf, b' ', pad_total);
+            buf.push_bytes(sign);
+            buf.push_bytes(&body);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+fn parse_decimal(digits: &[u8]) -> usize {
+    let mut result = 0_usize;
+    for &d in digits {
+        result = result
+            .saturating_mul(10)
+            .saturating_add((d - b'0') as usize);
+    }
+    result
+}
+
+fn parse_positional_index(fmt: &[u8]) -> Option<(usize, usize)> {
+    let mut pos = 0usize;
+    while pos < fmt.len() && fmt[pos].is_ascii_digit() {
+        pos += 1;
+    }
+    if pos == 0 || pos >= fmt.len() || fmt[pos] != b'$' {
+        return None;
+    }
+    let position = parse_decimal(&fmt[..pos]);
+    if position == 0 {
+        return None;
+    }
+    Some((position, pos + 1))
+}
+
+fn hex_float_precision(spec: &FormatSpec) -> Option<usize> {
+    match spec.precision {
+        Precision::Fixed(p) => Some(p.min(MAX_FLOAT_PRECISION)),
+        Precision::None => None,
+        Precision::FromArg | Precision::FromArgPosition(_) => Some(6),
+    }
+}
+
+fn resolve_width(spec: &FormatSpec) -> usize {
+    match spec.width {
+        Width::Fixed(w) => w,
+        _ => 0,
+    }
+}
+
+/// Render `value` in the given `base` into the END of `buf`.
+/// Returns the number of digits written. Digits are placed right-aligned.
+/// Two-ASCII-digit lookup table for decimal pairs `00`..=`99`, built at compile
+/// time (`DEC_PAIRS[2*n..2*n+2]` is the zero-padded decimal of `n`). Used by
+/// [`render_decimal`] to emit two digits per division.
+static DEC_PAIRS: [u8; 200] = build_dec_pairs();
+
+const fn build_dec_pairs() -> [u8; 200] {
+    let mut table = [0u8; 200];
+    let mut n = 0usize;
+    while n < 100 {
+        table[2 * n] = b'0' + (n / 10) as u8;
+        table[2 * n + 1] = b'0' + (n % 10) as u8;
+        n += 1;
+    }
+    table
+}
+
+/// Two-ASCII-digit lookup tables for hex bytes `0x00`..=`0xFF`
+/// (`HEX_PAIRS_*[2*b..2*b+2]` is the two hex chars of byte `b`), built at
+/// compile time. Used by [`render_hex`] to emit two hex digits per byte with no
+/// division — `%x`/`%X`/`%p` are the hot hexadecimal printf paths.
+static HEX_PAIRS_LOWER: [u8; 512] = build_hex_pairs(false);
+static HEX_PAIRS_UPPER: [u8; 512] = build_hex_pairs(true);
+
+const fn build_hex_pairs(upper: bool) -> [u8; 512] {
+    let mut table = [0u8; 512];
+    let a = if upper { b'A' } else { b'a' };
+    let mut b = 0usize;
+    while b < 256 {
+        let hi = (b >> 4) as u8;
+        let lo = (b & 0xF) as u8;
+        table[2 * b] = if hi < 10 { b'0' + hi } else { a + (hi - 10) };
+        table[2 * b + 1] = if lo < 10 { b'0' + lo } else { a + (lo - 10) };
+        b += 1;
+    }
+    table
+}
+
+/// Specialised base-16 renderer: emits two hex digits per iteration via
+/// [`HEX_PAIRS_LOWER`]/[`HEX_PAIRS_UPPER`], consuming one byte (`value & 0xFF`,
+/// `value >>= 8`) per step — no division at all (cf. the general loop's runtime
+/// `DIV`). Requires `value > 0` (the zero case is handled by the caller).
+/// Byte-for-byte identical output to the general loop with `base == 16`.
+fn render_hex(mut value: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    let tbl = if uppercase {
+        &HEX_PAIRS_UPPER
+    } else {
+        &HEX_PAIRS_LOWER
+    };
+    let mut pos = 64;
+    while value >= 256 {
+        let b = (value & 0xFF) as usize;
+        value >>= 8;
+        pos -= 2;
+        buf[pos] = tbl[2 * b];
+        buf[pos + 1] = tbl[2 * b + 1];
+    }
+    // value is now 1..=255 (one full byte left, possibly with a leading nibble).
+    if value >= 16 {
+        let b = value as usize;
+        pos -= 2;
+        buf[pos] = tbl[2 * b];
+        buf[pos + 1] = tbl[2 * b + 1];
+    } else {
+        // Single hex digit: low-nibble char of `value` (high nibble is 0).
+        pos -= 1;
+        buf[pos] = tbl[2 * (value as usize) + 1];
+    }
+    64 - pos
+}
+
+/// Generic power-of-two base renderer (handles `%o` base 8, `%b` base 2, etc.):
+/// the digit is `value & (base-1)` and the shift is `base.trailing_zeros()`, so
+/// the per-digit runtime `DIV`/`REM` of the general loop becomes a mask + shift.
+/// Requires `value > 0` and `base.is_power_of_two()`. Byte-for-byte identical
+/// output to the general loop.
+fn render_pow2(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    let shift = base.trailing_zeros();
+    let mask = base - 1;
+    let alpha = if uppercase { b'A' } else { b'a' };
+    let mut pos = 64;
+    while value > 0 && pos > 0 {
+        pos -= 1;
+        let digit = (value & mask) as u8;
+        buf[pos] = if digit < 10 {
+            b'0' + digit
+        } else {
+            alpha + (digit - 10)
+        };
+        value >>= shift;
+    }
+    64 - pos
+}
+
+/// Specialised decimal renderer (base 10): emits two digits per iteration via
+/// [`DEC_PAIRS`] with a compile-time divisor of 100, so the compiler lowers the
+/// division to a magic-multiply instead of the runtime `DIV` that the
+/// general-base [`render_digits`] loop is forced to use. Writes least-
+/// significant digits at the high end of `buf` and returns the digit count —
+/// byte-for-byte identical output to the general loop with `base == 10`.
+fn render_decimal(mut value: u64, buf: &mut [u8; 64]) -> usize {
+    let mut pos = 64;
+    while value >= 100 {
+        let pair = (value % 100) as usize;
+        value /= 100;
+        pos -= 2;
+        buf[pos] = DEC_PAIRS[2 * pair];
+        buf[pos + 1] = DEC_PAIRS[2 * pair + 1];
+    }
+    // 0..=99 remains: one digit if < 10, else the final pair.
+    if value >= 10 {
+        let pair = value as usize;
+        pos -= 2;
+        buf[pos] = DEC_PAIRS[2 * pair];
+        buf[pos + 1] = DEC_PAIRS[2 * pair + 1];
+    } else {
+        pos -= 1;
+        buf[pos] = b'0' + value as u8;
+    }
+    64 - pos
+}
+
+fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    // Decimal is the overwhelmingly common case (%d/%i/%u); take the LUT path
+    // with a const divisor. The general loop below handles hex/octal/binary.
+    if base == 10 {
+        return render_decimal(value, buf);
+    }
+    if value == 0 {
+        buf[63] = b'0';
+        return 1;
+    }
+    // Non-decimal printf bases (%x/%X=16, %o=8, %b=2) are all powers of two, so
+    // replace the per-digit runtime DIV with mask+shift; hex additionally uses a
+    // byte-pair LUT (two digits per iteration). Output is byte-identical.
+    if base == 16 {
+        return render_hex(value, uppercase, buf);
+    }
+    if base.is_power_of_two() {
+        return render_pow2(value, base, uppercase, buf);
+    }
+    let alpha = if uppercase { b'A' } else { b'a' };
+    let mut pos = 64;
+    while value > 0 && pos > 0 {
+        pos -= 1;
+        let digit = (value % base) as u8;
+        buf[pos] = if digit < 10 {
+            b'0' + digit
+        } else {
+            alpha + (digit - 10)
+        };
+        value /= base;
+    }
+    64 - pos
+}
+
+// The errno with which this thread's current printf call must fail, or 0: a
+// conversion dropped output because the memory for it could not be reserved
+// (ENOMEM: a field too large for what the process may still map, e.g.
+// `%.10000000f` under RLIMIT_AS, where glibc fails too), or the format has a
+// directive glibc rejects (EINVAL, see `FormatSegments::invalid_directive`).
+// The printf-family entry points return -1 with it instead of a success count
+// for truncated or literal output. `ANY_RENDER_FAILURE` keeps the check to one
+// relaxed load until the first such failure in the process.
+std::thread_local! {
+    static RENDER_FAILURE: core::cell::Cell<i32> = const { core::cell::Cell::new(0) };
+}
+static ANY_RENDER_FAILURE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Fail this thread's current printf call with `errno`.
+#[cold]
+pub fn note_render_failure(errno: i32) {
+    ANY_RENDER_FAILURE.store(true, Ordering::Relaxed);
+    RENDER_FAILURE.with(|failure| failure.set(errno));
+}
+
+#[cold]
+fn note_render_alloc_failure() {
+    note_render_failure(crate::errno::ENOMEM);
+}
+
+/// The errno a printf call on this thread must fail with since the last
+/// call (0: none), clearing it.
+#[inline]
+pub fn take_render_failure() -> i32 {
+    if !ANY_RENDER_FAILURE.load(Ordering::Relaxed) {
+        return 0;
+    }
+    RENDER_FAILURE.with(|failure| failure.replace(0))
+}
+
+fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
+    // A field as wide as C asks for: glibc prints `%2000000d` in full, and the
+    // old 1 MiB cap silently cut such fields short (and the return count with
+    // them). A field too large for the memory available is dropped rather than
+    // aborting the process on an infallible allocation, and the call fails.
+    if count > 4096 && buf.try_reserve(count).is_err() {
+        note_render_alloc_failure();
+        return;
+    }
+    buf.extend(std::iter::repeat_n(byte, count));
+}
+
+#[inline]
+pub(crate) fn is_integral_f64(x: f64) -> bool {
+    let bits = x.to_bits() & !(1u64 << 63);
+    match (bits >> 52) as u32 {
+        0x7ff => false,
+        e if e >= 0x3ff + 52 => true,
+        e if e < 0x3ff => bits == 0,
+        e => bits & ((1u64 << (0x3ff + 52 - e)) - 1) == 0,
+    }
+}
+
+#[inline]
+fn round_ties_even_f64(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let sign = bits & (1u64 << 63);
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    if e >= 1023 + 52 {
+        return x;
+    }
+    if e < 1023 {
+        let mag = f64::from_bits(bits & !(1u64 << 63));
+        let r = if mag > 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 1075 - e;
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let round_up = frac > half || (frac == half && (int_part & (1u64 << frac_bits)) != 0);
+    f64::from_bits(if round_up {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    })
+}
+
+/// `%f` / `%F` formatting: fixed-point decimal.
+fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
+    if precision == 0 {
+        // Use Rust's Display to format the integer part rather than casting to u64,
+        // which would saturate for values > u64::MAX (~1.8e19).
+        // round_ties_even_f64 implements IEEE 754 round-half-to-even (banker's rounding)
+        // per POSIX conformance requirements without calling the exported `roundeven` symbol.
+        let rounded = round_ties_even_f64(value);
+        if alt_form {
+            alloc::format!("{rounded:.0}.")
+        } else {
+            alloc::format!("{rounded:.0}")
+        }
+    } else if is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
+        // Exact-integer fast path (see the bare-%f path in render_raw_float): a finite
+        // integral value < 2^64 formats as its integer digits + `precision` zeros with
+        // no flt2dec. Byte-identical to `{:.prec$}`; `fract()==0.0` excludes inf/nan and
+        // proves integral, `< 2^64` makes `as u64` exact. Sign preserved for callers that
+        // pass a signed value (the printf paths pass `abs`, so this is defensive).
+        use core::fmt::Write as _;
+        let mut s = String::with_capacity(24 + precision);
+        if value.is_sign_negative() {
+            s.push('-');
+        }
+        let _ = write!(s, "{}", value.abs() as u64);
+        s.push('.');
+        s.extend(core::iter::repeat_n('0', precision));
+        s
+    } else if let Some(dyadic) = try_format_f_dyadic(value, precision) {
+        dyadic
+    } else if let Some(scaled) = rounded_scaled_fixed(value, precision) {
+        let mut s = String::with_capacity(24 + precision);
+        if value.is_sign_negative() {
+            s.push('-');
+        }
+        let mut tmp = [0u8; 40];
+        let ds = decimal_digits_u128(scaled, &mut tmp);
+        push_fixed_scaled_digits_string(&mut s, ds, precision);
+        s
+    } else {
+        alloc::format!("{:.prec$}", value, prec = precision)
+    }
+}
+
+/// Exact-dyadic `%f` digit string (sign + integer part + '.' + `precision` frac digits) for a
+/// finite `value` with at most `precision` fractional bits, else `None`. Mirror of the dyadic
+/// fast path in `render_raw_float`: `value*10^precision = (value*2^precision)*5^precision` is an
+/// integer whose digits are the output with a point `precision` places from the right — no
+/// flt2dec, no rounding. Byte-identical to `{:.prec$}` (verified by `dyadf_iso`). Guarded to
+/// `1 <= precision <= 19` so `5^precision * (< 2^64)` fits u128.
+fn try_format_f_dyadic(value: f64, precision: usize) -> Option<String> {
+    if precision == 0 || precision > 19 {
+        return None;
+    }
+    // 2^precision built directly from the exponent field (exact, no powi).
+    let scale = f64::from_bits((1023u64 + precision as u64) << 52);
+    let scaled = value.abs() * scale;
+    if !is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
+        return None;
+    }
+    let digits = (scaled as u128).checked_mul(5u128.pow(precision as u32))?;
+    let mut tmp = [0u8; 40];
+    let mut nrem = digits;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (nrem % 10) as u8;
+        nrem /= 10;
+        if nrem == 0 {
+            break;
+        }
+    }
+    let ds = &tmp[i..];
+    let mut s = String::with_capacity(ds.len() + 3);
+    if value.is_sign_negative() {
+        s.push('-');
+    }
+    if ds.len() > precision {
+        let point = ds.len() - precision;
+        for &b in &ds[..point] {
+            s.push(b as char);
+        }
+        s.push('.');
+        for &b in &ds[point..] {
+            s.push(b as char);
+        }
+    } else {
+        s.push('0');
+        s.push('.');
+        for _ in 0..precision - ds.len() {
+            s.push('0');
+        }
+        for &b in ds {
+            s.push(b as char);
+        }
+    }
+    Some(s)
+}
+
+const POW5_FIXED: [u128; 10] = [
+    1, 5, 25, 125, 625, 3_125, 15_625, 78_125, 390_625, 1_953_125,
+];
+
+/// Exact fixed-precision `%f` rounding for the common small-precision decimal lane.
+///
+/// Computes `round_ties_even(abs(value) * 10^precision)` from the binary64 mantissa
+/// using integer arithmetic. The fast path is deliberately capped to precision <= 9
+/// and a 64-bit result so the downstream decimal emission is tiny and the fallback
+/// remains responsible for large/edge dtoa cases.
+pub fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
+    if precision == 0 || precision > 9 {
+        return None;
+    }
+    let bits = value.abs().to_bits();
+    let exp_bits = ((bits >> 52) & 0x7ff) as i32;
+    let frac = bits & ((1u64 << 52) - 1);
+    if exp_bits == 0x7ff {
+        return None;
+    }
+    let (mant, exp2) = if exp_bits == 0 {
+        (frac, -1074)
+    } else {
+        ((1u64 << 52) | frac, exp_bits - 1075)
+    };
+    if mant == 0 {
+        return Some(0);
+    }
+
+    let n = (mant as u128).checked_mul(POW5_FIXED[precision])?;
+    let shift = exp2 + precision as i32;
+    let rounded = if shift >= 0 {
+        let shift = shift as u32;
+        if shift >= 128 || n > (u128::MAX >> shift) {
+            return None;
+        }
+        n << shift
+    } else {
+        round_shift_right_ties_even(n, (-shift) as u32)?
+    };
+    // Return the full u128. This used to reject anything above `u64::MAX`, which
+    // sent ordinary large magnitudes — 1e18 and 1e19 are in the bench's own value
+    // set — down the `format!("{:.prec$}")` path: flt2dec plus a String
+    // allocation, on an allocator this campaign measured at ~12x glibc. The
+    // scaled value is already computed in u128 and both consumers
+    // (`push_fixed_scaled_u128`, `decimal_digits_u128`) are u128-wide, so the
+    // narrower gate discarded a correct answer. Overflow is still rejected
+    // above, by the `n << shift` and `checked_mul` guards.
+    Some(rounded)
+}
+
+fn round_shift_right_ties_even(n: u128, shift: u32) -> Option<u128> {
+    if shift == 0 {
+        return Some(n);
+    }
+    if shift >= 128 {
+        return if shift == 128 && n == (1u128 << 127) {
+            Some(0)
+        } else {
+            None
+        };
+    }
+    let q = n >> shift;
+    let rem = n & ((1u128 << shift) - 1);
+    let half = 1u128 << (shift - 1);
+    let round_up = rem > half || (rem == half && (q & 1) == 1);
+    q.checked_add(round_up as u128)
+}
+
+pub fn decimal_digits_u128(mut value: u128, tmp: &mut [u8; 40]) -> &[u8] {
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    &tmp[i..]
+}
+
+fn push_fixed_scaled_u128(buf: &mut Vec<u8>, scaled: u128, precision: usize) {
+    let mut tmp = [0u8; 40];
+    let ds = decimal_digits_u128(scaled, &mut tmp);
+    push_fixed_scaled_digits_vec(buf, ds, precision);
+}
+
+fn push_fixed_scaled_digits_vec(buf: &mut Vec<u8>, ds: &[u8], precision: usize) {
+    if ds.len() > precision {
+        let point = ds.len() - precision;
+        buf.push_bytes(&ds[..point]);
+        buf.push(b'.');
+        buf.push_bytes(&ds[point..]);
+    } else {
+        buf.push(b'0');
+        buf.push(b'.');
+        buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
+        buf.push_bytes(ds);
+    }
+}
+
+fn push_fixed_scaled_digits_string(s: &mut String, ds: &[u8], precision: usize) {
+    if ds.len() > precision {
+        let point = ds.len() - precision;
+        for &b in &ds[..point] {
+            s.push(b as char);
+        }
+        s.push('.');
+        for &b in &ds[point..] {
+            s.push(b as char);
+        }
+    } else {
+        s.push('0');
+        s.push('.');
+        for _ in 0..precision - ds.len() {
+            s.push('0');
+        }
+        for &b in ds {
+            s.push(b as char);
+        }
+    }
+}
+
+/// `%e` / `%E` formatting: scientific notation.
+fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
+    // Common case (`%e`/`%E`, no `#`): delegate to the shared, heap-lean
+    // `render_pct_e` (StackStr intermediate) instead of this function's
+    // `alloc::format!` probe — dedup + fewer allocs. For `%E`, the only lowercase
+    // char render_pct_e emits is the `'e'`, so an in-place `make_ascii_uppercase`
+    // upper-cases exactly that. Byte-identical (guarded by
+    // `printf_float_differential_fuzz`). `alt_form` keeps the path below (it forces
+    // a trailing point at precision 0).
+    if !alt_form {
+        let mut s = crate::stdlib::ecvt::render_pct_e(value, precision);
+        if uppercase {
+            s.make_ascii_uppercase();
+        }
+        return s;
+    }
+    let e_char = if uppercase { 'E' } else { 'e' };
+    if value == 0.0 {
+        if precision == 0 {
+            let dot = if alt_form { "." } else { "" };
+            return alloc::format!("0{dot}{e_char}+00");
+        }
+        let zeros: String = core::iter::repeat_n('0', precision).collect();
+        return alloc::format!("0.{zeros}{e_char}+00");
+    }
+    // Rust's `{:e}` formatting is correctly rounded (round-half-to-even) at
+    // any precision. Dividing `value` by a power of 10 to recover the
+    // mantissa loses low-order bits, so digits past ~15 significant figures
+    // came out wrong; render with `{:e}` directly and only translate the
+    // exponent into C's `e±dd` form (explicit sign, minimum two digits).
+    let raw = alloc::format!("{:.prec$e}", value, prec = precision);
+    let e_pos = raw
+        .bytes()
+        .position(|b| b == b'e')
+        .expect("Rust scientific formatting always contains 'e'");
+    let mantissa = &raw[..e_pos];
+    let exp: i32 = raw[e_pos + 1..]
+        .parse()
+        .expect("Rust scientific exponent is always a valid integer");
+    let sign = if exp < 0 { '-' } else { '+' };
+    let abs_exp = exp.unsigned_abs();
+    // With `#` (alt_form) the result must always carry a decimal point, even
+    // at precision 0 where the mantissa is a single bare digit.
+    let dot = if alt_form && !mantissa.contains('.') {
+        "."
+    } else {
+        ""
+    };
+    alloc::format!("{mantissa}{dot}{e_char}{sign}{abs_exp:02}")
+}
+
+/// Bench-only hooks for the deployed printf float formatters (post-delegation).
+#[doc(hidden)]
+pub fn __bench_format_g(value: f64, precision: usize) -> String {
+    format_g(value, precision, false, false)
+}
+#[doc(hidden)]
+pub fn __bench_format_g_legacy(value: f64, precision: usize) -> String {
+    crate::stdlib::ecvt::render_pct_g(value, precision)
+}
+#[doc(hidden)]
+pub fn __bench_format_e(value: f64, precision: usize) -> String {
+    format_e(value, precision, false, false)
+}
+#[doc(hidden)]
+pub fn __bench_format_a(value: f64) -> String {
+    format_a(value, None, false, false)
+}
+/// Deployed `%e` path (width-0, no `#`): `render_pct_e_into`, exactly the function
+/// `format_float` calls for real `printf("%e", ..)`. The fixed-scaled fast path now
+/// lives inside it (after its exact-integer/dyadic paths), so this hook measures the
+/// deployed win. Bench hook.
+#[doc(hidden)]
+pub fn __bench_render_pct_e_into(value: f64, precision: usize) -> alloc::vec::Vec<u8> {
+    let mut buf = alloc::vec::Vec::new();
+    crate::stdlib::ecvt::render_pct_e_into(value, precision, &mut buf);
+    buf
+}
+#[doc(hidden)]
+pub fn __bench_format_f(value: f64, precision: usize) -> String {
+    format_f(value, precision, false)
+}
+#[doc(hidden)]
+pub fn __bench_format_f_legacy(value: f64, precision: usize) -> String {
+    alloc::format!("{:.prec$}", value, prec = precision)
+}
+
+/// `%g` / `%G` formatting: shortest of `%f` or `%e`.
+fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
+    // Common case (`%g`/`%G`, no `#`): delegate to the shared, heap-lean
+    // `render_pct_g` (StackStr probe + single-pass reposition) instead of this
+    // function's `alloc::format!` probe + helpers — dedup + fewer allocs. For `%G`
+    // the only lowercase char is the optional `'e'`; in-place `make_ascii_uppercase`
+    // folds exactly that. Byte-identical (guarded by `printf_float_differential_fuzz`);
+    // `alt_form` (keep trailing zeros) keeps the path below.
+    if !alt_form {
+        if let Some(s) = try_format_g_fixed_scaled(value, precision) {
+            return s;
+        }
+        let mut s = crate::stdlib::ecvt::render_pct_g(value, precision);
+        if uppercase {
+            s.make_ascii_uppercase();
+        }
+        return s;
+    }
+    let p = if precision == 0 { 1 } else { precision };
+
+    if value == 0.0 {
+        if alt_form {
+            if p <= 1 {
+                return "0.".into();
+            }
+            let zeros: String = core::iter::repeat_n('0', p - 1).collect();
+            return alloc::format!("0.{zeros}");
+        }
+        return "0".into();
+    }
+
+    // Decimal exponent AFTER rounding to `p` significant digits. The naive
+    // `value.log10().floor()` gives the *pre-rounding* exponent, but C requires
+    // the exponent the value would have in %e style — i.e. after rounding to `p`
+    // significant digits. Rounding can carry into the next decade (0.0976 with
+    // p=1 -> "0.1", exponent -2 -> -1; 999999.5 with p=6 -> "1e+06",
+    // exponent 5 -> 6), which changes both the %g style choice and the %f
+    // fractional-digit count. Reading the exponent off a correctly-rounded `{:e}`
+    // rendering is exact post-rounding (and also avoids `log10()` floating-point
+    // imprecision at exact powers of ten). Falls back to the log10 estimate only
+    // if the parse unexpectedly fails.
+    let rounded_e = alloc::format!("{:.*e}", p - 1, value);
+    let Some((mantissa, exp)) = split_scientific(&rounded_e) else {
+        // `libm::log10` (pure Rust), NOT `value.log10()`: the std `f64::log10`
+        // lowers to a call to the `log10` symbol, which in the shipped libc.so is
+        // our OWN interposed `log10` — a membrane round-trip (and the glibc-linked
+        // bench/test would silently bind it to glibc instead of the shipped path).
+        // Same anti-pattern as bd-2g7oyh.370 (log2f) / bd-2g7oyh.371 (erf). This
+        // branch is a near-unreachable fallback, but the convention holds.
+        let exp = libm::floor(libm::log10(value)) as i32;
+        let use_f_style = exp >= -4 && exp < p as i32;
+        if use_f_style {
+            let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
+            let mut s = alloc::format!("{:.prec$}", value, prec = frac_digits);
+            if alt_form {
+                if !s.contains('.') {
+                    s.push('.');
+                }
+            } else {
+                strip_trailing_zeros(&mut s);
+            }
+            return s;
+        }
+        let mut s = format_e(value, p.saturating_sub(1), uppercase, alt_form);
+        if !alt_form && let Some(e_pos) = s.bytes().position(|b| b == b'e' || b == b'E') {
+            // Strip the mantissa's trailing zeros (and a bare '.') in place instead of
+            // `s[..e_pos].to_string()` + `strip_trailing_zeros` + a third `format!`
+            // concat. Byte-identical to the old path: `strip_trailing_zeros` only acts
+            // when the mantissa contains '.', pops trailing '0's, then a trailing '.'.
+            let b = s.as_bytes();
+            if b[..e_pos].contains(&b'.') {
+                let mut end = e_pos;
+                while end > 0 && b[end - 1] == b'0' {
+                    end -= 1;
+                }
+                if end > 0 && b[end - 1] == b'.' {
+                    end -= 1;
+                }
+                if end < e_pos {
+                    s.drain(end..e_pos);
+                }
+            }
+        }
+        return s;
+    };
+    // C11 7.21.6.1 para 8: use %e style iff exp < -4 OR exp >= precision;
+    // otherwise %f. The lower bound is -4 (not -1): e.g. 0.0001234 has
+    // exp = -4 and precision = 6, so it must render as "0.0001234".
+    let use_f_style = exp >= -4 && exp < p as i32;
+    if use_f_style {
+        return format_g_fixed_from_scientific(mantissa, exp, alt_form);
+    }
+
+    format_g_exp_from_scientific(mantissa, exp, uppercase, alt_form)
+}
+
+pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
+    let mut out = [0u8; 48];
+    let len = try_format_g_fixed_scaled_into(value, precision, &mut out)?;
+    let mut rendered = String::with_capacity(len);
+    // A slice-to-String copy lowers to the interposed memcpy in the deployed
+    // library. Push the bounded ASCII digits as the original formatter did.
+    for &byte in &out[..len] {
+        rendered.push(byte as char);
+    }
+    Some(rendered)
+}
+
+/// Buffer-writing core shared by the allocating formatter and deployed `%g`.
+/// Accepted values have at most nine integer digits and nine fractional
+/// digits, so the sign, decimal point and digits fit in the caller's 48-byte scratch.
+pub(crate) fn try_format_g_fixed_scaled_into(
+    value: f64,
+    precision: usize,
+    out: &mut [u8; 48],
+) -> Option<usize> {
+    let p = if precision == 0 { 1 } else { precision };
+    if p > 9 || value == 0.0 {
+        return None;
+    }
+
+    let negative = value.is_sign_negative();
+    let abs = value.abs();
+    let exp = decimal_exp_for_fixed_g(abs)?;
+    if exp >= p as i32 {
+        return None;
+    }
+    let frac_digits = (p as i32 - 1 - exp) as usize;
+    if frac_digits == 0 || frac_digits > 9 {
+        return None;
+    }
+
+    let scaled = rounded_scaled_fixed(abs, frac_digits)?;
+    let post_exp = fixed_scaled_decimal_exp_after_rounding(scaled, frac_digits, exp);
+    if post_exp >= p as i32 {
+        return None;
+    }
+
+    let mut tmp = [0u8; 40];
+    let ds = decimal_digits_u128(scaled, &mut tmp);
+    let mut len = 0;
+    if negative {
+        out[len] = b'-';
+        len += 1;
+    }
+    if ds.len() > frac_digits {
+        let point = ds.len() - frac_digits;
+        for &digit in &ds[..point] {
+            out[len] = digit;
+            len += 1;
+        }
+        out[len] = b'.';
+        len += 1;
+        for &digit in &ds[point..] {
+            out[len] = digit;
+            len += 1;
+        }
+    } else {
+        out[len] = b'0';
+        out[len + 1] = b'.';
+        len += 2;
+        for _ in 0..frac_digits - ds.len() {
+            out[len] = b'0';
+            len += 1;
+        }
+        for &digit in ds {
+            out[len] = digit;
+            len += 1;
+        }
+    }
+    while out[len - 1] == b'0' {
+        len -= 1;
+    }
+    if out[len - 1] == b'.' {
+        len -= 1;
+    }
+    Some(len)
+}
+
+/// Fast path for `%e`/`%E` (no `#`): compute the `precision + 1` significant
+/// mantissa digits by EXACT integer scaling — `rounded_scaled_fixed`, the same
+/// correctly-rounded (ties-to-even, exact big-integer) machinery the `%g` fast
+/// path uses — and append the C `d.ddde±dd` form straight into `buf` with no
+/// per-call String. Returns `true` iff it handled `value`. For `|value|` in
+/// `[10^E, 10^(E+1))` the mantissa digits are `round(|value| * 10^(precision-E))`:
+/// rounding to `precision-E` decimal places is exactly rounding to `precision+1`
+/// significant digits, yielding a `precision+1`-digit integer (or `precision+2`
+/// when a tie carries to the next decade, e.g. `9.9999995e-01` -> `1.000000e+00`).
+///
+/// Called from `render_pct_e`/`render_pct_e_into` (ecvt) AFTER their exact-integer
+/// and dyadic fast paths — those already handle integral and terminating-decimal
+/// values (e.g. `2.5`) with lighter arithmetic, so this only fires for the
+/// non-dyadic values (like pi) that would otherwise fall to the slow `{:e}`
+/// flt2dec reshape. Byte-identical to that reshape for accepted inputs (guarded by
+/// `printf_float_differential_fuzz`, which drives `format_float`).
+pub(crate) fn try_pct_e_fixed_scaled_into(value: f64, precision: usize, buf: &mut Vec<u8>) -> bool {
+    if precision == 0 || !value.is_finite() || value == 0.0 {
+        return false;
+    }
+    let abs = value.abs();
+    let Some(pre_exp) = decimal_exp_for_fixed_g(abs) else {
+        return false;
+    };
+    let k = precision as i32 - pre_exp;
+    if !(1..=9).contains(&k) {
+        return false;
+    }
+    let Some(scaled) = rounded_scaled_fixed(abs, k as usize) else {
+        return false;
+    };
+    let mut tmp = [0u8; 40];
+    let ds = decimal_digits_u128(scaled, &mut tmp);
+    let (sig, exp) = if ds.len() == precision + 1 {
+        (ds, pre_exp)
+    } else if ds.len() == precision + 2 {
+        (&ds[..precision + 1], pre_exp + 1)
+    } else {
+        return false;
+    };
+
+    if value.is_sign_negative() {
+        buf.push(b'-');
+    }
+    buf.push(sig[0]);
+    buf.push(b'.');
+    buf.push_bytes(&sig[1..]);
+    // C `e±dd` tail (sign, >= 2 digits). `pre_exp` comes from decimal_exp_for_fixed_g
+    // (range [-4, 8]) with an optional +1 carry, so `abs_exp` is always a single digit
+    // here — the `< 10` pad emits exactly two exponent digits.
+    buf.push(b'e');
+    buf.push(if exp < 0 { b'-' } else { b'+' });
+    let abs_exp = exp.unsigned_abs();
+    if abs_exp < 10 {
+        buf.push(b'0');
+    }
+    let mut etmp = [0u8; 3];
+    let mut n = abs_exp;
+    let mut ei = etmp.len();
+    loop {
+        ei -= 1;
+        etmp[ei] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    buf.push_bytes(&etmp[ei..]);
+    true
+}
+
+pub(crate) fn decimal_exp_for_fixed_g(value: f64) -> Option<i32> {
+    const POW10_POS: [f64; 10] = [
+        1.0,
+        10.0,
+        100.0,
+        1_000.0,
+        10_000.0,
+        100_000.0,
+        1_000_000.0,
+        10_000_000.0,
+        100_000_000.0,
+        1_000_000_000.0,
+    ];
+
+    if !(0.0001..POW10_POS[9]).contains(&value) {
+        return None;
+    }
+    if value < 1.0 {
+        return Some(if value >= 0.1 {
+            -1
+        } else if value >= 0.01 {
+            -2
+        } else if value >= 0.001 {
+            -3
+        } else {
+            -4
+        });
+    }
+
+    let mut exp = 0;
+    while exp + 1 < POW10_POS.len() && value >= POW10_POS[exp + 1] {
+        exp += 1;
+    }
+    Some(exp as i32)
+}
+
+fn fixed_scaled_decimal_exp_after_rounding(scaled: u128, precision: usize, pre_exp: i32) -> i32 {
+    const POW10_U128: [u128; 10] = [
+        1,
+        10,
+        100,
+        1_000,
+        10_000,
+        100_000,
+        1_000_000,
+        10_000_000,
+        100_000_000,
+        1_000_000_000,
+    ];
+
+    let integer = scaled / POW10_U128[precision];
+    if pre_exp < 0 {
+        if integer > 0 { 0 } else { pre_exp }
+    } else if integer >= POW10_U128[(pre_exp as usize) + 1] {
+        pre_exp + 1
+    } else {
+        pre_exp
+    }
+}
+
+fn split_scientific(raw: &str) -> Option<(&str, i32)> {
+    let e_pos = raw.bytes().position(|b| b == b'e')?;
+    let exp = raw[e_pos + 1..].parse::<i32>().ok()?;
+    Some((&raw[..e_pos], exp))
+}
+
+fn format_g_fixed_from_scientific(mantissa: &str, exp: i32, alt_form: bool) -> String {
+    let negative = mantissa.as_bytes().first().copied() == Some(b'-');
+    let mantissa_digits = if negative { &mantissa[1..] } else { mantissa };
+    let digits = mantissa_digits.bytes().filter(|&b| b != b'.');
+    let digit_count = digits.clone().count();
+    let decimal_pos = exp + 1;
+    let mut s = String::with_capacity(
+        digit_count + decimal_pos.unsigned_abs() as usize + 2 + usize::from(negative),
+    );
+    if negative {
+        s.push('-');
+    }
+
+    if decimal_pos <= 0 {
+        s.push('0');
+        s.push('.');
+        for _ in 0..decimal_pos.unsigned_abs() {
+            s.push('0');
+        }
+        for digit in digits {
+            s.push(digit as char);
+        }
+    } else {
+        let decimal_pos = decimal_pos as usize;
+        for (idx, digit) in digits.enumerate() {
+            if idx == decimal_pos {
+                s.push('.');
+            }
+            s.push(digit as char);
+        }
+        for _ in digit_count..decimal_pos {
+            s.push('0');
+        }
+    }
+
+    if alt_form {
+        if !s.contains('.') {
+            s.push('.');
+        }
+    } else {
+        strip_trailing_zeros(&mut s);
+    }
+    s
+}
+
+fn format_g_exp_from_scientific(
+    mantissa: &str,
+    exp: i32,
+    uppercase: bool,
+    alt_form: bool,
+) -> String {
+    use core::fmt::Write as _;
+    let e_char = if uppercase { 'E' } else { 'e' };
+    let sign = if exp < 0 { '-' } else { '+' };
+    let abs_exp = exp.unsigned_abs();
+    // Build the "<mantissa><e><sign><exp>" string in a single allocation instead of
+    // `mantissa.to_string()` + `strip_trailing_zeros`/dot-fixup + a second `format!`
+    // concat. The mantissa transform is byte-identical to the old in-place one:
+    // non-alt strips the trailing-'0' run (and a bare '.'); alt appends '.' iff absent.
+    let (mbytes, extra_dot) = if !alt_form {
+        let b = mantissa.as_bytes();
+        let mut end = mantissa.len();
+        if b.contains(&b'.') {
+            while end > 0 && b[end - 1] == b'0' {
+                end -= 1;
+            }
+            if end > 0 && b[end - 1] == b'.' {
+                end -= 1;
+            }
+        }
+        (&mantissa[..end], false)
+    } else if !mantissa.as_bytes().contains(&b'.') {
+        (mantissa, true)
+    } else {
+        (mantissa, false)
+    };
+    let mut s = String::with_capacity(mbytes.len() + usize::from(extra_dot) + 6);
+    s.push_str(mbytes);
+    if extra_dot {
+        s.push('.');
+    }
+    s.push(e_char);
+    s.push(sign);
+    let _ = write!(s, "{abs_exp:02}");
+    s
+}
+
+/// `%a` / `%A` formatting: hexadecimal floating-point.
+///
+/// Produces output of the form `0xh.hhhhp±d` where `h` are hex digits and
+/// `d` is the binary exponent in decimal.
+fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: bool) -> String {
+    let mut out = Vec::new();
+    render_pct_a_into(value, precision, uppercase, alt_form, &mut out);
+    // Output is pure ASCII (0x prefix, hex digits, '.', p/P, sign, decimal exponent).
+    String::from_utf8(out).expect("hex-float output is ASCII")
+}
+
+/// Buffer-writing core of `%a`/`%A` (hex float): appends the C hex-float form straight
+/// into `out` with no per-call String. `format_a` is the String wrapper; the DEPLOYED
+/// printf `%a` path (format_float's width-0 fast branch) calls this to skip the String +
+/// copy the general path paid. `%a` is exact bit-slicing (13 mantissa nibbles into a stack
+/// array + round-half-to-even only when dropping digits), so this is alloc-free. Byte-
+/// identical (printf_float_differential_fuzz's spec set `b"eEfFgGaA"` fuzzes %a/%A).
+pub(crate) fn render_pct_a_into(
+    value: f64,
+    precision: Option<usize>,
+    uppercase: bool,
+    alt_form: bool,
+    out: &mut Vec<u8>,
+) {
+    let p_byte = if uppercase { b'P' } else { b'p' };
+    let hex_alpha = if uppercase { b'A' } else { b'a' };
+    let prefix: &[u8] = if uppercase { b"0X" } else { b"0x" };
+
+    if value == 0.0 {
+        out.extend_from_slice(prefix);
+        out.push(b'0');
+        let prec = precision.unwrap_or(0);
+        if prec > 0 {
+            out.push(b'.');
+            out.extend(core::iter::repeat_n(b'0', prec));
+        } else if alt_form {
+            out.push(b'.');
+        }
+        out.push(p_byte);
+        out.extend_from_slice(b"+0");
+        return;
+    }
+
+    let bits = value.to_bits();
+    let mantissa_bits = bits & 0x000F_FFFF_FFFF_FFFF;
+    let biased_exp = ((bits >> 52) & 0x7FF) as i32;
+
+    let (mut lead_digit, bin_exp) = if biased_exp == 0 {
+        // Subnormal: leading digit is 0, exponent is -1022.
+        (0u8, -1022i32)
+    } else {
+        // Normal: leading digit is 1, exponent is biased_exp - 1023.
+        (1u8, biased_exp - 1023)
+    };
+
+    // The 52-bit mantissa gives 13 hex digits of fractional part.
+    const DEFAULT_PREC: usize = 13;
+    let prec = precision.unwrap_or_else(|| exact_hex_fraction_digits(mantissa_bits, DEFAULT_PREC));
+
+    let mut nib = [0u8; DEFAULT_PREC];
+    for (i, n) in nib.iter_mut().enumerate() {
+        *n = ((mantissa_bits >> (48 - i * 4)) & 0xF) as u8;
+    }
+    // Round to `prec` fraction digits (round-half-to-even) only when dropping real digits.
+    // `prec >= DEFAULT_PREC` keeps all 13 nibbles (the excess are trailing zeros).
+    if prec < DEFAULT_PREC {
+        let first_discarded = nib[prec];
+        let lower_nibbles = DEFAULT_PREC - (prec + 1);
+        let lower_nonzero = if lower_nibbles == 0 {
+            false
+        } else {
+            let lower_mask = (1_u64 << (lower_nibbles * 4)) - 1;
+            mantissa_bits & lower_mask != 0
+        };
+        let last_kept_odd = if prec == 0 {
+            lead_digit & 1 != 0
+        } else {
+            nib[prec - 1] & 1 != 0
+        };
+        if first_discarded > 8 || (first_discarded == 8 && (lower_nonzero || last_kept_odd)) {
+            if prec == 0 {
+                lead_digit = lead_digit.saturating_add(1);
+            } else {
+                let mut carry = true;
+                for j in (0..prec).rev() {
+                    if nib[j] < 0xF {
+                        nib[j] += 1;
+                        carry = false;
+                        break;
+                    }
+                    nib[j] = 0;
+                }
+                if carry {
+                    lead_digit = lead_digit.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    let hex_char = |n: u8| -> u8 {
+        if n < 10 {
+            b'0' + n
+        } else {
+            hex_alpha + (n - 10)
+        }
+    };
+
+    out.reserve(prefix.len() + prec + 8);
+    out.extend_from_slice(prefix);
+    out.push(hex_char(lead_digit));
+    if prec > 0 || alt_form {
+        out.push(b'.');
+    }
+    // Fraction: the first `min(prec, 13)` real nibbles, then any excess as zeros.
+    let kept = prec.min(DEFAULT_PREC);
+    for &n in &nib[..kept] {
+        out.push(hex_char(n));
+    }
+    out.extend(core::iter::repeat_n(b'0', prec - kept));
+    out.push(p_byte);
+    out.push(if bin_exp < 0 { b'-' } else { b'+' });
+    let mut tmp = [0u8; 40];
+    out.extend_from_slice(decimal_digits_u128(
+        bin_exp.unsigned_abs() as u128,
+        &mut tmp,
+    ));
+}
+
+fn exact_hex_fraction_digits(mantissa_bits: u64, default_prec: usize) -> usize {
+    if mantissa_bits == 0 {
+        return 0;
+    }
+    let mut trailing = 0;
+    let mut m = mantissa_bits;
+    while m & 0xF == 0 && trailing < default_prec {
+        m >>= 4;
+        trailing += 1;
+    }
+    default_prec - trailing
+}
+
+/// Remove trailing zeros after the decimal point.
+fn strip_trailing_zeros(s: &mut String) {
+    if s.contains('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+}
+
+// We need alloc for String formatting of floats.
+extern crate alloc;
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+
+    /// A pad whose memory cannot be reserved is dropped AND reported, once:
+    /// the printf entry points turn the report into -1/ENOMEM instead of a
+    /// success count for truncated output.
+    #[test]
+    fn unreservable_pad_reports_alloc_failure_once() {
+        let _ = super::take_render_failure();
+        let mut buf = b"x".to_vec();
+        super::pad(&mut buf, b'0', 8);
+        assert_eq!(buf, b"x00000000");
+        assert_eq!(super::take_render_failure(), 0);
+        super::pad(&mut buf, b'0', usize::MAX);
+        assert_eq!(buf, b"x00000000", "the unreservable field is dropped");
+        assert_eq!(super::take_render_failure(), crate::errno::ENOMEM);
+        assert_eq!(super::take_render_failure(), 0, "taking clears it");
+    }
+
+    /// glibc fails the whole call (EINVAL) on a directive cut off by the end
+    /// of the format or an unsupported C23 `wN`, but prints an unknown
+    /// conversion literally.
+    #[test]
+    fn invalid_directives_are_flagged_unknown_conversions_are_not() {
+        for fmt in [
+            &b"a%"[..],
+            b"a%5",
+            b"a%l",
+            b"a%q",
+            b"a%-",
+            b"a%.",
+            b"a%w7d",
+            b"a%w0d",
+            b"a%w128d",
+            b"a%wd",
+            b"a%wfd",
+        ] {
+            assert!(
+                super::parse_format_string(fmt).invalid_directive(),
+                "{:?} must be rejected",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+        for fmt in [
+            &b"a%yb"[..],
+            b"a%Hdb",
+            b"%w8d %w16d %w32d %w64d %wf8d %wf16d %wf32d %wf64d",
+            b"100%%",
+            b"%5.2f %-3s %lu",
+        ] {
+            assert!(
+                !super::parse_format_string(fmt).invalid_directive(),
+                "{:?} must not be rejected",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_conversions_preserve_star_operands_without_a_value() {
+        let segments = parse_format_string(b"%*.*lQ:%d:%s:%.1f%n");
+        assert_eq!(count_printf_args_of(&segments), 6);
+        let FormatSegment::Spec(spec) = segments[0] else {
+            panic!("unknown conversion must remain a parsed directive");
+        };
+        assert!(spec.is_unknown_conversion());
+        assert_eq!(spec.width, Width::FromArg);
+        assert_eq!(spec.precision, Precision::FromArg);
+        assert_eq!(spec.length, LengthMod::L);
+        assert_eq!(spec.value_arg_kind(), None);
+        let positional = parse_format_string(b"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n");
+        assert_eq!(count_printf_args_of(&positional), 6);
+        assert_eq!(
+            positional_printf_arg_plan(&positional).unwrap(),
+            vec![
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Fp,
+                ValueArgKind::Gp,
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_conversions_render_normalized_flags_and_operands() {
+        for (fmt, expected) in [
+            (&b"# +0-'12.003Q"[..], &b"%#'+-12.3Q"[..]),
+            (b"hhQ", b"%Q"),
+            (b"LQ", b"%Q"),
+            (b"qQ", b"%Q"),
+            (b"9.2Q", b"%9.2Q"),
+            (b"0Q", b"%0Q"),
+            (b".0Q", b"%.0Q"),
+            (b"#I0Q", b"%#0IQ"),
+        ] {
+            let (spec, consumed) = parse_format_spec(fmt).unwrap();
+            assert_eq!(consumed, fmt.len());
+            assert!(spec.is_unknown_conversion());
+            let mut buf = Vec::new();
+            spec.render_unknown_conversion(&mut buf);
+            assert_eq!(buf, expected);
+        }
+        for fmt in [b"d".as_slice(), b"s", b"m", b"%", b"Lf"] {
+            assert!(!parse_format_spec(fmt).unwrap().0.is_unknown_conversion());
+        }
+        let (integer, _) = parse_format_spec(b"qd").unwrap();
+        assert_eq!(integer.length, LengthMod::Ll);
+        assert_eq!(integer.value_arg_kind(), Some(ValueArgKind::Gp));
+        let (float, _) = parse_format_spec(b"qf").unwrap();
+        assert_eq!(float.length, LengthMod::BigL);
+        assert_eq!(float.value_arg_kind(), Some(ValueArgKind::X87));
+        let (mut zero_width, _) = parse_format_spec(b"Q").unwrap();
+        zero_width.width = Width::Fixed(0);
+        let mut buf = Vec::new();
+        zero_width.render_unknown_conversion(&mut buf);
+        assert_eq!(buf, b"%Q");
+    }
+
+    /// The accumulated `sequential_args` must equal the walk it replaced.
+    ///
+    /// This is the whole risk of the change: a field filled at push time and a
+    /// function that computes the same thing can drift apart silently, and the
+    /// only symptom would be printf reading the wrong number of varargs — which
+    /// is memory-unsafe, not merely wrong. So the two are compared directly over
+    /// a spread of formats rather than trusting one to imply the other.
+    #[test]
+    fn sequential_args_matches_the_walk() {
+        let formats: &[&[u8]] = &[
+            b"",
+            b"no conversions at all",
+            b"%s",
+            b"%s %s",
+            b"%s %s %s %s",
+            b"%d %s %u %x",
+            b"%s %s %d %lu",
+            b"%s=%s %s=%s",
+            // Width and precision that consume their own arguments.
+            b"%*d",
+            b"%.*f",
+            b"%*.*g",
+            b"%*s %d %.*e",
+            // Conversions that consume no value argument at all.
+            b"%%",
+            b"100%% done",
+            b"%n",
+            // Mixed, including a literal run either side.
+            b"prefix %s middle %*d suffix",
+            // Past the inline/heap boundary so the heap path is covered too.
+            b"%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",
+        ];
+
+        for fmt in formats {
+            let segments = parse_format_string(fmt);
+            // The positional path still walks, so the field is only claimed to
+            // match for the sequential case.
+            if segments.any_positional() {
+                continue;
+            }
+            let walked = count_printf_args_sequential(segments.as_slice());
+            let accumulated = count_printf_args_of(&segments);
+            assert_eq!(
+                accumulated,
+                walked,
+                "format {:?}: accumulated {accumulated} but the walk says {walked}",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    /// `has_long_double` must agree with an independent walk over the specs.
+    ///
+    /// The accumulator runs at parse time and the extractor trusts it without
+    /// re-checking, so a drift here does not print a wrong number: it routes a
+    /// format to the register reader that cannot see an X87 argument at all,
+    /// leaving sixteen stack bytes unconsumed and corrupting every conversion
+    /// after the `%Lf`. That is silent, so it is pinned against the definition
+    /// the same way `sequential_args` is.
+    #[test]
+    fn has_long_double_matches_an_independent_walk() {
+        let formats: &[&[u8]] = &[
+            // No long double anywhere — the case that must stay false, and the
+            // one the extractor takes on essentially every real call.
+            b"",
+            b"no conversions at all",
+            b"%s %d %f %g %e",
+            b"%lf %llf %hf",
+            b"%%",
+            b"%n",
+            b"100%% done",
+            // Present, in each float conversion that accepts the length.
+            b"%Lf",
+            b"%Le",
+            b"%Lg",
+            b"%LG",
+            b"%La",
+            b"%LA",
+            // Present but not first: the walk cannot short-circuit early, and
+            // a scan that gave up after the first spec would miss these.
+            b"%d %Lf",
+            b"%s %s %s %s %s %Lf",
+            b"%d %s %u %x %c %p %Le end",
+            // Past the inline/heap boundary, so the heap arm is covered.
+            b"%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %Lf",
+            // `L` on a conversion that is NOT floating point. glibc treats it
+            // as a no-op for integers, so these consume an int, not sixteen
+            // stack bytes — flagging them would send an ordinary format down
+            // the slow hand-written walker.
+            b"%Ld",
+            b"%Lu",
+            b"%Ls",
+            b"%Lc",
+            // Width and precision spelled with `L` before the conversion.
+            b"%12.4Lf",
+            b"%-*.*Lf",
+            // Truncated: no conversion character at all.
+            b"%L",
+            b"%12L",
+        ];
+
+        for fmt in formats {
+            let segments = parse_format_string(fmt);
+            let walked = segments.iter().any(|seg| match seg {
+                FormatSegment::Spec(spec) => {
+                    spec.length == LengthMod::BigL && spec.value_arg_is_float()
+                }
+                _ => false,
+            });
+            assert_eq!(
+                segments.has_long_double(),
+                walked,
+                "format {:?}: field says {} but the walk says {walked}",
+                String::from_utf8_lossy(fmt),
+                segments.has_long_double()
+            );
+        }
+    }
+
+    /// The flag must be TRUE for the formats that need the X87-aware reader and
+    /// FALSE for the ones that do not.
+    ///
+    /// The test above only proves the field and the walk agree; if both were
+    /// wrong in the same way it would still pass. This one states the answers.
+    #[test]
+    fn has_long_double_is_set_for_the_formats_that_need_it() {
+        for fmt in [&b"%Lf"[..], b"%Le", b"%Lg", b"%d %Lf", b"%12.4Lf", b"%La"] {
+            assert!(
+                parse_format_string(fmt).has_long_double(),
+                "format {:?} carries a long double and must take the X87 reader",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+        for fmt in [&b"%f"[..], b"%lf", b"%d", b"%s", b"", b"%Ld", b"%%", b"%L"] {
+            assert!(
+                !parse_format_string(fmt).has_long_double(),
+                "format {:?} has no long double and must stay on the fast reader",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    /// The routing invariant the register-path extractors rely on.
+    ///
+    /// `extract_va_args!` (and its wide twin) decide which reader to use from
+    /// `has_long_double()`, and only the va_list walker can read an X87 stack
+    /// slot. So an `X87` entry in the argument plan must imply the flag — if
+    /// the two ever disagreed, a positional `%Lf` would reach a reader with no
+    /// X87 case at all, which is the argument-stream corruption this class was
+    /// added to end. The extractors' `debug_assert!(false, ...)` arms name this
+    /// test; it is what makes them dead code rather than a hope.
+    #[test]
+    fn positional_x87_implies_has_long_double() {
+        let formats: &[&[u8]] = &[
+            b"%1$Lf",
+            b"%1$Lf %2$d",
+            b"%2$d %1$.3Lf",
+            b"%1$Le %2$Lg %3$s",
+            b"%2$*1$.4Lf",
+            // Positional, no long double: the plan must carry no X87 at all.
+            b"%1$f %2$d",
+            b"%1$s %2$p",
+            b"%1$Ld",
+            // Non-positional: no plan is built, so nothing to check but the
+            // flag, which the walk tests above cover.
+            b"%Lf",
+            b"%d",
+        ];
+
+        for fmt in formats {
+            let segments = parse_format_string(fmt);
+            let plan = positional_printf_arg_plan(segments.as_slice());
+            let has_x87 = plan
+                .as_deref()
+                .is_some_and(|plan| plan.contains(&ValueArgKind::X87));
+            if has_x87 {
+                assert!(
+                    segments.has_long_double(),
+                    "format {:?}: plan carries X87 but has_long_double() is false, \
+                     so the extractor would route it to the register reader",
+                    String::from_utf8_lossy(fmt)
+                );
+            }
+        }
+
+        // Stated outright, because "no X87 anywhere" would satisfy the
+        // implication above vacuously.
+        let plan = positional_printf_arg_plan(parse_format_string(b"%2$d %1$.3Lf").as_slice())
+            .expect("positional format must yield a plan");
+        assert_eq!(
+            plan,
+            vec![ValueArgKind::X87, ValueArgKind::Gp],
+            "position 1 is the long double and position 2 the int, in that order"
+        );
+
+        let plan = positional_printf_arg_plan(parse_format_string(b"%1$Ld %2$f").as_slice())
+            .expect("positional format must yield a plan");
+        assert_eq!(
+            plan,
+            vec![ValueArgKind::Gp, ValueArgKind::Fp],
+            "`L` on an integer conversion must not become X87"
+        );
+        // Slot 1 above is Gp because fl classifies no argument at all for
+        // `%Ld` and the plan default-fills unassigned slots with Gp — not
+        // because it recognised an integer. Live glibc 2.42 DOES consume one
+        // there (`%Ld` of 1234567890123 prints that number), which is a
+        // separate divergence tracked as bd-3g1cvv. Said here so
+        // the next reader does not take this assertion as evidence that fl
+        // handles `%Ld`.
+    }
+
+    /// Positional formats must still take the walk, not the field.
+    ///
+    /// Their count is the highest referenced position rather than a running
+    /// total — `%2$s` alone needs two arguments — so accumulating would
+    /// undercount and printf would read too few varargs.
+    #[test]
+    fn positional_formats_do_not_use_the_accumulated_count() {
+        for fmt in [&b"%2$s"[..], &b"%3$d %1$s"[..], &b"%*2$d"[..]] {
+            let segments = parse_format_string(fmt);
+            assert!(
+                segments.any_positional(),
+                "format {:?} should be flagged positional",
+                String::from_utf8_lossy(fmt)
+            );
+            let expected = count_printf_args(segments.as_slice());
+            assert_eq!(
+                count_printf_args_of(&segments),
+                expected,
+                "positional format {:?} must use the plan, not the running total",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+    use super::*;
+
+    // `FormatSegments::new` initialises an eight-slot inline array on every
+    // printf call and `push` copies a whole segment per conversion, so these
+    // sizes sit on the hot path rather than being a detail of representation.
+    //
+    // Shrinking them is NOT automatically a win, which is the point of pinning
+    // them here. bd-5pagbr narrowed the width/precision/position payloads to 32
+    // bits, which really did shrink FormatSpec 64 -> 36 and FormatSegment
+    // 64 -> 40 (the eight-slot array 512 -> 320 bytes), and the fused snprintf
+    // family still measured 7-9% SLOWER on hz2 (6/6 arm pairs, disjoint CIs)
+    // and slower again on hz1, so it was reverted. The segment array is
+    // stack-local and already hot, so its size is not what the fused shapes are
+    // paying for; the `as usize` widening the narrower payloads require lands
+    // in the per-conversion path, which is. Any future change to these sizes
+    // has to be re-measured on syslog_line, http_log and kv_join rather than
+    // argued from byte counts.
+    #[test]
+    fn format_segment_representation_has_the_measured_size() {
+        // Compared as one tuple so a failure reports BOTH sizes; asserting them
+        // separately would abort on the first and hide the second.
+        assert_eq!(
+            (
+                core::mem::size_of::<FormatSpec>(),
+                core::mem::size_of::<FormatSegment<'_>>()
+            ),
+            (64usize, 64usize),
+            "format representation changed size; re-measure the fused snprintf \
+             family (syslog_line, http_log, kv_join) before accepting it"
+        );
+    }
+
+    // Reference decimal renderer: the original general-base loop, kept here so
+    // the LUT path can be proven byte-for-byte isomorphic to it.
+    fn render_decimal_reference(mut value: u64, buf: &mut [u8; 64]) -> usize {
+        if value == 0 {
+            buf[63] = b'0';
+            return 1;
+        }
+        let mut pos = 64;
+        while value > 0 {
+            pos -= 1;
+            buf[pos] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+        64 - pos
+    }
+
+    #[test]
+    fn render_decimal_isomorphic_to_reference_and_std() {
+        let mut probes: Vec<u64> = vec![
+            0,
+            1,
+            9,
+            10,
+            99,
+            100,
+            999,
+            1000,
+            12_345,
+            4_294_967_295,
+            4_294_967_296,
+            9_999_999_999,
+            10_000_000_000,
+            18_446_744_073_709_551_614,
+            u64::MAX,
+        ];
+        // Every power of ten and its neighbours (digit-count boundaries).
+        let mut p: u64 = 1;
+        loop {
+            probes.push(p.saturating_sub(1));
+            probes.push(p);
+            probes.push(p + 1);
+            match p.checked_mul(10) {
+                Some(next) => p = next,
+                None => break,
+            }
+        }
+        // Deterministic LCG sweep across the whole u64 range.
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..200_000 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            probes.push(state);
+        }
+
+        for &v in &probes {
+            let mut lut = [0u8; 64];
+            let mut reff = [0u8; 64];
+            let nl = render_decimal(v, &mut lut);
+            let nr = render_decimal_reference(v, &mut reff);
+            assert_eq!(nl, nr, "digit count mismatch for {v}");
+            assert_eq!(
+                &lut[64 - nl..],
+                &reff[64 - nr..],
+                "LUT vs reference digits mismatch for {v}"
+            );
+            assert_eq!(
+                &lut[64 - nl..],
+                v.to_string().as_bytes(),
+                "LUT vs std::to_string mismatch for {v}"
+            );
+            // render_digits(base=10) must dispatch to the same bytes.
+            let mut viad = [0u8; 64];
+            let nd = render_digits(v, 10, false, &mut viad);
+            assert_eq!(
+                &viad[64 - nd..],
+                &lut[64 - nl..],
+                "render_digits(10) mismatch for {v}"
+            );
+        }
+    }
+
+    // Reference general-base renderer (runtime DIV loop) — the exact code the
+    // render_hex / render_pow2 fast paths replace, kept here to prove they are
+    // byte-for-byte isomorphic for the power-of-two printf bases.
+    fn render_digits_reference(
+        mut value: u64,
+        base: u64,
+        uppercase: bool,
+        buf: &mut [u8; 64],
+    ) -> usize {
+        if value == 0 {
+            buf[63] = b'0';
+            return 1;
+        }
+        let alpha = if uppercase { b'A' } else { b'a' };
+        let mut pos = 64;
+        while value > 0 && pos > 0 {
+            pos -= 1;
+            let digit = (value % base) as u8;
+            buf[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                alpha + (digit - 10)
+            };
+            value /= base;
+        }
+        64 - pos
+    }
+
+    #[test]
+    fn format_segments_inline_and_spill_preserve_order() {
+        // Push n literal segments and verify as_slice + into_iter return them in
+        // order across the inline/heap boundary (INLINE_SEGMENTS).
+        let labels: Vec<Vec<u8>> = (0..40)
+            .map(|i| alloc::format!("seg{i}").into_bytes())
+            .collect();
+        for n in 0..=labels.len() {
+            let mut segs = FormatSegments::new();
+            for lab in labels.iter().take(n) {
+                segs.push(FormatSegment::Literal(lab));
+            }
+            // as_slice order
+            let via_slice: Vec<&[u8]> = segs
+                .as_slice()
+                .iter()
+                .map(|s| match s {
+                    FormatSegment::Literal(b) => *b,
+                    _ => b"?".as_slice(),
+                })
+                .collect();
+            let expected: Vec<&[u8]> = labels.iter().take(n).map(|v| v.as_slice()).collect();
+            assert_eq!(via_slice, expected, "as_slice order mismatch for n={n}");
+            assert_eq!(segs.as_slice().len(), n, "len mismatch n={n}");
+            // into_iter (owned) order
+            let via_iter: Vec<Vec<u8>> = segs
+                .clone()
+                .into_iter()
+                .map(|s| match s {
+                    FormatSegment::Literal(b) => b.to_vec(),
+                    _ => b"?".to_vec(),
+                })
+                .collect();
+            let expected_owned: Vec<Vec<u8>> = labels.iter().take(n).cloned().collect();
+            assert_eq!(
+                via_iter, expected_owned,
+                "into_iter order mismatch for n={n}"
+            );
+        }
+    }
+
+    #[test]
+    fn find_percent_matches_naive_scan() {
+        // Boundary inputs: empty, no match, match at every position, multiple,
+        // and chunk-boundary cases (around the 8-byte SWAR stride).
+        let mut cases: Vec<Vec<u8>> = vec![
+            vec![],
+            b"no percent here at all".to_vec(),
+            b"%".to_vec(),
+            b"%abc".to_vec(),
+            b"abc%".to_vec(),
+            b"abcdefg%hijk".to_vec(), // % at index 7 (last of first word)
+            b"abcdefgh%ijk".to_vec(), // % at index 8 (first of second word)
+            b"0123456789abcdef%".to_vec(),
+            b"a%b%c%".to_vec(),
+        ];
+        // % at each position of a 40-byte buffer.
+        for p in 0..40usize {
+            let mut v = vec![b'x'; 40];
+            v[p] = b'%';
+            cases.push(v);
+        }
+        // Deterministic pseudo-random buffers, some seeded with '%'.
+        let mut state: u64 = 0x00C0_FFEE_1234_5678;
+        for _ in 0..20_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let n = (state as usize) % 64;
+            let mut v: Vec<u8> = (0..n).map(|k| ((state >> (k % 56)) as u8) | 1).collect();
+            if state & 1 == 0 && n > 0 {
+                v[(state as usize >> 8) % n] = b'%';
+            }
+            cases.push(v);
+        }
+        for c in &cases {
+            let fast = find_percent(c);
+            let naive = c.iter().position(|&b| b == b'%');
+            assert_eq!(fast, naive, "find_percent mismatch for {c:?}");
+        }
+    }
+
+    #[test]
+    fn render_hex_and_pow2_isomorphic_to_reference() {
+        // Deterministic xorshift over a wide value space, plus boundary probes.
+        let mut probes: Vec<u64> = vec![
+            0,
+            1,
+            9,
+            15,
+            16,
+            17,
+            255,
+            256,
+            257,
+            0xFF,
+            0x100,
+            0xFFFF,
+            0x10000,
+            0xABCD,
+            0xDEADBEEF,
+            0xFFFF_FFFF,
+            0x1_0000_0000,
+            u64::MAX,
+            u64::MAX - 1,
+            0x8000_0000_0000_0000,
+            0x0FED_CBA9_8765_4321,
+        ];
+        let mut state: u64 = 0x1234_5678_9abc_def1;
+        for _ in 0..50_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            probes.push(state);
+            probes.push(state & 0xFF);
+            probes.push(state & 0xFFFF);
+        }
+        for &v in &probes {
+            for &base in &[2u64, 8, 16] {
+                for &up in &[false, true] {
+                    let mut fast = [0u8; 64];
+                    let mut reff = [0u8; 64];
+                    let nf = render_digits(v, base, up, &mut fast);
+                    let nr = render_digits_reference(v, base, up, &mut reff);
+                    assert_eq!(nf, nr, "digit count mismatch v={v} base={base} up={up}");
+                    assert_eq!(
+                        &fast[64 - nf..],
+                        &reff[64 - nr..],
+                        "fast vs reference digits mismatch v={v} base={base} up={up}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bare_integer_fast_path_matches_canonical() {
+        let u_spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::Ll,
+            b'u',
+            None,
+        );
+        let i_spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::Ll,
+            b'd',
+            None,
+        );
+
+        let mut state: u64 = 0xDEAD_BEEF_CAFE_F00D;
+        for i in 0..200_000u64 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            // unsigned
+            let mut ub = Vec::new();
+            format_unsigned(state, &u_spec, &mut ub);
+            assert_eq!(ub, state.to_string().as_bytes(), "%u mismatch for {state}");
+            // signed (reinterpret bits across the full i64 range)
+            let s = state as i64;
+            let mut sb = Vec::new();
+            format_signed(s, &i_spec, &mut sb);
+            assert_eq!(sb, s.to_string().as_bytes(), "%d mismatch for {s}");
+            if i < 5 {
+                // also pin the small/edge values explicitly
+                for &edge in &[0i64, 1, -1, 9, -9, 10, i64::MIN, i64::MAX] {
+                    let mut eb = Vec::new();
+                    format_signed(edge, &i_spec, &mut eb);
+                    assert_eq!(eb, edge.to_string().as_bytes(), "%d edge {edge}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_int() {
+        let (spec, consumed) = parse_format_spec(b"d").unwrap();
+        assert_eq!(consumed, 1);
+        assert_eq!(spec.conversion, b'd');
+        assert_eq!(spec.width, Width::None);
+        assert_eq!(spec.precision, Precision::None);
+        assert_eq!(spec.value_position, None);
+    }
+
+    #[test]
+    fn uppercase_l_aliases_are_conversion_specific() {
+        for (directive, expected_length) in [
+            (&b"Ld"[..], LengthMod::Ll),
+            (&b"Lu"[..], LengthMod::Ll),
+            (&b"Ls"[..], LengthMod::L),
+            (&b"Lc"[..], LengthMod::L),
+        ] {
+            let (spec, _) = parse_format_spec(directive).expect("glibc alias must parse");
+            assert_eq!(spec.length, expected_length, "{directive:?}");
+        }
+        assert!(
+            parse_format_spec(b"Ln").is_none(),
+            "uppercase L is not a blanket length alias"
+        );
+    }
+
+    #[test]
+    fn bare_standard_directives_preserve_the_general_parser_contract() {
+        // These directives are the parser shortcut's entire domain.  The
+        // trailing byte proves that it consumes exactly the conversion byte;
+        // the following literal must remain available to parse_format_string.
+        for &conversion in b"diuoxXcspn" {
+            let (spec, consumed) = parse_format_spec(&[conversion, b'!']).unwrap();
+            assert_eq!(consumed, 1, "%{} consumed too much", conversion as char);
+            assert_eq!(spec.conversion, conversion);
+            assert_eq!(spec.flags, FormatFlags::default());
+            assert_eq!(spec.width, Width::None);
+            assert_eq!(spec.precision, Precision::None);
+            assert_eq!(spec.length, LengthMod::None);
+            assert_eq!(spec.value_position, None);
+        }
+    }
+
+    fn grouping(separator: &[u8], rule: &[u8]) -> NumericGrouping {
+        let mut g = NumericGrouping {
+            separator: [0; 7],
+            separator_len: separator.len(),
+            rule: [0; 8],
+        };
+        g.separator[..separator.len()].copy_from_slice(separator);
+        g.rule[..rule.len()].copy_from_slice(rule);
+        g
+    }
+
+    fn grouped(g: &NumericGrouping, digits: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        g.push_grouped(&mut out, digits);
+        assert_eq!(out.len(), g.grouped_len(digits.len()));
+        out
+    }
+
+    #[test]
+    fn numeric_grouping_follows_glibc_grouping_rules() {
+        // en_US: "\3\3" -- threes, the last size repeating.
+        let en = grouping(b",", &[3, 3]);
+        assert_eq!(grouped(&en, b"1"), b"1");
+        assert_eq!(grouped(&en, b"999"), b"999");
+        assert_eq!(grouped(&en, b"1000"), b"1,000");
+        assert_eq!(grouped(&en, b"1234567"), b"1,234,567");
+        assert_eq!(
+            grouped(&en, b"9223372036854775807"),
+            b"9,223,372,036,854,775,807"
+        );
+        // A single size repeats too: "\3".
+        assert_eq!(grouped(&grouping(b".", &[3]), b"1234567"), b"1.234.567");
+        // en_IN: "\3\2" -- the first group three, then twos.
+        let india = grouping(b",", &[3, 2]);
+        assert_eq!(grouped(&india, b"123456789"), b"12,34,56,789");
+        // CHAR_MAX ends grouping: only the first three split off.
+        assert_eq!(
+            grouped(&grouping(b",", &[3, 0x7f]), b"1234567"),
+            b"1234,567"
+        );
+        // Multi-byte separator (fr_FR's U+202F NARROW NO-BREAK SPACE).
+        let fr = grouping("\u{202f}".as_bytes(), &[3]);
+        assert_eq!(
+            grouped(&fr, b"1234567"),
+            "1\u{202f}234\u{202f}567".as_bytes()
+        );
+        // The float helper groups only the leading integer digits.
+        assert_eq!(en.group_leading_digits(b"1234567.891"), b"1,234,567.891");
+        assert_eq!(en.group_leading_digits(b"1.23457e+06"), b"1.23457e+06");
+    }
+
+    #[test]
+    fn test_grouping_flag_parsed_and_c_locale_noop() {
+        // POSIX `'` flag must be consumed as a flag, not mistaken for the
+        // conversion specifier. glibc in the C locale accepts it and emits no
+        // separators (empty `grouping`), so output equals the un-flagged form.
+        let (spec, consumed) = parse_format_spec(b"'d").unwrap();
+        assert_eq!(consumed, 2);
+        assert_eq!(spec.conversion, b'd');
+        assert!(spec.flags.group);
+
+        let mut buf = Vec::new();
+        format_signed(1_000_000, &spec, &mut buf);
+        assert_eq!(&buf, b"1000000");
+
+        // Combines with other flags and width: glibc `%'+8d` of 1234 -> "   +1234".
+        let (spec, _) = parse_format_spec(b"'+8d").unwrap();
+        assert!(spec.flags.group && spec.flags.force_sign);
+        let mut buf = Vec::new();
+        format_signed(1234, &spec, &mut buf);
+        assert_eq!(&buf, b"   +1234");
+    }
+
+    #[test]
+    fn test_generated_printf_table_routes_core_specifiers() {
+        let signed = printf_route(b'd').expect("signed decimal route");
+        let floating = printf_route(b'g').expect("general float route");
+        let literal = printf_route(b'%').expect("literal percent route");
+
+        assert_eq!(signed.handler, PrintfHandler::SignedDecimal);
+        assert_eq!(signed.arg_category, ArgCategory::SignedInt);
+        assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert_eq!(
+            signed.raw_render_kind(),
+            Some(RawValueRenderKind::SignedInt)
+        );
+        assert!(signed.accepts_length(LengthMod::L));
+        assert!(!signed.accepts_length(LengthMod::BigL));
+        assert_eq!(floating.handler, PrintfHandler::FloatGeneral);
+        assert_eq!(floating.arg_category, ArgCategory::Float);
+        assert_eq!(floating.value_arg_kind(), Some(ValueArgKind::Fp));
+        assert_eq!(
+            floating.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::General))
+        );
+        assert_eq!(literal.handler, PrintfHandler::LiteralPercent);
+        assert!(literal.is_literal_percent());
+        assert_eq!(
+            printf_route(b'X').and_then(PrintfRoute::raw_render_kind),
+            Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::HexUpper
+            ))
+        );
+        assert_eq!(
+            printf_route(b'X')
+                .and_then(PrintfRoute::raw_render_kind)
+                .and_then(RawValueRenderKind::int_base),
+            Some((16, true))
+        );
+        assert_eq!(
+            printf_route(b'o')
+                .and_then(PrintfRoute::raw_render_kind)
+                .and_then(RawValueRenderKind::unsigned_kind),
+            Some(UnsignedFormatKind::Octal)
+        );
+        assert!(printf_route(b'Q').is_none());
+    }
+
+    #[test]
+    fn test_format_spec_route_helpers_follow_generated_metadata() {
+        let signed = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'd',
+            None,
+        );
+        let string = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b's',
+            None,
+        );
+        let float = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'f',
+            None,
+        );
+        let store = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'n',
+            None,
+        );
+        let percent = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'%',
+            None,
+        );
+        let errno = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'm',
+            None,
+        );
+        let positional = FormatSpec::new(
+            FormatFlags::default(),
+            Width::FromArgPosition(2),
+            Precision::FromArgPosition(4),
+            LengthMod::None,
+            b'd',
+            Some(3),
+        );
+
+        assert!(signed.consumes_value_arg());
+        assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(signed.value_arg_is_gp());
+        assert!(!signed.value_arg_is_string());
+        assert!(!signed.stores_count());
+        assert_eq!(
+            signed.raw_render_kind(),
+            Some(RawValueRenderKind::SignedInt)
+        );
+        assert!(string.value_arg_is_string());
+        assert_eq!(string.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(string.value_arg_is_gp());
+        assert_eq!(float.value_arg_kind(), Some(ValueArgKind::Fp));
+        assert!(float.value_arg_is_float());
+        assert!(!float.value_arg_is_gp());
+        assert_eq!(
+            float.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Fixed))
+        );
+        assert!(store.stores_count());
+        assert_eq!(store.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(store.value_arg_is_gp());
+        assert!(percent.is_literal_percent());
+        assert!(errno.is_errno_message());
+        assert!(!errno.consumes_value_arg());
+        assert_eq!(errno.value_arg_kind(), None);
+        assert!(!errno.value_arg_is_gp());
+        assert_eq!(
+            positional.positional_width_arg_kind(),
+            Some((2, ValueArgKind::Gp))
+        );
+        assert_eq!(
+            positional.positional_precision_arg_kind(),
+            Some((4, ValueArgKind::Gp))
+        );
+        assert_eq!(
+            positional.positional_value_arg_kind(),
+            Some((3, ValueArgKind::Gp))
+        );
+        assert_eq!(errno.positional_value_arg_kind(), None);
+
+        let hex = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'x',
+            None,
+        );
+        assert_eq!(
+            hex.raw_render_kind(),
+            Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::HexLower
+            ))
+        );
+        assert_eq!(
+            hex.raw_render_kind()
+                .and_then(RawValueRenderKind::alt_prefix),
+            Some(&b"0x"[..])
+        );
+        assert_eq!(
+            FormatSpec::new(
+                FormatFlags {
+                    alt_form: true,
+                    ..FormatFlags::default()
+                },
+                Width::None,
+                Precision::Fixed(0),
+                LengthMod::None,
+                b'o',
+                None,
+            )
+            .raw_render_kind()
+            .and_then(RawValueRenderKind::unsigned_kind)
+            .map(|kind| kind.preserves_single_zero_when_suppressed(true)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_render_value_arg_routes_non_string_handlers() {
+        let hex = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'x',
+            None,
+        );
+        let pointer = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'p',
+            None,
+        );
+        let string = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b's',
+            None,
+        );
+
+        let mut buf = Vec::new();
+        assert!(hex.render_value_arg(0x2a, &mut buf));
+        assert_eq!(buf, b"2a");
+
+        buf.clear();
+        assert!(pointer.render_value_arg(0x1234, &mut buf));
+        assert_eq!(buf, b"0x1234");
+
+        buf.clear();
+        assert!(!string.render_value_arg(0x1234, &mut buf));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_printf_arg_plan_helpers_cover_gp_and_fp_positions() {
+        let segments = parse_format_string(b"%2$.*1$f %4$*3$s");
+        assert_eq!(
+            positional_printf_arg_plan(&segments),
+            Some(vec![
+                ValueArgKind::Gp,
+                ValueArgKind::Fp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+            ])
+        );
+        assert_eq!(count_printf_args(&segments), 4);
+
+        let sequential = parse_format_string(b"%*.*f %s");
+        assert_eq!(positional_printf_arg_plan(&sequential), None);
+        assert_eq!(count_printf_args(&sequential), 4);
+    }
+
+    #[test]
+    fn test_parse_width_precision() {
+        let (spec, consumed) = parse_format_spec(b"10.5f").unwrap();
+        assert_eq!(consumed, 5);
+        assert_eq!(spec.conversion, b'f');
+        assert_eq!(spec.width, Width::Fixed(10));
+        assert_eq!(spec.precision, Precision::Fixed(5));
+    }
+
+    #[test]
+    fn test_parse_flags() {
+        let (spec, _) = parse_format_spec(b"-+#010d").unwrap();
+        // '-' overrides '0'
+        assert!(spec.flags.left_justify);
+        assert!(spec.flags.force_sign);
+        assert!(spec.flags.alt_form);
+        assert!(!spec.flags.zero_pad); // overridden by '-'
+    }
+
+    #[test]
+    fn test_parse_length_hh() {
+        let (spec, _) = parse_format_spec(b"hhd").unwrap();
+        assert_eq!(spec.length, LengthMod::Hh);
+        assert_eq!(spec.conversion, b'd');
+    }
+
+    #[test]
+    fn test_parse_length_ll() {
+        let (spec, _) = parse_format_spec(b"llu").unwrap();
+        assert_eq!(spec.length, LengthMod::Ll);
+        assert_eq!(spec.conversion, b'u');
+    }
+
+    #[test]
+    fn test_parse_invalid_length_modifier_sanitizes_printf_spec() {
+        // glibc accepts the historical uppercase `L` spelling on `s`/`c` as
+        // the wide `l` form (same as `%ls`). Our parser sanitizes BigL to L
+        // to match. Verified against glibc 2.42 (bd-2g7oyh).
+        let (spec, consumed) =
+            parse_format_spec(b"Ls").expect("glibc accepts %Ls as the wide %ls form");
+        assert_eq!(consumed, 2);
+        assert_eq!(spec.length, LengthMod::L);
+    }
+
+    #[test]
+    fn test_parse_sanitizes_flags_using_generated_route_mask() {
+        let (spec, _) = parse_format_spec(b"+#0s").unwrap();
+        assert!(!spec.flags.force_sign);
+        assert!(!spec.flags.alt_form);
+        assert!(!spec.flags.zero_pad);
+        assert!(!spec.flags.space_sign);
+        assert!(!spec.flags.left_justify);
+    }
+
+    #[test]
+    fn test_parse_star_width() {
+        let (spec, _) = parse_format_spec(b"*d").unwrap();
+        assert_eq!(spec.width, Width::FromArg);
+    }
+
+    #[test]
+    fn test_parse_star_precision() {
+        let (spec, _) = parse_format_spec(b".*f").unwrap();
+        assert_eq!(spec.precision, Precision::FromArg);
+    }
+
+    #[test]
+    fn test_parse_positional_value_width_and_precision() {
+        let (spec, consumed) = parse_format_spec(b"3$*2$.*1$f").unwrap();
+        assert_eq!(consumed, 10);
+        assert_eq!(spec.value_position, Some(3));
+        assert_eq!(spec.width, Width::FromArgPosition(2));
+        assert_eq!(spec.precision, Precision::FromArgPosition(1));
+        assert_eq!(spec.conversion, b'f');
+    }
+
+    #[test]
+    fn test_parse_format_string_segments() {
+        let segments = parse_format_string(b"hello %d world %s!");
+        assert_eq!(segments.len(), 5);
+        assert!(matches!(segments[0], FormatSegment::Literal(b"hello ")));
+        assert!(matches!(&segments[1], FormatSegment::Spec(s) if s.conversion == b'd'));
+        assert!(matches!(segments[2], FormatSegment::Literal(b" world ")));
+        assert!(matches!(&segments[3], FormatSegment::Spec(s) if s.conversion == b's'));
+        assert!(matches!(segments[4], FormatSegment::Literal(b"!")));
+    }
+
+    #[test]
+    fn test_parse_percent_escape() {
+        let segments = parse_format_string(b"100%%");
+        assert_eq!(segments.len(), 2);
+        assert!(matches!(segments[0], FormatSegment::Literal(b"100")));
+        assert!(matches!(segments[1], FormatSegment::Percent));
+    }
+
+    #[test]
+    fn test_parse_format_string_positional_segments() {
+        let segments = parse_format_string(b"%2$s is %1$d");
+        assert_eq!(segments.len(), 3);
+        assert!(
+            matches!(&segments[0], FormatSegment::Spec(s) if s.value_position == Some(2) && s.conversion == b's')
+        );
+        assert!(matches!(segments[1], FormatSegment::Literal(b" is ")));
+        assert!(
+            matches!(&segments[2], FormatSegment::Spec(s) if s.value_position == Some(1) && s.conversion == b'd')
+        );
+    }
+
+    #[test]
+    fn test_format_signed_basic() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(42, &spec, &mut buf);
+        assert_eq!(&buf, b"42");
+    }
+
+    #[test]
+    fn test_format_signed_negative() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(-123, &spec, &mut buf);
+        assert_eq!(&buf, b"-123");
+    }
+
+    #[test]
+    fn test_format_signed_width_pad() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::Fixed(8),
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(42, &spec, &mut buf);
+        assert_eq!(&buf, b"      42");
+    }
+
+    #[test]
+    fn test_format_signed_zero_pad() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                zero_pad: true,
+                ..Default::default()
+            },
+            width: Width::Fixed(8),
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(42, &spec, &mut buf);
+        assert_eq!(&buf, b"00000042");
+    }
+
+    #[test]
+    fn test_format_signed_left_justify() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                left_justify: true,
+                ..Default::default()
+            },
+            width: Width::Fixed(8),
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(42, &spec, &mut buf);
+        assert_eq!(&buf, b"42      ");
+    }
+
+    #[test]
+    fn test_format_unsigned_hex() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                alt_form: true,
+                ..Default::default()
+            },
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'x',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_unsigned(255, &spec, &mut buf);
+        assert_eq!(&buf, b"0xff");
+    }
+
+    #[test]
+    fn test_format_unsigned_octal() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                alt_form: true,
+                ..Default::default()
+            },
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'o',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_unsigned(8, &spec, &mut buf);
+        assert_eq!(&buf, b"010");
+    }
+
+    #[test]
+    fn test_format_str_basic() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b's',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_str(b"hello", &spec, &mut buf);
+        assert_eq!(&buf, b"hello");
+    }
+
+    #[test]
+    fn test_format_str_precision_truncate() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(3),
+            length: LengthMod::None,
+            conversion: b's',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_str(b"hello", &spec, &mut buf);
+        assert_eq!(&buf, b"hel");
+    }
+
+    #[test]
+    fn test_format_char() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::Fixed(5),
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'c',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_char(b'A', &spec, &mut buf);
+        assert_eq!(&buf, b"    A");
+    }
+
+    #[test]
+    fn test_format_pointer_null() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'p',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_pointer(0, &spec, &mut buf);
+        assert_eq!(&buf, b"(nil)");
+    }
+
+    #[test]
+    fn test_format_pointer_nonzero() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'p',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_pointer(0xDEAD, &spec, &mut buf);
+        assert_eq!(&buf, b"0xdead");
+    }
+
+    #[test]
+    fn test_format_float_basic() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(core::f64::consts::PI, &spec, &mut buf);
+        let s = String::from_utf8_lossy(&buf);
+        assert!(s.starts_with("3.14"));
+    }
+
+    #[test]
+    fn test_format_float_scaled_fixed_matches_rust() {
+        let mut spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(6),
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+            route: None,
+        };
+        let cases = [
+            (12345.678901_f64, 6usize),
+            (0.1_f64, 6usize),
+            (1.23456789_f64, 6usize),
+            (999.9999995_f64, 6usize),
+            (-0.0000004_f64, 6usize),
+            (-123.456789_f64, 6usize),
+            (1.0_f64 / 3.0_f64, 6usize),
+            (12_345.678901_f64, 3usize),
+        ];
+        let mut buf = Vec::new();
+        for (value, precision) in cases {
+            assert!(
+                rounded_scaled_fixed(value, precision).is_some(),
+                "scaled fixed path should cover value={value} precision={precision}"
+            );
+            spec.precision = Precision::Fixed(precision);
+            buf.clear();
+            format_float(value, &spec, &mut buf);
+            let expected = alloc::format!("{:.prec$}", value, prec = precision);
+            assert_eq!(
+                buf,
+                expected.as_bytes(),
+                "value={value} precision={precision}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_float_nan() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(f64::NAN, &spec, &mut buf);
+        assert_eq!(&buf, b"nan");
+    }
+
+    #[test]
+    fn test_format_float_inf() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(f64::INFINITY, &spec, &mut buf);
+        assert_eq!(&buf, b"inf");
+    }
+
+    #[test]
+    fn test_hex_float_default_precision_is_exact() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(1.5, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.8p+0");
+
+        buf.clear();
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1p+0");
+
+        buf.clear();
+        format_float(0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x0p+0");
+    }
+
+    #[test]
+    fn test_hex_float_alt_form_keeps_decimal_point() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                alt_form: true,
+                ..FormatFlags::default()
+            },
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.p+0");
+
+        buf.clear();
+        format_float(0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x0.p+0");
+    }
+
+    #[test]
+    fn test_hex_float_explicit_precision_rounds_nibbles() {
+        let mut spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(1),
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+
+        // 1.09375 == 0x1.18p+0. At one hex digit this is an exact
+        // half-way case; ties round to even, so the odd retained
+        // nibble 1 rounds up to 2.
+        format_float(1.09375, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.2p+0");
+
+        buf.clear();
+        // 1.03125 == 0x1.08p+0. The retained nibble is even, so the
+        // half-way discarded 8 does not round up.
+        format_float(1.03125, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1.0p+0");
+
+        buf.clear();
+        spec.conversion = b'A';
+        format_float(0.1, &spec, &mut buf);
+        assert_eq!(&buf, b"0X1.AP-4");
+
+        buf.clear();
+        spec.conversion = b'a';
+        spec.precision = Precision::Fixed(0);
+        format_float(1.5, &spec, &mut buf);
+        assert_eq!(&buf, b"0x2p+0");
+
+        buf.clear();
+        format_float(1.9999999999999998, &spec, &mut buf);
+        assert_eq!(&buf, b"0x2p+0");
+    }
+
+    #[test]
+    fn test_hex_float_zero_padding_keeps_prefix_before_zeroes() {
+        let mut spec = FormatSpec {
+            flags: FormatFlags {
+                zero_pad: true,
+                ..FormatFlags::default()
+            },
+            width: Width::Fixed(20),
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'a',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x000000000000001p+0");
+
+        buf.clear();
+        format_float(-1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"-0x00000000000001p+0");
+
+        buf.clear();
+        spec.flags.force_sign = true;
+        spec.conversion = b'A';
+        format_float(1.0, &spec, &mut buf);
+        assert_eq!(&buf, b"+0X00000000000001P+0");
+
+        buf.clear();
+        spec.flags.force_sign = false;
+        spec.flags.alt_form = true;
+        spec.precision = Precision::Fixed(0);
+        spec.conversion = b'a';
+        format_float(0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"0x00000000000000.p+0");
+    }
+
+    #[test]
+    fn test_hex_float_glibc_edge_cases() {
+        let mut spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'a',
+            None,
+        );
+        let mut buf = Vec::new();
+
+        format_float(-0.0, &spec, &mut buf);
+        assert_eq!(&buf, b"-0x0p+0");
+
+        buf.clear();
+        format_float(f64::from_bits(1), &spec, &mut buf);
+        assert_eq!(&buf, b"0x0.0000000000001p-1022");
+
+        buf.clear();
+        spec.precision = Precision::Fixed(0);
+        format_float(f64::from_bits(1), &spec, &mut buf);
+        assert_eq!(&buf, b"0x0p-1022");
+
+        buf.clear();
+        format_float(f64::MIN_POSITIVE, &spec, &mut buf);
+        assert_eq!(&buf, b"0x1p-1022");
+
+        buf.clear();
+        format_float(f64::from_bits(0x7fefffffffffffff), &spec, &mut buf);
+        assert_eq!(&buf, b"0x2p+1023");
+    }
+
+    #[test]
+    fn test_format_float_bankers_rounding() {
+        // IEEE 754 round-half-to-even (banker's rounding) test.
+        // 2.5 -> 2 (nearest even), 3.5 -> 4 (nearest even), 1.5 -> 2 (nearest even)
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(0),
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+            route: None,
+        };
+
+        let mut buf = Vec::new();
+        format_float(2.5, &spec, &mut buf);
+        assert_eq!(&buf, b"2", "2.5 should round to 2 (nearest even)");
+
+        buf.clear();
+        format_float(3.5, &spec, &mut buf);
+        assert_eq!(&buf, b"4", "3.5 should round to 4 (nearest even)");
+
+        buf.clear();
+        format_float(1.5, &spec, &mut buf);
+        assert_eq!(&buf, b"2", "1.5 should round to 2 (nearest even)");
+
+        buf.clear();
+        format_float(-2.5, &spec, &mut buf);
+        assert_eq!(&buf, b"-2", "-2.5 should round to -2 (nearest even)");
+
+        buf.clear();
+        format_float(-3.5, &spec, &mut buf);
+        assert_eq!(&buf, b"-4", "-3.5 should round to -4 (nearest even)");
+
+        // Confirm non-half values round normally
+        buf.clear();
+        format_float(2.4, &spec, &mut buf);
+        assert_eq!(&buf, b"2", "2.4 rounds to 2");
+
+        buf.clear();
+        format_float(2.6, &spec, &mut buf);
+        assert_eq!(&buf, b"3", "2.6 rounds to 3");
+    }
+
+    #[test]
+    fn test_precision_zero_int() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(0),
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(0, &spec, &mut buf);
+        assert_eq!(&buf, b""); // POSIX: precision 0 with value 0 produces no digits
+    }
+
+    #[test]
+    fn test_force_sign() {
+        let spec = FormatSpec {
+            flags: FormatFlags {
+                force_sign: true,
+                ..Default::default()
+            },
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(42, &spec, &mut buf);
+        assert_eq!(&buf, b"+42");
+    }
+
+    #[test]
+    fn test_i64_min() {
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::None,
+            length: LengthMod::None,
+            conversion: b'd',
+            value_position: None,
+            route: None,
+        };
+        let mut buf = Vec::new();
+        format_signed(i64::MIN, &spec, &mut buf);
+        assert_eq!(&buf, b"-9223372036854775808");
+    }
+
+    // Regression for bd-ju24y. Values whose rounded %f-style representation
+    // has more integer digits than the %g precision must switch to %e style,
+    // matching glibc. Before the fix, format_g(999999.5, 6, _, _) returned
+    // "1000000" (7 digits, violating the precision-6 contract); now it
+    // returns "1e+06".
+    #[test]
+    fn test_g_rounding_overflow_switches_to_e() {
+        assert_eq!(format_g(999999.5, 6, false, false), "1e+06");
+        // Control: values that don't cross a decade stay in %f.
+        assert_eq!(format_g(99999.5, 6, false, false), "99999.5");
+        assert_eq!(format_g(9999.5, 6, false, false), "9999.5");
+        // Uppercase variant.
+        assert_eq!(format_g(999999.5, 6, true, false), "1E+06");
+    }
+
+    #[test]
+    fn test_g_scientific_reuse_preserves_fixed_style_boundaries() {
+        assert_eq!(format_g(12345.678901, 6, false, false), "12345.7");
+        assert_eq!(format_g(-12345.678901, 6, false, false), "-12345.7");
+        assert_eq!(format_g(12345.678901, 6, false, true), "12345.7");
+        assert_eq!(format_g(0.0001234, 6, false, false), "0.0001234");
+        assert_eq!(format_g(0.0001234, 6, false, true), "0.000123400");
+        assert_eq!(format_g(100.0, 3, false, true), "100.");
+    }
+
+    // Regression for the %e digit-accuracy bug: the mantissa was recomputed
+    // as value / 10^exp, which lost low-order bits. High-precision %e must
+    // emit the same correctly-rounded digits glibc does.
+    #[test]
+    fn test_e_high_precision_exact_digits() {
+        assert_eq!(
+            format_e(123456789.0, 17, false, false),
+            "1.23456789000000000e+08"
+        );
+        assert_eq!(
+            format_e(0.1, 20, false, false),
+            "1.00000000000000005551e-01"
+        );
+        // Basic cases and exponent formatting still hold.
+        assert_eq!(format_e(0.0, 2, false, false), "0.00e+00");
+        assert_eq!(format_e(1.0, 0, false, false), "1e+00");
+        assert_eq!(format_e(1.5e300, 1, false, false), "1.5e+300");
+        assert_eq!(format_e(2.0e-9, 0, true, false), "2E-09");
+        // Rounding carry across a decade (9.99 -> 1.0e1).
+        assert_eq!(format_e(9.96, 1, false, false), "1.0e+01");
+        // alt_form keeps a decimal point at precision 0.
+        assert_eq!(format_e(7.0, 0, false, true), "7.e+00");
+    }
+
+    // Regression for the %#g decimal-point bug: C11 7.21.6.1 requires the
+    // alternate form to always keep a decimal point even when the precision
+    // leaves zero fractional digits.
+    #[test]
+    fn test_hash_g_keeps_decimal_point() {
+        assert_eq!(format_g(3.0, 0, false, true), "3.");
+        assert_eq!(format_g(3.0, 1, false, true), "3.");
+        assert_eq!(format_g(100.0, 3, false, true), "100.");
+        // Without alt_form trailing zeros are still stripped.
+        assert_eq!(format_g(3.0, 1, false, false), "3");
+        // alt_form with fractional digits keeps the trailing zeros too.
+        assert_eq!(format_g(3.0, 3, false, true), "3.00");
+    }
+
+    // Regression for bd-h7ede. Rust's core::fmt stores precision as u16 and
+    // panics ("Formatting argument out of range") for precision >= 65536.
+    // format_float must cap precision before it reaches format!/%.*f, or any
+    // C caller with a format like `%.99999f` would abort the process.
+    #[test]
+    fn huge_precision_and_width_are_rendered_in_full() {
+        let spec = |w: Width, p: usize, conv: u8, flags: FormatFlags| {
+            FormatSpec::new(flags, w, Precision::Fixed(p), LengthMod::None, conv, None)
+        };
+        let plain = FormatFlags::default();
+        // %.70000f of 1.5 is "1." followed by "5" and 69999 zeros (past the
+        // old 65535 cap, which stopped the output there).
+        let mut buf = Vec::new();
+        format_float(1.5, &spec(Width::None, 70_000, b'f', plain), &mut buf);
+        assert_eq!(buf.len(), 70_002);
+        assert_eq!(&buf[..3], b"1.5");
+        assert!(buf[3..].iter().all(|&b| b == b'0'));
+        // Above EXACT_FLOAT_DIGITS the digits match the exact rendering padded
+        // with zeros, before the exponent for %e.
+        let mut exact = Vec::new();
+        format_float(0.1, &spec(Width::None, 1_100, b'e', plain), &mut exact);
+        let mut huge = Vec::new();
+        format_float(0.1, &spec(Width::None, 1_300, b'e', plain), &mut huge);
+        let e = exact.iter().position(|&b| b == b'e').unwrap();
+        assert_eq!(&huge[..e], &exact[..e]);
+        assert!(huge[e..e + 200].iter().all(|&b| b == b'0'));
+        assert_eq!(&huge[e + 200..], &exact[e..]);
+        // Zero padding goes after the sign; widths past 1 MiB are not cut.
+        let zero = FormatFlags {
+            zero_pad: true,
+            ..FormatFlags::default()
+        };
+        let mut padded = Vec::new();
+        format_float(
+            -1.0,
+            &spec(Width::Fixed(1_300), 1_200, b'f', zero),
+            &mut padded,
+        );
+        assert_eq!(padded.len(), 1_300);
+        assert_eq!(&padded[..3], b"-00");
+        let mut wide = Vec::new();
+        format_signed(7, &spec(Width::Fixed(2_000_000), 0, b'd', plain), &mut wide);
+        assert_eq!(wide.len(), 2_000_000);
+    }
+
+    #[test]
+    fn format_float_does_not_panic_on_huge_precision() {
+        // Exercise %f, %e, %g, %a at prec = 65536 (the first panicking value)
+        // and at prec = usize::MAX / 2 (pathological) — neither must panic.
+        for prec in [65_536usize, 100_000, usize::MAX / 2] {
+            for conv in *b"fegaFEGA" {
+                let spec = FormatSpec::new(
+                    FormatFlags::default(),
+                    Width::None,
+                    Precision::Fixed(prec),
+                    LengthMod::None,
+                    conv,
+                    None,
+                );
+                let mut buf = Vec::new();
+                // Must return without panicking. Output is allowed to be
+                // truncated — we only pin the no-abort contract.
+                format_float(1.5_f64, &spec, &mut buf);
+                assert!(
+                    !buf.is_empty(),
+                    "%{}: format_float produced empty output at prec={prec}",
+                    conv as char
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn format_float_still_honors_precision_up_to_cap() {
+        // At prec = 65535 (the cap) the formatter must still produce the
+        // requested number of fractional digits — capping to 65535 preserves
+        // currently-working behavior.
+        let spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::Fixed(65_535),
+            LengthMod::None,
+            b'f',
+            None,
+        );
+        let mut buf = Vec::new();
+        format_float(1.0_f64, &spec, &mut buf);
+        // "1." + 65535 '0's = 65537 bytes.
+        assert_eq!(buf.len(), 65_537);
+        assert_eq!(&buf[..2], b"1.");
+    }
+
+    /// pi as `long double`, the x87 bytes a C compiler stores for the
+    /// `3.14159265358979323846264338327950288L` literal.
+    const X87_PI: [u8; 10] = [0x35, 0xc2, 0x68, 0x21, 0xa2, 0xda, 0x0f, 0xc9, 0x00, 0x40];
+
+    fn spec_of(fmt: &[u8]) -> FormatSpec {
+        match parse_format_string(fmt).iter().next() {
+            Some(FormatSegment::Spec(spec)) => *spec,
+            other => panic!("{fmt:?} did not parse to a single spec: {other:?}"),
+        }
+    }
+
+    /// The FormatSpec -> `float128::FmtSpec` mapping, against strings READ OFF
+    /// THE RUNNING GLIBC rather than against another call to the code under
+    /// test. A mapping that swapped `plus` for `space`, or dropped the width,
+    /// would satisfy any self-comparison and fail every line here.
+    #[test]
+    fn render_long_double_arg_carries_the_flags_width_and_precision() {
+        for (fmt, expected) in [
+            (&b"%.25Lf"[..], &b"3.1415926535897932385128090"[..]),
+            (b"%Lf", b"3.141593"),
+            (b"%+.20Lg", b"+3.1415926535897932385"),
+            (b"%#.0Lf", b"3."),
+            (b"%-20.5Le", b"3.14159e+00         "),
+            (b"%La", b"0xc.90fdaa22168c235p-2"),
+            (b"%.3La", b"0xc.910p-2"),
+            (b"%LA", b"0XC.90FDAA22168C235P-2"),
+        ] {
+            let mut buf = Vec::new();
+            assert!(
+                spec_of(fmt).render_long_double_arg(&X87_PI, &mut buf),
+                "{fmt:?} was not classified as a long double conversion"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&buf),
+                String::from_utf8_lossy(expected),
+                "{}",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
+
+    /// The refusal path. `render_long_double_arg` is reached from the ABI on the
+    /// strength of a classification, and the ten bytes it is handed are read
+    /// through a pointer that only an X87 argument slot supplies — so a spec
+    /// that is not a long double conversion must be declined, not rendered from
+    /// whatever those bytes happen to be. `%Ld` is the case that matters: `L` on
+    /// a non-float conversion is Gp, not X87.
+    #[test]
+    fn render_long_double_arg_declines_everything_that_is_not_x87() {
+        for fmt in [
+            &b"%f"[..],
+            b"%.2f",
+            b"%lf",
+            b"%Ld",
+            b"%Lu",
+            b"%Ls",
+            b"%d",
+            b"%s",
+        ] {
+            let mut buf = Vec::new();
+            assert!(
+                !spec_of(fmt).render_long_double_arg(&X87_PI, &mut buf),
+                "{} was accepted as a long double conversion",
+                String::from_utf8_lossy(fmt)
+            );
+            assert!(
+                buf.is_empty(),
+                "{} was declined but still wrote {:?}",
+                String::from_utf8_lossy(fmt),
+                String::from_utf8_lossy(&buf)
+            );
+        }
+    }
+}

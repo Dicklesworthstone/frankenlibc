@@ -1,0 +1,7 @@
+
+running 2 tests
+test native_pathname_got_protocol ... ok
+test native_pathname_plt_protocol ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 2.96s
+

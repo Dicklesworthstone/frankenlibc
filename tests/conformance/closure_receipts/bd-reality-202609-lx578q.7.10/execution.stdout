@@ -1,0 +1,12 @@
+
+running 7 tests
+test binary128_inverse_trig_domain_errno_and_invalid ... ok
+test binary128_inverse_trig_nan_flags_preserve_errno ... ok
+test binary128_inverse_trig_valid_inputs_preserve_errno ... ok
+test domain_aliases_share_infinity_errno ... ok
+test domain_controls_preserve_existing_errno ... ok
+test infinite_domain_errors_set_errno_in_both_widths ... ok
+test math_errno_matches_glibc ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,29 @@
+
+running 24 tests
+test alloc_validate_free_lifecycle ... ok
+test concurrent_mixed_workload ... ok
+test concurrent_read_validate_live_pointer ... ok
+test concurrent_validate_on_shared_pipeline ... ok
+test double_free_detected ... ok
+test dual_key_csprng_canary_domain_separation_e2e ... ok
+test foreign_pointer_free_detected ... ok
+test foreign_pointer_is_allowed_with_unknown_state ... ok
+test large_allocation_validated ... ok
+test low_addresses_validate_as_null_or_invalid ... ok
+test mixed_workload_deterministic ... ok
+test multiple_allocations_independent ... ok
+test multiple_foreign_addresses_all_recognized ... ok
+test null_free_returns_invalid ... ok
+test null_pointer_validates_as_null ... ok
+test pipeline_metrics_after_workload ... ok
+test rapid_alloc_free_cycles ... ok
+test safety_state_lattice_monotonicity ... ok
+test small_allocation_validated ... ok
+test smoke_script_wires_all_canary_cases_and_audit_emission ... ok
+test tls_cache_hits_on_repeated_validation ... ok
+test validation_latency_within_budget ... ok
+test validation_outcome_abstraction_fields ... ok
+test warm_tls_cache_detects_tail_and_header_corruption_e2e ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+

@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.32",
+  "contract": {
+    "behavior": "Nineteen native byte-ctype imports, real PLT/GOT function and ctype.h macro behavior, and exact family-specific caller-relative symbol versions",
+    "acceptance_sha256": "650b09bd0117a3c54f2f06dcb276b669e4a2b03b29025ee8518bb4b755793fd2",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/dlfcn_memory.rs",
+      "crates/frankenlibc-abi/src/ctype_abi.rs",
+      "crates/frankenlibc-abi/src/dlfcn_lookup.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs",
+      "crates/frankenlibc-abi/tests/ctype_abi_test.rs",
+      "crates/frankenlibc-abi/tests/conformance_strtol_family.rs",
+      "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs",
+      "crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs",
+      "tests/integration/fixture_native_runtime_driver.c"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/ctype_abi.rs": "3bb540bf3076714aac201ac2b74cf1b7064d3479750789827c1a0d48c9d607d9",
+        "crates/frankenlibc-abi/src/dlfcn_lookup.rs": "12b7043ecd5c0adff87a6ec5c9909d05a85bd7de60c3737ce79cfd970966d3e6",
+        "crates/frankenlibc-abi/src/dlfcn_memory.rs": "ec15b06ac96541289c659e05b8227f11201d3170e91daaca5763fe779e0d24f2",
+        "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
+        "crates/frankenlibc-abi/tests/conformance_strtol_family.rs": "06891e185f7904e94d2459150798b1e9996e1f11fa4fbf3553c1fb8711955800",
+        "crates/frankenlibc-abi/tests/ctype_abi_test.rs": "b61ac52548d667551600fe422cbaf6117da37686a670bee36bc5eb60b0531986",
+        "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs": "7e72bbdf0450e433d357d8ade78558ba54876d21b58929860898f6955aaa0cde",
+        "crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs": "b6addd076c437f5153d3a9c602ed8e41f0c59d9de7ac2abc6d6b72099d8d019c",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "tests/integration/fixture_native_runtime_driver.c": "fe9545d2ed8c05879a720379eadf7b5d8dc1653f6e3f19cc14fa3845b2f2fb30"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-05T07:17:25.340189916Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/039c15b9ba89a1e2/out/conformance_diff_ctype-039c15b9ba89a1e2",
+        "native_ctype_",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_diff_ctype",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/039c15b9ba89a1e2/out/conformance_diff_ctype-039c15b9ba89a1e2"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "native_ctype_got_protocol",
+        "native_ctype_plt_protocol"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_diff_ctype",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:58:53.689899+00:00",
+    "finished_at": "2026-11-12T04:58:53.908338+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "70c7d13d5a9e7aee31a00011caf7c1926f09a22faadee59ad4df477fc8f1d24f",
+    "stderr_sha256": "cb90005141d5b96203a53c77858fd07c60f3f2abd12724240477f4a8ff143e55",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/039c15b9ba89a1e2/out/conformance_diff_ctype-039c15b9ba89a1e2",
+      "native_ctype_",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:58:53.928750+00:00",
+    "finished_at": "2026-11-12T04:58:54.424264+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "8d6c046a3a45c1053fc5f02bf928c358127b6290da6e23a3f34fcda7a6d4b5ef",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/039c15b9ba89a1e2/out/conformance_diff_ctype-039c15b9ba89a1e2": "5b6906180bf8c142d146252620da223ffdb9285b008b25c0223805614ce78858"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/039c15b9ba89a1e2/out/conformance_diff_ctype-039c15b9ba89a1e2": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/ctype_abi.rs": "3bb540bf3076714aac201ac2b74cf1b7064d3479750789827c1a0d48c9d607d9",
+    "crates/frankenlibc-abi/src/dlfcn_lookup.rs": "12b7043ecd5c0adff87a6ec5c9909d05a85bd7de60c3737ce79cfd970966d3e6",
+    "crates/frankenlibc-abi/src/dlfcn_memory.rs": "ec15b06ac96541289c659e05b8227f11201d3170e91daaca5763fe779e0d24f2",
+    "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
+    "crates/frankenlibc-abi/tests/conformance_strtol_family.rs": "06891e185f7904e94d2459150798b1e9996e1f11fa4fbf3553c1fb8711955800",
+    "crates/frankenlibc-abi/tests/ctype_abi_test.rs": "b61ac52548d667551600fe422cbaf6117da37686a670bee36bc5eb60b0531986",
+    "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs": "7e72bbdf0450e433d357d8ade78558ba54876d21b58929860898f6955aaa0cde",
+    "crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs": "b6addd076c437f5153d3a9c602ed8e41f0c59d9de7ac2abc6d6b72099d8d019c",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "tests/integration/fixture_native_runtime_driver.c": "fe9545d2ed8c05879a720379eadf7b5d8dc1653f6e3f19cc14fa3845b2f2fb30"
+  },
+  "executable_sha256": "5b6906180bf8c142d146252620da223ffdb9285b008b25c0223805614ce78858"
+}

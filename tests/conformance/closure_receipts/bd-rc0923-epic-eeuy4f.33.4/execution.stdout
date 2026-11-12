@@ -1,0 +1,10 @@
+
+running 5 tests
+test snprintf_chk_maxlen_over_real_buffer_aborts_child_process ... ok
+test snprintf_chk_truncates ... ok
+test snprintf_chk_zero_maxlen ... ok
+test vsnprintf_chk_direct_va_list ... ok
+test vsnprintf_chk_safe ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 158 filtered out; finished in 0.21s
+

@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.48",
+  "contract": {
+    "behavior": "Make GitHub CI pipeline failures propagate through eight declared Bash workflow defaults, preserving all original bodies and gates",
+    "acceptance_sha256": "0a4ff7de5b3bb926e9f46d4dbcd426a148dae2652b0339f3c5be45c4119d877c",
+    "claim_class": "source",
+    "evidence_class": "source",
+    "source": {
+      "commit": "f5dcc0877052e070d14e4f6d11c6cec7cd7836fd",
+      "files": {
+        ".github/workflows/c11-thread-cancellation.yml": "d85e9062578d8e2a1c5fec18f1f1c1fa0df05d78ca3b21e32dcdcad8435d823b",
+        ".github/workflows/legacy-host-dns.yml": "301e1ea2a54b69c48c55cf3cce1203f0bbb600b91ddc5872cdaed73dc106be07",
+        ".github/workflows/locale-objects.yml": "5e8d1bd21a50dcfe50be089aab0a12b5763093fd98651ccfe2c22ba35c38ca9f",
+        ".github/workflows/socket-address-safety.yml": "6dae063ef92f6d2b14050d1c5f4fdb9d170adf407a060d3c5d5c682d536b3280",
+        ".github/workflows/socket-message-safety.yml": "ab4c77958f01a49d4e4c15e70ae95a11a767e3b02712b7028d5d17d925dd3d92",
+        ".github/workflows/socket-option-contracts.yml": "bdbb806c5a5c64b38bbe1c3738b24f17008692d3ddcdabd890bbb288ffe26b86",
+        ".github/workflows/stdio-file-layout.yml": "c5ab57873308fbdbaf6b958d67154450041b4118ee60b87b40c29e0df1e9f91f",
+        ".github/workflows/vectored-io-safety.yml": "a20be83f0f49741d83eee98ad72245afd284e6e3b67038a03a87eff177652583",
+        "scripts/check_pipeline_exit_status.sh": "947c9786a914df152ec1756f87ff751611b192d56729f87a28611447e5c09c32"
+      }
+    },
+    "behavior_paths": [
+      ".github/workflows/c11-thread-cancellation.yml",
+      ".github/workflows/legacy-host-dns.yml",
+      ".github/workflows/locale-objects.yml",
+      ".github/workflows/socket-address-safety.yml",
+      ".github/workflows/socket-message-safety.yml",
+      ".github/workflows/socket-option-contracts.yml",
+      ".github/workflows/stdio-file-layout.yml",
+      ".github/workflows/vectored-io-safety.yml"
+    ],
+    "test_paths": [
+      "scripts/check_pipeline_exit_status.sh"
+    ],
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "source",
+      "features": []
+    },
+    "not_before": "2026-11-03T11:58:33.123692+00:00",
+    "gate": {
+      "command": [
+        "python3",
+        "-c",
+        "import hashlib, json, pathlib, re, subprocess, sys, yaml\n\nworkflows = [\n    '.github/workflows/c11-thread-cancellation.yml',\n    '.github/workflows/legacy-host-dns.yml',\n    '.github/workflows/locale-objects.yml',\n    '.github/workflows/socket-address-safety.yml',\n    '.github/workflows/socket-message-safety.yml',\n    '.github/workflows/socket-option-contracts.yml',\n    '.github/workflows/stdio-file-layout.yml',\n    '.github/workflows/vectored-io-safety.yml',\n]\ninputs = {w: hashlib.sha256(pathlib.Path(w).read_bytes()).hexdigest() for w in workflows}\ninputs['scripts/check_pipeline_exit_status.sh'] = hashlib.sha256(\n    pathlib.Path('scripts/check_pipeline_exit_status.sh').read_bytes()\n).hexdigest()\nsyntax_blocks = 0\npipeline_cases = 0\nfor name in workflows:\n    doc = yaml.safe_load(pathlib.Path(name).read_text())\n    defaults = doc.get('defaults')\n    assert defaults == {'run': {'shell': 'bash'}}, (name, defaults)\n    for job, body in doc.get('jobs', {}).items():\n        for idx, step in enumerate(body.get('steps', [])):\n            if 'run' not in step:\n                continue\n            syn = subprocess.run(['bash', '-n'], input=step['run'], capture_output=True, text=True)\n            assert syn.returncode == 0, (name, job, idx, syn.stderr)\n            syntax_blocks += 1\n    explicit = ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail']\n    for tag, cmd, want in [\n        ('configured-failure', explicit + ['-c', \"bash -c 'printf upstream-evidence; exit 7' | tee\"], 7),\n        ('configured-success', explicit + ['-c', \"bash -c 'printf upstream-evidence; exit 0' | tee\"], 0),\n        ('implicit-masking-negative', ['bash', '--noprofile', '--norc', '-e', '-c', \"bash -c 'printf upstream-evidence; exit 7' | tee\"], 0),\n    ]:\n        p = subprocess.run(cmd, capture_output=True, text=True)\n        assert p.returncode == want and p.stdout == 'upstream-evidence' and not p.stderr, (name, tag, p.returncode)\n        pipeline_cases += 1\np = subprocess.run(['bash', 'scripts/check_pipeline_exit_status.sh'], capture_output=True, text=True)\nprint(p.stdout, flush=True)\nsys.stderr.write(p.stderr)\nassert p.returncode == 0 and re.search(r'findings\\s*:\\s*0\\b', p.stdout)\nscanned = int(re.search(r'files scanned:\\s*(\\d+)', p.stdout).group(1))\nassert scanned > 0 and len(workflows) == 8 and syntax_blocks == 53 and pipeline_cases == 24\nfor name, digest in inputs.items():\n    assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == digest, name\nprint('BASH_DEFAULTS_VERIFIED workflows=8 pipeline_cases=24', flush=True)\nprint('BASH_SYNTAX_BLOCKS', syntax_blocks, flush=True)\nprint('WORKFLOW_INPUTS_AND_CHECKER', len(inputs), flush=True)\n"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "expected_stdout": [
+        "findings     : 0",
+        "PASS: no pipeline exit-status traps found.",
+        "BASH_DEFAULTS_VERIFIED workflows=8 pipeline_cases=24",
+        "BASH_SYNTAX_BLOCKS 53",
+        "WORKFLOW_INPUTS_AND_CHECKER 9"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": null,
+  "execution": {
+    "command": [
+      "python3",
+      "-c",
+      "import hashlib, json, pathlib, re, subprocess, sys, yaml\n\nworkflows = [\n    '.github/workflows/c11-thread-cancellation.yml',\n    '.github/workflows/legacy-host-dns.yml',\n    '.github/workflows/locale-objects.yml',\n    '.github/workflows/socket-address-safety.yml',\n    '.github/workflows/socket-message-safety.yml',\n    '.github/workflows/socket-option-contracts.yml',\n    '.github/workflows/stdio-file-layout.yml',\n    '.github/workflows/vectored-io-safety.yml',\n]\ninputs = {w: hashlib.sha256(pathlib.Path(w).read_bytes()).hexdigest() for w in workflows}\ninputs['scripts/check_pipeline_exit_status.sh'] = hashlib.sha256(\n    pathlib.Path('scripts/check_pipeline_exit_status.sh').read_bytes()\n).hexdigest()\nsyntax_blocks = 0\npipeline_cases = 0\nfor name in workflows:\n    doc = yaml.safe_load(pathlib.Path(name).read_text())\n    defaults = doc.get('defaults')\n    assert defaults == {'run': {'shell': 'bash'}}, (name, defaults)\n    for job, body in doc.get('jobs', {}).items():\n        for idx, step in enumerate(body.get('steps', [])):\n            if 'run' not in step:\n                continue\n            syn = subprocess.run(['bash', '-n'], input=step['run'], capture_output=True, text=True)\n            assert syn.returncode == 0, (name, job, idx, syn.stderr)\n            syntax_blocks += 1\n    explicit = ['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail']\n    for tag, cmd, want in [\n        ('configured-failure', explicit + ['-c', \"bash -c 'printf upstream-evidence; exit 7' | tee\"], 7),\n        ('configured-success', explicit + ['-c', \"bash -c 'printf upstream-evidence; exit 0' | tee\"], 0),\n        ('implicit-masking-negative', ['bash', '--noprofile', '--norc', '-e', '-c', \"bash -c 'printf upstream-evidence; exit 7' | tee\"], 0),\n    ]:\n        p = subprocess.run(cmd, capture_output=True, text=True)\n        assert p.returncode == want and p.stdout == 'upstream-evidence' and not p.stderr, (name, tag, p.returncode)\n        pipeline_cases += 1\np = subprocess.run(['bash', 'scripts/check_pipeline_exit_status.sh'], capture_output=True, text=True)\nprint(p.stdout, flush=True)\nsys.stderr.write(p.stderr)\nassert p.returncode == 0 and re.search(r'findings\\s*:\\s*0\\b', p.stdout)\nscanned = int(re.search(r'files scanned:\\s*(\\d+)', p.stdout).group(1))\nassert scanned > 0 and len(workflows) == 8 and syntax_blocks == 53 and pipeline_cases == 24\nfor name, digest in inputs.items():\n    assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == digest, name\nprint('BASH_DEFAULTS_VERIFIED workflows=8 pipeline_cases=24', flush=True)\nprint('BASH_SYNTAX_BLOCKS', syntax_blocks, flush=True)\nprint('WORKFLOW_INPUTS_AND_CHECKER', len(inputs), flush=True)\n"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:14:23.750145+00:00",
+    "finished_at": "2026-11-12T06:14:25.538075+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "e827d0d9cd0c063f5bc6ac6b6ebcc55829649b5e5b3a556d29b30816272e99f2",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "artifacts": {},
+  "artifact_files": {},
+  "source_files": {
+    ".github/workflows/c11-thread-cancellation.yml": "d85e9062578d8e2a1c5fec18f1f1c1fa0df05d78ca3b21e32dcdcad8435d823b",
+    ".github/workflows/legacy-host-dns.yml": "301e1ea2a54b69c48c55cf3cce1203f0bbb600b91ddc5872cdaed73dc106be07",
+    ".github/workflows/locale-objects.yml": "5e8d1bd21a50dcfe50be089aab0a12b5763093fd98651ccfe2c22ba35c38ca9f",
+    ".github/workflows/socket-address-safety.yml": "6dae063ef92f6d2b14050d1c5f4fdb9d170adf407a060d3c5d5c682d536b3280",
+    ".github/workflows/socket-message-safety.yml": "ab4c77958f01a49d4e4c15e70ae95a11a767e3b02712b7028d5d17d925dd3d92",
+    ".github/workflows/socket-option-contracts.yml": "bdbb806c5a5c64b38bbe1c3738b24f17008692d3ddcdabd890bbb288ffe26b86",
+    ".github/workflows/stdio-file-layout.yml": "c5ab57873308fbdbaf6b958d67154450041b4118ee60b87b40c29e0df1e9f91f",
+    ".github/workflows/vectored-io-safety.yml": "a20be83f0f49741d83eee98ad72245afd284e6e3b67038a03a87eff177652583",
+    "scripts/check_pipeline_exit_status.sh": "947c9786a914df152ec1756f87ff751611b192d56729f87a28611447e5c09c32"
+  },
+  "executable_sha256": "52e0a13e60a981d8c4b6478be2ba5176f69da07948a056bf49cf6f077e30cb41"
+}

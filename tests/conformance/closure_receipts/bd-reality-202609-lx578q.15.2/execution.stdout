@@ -1,0 +1,18 @@
+
+running 13 tests
+test completion_debt_evidence_binds_all_audit_items ... ok
+test paired_all_hardened_prevented ... ok
+test paired_all_strict_detected ... ok
+test paired_entries_define_fuzz_replay_seed_contract ... ok
+test paired_evidence_bundles_joinable ... ok
+test paired_fuzz_replay_seed_keys_are_deterministic ... ok
+test paired_mode_checker_accepts_completion_debt_bindings ... ok
+test paired_no_validation_errors ... ok
+test paired_report_generates_successfully ... ok
+test paired_report_schema_complete ... ok
+test paired_unique_dossier_ids ... ok
+test sq_m0_hsfp_counterexamples_and_confinement_controls ... ok
+test structured_log_contains_paired_mode_evidence ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.68s
+

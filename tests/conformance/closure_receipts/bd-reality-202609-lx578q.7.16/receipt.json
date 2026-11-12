@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.16",
+  "contract": {
+    "behavior": "Stop unbounded source prescans for output-limited multibyte string writes",
+    "acceptance_sha256": "abc11b43f82495ca770f1b4ce9276b6e5be6285393ea38e7c25f6a849984b145",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/wchar_abi.rs": "239385b6ed576334c0f543abab0ec6ba143819cda03b90d26ff7ebd2e6f82757",
+        "crates/frankenlibc-abi/tests/bounded_scan_guard_page_safety.rs": "fb2a37d2ae10cbe59fcdca731cecae39e2fa05af0142b5aa393e1bfe59826713",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/wchar_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/bounded_scan_guard_page_safety.rs"
+    ],
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-03T03:58:39Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/51bef58486124e63/out/bounded_scan_guard_page_safety-51bef58486124e63",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "bounded_scan_guard_page_safety",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/51bef58486124e63/out/bounded_scan_guard_page_safety-51bef58486124e63"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "bounded_scans_never_read_into_guard_page",
+        "capped_parsers_never_read_into_guard_page",
+        "fixture_can_observe_an_over_read",
+        "multibyte_string_write_limits_stop_before_guard",
+        "published_progname_scan_never_reads_into_guard_page",
+        "saturating_bound_is_still_page_clamped",
+        "wide_string_write_limits_stop_before_guard"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "bounded_scan_guard_page_safety",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:58:15.851985+00:00",
+    "finished_at": "2026-11-12T04:58:16.384225+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "041b4675f47161dbcf6d49c767ee7fedb95e6094bed35c955af6683c5991652c",
+    "stderr_sha256": "05aab9237398cd9a193d5b52d441c4c51989ab837b15b12d3722e013cef94010",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/51bef58486124e63/out/bounded_scan_guard_page_safety-51bef58486124e63",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:58:16.397449+00:00",
+    "finished_at": "2026-11-12T04:58:18.961700+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "b0a0a8dd5ea266c22328850853bb58e3961c6a49a46a319201dc1720127017e1",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 7
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/51bef58486124e63/out/bounded_scan_guard_page_safety-51bef58486124e63": "f591b2e9bc5007bb6c3058fc9b0cf2b2ba3cfaf5197564003e95db4688f8c0bf"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/51bef58486124e63/out/bounded_scan_guard_page_safety-51bef58486124e63": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/wchar_abi.rs": "239385b6ed576334c0f543abab0ec6ba143819cda03b90d26ff7ebd2e6f82757",
+    "crates/frankenlibc-abi/tests/bounded_scan_guard_page_safety.rs": "fb2a37d2ae10cbe59fcdca731cecae39e2fa05af0142b5aa393e1bfe59826713",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "f591b2e9bc5007bb6c3058fc9b0cf2b2ba3cfaf5197564003e95db4688f8c0bf"
+}

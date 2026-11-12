@@ -1,0 +1,1558 @@
+//! stdio-synth: Offline synthesis pipeline for printf/scanf tables.
+//!
+//! This crate generates provably-correct dispatch tables for printf/scanf
+//! format parsing, reducing the hand-written 1446 LOC printf.rs and 1026 LOC
+//! scanf.rs to ~200 LOC dispatchers consuming generated tables.
+//!
+//! # Architecture
+//!
+//! 1. `spec/printf_grammar.json` and `spec/scanf_grammar.json` define the
+//!    formal grammars as typed regular trees.
+//!
+//! 2. `printf_compiler.rs` and `scanf_compiler.rs` consume the grammars
+//!    and emit const dispatch tables (`PRINTF_TABLE`, `SCANF_TABLE`).
+//!
+//! 3. `proof.rs` generates SMT-LIB scripts that assert table correctness
+//!    against a reference interpreter. Build fails if cvc5/z3 reports unsat.
+//!
+//! 4. `symmetry.rs` computes the symmetry group acting on (route, invariant)
+//!    lattice using Atiyah-Bott localization, reducing SMT obligations ~250x.
+//!
+//! 5. `compress.rs` emits a quotiented DAG exploiting symmetry.
+
+pub mod grammar;
+pub mod table;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+/// Printf format specification parsed from JSON grammar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrintfGrammar {
+    pub version: u32,
+    pub description: String,
+    pub flag_set: std::collections::HashMap<String, FlagSpec>,
+    pub length_modifier: std::collections::HashMap<String, LengthSpec>,
+    pub conversion: std::collections::HashMap<String, ConversionSpec>,
+}
+
+/// scanf format specification parsed from JSON grammar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanfGrammar {
+    pub version: u32,
+    pub description: String,
+    pub assignment_suppression: bool,
+    pub length_modifier: std::collections::HashMap<String, LengthSpec>,
+    pub conversion: std::collections::HashMap<String, ScanfConversionSpec>,
+    pub scanset: Option<ScansetSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlagSpec {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LengthSpec {
+    pub int_type: Option<String>,
+    pub char_type: Option<String>,
+    pub string_type: Option<String>,
+    pub float_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversionSpec {
+    pub name: String,
+    pub argument: String,
+    pub output: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanfConversionSpec {
+    pub name: String,
+    pub target: String,
+    pub input: String,
+    #[serde(default)]
+    pub skips_leading_whitespace: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScansetSpec {
+    pub supports_negation: bool,
+    pub supports_ranges: bool,
+    pub first_char_may_be_closing_bracket: bool,
+}
+
+/// A single entry in the dispatch table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrintfRoute {
+    /// Handler enum variant.
+    pub handler: PrintfHandler,
+    /// Bitmask of valid length modifiers.
+    pub length_mask: u8,
+    /// Bitmask of valid flags.
+    pub flag_mask: u8,
+    /// Argument category for type checking.
+    pub arg_category: ArgCategory,
+}
+
+/// Printf handler variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum PrintfHandler {
+    Invalid = 0,
+    SignedDecimal,
+    UnsignedOctal,
+    UnsignedDecimal,
+    UnsignedHexLower,
+    UnsignedHexUpper,
+    FloatFixed,
+    FloatExp,
+    FloatGeneral,
+    FloatHex,
+    Character,
+    String,
+    Pointer,
+    StoreCount,
+    LiteralPercent,
+    /// C23 `%b` / `%B` (glibc 2.35+).
+    UnsignedBinaryLower,
+    UnsignedBinaryUpper,
+}
+
+/// Argument category for type dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ArgCategory {
+    None = 0,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    Pointer,
+    String,
+    Store,
+}
+
+/// A single entry in the generated scanf dispatch table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanfRoute {
+    pub handler: ScanfHandler,
+    pub length_mask: u8,
+    pub skips_leading_whitespace: bool,
+    pub arg_category: ScanfArgCategory,
+}
+
+/// Scanf handler variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ScanfHandler {
+    Invalid = 0,
+    SignedDecimal,
+    SignedAutoBase,
+    UnsignedDecimal,
+    UnsignedOctal,
+    UnsignedHex,
+    Float,
+    Character,
+    String,
+    Scanset,
+    CharsConsumed,
+    Pointer,
+    UnsignedBinary,
+}
+
+/// Assignment target category for scanf routes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ScanfArgCategory {
+    None = 0,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    CharBuffer,
+    StringBuffer,
+    Store,
+    Pointer,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoverageArtifact {
+    pub version: u32,
+    pub description: String,
+    pub printf_interactions: Vec<PrintfCoverageInteraction>,
+    pub scanf_interactions: Vec<ScanfCoverageInteraction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymmetryArtifact {
+    pub version: u32,
+    pub description: String,
+    pub printf_classes: Vec<PrintfSymmetryClass>,
+    pub scanf_classes: Vec<ScanfSymmetryClass>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrintfSymmetryClass {
+    pub class_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: PrintfHandler,
+    pub length_mask: u8,
+    pub flag_mask: u8,
+    pub arg_category: ArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanfSymmetryClass {
+    pub class_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: ScanfHandler,
+    pub length_mask: u8,
+    pub skips_leading_whitespace: bool,
+    pub arg_category: ScanfArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompressedArtifact {
+    pub version: u32,
+    pub description: String,
+    pub printf_valid_route_count: u32,
+    pub printf_node_count: u32,
+    pub scanf_valid_route_count: u32,
+    pub scanf_node_count: u32,
+    pub printf_nodes: Vec<PrintfQuotientNode>,
+    pub scanf_nodes: Vec<ScanfQuotientNode>,
+    pub printf_conversion_to_node: BTreeMap<String, u32>,
+    pub scanf_conversion_to_node: BTreeMap<String, u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineManifest {
+    pub version: u32,
+    pub description: String,
+    pub artifacts: Vec<PipelineArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineArtifact {
+    pub path: String,
+    pub sha256: String,
+    pub byte_len: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrintfQuotientNode {
+    pub node_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: PrintfHandler,
+    pub length_mask: u8,
+    pub flag_mask: u8,
+    pub arg_category: ArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanfQuotientNode {
+    pub node_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: ScanfHandler,
+    pub length_mask: u8,
+    pub skips_leading_whitespace: bool,
+    pub arg_category: ScanfArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PrintfCoverageInteraction {
+    pub conversion: String,
+    pub length_modifier: Option<String>,
+    pub flag: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ScanfCoverageInteraction {
+    pub conversion: String,
+    pub length_modifier: Option<String>,
+    pub assignment_suppressed: bool,
+}
+
+impl PrintfGrammar {
+    /// Load grammar from JSON file.
+    pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let content = std::fs::read_to_string(path)?;
+        let raw: serde_json::Value = serde_json::from_str(&content)?;
+
+        // Parse the structured grammar
+        let flag_set = raw
+            .get("flag_set")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let length_modifier = raw
+            .get("length_modifier")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let conversion = raw
+            .get("conversion")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        Ok(Self {
+            version: raw.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            description: raw
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            flag_set,
+            length_modifier,
+            conversion,
+        })
+    }
+}
+
+impl ScanfGrammar {
+    /// Load grammar from JSON file.
+    pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let content = std::fs::read_to_string(path)?;
+        let raw: serde_json::Value = serde_json::from_str(&content)?;
+
+        let length_modifier = raw
+            .get("length_modifier")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let conversion = raw
+            .get("conversion")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let scanset = raw
+            .get("scanset")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        Ok(Self {
+            version: raw.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            description: raw
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            assignment_suppression: raw
+                .get("assignment_suppression")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            length_modifier,
+            conversion,
+            scanset,
+        })
+    }
+}
+
+/// Generate the 256-entry dispatch table for printf.
+pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
+    let mut table = [PrintfRoute {
+        handler: PrintfHandler::Invalid,
+        length_mask: 0,
+        flag_mask: 0,
+        arg_category: ArgCategory::None,
+    }; 256];
+
+    // Map conversion specifiers to table entries
+    for (spec, conv) in &grammar.conversion {
+        if spec.len() != 1 {
+            continue;
+        }
+        let byte = spec.as_bytes()[0] as usize;
+        if byte >= 256 {
+            continue;
+        }
+
+        let (handler, arg_cat) = match conv.name.as_str() {
+            "signed_decimal" | "signed_decimal_alt" => {
+                (PrintfHandler::SignedDecimal, ArgCategory::SignedInt)
+            }
+            "unsigned_octal" => (PrintfHandler::UnsignedOctal, ArgCategory::UnsignedInt),
+            "unsigned_decimal" => (PrintfHandler::UnsignedDecimal, ArgCategory::UnsignedInt),
+            "unsigned_hex_lower" => (PrintfHandler::UnsignedHexLower, ArgCategory::UnsignedInt),
+            "unsigned_hex_upper" => (PrintfHandler::UnsignedHexUpper, ArgCategory::UnsignedInt),
+            "unsigned_binary_lower" => {
+                (PrintfHandler::UnsignedBinaryLower, ArgCategory::UnsignedInt)
+            }
+            "unsigned_binary_upper" => {
+                (PrintfHandler::UnsignedBinaryUpper, ArgCategory::UnsignedInt)
+            }
+            "float_fixed_lower" | "float_fixed_upper" => {
+                (PrintfHandler::FloatFixed, ArgCategory::Float)
+            }
+            "float_exp_lower" | "float_exp_upper" => (PrintfHandler::FloatExp, ArgCategory::Float),
+            "float_general_lower" | "float_general_upper" => {
+                (PrintfHandler::FloatGeneral, ArgCategory::Float)
+            }
+            "float_hex_lower" | "float_hex_upper" => (PrintfHandler::FloatHex, ArgCategory::Float),
+            "character" => (PrintfHandler::Character, ArgCategory::SignedInt),
+            "string" => (PrintfHandler::String, ArgCategory::String),
+            "pointer" => (PrintfHandler::Pointer, ArgCategory::Pointer),
+            "store_count" => (PrintfHandler::StoreCount, ArgCategory::Store),
+            "literal_percent" => (PrintfHandler::LiteralPercent, ArgCategory::None),
+            _ => continue,
+        };
+
+        // Compute valid length modifier mask
+        // Bit layout: 0=hh, 1=h, 2=l, 3=ll, 4=j, 5=z, 6=t, 7=L
+        let length_mask = match handler {
+            PrintfHandler::SignedDecimal
+            | PrintfHandler::UnsignedOctal
+            | PrintfHandler::UnsignedDecimal
+            | PrintfHandler::UnsignedHexLower
+            | PrintfHandler::UnsignedHexUpper
+            | PrintfHandler::UnsignedBinaryLower
+            | PrintfHandler::UnsignedBinaryUpper => {
+                0b0111_1111 // hh, h, l, ll, j, z, t
+            }
+            PrintfHandler::FloatFixed
+            | PrintfHandler::FloatExp
+            | PrintfHandler::FloatGeneral
+            | PrintfHandler::FloatHex => {
+                0b1000_0100 // L (long double) and l (has no effect but is allowed per POSIX)
+            }
+            PrintfHandler::Character => {
+                0b0000_0100 // l for wint_t
+            }
+            PrintfHandler::String => {
+                0b0000_0100 // l for wide strings (wchar_t*)
+            }
+            PrintfHandler::StoreCount => {
+                0b0111_1111 // hh, h, l, ll, j, z, t for pointer size variants
+            }
+            PrintfHandler::Pointer | PrintfHandler::LiteralPercent | PrintfHandler::Invalid => 0,
+        };
+
+        // Compute valid flag mask (-, +, space, #, 0)
+        // Bit layout: 0=-, 1=+, 2=space, 3=#, 4=0
+        let flag_mask = match handler {
+            PrintfHandler::SignedDecimal => 0b11111,   // all flags valid
+            PrintfHandler::UnsignedOctal => 0b11001,   // -, #, 0 (not + or space)
+            PrintfHandler::UnsignedDecimal => 0b10001, // -, 0 (not +, space, #)
+            PrintfHandler::UnsignedHexLower
+            | PrintfHandler::UnsignedHexUpper
+            | PrintfHandler::UnsignedBinaryLower
+            | PrintfHandler::UnsignedBinaryUpper => 0b11001, // -, #, 0
+            PrintfHandler::FloatFixed
+            | PrintfHandler::FloatExp
+            | PrintfHandler::FloatGeneral
+            | PrintfHandler::FloatHex => 0b11111, // all flags valid
+            PrintfHandler::Character => 0b00001,       // only - (width padding)
+            PrintfHandler::String => 0b00001,          // only -
+            PrintfHandler::Pointer => 0b11111, // glibc renders non-NULL %p like %#x: -, +, space, #, 0
+            PrintfHandler::StoreCount => 0b00000, // no flags valid
+            PrintfHandler::LiteralPercent => 0b00000, // no flags
+            PrintfHandler::Invalid => 0,
+        };
+
+        table[byte] = PrintfRoute {
+            handler,
+            length_mask,
+            flag_mask,
+            arg_category: arg_cat,
+        };
+    }
+
+    table
+}
+
+/// Generate the 256-entry dispatch table for scanf.
+pub fn generate_scanf_table(grammar: &ScanfGrammar) -> [ScanfRoute; 256] {
+    let mut table = [ScanfRoute {
+        handler: ScanfHandler::Invalid,
+        length_mask: 0,
+        skips_leading_whitespace: false,
+        arg_category: ScanfArgCategory::None,
+    }; 256];
+
+    for (spec, conv) in &grammar.conversion {
+        if spec.len() != 1 {
+            continue;
+        }
+        let byte = spec.as_bytes()[0] as usize;
+        if byte >= 256 {
+            continue;
+        }
+
+        let (handler, arg_category) = match conv.name.as_str() {
+            "signed_decimal" => (ScanfHandler::SignedDecimal, ScanfArgCategory::SignedInt),
+            "signed_integer_auto_base" => {
+                (ScanfHandler::SignedAutoBase, ScanfArgCategory::SignedInt)
+            }
+            "unsigned_decimal" => (ScanfHandler::UnsignedDecimal, ScanfArgCategory::UnsignedInt),
+            "unsigned_octal" => (ScanfHandler::UnsignedOctal, ScanfArgCategory::UnsignedInt),
+            "unsigned_binary" => (ScanfHandler::UnsignedBinary, ScanfArgCategory::UnsignedInt),
+            "unsigned_hex" | "unsigned_hex_upper" => {
+                (ScanfHandler::UnsignedHex, ScanfArgCategory::UnsignedInt)
+            }
+            "float_fixed"
+            | "float_fixed_upper"
+            | "float_exp"
+            | "float_exp_upper"
+            | "float_general"
+            | "float_general_upper"
+            | "float_hex"
+            | "float_hex_upper" => (ScanfHandler::Float, ScanfArgCategory::Float),
+            "character" => (ScanfHandler::Character, ScanfArgCategory::CharBuffer),
+            "string" => (ScanfHandler::String, ScanfArgCategory::StringBuffer),
+            "scanset" => (ScanfHandler::Scanset, ScanfArgCategory::StringBuffer),
+            "chars_consumed" => (ScanfHandler::CharsConsumed, ScanfArgCategory::Store),
+            "pointer" => (ScanfHandler::Pointer, ScanfArgCategory::Pointer),
+            _ => continue,
+        };
+
+        let length_mask = match handler {
+            ScanfHandler::SignedDecimal
+            | ScanfHandler::SignedAutoBase
+            | ScanfHandler::UnsignedDecimal
+            | ScanfHandler::UnsignedOctal
+            | ScanfHandler::UnsignedBinary
+            | ScanfHandler::UnsignedHex
+            | ScanfHandler::CharsConsumed => 0b0111_1111,
+            ScanfHandler::Float => 0b1000_0100,
+            ScanfHandler::Character | ScanfHandler::String | ScanfHandler::Scanset => 0b0000_0100,
+            ScanfHandler::Pointer | ScanfHandler::Invalid => 0,
+        };
+
+        table[byte] = ScanfRoute {
+            handler,
+            length_mask,
+            skips_leading_whitespace: conv.skips_leading_whitespace,
+            arg_category,
+        };
+    }
+
+    table
+}
+
+/// Emit Rust source code for the generated table.
+pub fn emit_printf_table_source(table: &[PrintfRoute; 256]) -> String {
+    let mut output = String::new();
+    output
+        .push_str("// AUTO-GENERATED snapshot from tools/stdio_synth/spec/printf_grammar.json.\n");
+    output.push_str("// DO NOT EDIT BY HAND UNLESS THE GENERATOR SHAPE CHANGES.\n\n");
+    output.push_str("use super::{ArgCategory, PrintfHandler, PrintfRoute};\n\n");
+    output.push_str("const INVALID_ROUTE: PrintfRoute = PrintfRoute {\n");
+    output.push_str("    handler: PrintfHandler::Invalid,\n");
+    output.push_str("    length_mask: 0,\n");
+    output.push_str("    flag_mask: 0,\n");
+    output.push_str("    arg_category: ArgCategory::None,\n");
+    output.push_str("};\n\n");
+    output.push_str("const fn route(\n");
+    output.push_str("    handler: PrintfHandler,\n");
+    output.push_str("    length_mask: u8,\n");
+    output.push_str("    flag_mask: u8,\n");
+    output.push_str("    arg_category: ArgCategory,\n");
+    output.push_str(") -> PrintfRoute {\n");
+    output.push_str("    PrintfRoute {\n");
+    output.push_str("        handler,\n");
+    output.push_str("        length_mask,\n");
+    output.push_str("        flag_mask,\n");
+    output.push_str("        arg_category,\n");
+    output.push_str("    }\n");
+    output.push_str("}\n\n");
+    output.push_str("pub const PRINTF_TABLE: [PrintfRoute; 256] = {\n");
+    output.push_str("    let mut table = [INVALID_ROUTE; 256];\n\n");
+
+    for i in ordered_valid_printf_indices(table) {
+        let route = &table[i];
+        let handler = match route.handler {
+            PrintfHandler::Invalid => "PrintfHandler::Invalid",
+            PrintfHandler::SignedDecimal => "PrintfHandler::SignedDecimal",
+            PrintfHandler::UnsignedOctal => "PrintfHandler::UnsignedOctal",
+            PrintfHandler::UnsignedDecimal => "PrintfHandler::UnsignedDecimal",
+            PrintfHandler::UnsignedHexLower => "PrintfHandler::UnsignedHexLower",
+            PrintfHandler::UnsignedHexUpper => "PrintfHandler::UnsignedHexUpper",
+            PrintfHandler::UnsignedBinaryLower => "PrintfHandler::UnsignedBinaryLower",
+            PrintfHandler::UnsignedBinaryUpper => "PrintfHandler::UnsignedBinaryUpper",
+            PrintfHandler::FloatFixed => "PrintfHandler::FloatFixed",
+            PrintfHandler::FloatExp => "PrintfHandler::FloatExp",
+            PrintfHandler::FloatGeneral => "PrintfHandler::FloatGeneral",
+            PrintfHandler::FloatHex => "PrintfHandler::FloatHex",
+            PrintfHandler::Character => "PrintfHandler::Character",
+            PrintfHandler::String => "PrintfHandler::String",
+            PrintfHandler::Pointer => "PrintfHandler::Pointer",
+            PrintfHandler::StoreCount => "PrintfHandler::StoreCount",
+            PrintfHandler::LiteralPercent => "PrintfHandler::LiteralPercent",
+        };
+        let arg_cat = match route.arg_category {
+            ArgCategory::None => "ArgCategory::None",
+            ArgCategory::SignedInt => "ArgCategory::SignedInt",
+            ArgCategory::UnsignedInt => "ArgCategory::UnsignedInt",
+            ArgCategory::Float => "ArgCategory::Float",
+            ArgCategory::Pointer => "ArgCategory::Pointer",
+            ArgCategory::String => "ArgCategory::String",
+            ArgCategory::Store => "ArgCategory::Store",
+        };
+
+        if matches!(i as u8, b'p' | b'%') {
+            output.push_str(&format!(
+                "    table[{} as usize] = route({}, {}, {}, {});\n",
+                format_byte_literal(i as u8),
+                handler,
+                format_mask_or_zero(route.length_mask),
+                format_mask_or_zero(route.flag_mask),
+                arg_cat
+            ));
+        } else {
+            output.push_str(&format!(
+                "    table[{} as usize] = route(\n",
+                format_byte_literal(i as u8)
+            ));
+            output.push_str(&format!("        {},\n", handler));
+            output.push_str(&format!(
+                "        {},\n",
+                format_mask_or_zero(route.length_mask)
+            ));
+            output.push_str(&format!(
+                "        {},\n",
+                format_mask_or_zero(route.flag_mask)
+            ));
+            output.push_str(&format!("        {},\n", arg_cat));
+            output.push_str("    );\n");
+        }
+    }
+
+    output.push('\n');
+    output.push_str("    table\n");
+    output.push_str("};\n");
+    output
+}
+
+/// Emit Rust source code for the generated scanf table snapshot.
+pub fn emit_scanf_table_source(table: &[ScanfRoute; 256]) -> String {
+    let mut output = String::new();
+    output.push_str("// AUTO-GENERATED snapshot from tools/stdio_synth/spec/scanf_grammar.json.\n");
+    output.push_str("// DO NOT EDIT BY HAND UNLESS THE GENERATOR SHAPE CHANGES.\n\n");
+    output.push_str("use super::{ScanfArgCategory, ScanfHandler, ScanfRoute};\n\n");
+    output.push_str("const INVALID_ROUTE: ScanfRoute = ScanfRoute {\n");
+    output.push_str("    handler: ScanfHandler::Invalid,\n");
+    output.push_str("    length_mask: 0,\n");
+    output.push_str("    skips_leading_whitespace: false,\n");
+    output.push_str("    arg_category: ScanfArgCategory::None,\n");
+    output.push_str("};\n\n");
+    output.push_str("const fn route(\n");
+    output.push_str("    handler: ScanfHandler,\n");
+    output.push_str("    length_mask: u8,\n");
+    output.push_str("    skips_leading_whitespace: bool,\n");
+    output.push_str("    arg_category: ScanfArgCategory,\n");
+    output.push_str(") -> ScanfRoute {\n");
+    output.push_str("    ScanfRoute {\n");
+    output.push_str("        handler,\n");
+    output.push_str("        length_mask,\n");
+    output.push_str("        skips_leading_whitespace,\n");
+    output.push_str("        arg_category,\n");
+    output.push_str("    }\n");
+    output.push_str("}\n\n");
+    output.push_str("pub const SCANF_TABLE: [ScanfRoute; 256] = {\n");
+    output.push_str("    let mut table = [INVALID_ROUTE; 256];\n\n");
+
+    for i in ordered_valid_scanf_indices(table) {
+        let route = &table[i];
+        let handler = match route.handler {
+            ScanfHandler::Invalid => "ScanfHandler::Invalid",
+            ScanfHandler::SignedDecimal => "ScanfHandler::SignedDecimal",
+            ScanfHandler::SignedAutoBase => "ScanfHandler::SignedAutoBase",
+            ScanfHandler::UnsignedDecimal => "ScanfHandler::UnsignedDecimal",
+            ScanfHandler::UnsignedOctal => "ScanfHandler::UnsignedOctal",
+            ScanfHandler::UnsignedBinary => "ScanfHandler::UnsignedBinary",
+            ScanfHandler::UnsignedHex => "ScanfHandler::UnsignedHex",
+            ScanfHandler::Float => "ScanfHandler::Float",
+            ScanfHandler::Character => "ScanfHandler::Character",
+            ScanfHandler::String => "ScanfHandler::String",
+            ScanfHandler::Scanset => "ScanfHandler::Scanset",
+            ScanfHandler::CharsConsumed => "ScanfHandler::CharsConsumed",
+            ScanfHandler::Pointer => "ScanfHandler::Pointer",
+        };
+        let arg_category = match route.arg_category {
+            ScanfArgCategory::None => "ScanfArgCategory::None",
+            ScanfArgCategory::SignedInt => "ScanfArgCategory::SignedInt",
+            ScanfArgCategory::UnsignedInt => "ScanfArgCategory::UnsignedInt",
+            ScanfArgCategory::Float => "ScanfArgCategory::Float",
+            ScanfArgCategory::CharBuffer => "ScanfArgCategory::CharBuffer",
+            ScanfArgCategory::StringBuffer => "ScanfArgCategory::StringBuffer",
+            ScanfArgCategory::Store => "ScanfArgCategory::Store",
+            ScanfArgCategory::Pointer => "ScanfArgCategory::Pointer",
+        };
+
+        if i as u8 == b'p' {
+            output.push_str(&format!(
+                "    table[{} as usize] = route({}, {}, {}, {});\n",
+                format_byte_literal(i as u8),
+                handler,
+                format_mask_or_zero(route.length_mask),
+                route.skips_leading_whitespace,
+                arg_category
+            ));
+        } else {
+            output.push_str(&format!(
+                "    table[{} as usize] = route(\n",
+                format_byte_literal(i as u8)
+            ));
+            output.push_str(&format!("        {},\n", handler));
+            output.push_str(&format!(
+                "        {},\n",
+                format_mask_or_zero(route.length_mask)
+            ));
+            output.push_str(&format!("        {},\n", route.skips_leading_whitespace));
+            output.push_str(&format!("        {},\n", arg_category));
+            output.push_str("    );\n");
+        }
+    }
+
+    output.push_str("\n    table\n");
+    output.push_str("};\n");
+    output
+}
+
+fn emit_piecewise_u8_function(output: &mut String, name: &str, values: &[(u8, u8)], default: u8) {
+    output.push_str(&format!("(define-fun {} ((c Int)) Int\n", name));
+    for &(byte, value) in values {
+        output.push_str(&format!("  (ite (= c {}) {}\n", byte, value));
+    }
+    output.push_str(&format!("    {}", default));
+    for _ in values {
+        output.push(')');
+    }
+    output.push_str(")\n\n");
+}
+
+fn format_binary_mask(mask: u8) -> String {
+    format!("0b{:04b}_{:04b}", mask >> 4, mask & 0x0f)
+}
+
+fn format_mask_or_zero(mask: u8) -> String {
+    if mask == 0 {
+        "0".to_owned()
+    } else {
+        format_binary_mask(mask)
+    }
+}
+
+fn format_byte_literal(byte: u8) -> String {
+    format!("b'{}'", char::from(byte).escape_default())
+}
+
+fn ordered_valid_printf_indices(table: &[PrintfRoute; 256]) -> Vec<usize> {
+    const PREFERRED_ORDER: &[u8] = b"diouxXbBfFeEgGaAcspn%";
+    ordered_valid_indices(PREFERRED_ORDER, |idx| {
+        table[idx].handler != PrintfHandler::Invalid
+    })
+}
+
+fn ordered_valid_scanf_indices(table: &[ScanfRoute; 256]) -> Vec<usize> {
+    const PREFERRED_ORDER: &[u8] = b"diuobxXfFeEgGaAcs[np";
+    ordered_valid_indices(PREFERRED_ORDER, |idx| {
+        table[idx].handler != ScanfHandler::Invalid
+    })
+}
+
+fn ordered_valid_indices(preferred_order: &[u8], is_valid: impl Fn(usize) -> bool) -> Vec<usize> {
+    let mut ordered = Vec::new();
+    let mut seen = [false; 256];
+
+    for &byte in preferred_order {
+        let idx = byte as usize;
+        if is_valid(idx) {
+            ordered.push(idx);
+            seen[idx] = true;
+        }
+    }
+
+    for (idx, already_seen) in seen.iter().enumerate() {
+        if !*already_seen && is_valid(idx) {
+            ordered.push(idx);
+        }
+    }
+
+    ordered
+}
+
+fn emit_piecewise_bool_function(
+    output: &mut String,
+    name: &str,
+    values: &[(u8, bool)],
+    default: bool,
+) {
+    output.push_str(&format!("(define-fun {} ((c Int)) Bool\n", name));
+    for &(byte, value) in values {
+        output.push_str(&format!(
+            "  (ite (= c {}) {}\n",
+            byte,
+            if value { "true" } else { "false" }
+        ));
+    }
+    output.push_str(if default { "    true" } else { "    false" });
+    for _ in values {
+        output.push(')');
+    }
+    output.push_str(")\n\n");
+}
+
+fn sorted_conversion_bytes<K, V>(map: &std::collections::HashMap<K, V>) -> Vec<u8>
+where
+    K: AsRef<str> + std::cmp::Eq + std::hash::Hash,
+{
+    let mut bytes = map
+        .keys()
+        .filter_map(|key| {
+            let s = key.as_ref();
+            (s.len() == 1).then_some(s.as_bytes()[0])
+        })
+        .collect::<Vec<_>>();
+    bytes.sort_unstable();
+    bytes
+}
+
+fn length_labels_from_mask(mask: u8) -> Vec<Option<String>> {
+    let labels = [
+        (0b0000_0001, "hh"),
+        (0b0000_0010, "h"),
+        (0b0000_0100, "l"),
+        (0b0000_1000, "ll"),
+        (0b0001_0000, "j"),
+        (0b0010_0000, "z"),
+        (0b0100_0000, "t"),
+        (0b1000_0000, "L"),
+    ];
+    let mut values = labels
+        .into_iter()
+        .filter_map(|(bit, label)| ((mask & bit) != 0).then_some(Some(label.to_owned())))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        values.push(None);
+    }
+    values
+}
+
+fn flag_labels_from_mask(mask: u8) -> Vec<Option<String>> {
+    let labels = [
+        (0b0000_0001, "-"),
+        (0b0000_0010, "+"),
+        (0b0000_0100, " "),
+        (0b0000_1000, "#"),
+        (0b0001_0000, "0"),
+    ];
+    let mut values = labels
+        .into_iter()
+        .filter_map(|(bit, label)| ((mask & bit) != 0).then_some(Some(label.to_owned())))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        values.push(None);
+    }
+    values
+}
+
+type PrintfSymmetryKey = (u8, u8, u8, u8);
+type PrintfSymmetryGroup = (PrintfRoute, Vec<String>);
+type ScanfSymmetryKey = (u8, u8, bool, u8);
+type ScanfSymmetryGroup = (ScanfRoute, Vec<String>);
+
+fn build_printf_symmetry_classes(
+    grammar: &PrintfGrammar,
+    table: &[PrintfRoute; 256],
+) -> Vec<PrintfSymmetryClass> {
+    let mut groups: BTreeMap<PrintfSymmetryKey, PrintfSymmetryGroup> = BTreeMap::new();
+    for byte in sorted_conversion_bytes(&grammar.conversion) {
+        let route = table[byte as usize];
+        if route.handler == PrintfHandler::Invalid {
+            continue;
+        }
+        let key = (
+            route.handler as u8,
+            route.length_mask,
+            route.flag_mask,
+            route.arg_category as u8,
+        );
+        let entry = groups.entry(key).or_insert((route, Vec::new()));
+        entry.1.push((byte as char).to_string());
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_key, (route, members)))| PrintfSymmetryClass {
+            class_id: index as u32,
+            representative_conversion: members
+                .first()
+                .cloned()
+                .expect("printf symmetry class has member"),
+            member_count: members.len() as u32,
+            members,
+            handler: route.handler,
+            length_mask: route.length_mask,
+            flag_mask: route.flag_mask,
+            arg_category: route.arg_category,
+        })
+        .collect()
+}
+
+fn build_scanf_symmetry_classes(
+    grammar: &ScanfGrammar,
+    table: &[ScanfRoute; 256],
+) -> Vec<ScanfSymmetryClass> {
+    let mut groups: BTreeMap<ScanfSymmetryKey, ScanfSymmetryGroup> = BTreeMap::new();
+    for byte in sorted_conversion_bytes(&grammar.conversion) {
+        let route = table[byte as usize];
+        if route.handler == ScanfHandler::Invalid {
+            continue;
+        }
+        let key = (
+            route.handler as u8,
+            route.length_mask,
+            route.skips_leading_whitespace,
+            route.arg_category as u8,
+        );
+        let entry = groups.entry(key).or_insert((route, Vec::new()));
+        entry.1.push((byte as char).to_string());
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_key, (route, members)))| ScanfSymmetryClass {
+            class_id: index as u32,
+            representative_conversion: members
+                .first()
+                .cloned()
+                .expect("scanf symmetry class has member"),
+            member_count: members.len() as u32,
+            members,
+            handler: route.handler,
+            length_mask: route.length_mask,
+            skips_leading_whitespace: route.skips_leading_whitespace,
+            arg_category: route.arg_category,
+        })
+        .collect()
+}
+
+pub fn build_symmetry_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> SymmetryArtifact {
+    SymmetryArtifact {
+        version: 1,
+        description:
+            "Deterministic stdio route symmetry classes derived from generated printf/scanf tables"
+                .to_owned(),
+        printf_classes: build_printf_symmetry_classes(printf_grammar, printf_table),
+        scanf_classes: build_scanf_symmetry_classes(scanf_grammar, scanf_table),
+    }
+}
+
+pub fn emit_symmetry_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let artifact =
+        build_symmetry_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut json = serde_json::to_string_pretty(&artifact).expect("symmetry artifact serializes");
+    json.push('\n');
+    json
+}
+
+pub fn build_compressed_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> CompressedArtifact {
+    let symmetry =
+        build_symmetry_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut printf_conversion_to_node = BTreeMap::new();
+    let printf_nodes = symmetry
+        .printf_classes
+        .iter()
+        .map(|class| {
+            for member in &class.members {
+                printf_conversion_to_node.insert(member.clone(), class.class_id);
+            }
+            PrintfQuotientNode {
+                node_id: class.class_id,
+                representative_conversion: class.representative_conversion.clone(),
+                member_count: class.member_count,
+                members: class.members.clone(),
+                handler: class.handler,
+                length_mask: class.length_mask,
+                flag_mask: class.flag_mask,
+                arg_category: class.arg_category,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut scanf_conversion_to_node = BTreeMap::new();
+    let scanf_nodes = symmetry
+        .scanf_classes
+        .iter()
+        .map(|class| {
+            for member in &class.members {
+                scanf_conversion_to_node.insert(member.clone(), class.class_id);
+            }
+            ScanfQuotientNode {
+                node_id: class.class_id,
+                representative_conversion: class.representative_conversion.clone(),
+                member_count: class.member_count,
+                members: class.members.clone(),
+                handler: class.handler,
+                length_mask: class.length_mask,
+                skips_leading_whitespace: class.skips_leading_whitespace,
+                arg_category: class.arg_category,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    CompressedArtifact {
+        version: 1,
+        description: "Deterministic quotiented stdio route graph derived from symmetry classes"
+            .to_owned(),
+        printf_valid_route_count: sorted_conversion_bytes(&printf_grammar.conversion)
+            .into_iter()
+            .filter(|byte| printf_table[*byte as usize].handler != PrintfHandler::Invalid)
+            .count() as u32,
+        printf_node_count: printf_nodes.len() as u32,
+        scanf_valid_route_count: sorted_conversion_bytes(&scanf_grammar.conversion)
+            .into_iter()
+            .filter(|byte| scanf_table[*byte as usize].handler != ScanfHandler::Invalid)
+            .count() as u32,
+        scanf_node_count: scanf_nodes.len() as u32,
+        printf_nodes,
+        scanf_nodes,
+        printf_conversion_to_node,
+        scanf_conversion_to_node,
+    }
+}
+
+pub fn emit_compressed_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let artifact =
+        build_compressed_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut json = serde_json::to_string_pretty(&artifact).expect("compressed artifact serializes");
+    json.push('\n');
+    json
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn sha256_hex(contents: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(contents.as_bytes());
+    hex_encode(&hasher.finalize())
+}
+
+pub fn build_pipeline_artifacts(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> BTreeMap<String, String> {
+    let mut artifacts = BTreeMap::new();
+    artifacts.insert(
+        "synth/printf_table.rs".to_owned(),
+        emit_printf_table_source(printf_table),
+    );
+    artifacts.insert(
+        "synth/scanf_table.rs".to_owned(),
+        emit_scanf_table_source(scanf_table),
+    );
+    artifacts.insert(
+        "synth/coverage.json".to_owned(),
+        emit_coverage_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts.insert(
+        "synth/symmetry.json".to_owned(),
+        emit_symmetry_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts.insert(
+        "synth/quotient.json".to_owned(),
+        emit_compressed_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts.insert(
+        "proof/stdio_tables.smt2".to_owned(),
+        emit_smt_proof_source(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts
+}
+
+pub fn build_pipeline_manifest(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> PipelineManifest {
+    let artifacts =
+        build_pipeline_artifacts(printf_grammar, scanf_grammar, printf_table, scanf_table)
+            .into_iter()
+            .map(|(path, contents)| PipelineArtifact {
+                byte_len: contents.len(),
+                sha256: sha256_hex(&contents),
+                path,
+            })
+            .collect();
+
+    PipelineManifest {
+        version: 1,
+        description:
+            "Deterministic manifest for stdio synthesis pipeline artifacts generated from printf/scanf grammars"
+                .to_owned(),
+        artifacts,
+    }
+}
+
+pub fn emit_pipeline_manifest(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let manifest =
+        build_pipeline_manifest(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut json = serde_json::to_string_pretty(&manifest).expect("pipeline manifest serializes");
+    json.push('\n');
+    json
+}
+
+pub fn emit_coverage_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let mut printf_interactions = Vec::new();
+    for byte in sorted_conversion_bytes(&printf_grammar.conversion) {
+        let route = printf_table[byte as usize];
+        if route.handler == PrintfHandler::Invalid {
+            continue;
+        }
+        let conversion = (byte as char).to_string();
+        for length_modifier in length_labels_from_mask(route.length_mask) {
+            for flag in flag_labels_from_mask(route.flag_mask) {
+                printf_interactions.push(PrintfCoverageInteraction {
+                    conversion: conversion.clone(),
+                    length_modifier: length_modifier.clone(),
+                    flag: flag.clone(),
+                });
+            }
+        }
+    }
+    printf_interactions.sort();
+
+    let mut scanf_interactions = Vec::new();
+    for byte in sorted_conversion_bytes(&scanf_grammar.conversion) {
+        let route = scanf_table[byte as usize];
+        if route.handler == ScanfHandler::Invalid {
+            continue;
+        }
+        let conversion = (byte as char).to_string();
+        for length_modifier in length_labels_from_mask(route.length_mask) {
+            scanf_interactions.push(ScanfCoverageInteraction {
+                conversion: conversion.clone(),
+                length_modifier: length_modifier.clone(),
+                assignment_suppressed: false,
+            });
+            if scanf_grammar.assignment_suppression {
+                scanf_interactions.push(ScanfCoverageInteraction {
+                    conversion: conversion.clone(),
+                    length_modifier: length_modifier.clone(),
+                    assignment_suppressed: true,
+                });
+            }
+        }
+    }
+    scanf_interactions.sort();
+
+    let artifact = CoverageArtifact {
+        version: 1,
+        description: "Deterministic stdio interaction coverage derived from generated printf/scanf route tables".to_owned(),
+        printf_interactions,
+        scanf_interactions,
+    };
+
+    let mut json = serde_json::to_string_pretty(&artifact).expect("coverage artifact serializes");
+    json.push('\n');
+    json
+}
+
+/// Emit a deterministic SMT-LIB proof artifact for the current stdio tables.
+pub fn emit_smt_proof_source(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let mut output = String::new();
+    output.push_str("; AUTO-GENERATED by stdio-synth. DO NOT EDIT.\n");
+    output.push_str("; Proof obligations for generated printf/scanf dispatch tables.\n");
+    output.push_str("(set-logic QF_UFLIA)\n\n");
+
+    let printf_bytes = sorted_conversion_bytes(&printf_grammar.conversion);
+    let scanf_bytes = sorted_conversion_bytes(&scanf_grammar.conversion);
+
+    let printf_handler_values = printf_bytes
+        .iter()
+        .map(|&byte| (byte, printf_table[byte as usize].handler as u8))
+        .collect::<Vec<_>>();
+    let printf_length_values = printf_bytes
+        .iter()
+        .map(|&byte| (byte, printf_table[byte as usize].length_mask))
+        .collect::<Vec<_>>();
+    let printf_flag_values = printf_bytes
+        .iter()
+        .map(|&byte| (byte, printf_table[byte as usize].flag_mask))
+        .collect::<Vec<_>>();
+    let printf_arg_values = printf_bytes
+        .iter()
+        .map(|&byte| (byte, printf_table[byte as usize].arg_category as u8))
+        .collect::<Vec<_>>();
+
+    emit_piecewise_u8_function(&mut output, "printf_handler", &printf_handler_values, 0);
+    emit_piecewise_u8_function(&mut output, "printf_length_mask", &printf_length_values, 0);
+    emit_piecewise_u8_function(&mut output, "printf_flag_mask", &printf_flag_values, 0);
+    emit_piecewise_u8_function(&mut output, "printf_arg_category", &printf_arg_values, 0);
+
+    let scanf_handler_values = scanf_bytes
+        .iter()
+        .map(|&byte| (byte, scanf_table[byte as usize].handler as u8))
+        .collect::<Vec<_>>();
+    let scanf_length_values = scanf_bytes
+        .iter()
+        .map(|&byte| (byte, scanf_table[byte as usize].length_mask))
+        .collect::<Vec<_>>();
+    let scanf_skip_values = scanf_bytes
+        .iter()
+        .map(|&byte| (byte, scanf_table[byte as usize].skips_leading_whitespace))
+        .collect::<Vec<_>>();
+    let scanf_arg_values = scanf_bytes
+        .iter()
+        .map(|&byte| (byte, scanf_table[byte as usize].arg_category as u8))
+        .collect::<Vec<_>>();
+
+    emit_piecewise_u8_function(&mut output, "scanf_handler", &scanf_handler_values, 0);
+    emit_piecewise_u8_function(&mut output, "scanf_length_mask", &scanf_length_values, 0);
+    emit_piecewise_bool_function(&mut output, "scanf_skip_ws", &scanf_skip_values, false);
+    emit_piecewise_u8_function(&mut output, "scanf_arg_category", &scanf_arg_values, 0);
+
+    output.push_str("; printf obligations\n");
+    for byte in &printf_bytes {
+        let route = printf_table[*byte as usize];
+        output.push_str(&format!(
+            "(assert (= (printf_handler {}) {}))\n",
+            byte, route.handler as u8
+        ));
+        output.push_str(&format!(
+            "(assert (= (printf_length_mask {}) {}))\n",
+            byte, route.length_mask
+        ));
+        output.push_str(&format!(
+            "(assert (= (printf_flag_mask {}) {}))\n",
+            byte, route.flag_mask
+        ));
+        output.push_str(&format!(
+            "(assert (= (printf_arg_category {}) {}))\n",
+            byte, route.arg_category as u8
+        ));
+        output.push_str(&format!("(assert (not (= (printf_handler {}) 0)))\n", byte));
+    }
+    for byte in 0u8..=255 {
+        if !printf_bytes.contains(&byte) {
+            output.push_str(&format!("(assert (= (printf_handler {}) 0))\n", byte));
+        }
+    }
+
+    output.push_str("\n; scanf obligations\n");
+    for byte in &scanf_bytes {
+        let route = scanf_table[*byte as usize];
+        output.push_str(&format!(
+            "(assert (= (scanf_handler {}) {}))\n",
+            byte, route.handler as u8
+        ));
+        output.push_str(&format!(
+            "(assert (= (scanf_length_mask {}) {}))\n",
+            byte, route.length_mask
+        ));
+        output.push_str(&format!(
+            "(assert (= (scanf_skip_ws {}) {}))\n",
+            byte,
+            if route.skips_leading_whitespace {
+                "true"
+            } else {
+                "false"
+            }
+        ));
+        output.push_str(&format!(
+            "(assert (= (scanf_arg_category {}) {}))\n",
+            byte, route.arg_category as u8
+        ));
+        output.push_str(&format!("(assert (not (= (scanf_handler {}) 0)))\n", byte));
+    }
+    for byte in 0u8..=255 {
+        if !scanf_bytes.contains(&byte) {
+            output.push_str(&format!("(assert (= (scanf_handler {}) 0))\n", byte));
+        }
+    }
+
+    output.push_str("\n(check-sat)\n");
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_grammar() -> PrintfGrammar {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let grammar_path = manifest_dir.join("spec/printf_grammar.json");
+        PrintfGrammar::load(&grammar_path).expect("printf grammar should load")
+    }
+
+    fn load_scanf_grammar() -> ScanfGrammar {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let grammar_path = manifest_dir.join("spec/scanf_grammar.json");
+        ScanfGrammar::load(&grammar_path).expect("scanf grammar should load")
+    }
+
+    #[test]
+    fn generated_printf_table_routes_core_specifiers() {
+        let table = generate_printf_table(&load_grammar());
+
+        assert_eq!(table[b'd' as usize].handler, PrintfHandler::SignedDecimal);
+        assert_eq!(table[b's' as usize].handler, PrintfHandler::String);
+        assert_eq!(table[b'%' as usize].handler, PrintfHandler::LiteralPercent);
+        assert_eq!(table[b'd' as usize].arg_category, ArgCategory::SignedInt);
+        assert_eq!(table[b'X' as usize].arg_category, ArgCategory::UnsignedInt);
+        assert_eq!(table[b'f' as usize].arg_category, ArgCategory::Float);
+        assert_eq!(table[b'Q' as usize].handler, PrintfHandler::Invalid);
+    }
+
+    #[test]
+    fn emitted_printf_source_is_deterministic() {
+        let grammar = load_grammar();
+        let table = generate_printf_table(&grammar);
+        let emitted_once = emit_printf_table_source(&table);
+        let emitted_twice = emit_printf_table_source(&table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("pub const PRINTF_TABLE: [PrintfRoute; 256]"));
+        assert!(emitted_once.contains("PrintfHandler::SignedDecimal"));
+        assert!(emitted_once.contains("PrintfHandler::LiteralPercent"));
+    }
+
+    #[test]
+    fn scanf_grammar_loads_core_specifiers() {
+        let grammar = load_scanf_grammar();
+
+        assert!(grammar.assignment_suppression);
+        assert_eq!(
+            grammar
+                .conversion
+                .get("d")
+                .expect("signed decimal conversion")
+                .name,
+            "signed_decimal"
+        );
+        assert_eq!(
+            grammar
+                .conversion
+                .get("[")
+                .expect("scanset conversion")
+                .name,
+            "scanset"
+        );
+        assert!(
+            grammar
+                .conversion
+                .get("s")
+                .expect("string conversion")
+                .skips_leading_whitespace
+        );
+        let scanset = grammar.scanset.expect("scanset support");
+        assert!(scanset.supports_negation);
+        assert!(scanset.supports_ranges);
+    }
+
+    #[test]
+    fn generated_scanf_table_routes_core_specifiers() {
+        let table = generate_scanf_table(&load_scanf_grammar());
+
+        assert_eq!(table[b'd' as usize].handler, ScanfHandler::SignedDecimal);
+        assert_eq!(table[b'i' as usize].handler, ScanfHandler::SignedAutoBase);
+        assert_eq!(table[b'b' as usize].handler, ScanfHandler::UnsignedBinary);
+        assert_eq!(
+            table[b'b' as usize].arg_category,
+            ScanfArgCategory::UnsignedInt
+        );
+        assert_eq!(table[b'b' as usize].length_mask, 0b0111_1111);
+        assert!(table[b'b' as usize].skips_leading_whitespace);
+        assert_eq!(table[b's' as usize].handler, ScanfHandler::String);
+        assert_eq!(table[b'[' as usize].handler, ScanfHandler::Scanset);
+        assert_eq!(
+            table[b'd' as usize].arg_category,
+            ScanfArgCategory::SignedInt
+        );
+        assert_eq!(table[b'p' as usize].arg_category, ScanfArgCategory::Pointer);
+        assert!(table[b's' as usize].skips_leading_whitespace);
+        assert!(!table[b'c' as usize].skips_leading_whitespace);
+        assert_eq!(table[b'Q' as usize].handler, ScanfHandler::Invalid);
+    }
+
+    #[test]
+    fn emitted_scanf_source_is_deterministic() {
+        let grammar = load_scanf_grammar();
+        let table = generate_scanf_table(&grammar);
+        let emitted_once = emit_scanf_table_source(&table);
+        let emitted_twice = emit_scanf_table_source(&table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("pub const SCANF_TABLE: [ScanfRoute; 256]"));
+        assert!(emitted_once.contains("ScanfHandler::SignedDecimal"));
+        assert!(emitted_once.contains("ScanfHandler::Scanset"));
+    }
+
+    #[test]
+    fn emitted_smt_proof_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_smt_proof_source(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_smt_proof_source(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("(define-fun printf_handler ((c Int)) Int"));
+        assert!(emitted_once.contains("(define-fun scanf_skip_ws ((c Int)) Bool"));
+        assert!(emitted_once.contains("(assert (= (printf_handler 100) 1))"));
+        assert!(emitted_once.contains("(assert (= (scanf_handler 91) 9))"));
+        assert!(emitted_once.contains("(check-sat)"));
+    }
+
+    #[test]
+    fn emitted_coverage_artifact_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_coverage_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_coverage_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"printf_interactions\""));
+        assert!(emitted_once.contains("\"scanf_interactions\""));
+        assert!(emitted_once.contains("\"conversion\": \"d\""));
+        assert!(emitted_once.contains("\"assignment_suppressed\": true"));
+    }
+
+    #[test]
+    fn emitted_symmetry_artifact_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_symmetry_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_symmetry_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"printf_classes\""));
+        assert!(emitted_once.contains("\"scanf_classes\""));
+        assert!(emitted_once.contains("\"member_count\""));
+        assert!(emitted_once.contains("\"representative_conversion\""));
+    }
+
+    #[test]
+    fn emitted_compressed_artifact_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_compressed_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_compressed_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"printf_nodes\""));
+        assert!(emitted_once.contains("\"scanf_nodes\""));
+        assert!(emitted_once.contains("\"printf_conversion_to_node\""));
+        assert!(emitted_once.contains("\"scanf_conversion_to_node\""));
+    }
+
+    #[test]
+    fn compression_collapses_equivalent_printf_routes() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let artifact =
+            build_compressed_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert!(artifact.printf_node_count < artifact.printf_valid_route_count);
+        assert_eq!(
+            artifact.printf_conversion_to_node.get("d"),
+            artifact.printf_conversion_to_node.get("i")
+        );
+    }
+
+    #[test]
+    fn emitted_pipeline_manifest_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_pipeline_manifest(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_pipeline_manifest(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"path\": \"synth/printf_table.rs\""));
+        assert!(emitted_once.contains("\"path\": \"synth/scanf_table.rs\""));
+        assert!(emitted_once.contains("\"path\": \"synth/coverage.json\""));
+        assert!(emitted_once.contains("\"path\": \"synth/symmetry.json\""));
+        assert!(emitted_once.contains("\"path\": \"synth/quotient.json\""));
+        assert!(emitted_once.contains("\"path\": \"proof/stdio_tables.smt2\""));
+        assert!(emitted_once.contains("\"sha256\""));
+    }
+}

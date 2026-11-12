@@ -1,0 +1,948 @@
+//! Integration test: Replacement profile guard (bd-130)
+//!
+//! Validates that:
+//! 1. replacement_profile.json exists and is valid JSON.
+//! 2. All ABI modules with libc/host-wrapper call-throughs are in the interpose allowlist.
+//! 3. No pthread call-through exists outside pthread_abi.rs.
+//! 4. The call-through census in the profile matches reality.
+//! 5. Zero-unapproved fixture pack covers all callthrough families in both modes.
+//! 6. replacement guard report/log include symbol->module->path diagnostics.
+//! 7. The replacement guard script exists and is executable.
+//!
+//! Run: cargo test -p frankenlibc-harness --test replacement_guard_test
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+type SourceScanExceptions = HashMap<String, HashMap<String, HashSet<String>>>;
+
+fn workspace_root() -> PathBuf {
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    Path::new(manifest)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn load_profile() -> serde_json::Value {
+    let path = workspace_root().join("tests/conformance/replacement_profile.json");
+    let content = std::fs::read_to_string(&path).expect("replacement_profile.json should exist");
+    serde_json::from_str(&content).expect("replacement_profile.json should be valid JSON")
+}
+
+fn load_host_delegation_census() -> serde_json::Value {
+    let path = workspace_root().join("tests/conformance/host_delegation_census.v1.json");
+    let content =
+        std::fs::read_to_string(&path).expect("host_delegation_census.v1.json should exist");
+    serde_json::from_str(&content).expect("host_delegation_census.v1.json should be valid JSON")
+}
+
+fn load_fixture_pack() -> serde_json::Value {
+    let path =
+        workspace_root().join("tests/conformance/replacement_zero_unapproved_fixtures.v1.json");
+    let content = std::fs::read_to_string(&path)
+        .expect("replacement_zero_unapproved_fixtures.v1.json should exist");
+    serde_json::from_str(&content)
+        .expect("replacement_zero_unapproved_fixtures.v1.json should be valid JSON")
+}
+
+fn load_source_scan_exceptions(profile: &serde_json::Value) -> SourceScanExceptions {
+    let mut exceptions = SourceScanExceptions::new();
+    let rows = profile["detection_rules"]["source_scan_exceptions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for row in rows {
+        let Some(module) = row["module"].as_str() else {
+            continue;
+        };
+        let Some(function) = row["function"].as_str() else {
+            continue;
+        };
+        let symbols: HashSet<String> = row["symbols"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        if symbols.is_empty() {
+            continue;
+        }
+        exceptions
+            .entry(module.to_string())
+            .or_default()
+            .entry(function.to_string())
+            .or_default()
+            .extend(symbols);
+    }
+    exceptions
+}
+
+fn extract_function_name(line: &str) -> Option<String> {
+    let fn_pos = line.find("fn ")?;
+    let after = &line[fn_pos + 3..];
+    let end = after
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    if end == 0 {
+        None
+    } else {
+        Some(after[..end].to_string())
+    }
+}
+
+fn count_braces(line: &str) -> isize {
+    line.bytes().fold(0isize, |depth, byte| match byte {
+        b'{' => depth + 1,
+        b'}' => depth - 1,
+        _ => depth,
+    })
+}
+
+fn is_source_scan_exception(
+    module: &str,
+    current_fn: Option<&str>,
+    symbol: &str,
+    exceptions: &SourceScanExceptions,
+) -> bool {
+    current_fn
+        .and_then(|function| exceptions.get(module)?.get(function))
+        .is_some_and(|symbols| symbols.contains(symbol))
+}
+
+/// Extract a libc:: function call name from a line fragment starting at "libc::"
+fn extract_libc_call(fragment: &str) -> Option<&str> {
+    // fragment starts right after "libc::"
+    // We want: lowercase identifier followed by '('
+    let bytes = fragment.as_bytes();
+    let mut end = 0;
+    for &b in bytes {
+        if b.is_ascii_lowercase() || b == b'_' || (end > 0 && b.is_ascii_digit()) {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    if end == 0 {
+        return None;
+    }
+    // Check that the next non-whitespace character is '('
+    let rest = &fragment[end..];
+    let rest_trimmed = rest.trim_start();
+    if rest_trimmed.starts_with('(') {
+        Some(&fragment[..end])
+    } else {
+        None
+    }
+}
+
+/// Scan an ABI source file for call-throughs:
+///   - libc::<function>(...)
+///   - host_pthread_<wrapper>(...)
+///
+/// excluding raw syscall and `_sym` wrapper internals.
+fn scan_call_throughs(
+    module: &str,
+    content: &str,
+    profile: &serde_json::Value,
+) -> Vec<(usize, String)> {
+    let mut results = Vec::new();
+    let exceptions = load_source_scan_exceptions(profile);
+    let mut brace_depth = 0isize;
+    let mut pending_fn: Option<String> = None;
+    let mut current_fn: Option<String> = None;
+    let mut current_fn_base_depth = 0isize;
+
+    for (lineno, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("//")
+            && let Some(fn_name) = extract_function_name(line)
+        {
+            pending_fn = Some(fn_name);
+        }
+
+        let new_brace_depth = if trimmed.starts_with("//") {
+            brace_depth
+        } else {
+            brace_depth + count_braces(line)
+        };
+
+        if current_fn.is_none()
+            && let Some(fn_name) = pending_fn.as_ref()
+            && new_brace_depth > brace_depth
+        {
+            current_fn = Some(fn_name.clone());
+            current_fn_base_depth = brace_depth;
+            pending_fn = None;
+        }
+
+        if trimmed.starts_with("//") {
+            brace_depth = new_brace_depth;
+            continue;
+        }
+
+        let active_fn = current_fn.as_deref();
+        let mut search_from = 0;
+        while let Some(pos) = line[search_from..].find("libc::") {
+            let abs_pos = search_from + pos;
+            let after = &line[abs_pos + 6..];
+            if let Some(func_name) = extract_libc_call(after)
+                && func_name != "syscall"
+                && !is_source_scan_exception(module, active_fn, func_name, &exceptions)
+            {
+                results.push((lineno + 1, func_name.to_string()));
+            }
+            search_from = abs_pos + 6;
+        }
+
+        if trimmed.contains("fn host_pthread_") {
+            if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
+                current_fn = None;
+            }
+            brace_depth = new_brace_depth;
+            continue;
+        }
+        let mut host_search_from = 0;
+        while let Some(pos) = line[host_search_from..].find("host_pthread_") {
+            let abs_pos = host_search_from + pos;
+            let after = &line[abs_pos + "host_pthread_".len()..];
+            let bytes = after.as_bytes();
+            let mut end = 0;
+            for &b in bytes {
+                if b.is_ascii_lowercase() || b == b'_' || (end > 0 && b.is_ascii_digit()) {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+            if end > 0 {
+                let wrapped = &after[..end];
+                let rest = after[end..].trim_start();
+                if rest.starts_with('(') && !wrapped.ends_with("_sym") {
+                    results.push((lineno + 1, format!("pthread_{wrapped}")));
+                }
+            }
+            host_search_from = abs_pos + "host_pthread_".len();
+        }
+
+        if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
+            current_fn = None;
+        }
+        brace_depth = new_brace_depth;
+    }
+    results
+}
+
+fn forbidden_mutex_symbols() -> HashSet<&'static str> {
+    HashSet::from([
+        "pthread_mutex_init",
+        "pthread_mutex_destroy",
+        "pthread_mutex_lock",
+        "pthread_mutex_trylock",
+        "pthread_mutex_unlock",
+    ])
+}
+
+fn unique_target_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+fn managed_nested_cargo_target_dir() -> PathBuf {
+    if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+        return PathBuf::from(target_dir).join("nested-standalone-guard");
+    }
+    if let Some(target_base) = std::env::var_os("RCH_TARGET_BASE") {
+        return PathBuf::from(target_base).join("frankenlibc-standalone-guard");
+    }
+    workspace_root().join("target/nested-standalone-guard")
+}
+
+fn unique_report_paths(prefix: &str) -> (PathBuf, PathBuf) {
+    let dir = unique_target_dir(prefix);
+    std::fs::create_dir_all(&dir).expect("unique report dir should be created");
+    (
+        dir.join("replacement_guard.report.json"),
+        dir.join("replacement_guard.log.jsonl"),
+    )
+}
+
+#[test]
+fn profile_exists_and_valid() {
+    let profile = load_profile();
+    assert!(
+        profile["profile_version"].is_number(),
+        "Missing profile_version"
+    );
+    assert!(profile["profiles"].is_object(), "Missing profiles");
+    assert!(
+        profile["interpose_allowlist"].is_object(),
+        "Missing interpose_allowlist"
+    );
+    assert!(
+        profile["detection_rules"].is_object(),
+        "Missing detection_rules"
+    );
+    assert!(
+        profile["replacement_forbidden"].is_object(),
+        "Missing replacement_forbidden"
+    );
+}
+
+#[test]
+fn guard_script_exists_and_executable() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_guard.sh");
+    assert!(
+        script.exists(),
+        "scripts/check_replacement_guard.sh must exist"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(&script).unwrap().permissions();
+        assert!(
+            perms.mode() & 0o111 != 0,
+            "check_replacement_guard.sh must be executable"
+        );
+    }
+}
+
+#[test]
+fn interpose_allowlist_covers_all_call_through_modules() {
+    let profile = load_profile();
+    let abi_src = workspace_root().join("crates/frankenlibc-abi/src");
+
+    let allowlist: HashSet<String> = profile["interpose_allowlist"]["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+
+    let mut modules_with_ct: HashMap<String, usize> = HashMap::new();
+
+    for entry in std::fs::read_dir(&abi_src).unwrap() {
+        let entry = entry.unwrap();
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if !fname.ends_with("_abi.rs") {
+            continue;
+        }
+        let module = fname.trim_end_matches(".rs").to_string();
+        let content = std::fs::read_to_string(entry.path()).unwrap();
+        let calls = scan_call_throughs(&module, &content, &profile);
+        if !calls.is_empty() {
+            modules_with_ct.insert(module, calls.len());
+        }
+    }
+
+    let mut missing = Vec::new();
+    for module in modules_with_ct.keys() {
+        if !allowlist.contains(module) {
+            missing.push(format!("{} ({} calls)", module, modules_with_ct[module]));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "Modules with call-throughs not in interpose allowlist: {:?}",
+        missing
+    );
+}
+
+#[test]
+fn no_pthread_mutex_call_throughs_in_replacement_paths() {
+    let abi_src = workspace_root().join("crates/frankenlibc-abi/src");
+    let profile = load_profile();
+    let forbidden = forbidden_mutex_symbols();
+    let mut violations = Vec::new();
+
+    for entry in std::fs::read_dir(&abi_src).unwrap() {
+        let entry = entry.unwrap();
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if !fname.ends_with("_abi.rs") {
+            continue;
+        }
+        let module = fname.trim_end_matches(".rs");
+        let content = std::fs::read_to_string(entry.path()).unwrap();
+        for (lineno, func) in scan_call_throughs(module, &content, &profile) {
+            if forbidden.contains(func.as_str()) {
+                violations.push(format!("{fname}:{lineno} {func}"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "forbidden pthread_mutex call-throughs detected: {:?}",
+        violations
+    );
+}
+
+#[test]
+fn no_pthread_calls_outside_pthread_abi() {
+    let abi_src = workspace_root().join("crates/frankenlibc-abi/src");
+    let mut violations = Vec::new();
+
+    for entry in std::fs::read_dir(&abi_src).unwrap() {
+        let entry = entry.unwrap();
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if !fname.ends_with(".rs") || fname == "pthread_abi.rs" {
+            continue;
+        }
+        let content = std::fs::read_to_string(entry.path()).unwrap();
+        for (lineno, line) in content.lines().enumerate() {
+            if line.trim().starts_with("//") {
+                continue;
+            }
+            let mut pos = 0;
+            while let Some(idx) = line[pos..].find("libc::pthread_") {
+                let abs = pos + idx;
+                let after = &line[abs + 6..]; // skip "libc::"
+                if let Some(func) = extract_libc_call(after) {
+                    violations.push(format!("{}:{} libc::{}", fname, lineno + 1, func));
+                }
+                pos = abs + 14;
+            }
+            if line.contains("fn host_pthread_") {
+                continue;
+            }
+            let mut host_pos = 0;
+            while let Some(idx) = line[host_pos..].find("host_pthread_") {
+                let abs = host_pos + idx;
+                let after = &line[abs + "host_pthread_".len()..];
+                let mut end = 0;
+                for &b in after.as_bytes() {
+                    if b.is_ascii_lowercase() || b == b'_' || (end > 0 && b.is_ascii_digit()) {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if end > 0 {
+                    let wrapped = &after[..end];
+                    let rest = after[end..].trim_start();
+                    if rest.starts_with('(') && !wrapped.ends_with("_sym") {
+                        violations.push(format!(
+                            "{}:{} host_pthread_{}",
+                            fname,
+                            lineno + 1,
+                            wrapped
+                        ));
+                    }
+                }
+                host_pos = abs + "host_pthread_".len();
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "pthread call-throughs outside pthread_abi.rs: {:?}",
+        violations
+    );
+}
+
+#[test]
+fn call_through_census_matches_reality() {
+    let profile = load_profile();
+    let abi_src = workspace_root().join("crates/frankenlibc-abi/src");
+    let census = &profile["call_through_census"]["modules"];
+
+    for entry in std::fs::read_dir(&abi_src).unwrap() {
+        let entry = entry.unwrap();
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if !fname.ends_with("_abi.rs") {
+            continue;
+        }
+        let module = fname.trim_end_matches(".rs");
+        let content = std::fs::read_to_string(entry.path()).unwrap();
+        let calls = scan_call_throughs(module, &content, &profile);
+
+        if let Some(census_entry) = census.get(module) {
+            let census_count = census_entry["count"].as_u64().unwrap() as usize;
+            let actual = calls.len();
+            let ratio = if census_count > 0 {
+                actual as f64 / census_count as f64
+            } else if actual > 0 {
+                f64::INFINITY
+            } else {
+                1.0
+            };
+            assert!(
+                (0.5..=2.0).contains(&ratio),
+                "{}: census says {} but found {} call-throughs (ratio {:.2})",
+                module,
+                census_count,
+                actual,
+                ratio
+            );
+        }
+    }
+}
+
+#[test]
+fn replacement_profile_has_both_modes() {
+    let profile = load_profile();
+    let fixtures = load_fixture_pack();
+    let profiles = profile["profiles"].as_object().unwrap();
+
+    assert!(
+        profiles.contains_key("interpose"),
+        "Missing interpose profile"
+    );
+    assert!(
+        profiles.contains_key("replacement"),
+        "Missing replacement profile"
+    );
+
+    assert_eq!(
+        profile["profiles"]["interpose"]["call_through_allowed"].as_bool(),
+        Some(true),
+        "Interpose mode should allow call-through"
+    );
+    assert_eq!(
+        profile["profiles"]["replacement"]["call_through_allowed"].as_bool(),
+        Some(false),
+        "Replacement mode should forbid call-through"
+    );
+
+    let forbidden = profile["replacement_forbidden"]["mutex_symbols"]
+        .as_array()
+        .expect("replacement_forbidden.mutex_symbols must be an array");
+    let expected = forbidden_mutex_symbols();
+    let actual: HashSet<String> = forbidden
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "replacement_forbidden.mutex_symbols should list all tracked mutex symbols"
+    );
+    for symbol in expected {
+        assert!(
+            actual.contains(symbol),
+            "replacement_forbidden.mutex_symbols missing {symbol}"
+        );
+    }
+
+    let families = profile["callthrough_families"]["modules"]
+        .as_array()
+        .expect("callthrough_families.modules must be an array");
+    let family_set: HashSet<String> = families
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let expected_families: HashSet<String> = fixtures["summary"]["covered_callthrough_modules"]
+        .as_array()
+        .expect("fixture summary covered_callthrough_modules must be an array")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    assert_eq!(
+        family_set, expected_families,
+        "callthrough_families.modules must match replacement fixture family coverage"
+    );
+
+    let fixture_pack = profile["zero_unapproved_fixture_pack"]["path"]
+        .as_str()
+        .expect("zero_unapproved_fixture_pack.path must be string");
+    assert_eq!(
+        fixture_pack,
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+    );
+}
+
+#[test]
+fn raw_syscalls_are_not_flagged() {
+    let profile = load_profile();
+    let safe_patterns: HashSet<String> = profile["detection_rules"]["safe_patterns"]
+        .as_array()
+        .expect("detection_rules.safe_patterns must be an array")
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect();
+
+    assert!(
+        safe_patterns.contains("libc::syscall("),
+        "replacement guard profile must keep raw syscall calls out of host-callthrough findings"
+    );
+
+    let probe = r#"
+        pub unsafe extern "C" fn raw_syscall_probe() -> libc::c_long {
+            unsafe { libc::syscall(libc::SYS_getpid) }
+        }
+    "#;
+    assert!(
+        scan_call_throughs("raw_syscall_probe", probe, &profile).is_empty(),
+        "raw libc::syscall invocations must not be classified as host call-throughs"
+    );
+}
+
+#[test]
+fn callthrough_families_match_support_matrix() {
+    let profile = load_profile();
+    let root = workspace_root();
+
+    let declared_modules: HashSet<String> = profile["callthrough_families"]["modules"]
+        .as_array()
+        .expect("callthrough_families.modules must be array")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+
+    let abi_src = root.join("crates/frankenlibc-abi/src");
+    let source_modules: HashSet<String> = std::fs::read_dir(&abi_src)
+        .unwrap()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if !fname.ends_with("_abi.rs") {
+                return None;
+            }
+            let module = fname.trim_end_matches(".rs").to_string();
+            let content = std::fs::read_to_string(entry.path()).ok()?;
+            let calls = scan_call_throughs(&module, &content, &profile);
+            if calls.is_empty() { None } else { Some(module) }
+        })
+        .collect();
+
+    assert_eq!(
+        declared_modules, source_modules,
+        "replacement_profile.callthrough_families.modules must match source-scanned callthrough modules"
+    );
+
+    let allowlist: HashSet<String> = profile["interpose_allowlist"]["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    for module in &declared_modules {
+        assert!(
+            allowlist.contains(module),
+            "callthrough family {module} missing from interpose allowlist"
+        );
+    }
+}
+
+#[test]
+fn fixture_pack_covers_all_callthrough_families_in_both_modes() {
+    let profile = load_profile();
+    let fixtures = load_fixture_pack();
+
+    assert_eq!(fixtures["schema_version"].as_str(), Some("v1"));
+    assert_eq!(fixtures["bead"].as_str(), Some("bd-27kh"));
+
+    let profile_modules: HashSet<String> = profile["callthrough_families"]["modules"]
+        .as_array()
+        .expect("callthrough_families.modules must be array")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+
+    let fixture_rows = fixtures["fixtures"]
+        .as_array()
+        .expect("fixtures must be an array");
+    assert!(
+        profile_modules.is_empty() || !fixture_rows.is_empty(),
+        "fixtures must not be empty when callthrough families are tracked"
+    );
+
+    let mut mode_counts = HashMap::<String, usize>::new();
+    let mut module_modes = HashMap::<String, HashSet<String>>::new();
+    for row in fixture_rows {
+        let mode = row["mode"].as_str().expect("fixture.mode must be string");
+        let module = row["module"]
+            .as_str()
+            .expect("fixture.module must be string");
+        let expected = row["expected_outcome"]
+            .as_str()
+            .expect("fixture.expected_outcome must be string");
+        assert!(
+            mode == "interpose" || mode == "replacement",
+            "unexpected fixture mode: {mode}"
+        );
+        if mode == "interpose" {
+            assert_eq!(expected, "allowed");
+        } else {
+            assert_eq!(expected, "forbidden");
+        }
+        *mode_counts.entry(mode.to_string()).or_default() += 1;
+        module_modes
+            .entry(module.to_string())
+            .or_default()
+            .insert(mode.to_string());
+    }
+
+    for module in &profile_modules {
+        assert!(
+            module_modes.contains_key(module),
+            "missing fixture coverage for module {module}"
+        );
+        let modes = &module_modes[module];
+        assert!(
+            modes.contains("interpose") && modes.contains("replacement"),
+            "module {module} must be covered in both interpose and replacement fixtures"
+        );
+    }
+
+    let summary = fixtures["summary"]
+        .as_object()
+        .expect("summary must be object");
+    assert_eq!(
+        summary.get("fixture_count").and_then(|v| v.as_u64()),
+        Some(fixture_rows.len() as u64),
+        "summary.fixture_count mismatch"
+    );
+    assert_eq!(
+        summary
+            .get("interpose_allowed_count")
+            .and_then(|v| v.as_u64()),
+        Some(*mode_counts.get("interpose").unwrap_or(&0) as u64),
+        "summary.interpose_allowed_count mismatch"
+    );
+    assert_eq!(
+        summary
+            .get("replacement_forbidden_count")
+            .and_then(|v| v.as_u64()),
+        Some(*mode_counts.get("replacement").unwrap_or(&0) as u64),
+        "summary.replacement_forbidden_count mismatch"
+    );
+}
+
+#[test]
+fn guard_emits_symbol_module_path_diagnostics() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_guard.sh");
+    let (report_path, log_path) = unique_report_paths("replacement-guard-diagnostics");
+    let output = Command::new(&script)
+        .arg("interpose")
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_REPORT", &report_path)
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_LOG", &log_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run check_replacement_guard.sh");
+    assert!(
+        output.status.success(),
+        "replacement guard script failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(report_path.exists(), "missing {}", report_path.display());
+    assert!(log_path.exists(), "missing {}", log_path.display());
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&report_path).expect("report should be readable"),
+    )
+    .expect("report should parse");
+    assert_eq!(report["schema_version"].as_str(), Some("v1"));
+    assert_eq!(report["bead"].as_str(), Some("bd-h5x.3"));
+    assert!(
+        report["module_counts"].is_object(),
+        "module_counts must be object"
+    );
+    assert!(
+        report["module_rankings"].is_array(),
+        "module_rankings must be array"
+    );
+    assert!(
+        report["symbol_rankings"].is_array(),
+        "symbol_rankings must be array"
+    );
+    assert!(
+        report["non_threading_backlog"].is_object(),
+        "non_threading_backlog must be object"
+    );
+    assert!(
+        report["non_threading_backlog"]["top_modules"].is_array(),
+        "top_modules must be array"
+    );
+    let top_modules = report["non_threading_backlog"]["top_modules"]
+        .as_array()
+        .expect("top_modules array was asserted");
+    assert!(
+        report["total_call_throughs"].is_u64(),
+        "total_call_throughs must be u64"
+    );
+    let total_call_throughs = report["total_call_throughs"]
+        .as_u64()
+        .expect("total_call_throughs u64 was asserted");
+    if total_call_throughs == 0 {
+        let log_content = std::fs::read_to_string(&log_path).expect("log should be readable");
+        assert!(
+            top_modules.is_empty(),
+            "zero-callthrough report must have empty non_threading top_modules"
+        );
+        assert!(
+            log_content.lines().all(|line| line.trim().is_empty()),
+            "zero-callthrough report must not emit callthrough log rows"
+        );
+        return;
+    }
+    assert!(
+        !top_modules.is_empty(),
+        "non_threading_backlog.top_modules must not be empty"
+    );
+    for window in top_modules.windows(2) {
+        let left = window[0]["callthrough_count"]
+            .as_u64()
+            .expect("top_modules.callthrough_count must be u64");
+        let right = window[1]["callthrough_count"]
+            .as_u64()
+            .expect("top_modules.callthrough_count must be u64");
+        assert!(
+            left >= right,
+            "non_threading top_modules must be sorted descending by callthrough_count"
+        );
+    }
+    assert!(
+        top_modules
+            .iter()
+            .all(|row| row["classification"].as_str() == Some("non_threading")),
+        "non_threading_backlog.top_modules must exclude pthread_abi"
+    );
+    assert!(
+        report["violations_detail"].is_array(),
+        "violations_detail must be array"
+    );
+    assert!(
+        report["mutex_violations_detail"].is_array(),
+        "mutex_violations_detail must be array"
+    );
+
+    let first_log = std::fs::read_to_string(&log_path)
+        .expect("log should be readable")
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("log should include at least one row")
+        .to_string();
+    let row: serde_json::Value = serde_json::from_str(&first_log).expect("log row should parse");
+    for key in [
+        "trace_id",
+        "bead_id",
+        "scenario_id",
+        "mode",
+        "gate_name",
+        "decision_path",
+        "module",
+        "line",
+        "symbol",
+        "callthrough_detected",
+        "policy_rule",
+        "verdict",
+        "status",
+        "reason",
+        "artifact_ref",
+        "artifact_refs",
+    ] {
+        assert!(row.get(key).is_some(), "structured log row missing {key}");
+    }
+    assert_eq!(row["bead_id"].as_str(), Some("bd-h5x.3"));
+    assert_eq!(
+        row["callthrough_detected"].as_bool(),
+        Some(true),
+        "log row must record explicit callthrough detection"
+    );
+    assert!(
+        matches!(row["verdict"].as_str(), Some("allow") | Some("fail")),
+        "verdict must be allow or fail"
+    );
+}
+
+#[test]
+fn standalone_build_matches_replacement_guard_outcome() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_guard.sh");
+    let (report_path, log_path) = unique_report_paths("replacement-guard-standalone");
+    let guard_output = Command::new(&script)
+        .arg("replacement")
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_REPORT", &report_path)
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_LOG", &log_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run replacement guard in replacement mode");
+
+    let cargo_output = Command::new(env!("CARGO"))
+        .args([
+            "check",
+            "--release",
+            "-p",
+            "frankenlibc-abi",
+            "--features",
+            "standalone",
+        ])
+        .env("CARGO_TARGET_DIR", managed_nested_cargo_target_dir())
+        .env("RCH_CARGO_WRAPPER_BYPASS", "1")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run cargo check for standalone feature");
+
+    let census = load_host_delegation_census();
+    let blockers = census
+        .pointer("/profile_census/standalone-release-linux-x86_64/admission_blockers")
+        .and_then(serde_json::Value::as_array)
+        .expect("standalone profile should provide admission blockers");
+
+    let guard_passes = guard_output.status.success();
+    let expected_cargo_passes = guard_passes && blockers.is_empty();
+    let cargo_passes = cargo_output.status.success();
+
+    assert_eq!(
+        cargo_passes,
+        expected_cargo_passes,
+        "standalone build result must match replacement guard + census admission outcome\nreplacement_guard_stdout=\n{}\nreplacement_guard_stderr=\n{}\nstandalone_stdout=\n{}\nstandalone_stderr=\n{}",
+        String::from_utf8_lossy(&guard_output.stdout),
+        String::from_utf8_lossy(&guard_output.stderr),
+        String::from_utf8_lossy(&cargo_output.stdout),
+        String::from_utf8_lossy(&cargo_output.stderr)
+    );
+
+    if !cargo_passes {
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&cargo_output.stdout),
+            String::from_utf8_lossy(&cargo_output.stderr)
+        );
+        assert!(
+            combined.contains("standalone feature requires a replacement-clean ABI"),
+            "standalone build failure should explain the replacement-clean ABI guard\n{combined}"
+        );
+        assert!(
+            combined.contains("scripts/check_replacement_guard.sh replacement"),
+            "standalone build failure should point to the replacement guard script\n{combined}"
+        );
+
+        if !blockers.is_empty() {
+            assert!(
+                combined.contains("tests/conformance/host_delegation_census.v1.json")
+                    && combined.contains("standalone-release-linux-x86_64"),
+                "standalone build must identify the consumed profile evidence\n{combined}"
+            );
+            for blocker in blockers {
+                let code = blocker["code"]
+                    .as_str()
+                    .expect("standalone admission blocker should have a code");
+                let count = blocker["count"]
+                    .as_u64()
+                    .expect("standalone admission blocker should have an integer count");
+                let expected = format!("{code}={count}");
+                assert!(
+                    combined.contains(&expected),
+                    "standalone build must report derived blocker count {expected}\n{combined}"
+                );
+            }
+        }
+    }
+}

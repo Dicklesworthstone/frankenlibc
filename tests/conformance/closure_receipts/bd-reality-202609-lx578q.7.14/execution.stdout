@@ -1,0 +1,17 @@
+
+running 12 tests
+test c_locale_reports_ascii_and_decodes_ascii_only ... ok
+test c_utf8_locale_still_decodes_utf8 ... ok
+test legacy_single_character_boundaries_and_errno_match_glibc ... ok
+test legacy_split_state_reset_and_isolation_match_glibc ... ok
+test posix_locale_is_the_c_locale ... ok
+test single_byte_named_locales::char8_conversions_follow_the_external_locale ... ok
+test single_byte_named_locales::global_single_byte_character_matrix ... ok
+test single_byte_named_locales::named_single_byte_locale_objects_are_thread_local_snapshots ... ok
+test single_byte_named_locales::single_byte_string_capacity_count_and_restart_matrix ... ok
+test single_byte_named_locales::unsupported_multibyte_locale_rejection_preserves_state ... ok
+test string_conversion_capacity_matches_live_gnu ... ok
+test switching_between_locales_moves_the_codec_both_ways ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.60s
+

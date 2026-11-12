@@ -1,0 +1,2680 @@
+#![cfg(target_os = "linux")]
+
+//! Integration tests for `_FORTIFY_SOURCE` ABI entrypoints (`__*_chk` variants).
+//!
+//! Tests cover safe pass-through paths where buffer sizes are sufficient and
+//! fork-isolated failure paths where checked wrappers abort the child process.
+
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
+
+// Re-export fortified functions from the ABI crate.
+use frankenlibc_abi::errno_abi::__errno_location;
+use frankenlibc_abi::fortify_abi::*;
+use frankenlibc_abi::process_abi::fork as fl_fork;
+
+static FORK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+#[test]
+fn wide_fortify_entrypoints_use_target_wchar_t() {
+    // These coercions are deliberately compile-time ABI assertions. Linux
+    // x86_64 has a signed `wchar_t`, while aarch64 has an unsigned one; a
+    // private fixed-width alias can therefore pass host tests but fail every
+    // call from aarch64 fortify wrappers.
+    let _: unsafe extern "C" fn(
+        *mut libc::wchar_t,
+        *const libc::wchar_t,
+        usize,
+    ) -> *mut libc::wchar_t = __wcscpy_chk;
+    let _: unsafe extern "C-unwind" fn(
+        *mut libc::wchar_t,
+        usize,
+        c_int,
+        usize,
+        *const libc::wchar_t,
+        *mut c_void,
+    ) -> c_int = __vswprintf_chk;
+}
+
+fn clear_errno() {
+    unsafe { *__errno_location() = 0 };
+}
+
+fn errno_value() -> c_int {
+    unsafe { *__errno_location() }
+}
+
+fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
+    let _fork_guard = FORK_LOCK.lock();
+    let pid = unsafe { fl_fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+
+    if pid == 0 {
+        drop(_fork_guard);
+        child();
+        unsafe { libc::_exit(127) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(_fork_guard);
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    assert!(
+        libc::WIFSIGNALED(status),
+        "{label} child should terminate by signal, status={status}"
+    );
+    assert_eq!(
+        libc::WTERMSIG(status),
+        libc::SIGABRT,
+        "{label} child should terminate with SIGABRT"
+    );
+}
+
+/// Counterpart to [`assert_child_sigabrt`]: the child must run to COMPLETION
+/// rather than trip a fortify abort.
+///
+/// Fork-isolated for the same reason the abort arms are, but inverted: a guard
+/// that aborts when it should not would kill the whole test binary if the call
+/// were made in-process, which reads as a harness crash rather than a failed
+/// assertion. Here it is a plain failure naming the signal.
+fn assert_child_exits_normally(label: &str, child: impl FnOnce()) {
+    let _fork_guard = FORK_LOCK.lock();
+    let pid = unsafe { fl_fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+
+    if pid == 0 {
+        drop(_fork_guard);
+        child();
+        unsafe { libc::_exit(0) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(_fork_guard);
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    assert!(
+        !libc::WIFSIGNALED(status),
+        "{label} child died by signal {} — a fortify abort where none is due",
+        libc::WTERMSIG(status)
+    );
+    assert!(
+        libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        "{label} child should exit 0, status={status}"
+    );
+}
+
+#[test]
+fn chk_fail_aborts_child_process() {
+    assert_child_sigabrt("chk_fail", || unsafe { __chk_fail() });
+}
+
+#[test]
+fn stack_chk_fail_aborts_child_process() {
+    assert_child_sigabrt("stack_chk_fail", || unsafe { __stack_chk_fail() });
+}
+
+#[test]
+fn fortify_fail_aborts_child_process() {
+    let msg = c"explicit fortify failure";
+    assert_child_sigabrt("fortify_fail", || unsafe { __fortify_fail(msg.as_ptr()) });
+}
+
+// ===========================================================================
+// Memory operations: __memcpy_chk, __memmove_chk, __memset_chk,
+//                    __explicit_bzero_chk
+// ===========================================================================
+
+#[test]
+fn memcpy_chk_safe() {
+    let src = [1u8, 2, 3, 4, 5];
+    let mut dest = [0u8; 8];
+    let ret = unsafe {
+        __memcpy_chk(
+            dest.as_mut_ptr().cast(),
+            src.as_ptr().cast(),
+            5,
+            8, // destlen >= len
+        )
+    };
+    assert_eq!(ret, dest.as_mut_ptr().cast());
+    assert_eq!(&dest[..5], &[1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn memcpy_chk_exact_fit() {
+    let src = [0xAAu8; 4];
+    let mut dest = [0u8; 4];
+    unsafe {
+        __memcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr().cast(), 4, 4);
+    }
+    assert_eq!(dest, [0xAA; 4]);
+}
+
+#[test]
+fn memcpy_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("memcpy_chk overflow", || {
+        let src = [1u8, 2, 3, 4];
+        let mut dest = [0u8; 2];
+        unsafe {
+            __memcpy_chk(
+                dest.as_mut_ptr().cast(),
+                src.as_ptr().cast(),
+                src.len(),
+                dest.len(),
+            );
+        }
+    });
+}
+
+#[test]
+fn memmove_chk_overlapping() {
+    let mut buf = [1u8, 2, 3, 4, 5, 0, 0, 0];
+    // Move [1,2,3,4,5] two positions right within same buffer.
+    unsafe {
+        __memmove_chk(
+            buf.as_mut_ptr().add(2).cast(),
+            buf.as_ptr().cast(),
+            5,
+            6, // destlen covers positions 2..8
+        );
+    }
+    assert_eq!(&buf[2..7], &[1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn memmove_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("memmove_chk overflow", || {
+        let src = [1u8, 2, 3, 4];
+        let mut dest = [0u8; 2];
+        unsafe {
+            __memmove_chk(
+                dest.as_mut_ptr().cast(),
+                src.as_ptr().cast(),
+                src.len(),
+                dest.len(),
+            );
+        }
+    });
+}
+
+#[test]
+fn memset_chk_fills() {
+    let mut buf = [0u8; 16];
+    unsafe {
+        __memset_chk(buf.as_mut_ptr().cast(), 0x42, 10, 16);
+    }
+    assert_eq!(&buf[..10], &[0x42; 10]);
+    assert_eq!(&buf[10..], &[0; 6]);
+}
+
+#[test]
+fn memset_chk_exact_fit_fills_entire_buffer() {
+    let mut buf = [0u8; 4];
+    unsafe {
+        __memset_chk(buf.as_mut_ptr().cast(), 0xA5, buf.len(), buf.len());
+    }
+    assert_eq!(buf, [0xA5; 4]);
+}
+
+#[test]
+fn memset_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("memset_chk overflow", || {
+        let mut buf = [0u8; 2];
+        unsafe {
+            __memset_chk(buf.as_mut_ptr().cast(), 0x42, 4, buf.len());
+        }
+    });
+}
+
+#[test]
+fn explicit_bzero_chk_zeroes() {
+    let mut buf = [0xFFu8; 8];
+    unsafe {
+        __explicit_bzero_chk(buf.as_mut_ptr().cast(), 8, 8);
+    }
+    assert_eq!(buf, [0; 8]);
+}
+
+#[test]
+fn explicit_bzero_chk_partial() {
+    let mut buf = [0xFFu8; 8];
+    unsafe {
+        __explicit_bzero_chk(buf.as_mut_ptr().cast(), 4, 8);
+    }
+    assert_eq!(&buf[..4], &[0; 4]);
+    assert_eq!(&buf[4..], &[0xFF; 4]);
+}
+
+#[test]
+fn explicit_bzero_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("explicit_bzero_chk overflow", || {
+        let mut buf = [0xFFu8; 2];
+        unsafe {
+            __explicit_bzero_chk(buf.as_mut_ptr().cast(), 3, buf.len());
+        }
+    });
+}
+
+// ===========================================================================
+// String operations: __strcpy_chk, __strncpy_chk, __strcat_chk,
+//                    __strncat_chk, __stpcpy_chk, __stpncpy_chk
+// ===========================================================================
+
+#[test]
+fn strcpy_chk_safe() {
+    let src = CString::new("hello").unwrap();
+    let mut dest = [0u8; 16];
+    let ret = unsafe { __strcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 16) };
+    assert_eq!(ret, dest.as_mut_ptr().cast::<c_char>());
+    assert_eq!(&dest[..6], b"hello\0");
+}
+
+#[test]
+fn strcpy_chk_overflow_aborts_child_process() {
+    let src = c"toolong";
+    assert_child_sigabrt("strcpy_chk overflow", || {
+        let mut dest = [0u8; 4];
+        unsafe {
+            __strcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), dest.len());
+        }
+    });
+}
+
+#[test]
+fn strncpy_chk_safe() {
+    let src = CString::new("world").unwrap();
+    let mut dest = [0xFFu8; 10];
+    unsafe {
+        __strncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 10, 10);
+    }
+    assert_eq!(&dest[..5], b"world");
+    // strncpy pads with zeros
+    assert_eq!(&dest[5..], &[0; 5]);
+}
+
+#[test]
+fn strncpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("strncpy_chk n over real buffer", || {
+        let src = c"world";
+        let mut dest = [0u8; 2];
+        unsafe { __strncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 4, dest.len()) };
+    });
+}
+
+#[test]
+fn strcat_chk_safe() {
+    let mut dest = [0u8; 32];
+    dest[0] = b'A';
+    dest[1] = b'B';
+    dest[2] = 0;
+    let src = CString::new("CD").unwrap();
+    unsafe {
+        __strcat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 32);
+    }
+    assert_eq!(&dest[..5], b"ABCD\0");
+}
+
+#[test]
+fn strcat_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("strcat_chk src over real buffer", || {
+        let mut dest = [b'A', 0];
+        let src = c"B";
+        unsafe { __strcat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), dest.len()) };
+    });
+}
+
+#[test]
+fn strncat_chk_safe() {
+    let mut dest = [0u8; 32];
+    dest[0] = b'X';
+    dest[1] = 0;
+    let src = CString::new("YZWV").unwrap();
+    // Append at most 2 chars
+    unsafe {
+        __strncat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 2, 32);
+    }
+    assert_eq!(&dest[..4], b"XYZ\0");
+}
+
+#[test]
+fn strncat_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("strncat_chk n over real buffer", || {
+        let mut dest = [b'A', 0];
+        let src = c"B";
+        unsafe { __strncat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 1, dest.len()) };
+    });
+}
+
+#[test]
+fn strncat_chk_shorter_src() {
+    let mut dest = [0u8; 32];
+    dest[0] = b'A';
+    dest[1] = 0;
+    let src = CString::new("B").unwrap();
+    // n=10 but src is only "B" (1 char)
+    unsafe {
+        __strncat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 10, 32);
+    }
+    assert_eq!(&dest[..3], b"AB\0");
+}
+
+/// Regression: `__strncat_chk` must not read `src` past the `n` bytes that
+/// `strncat` is permitted to read. It previously sized the append with an
+/// unbounded `strlen(src)`, so a caller passing a non-terminated `src` with
+/// only `n` readable bytes (legal per POSIX) could fault.
+///
+/// `src` fills a whole readable page with non-NUL bytes, immediately followed
+/// by a `PROT_NONE` guard page. The append point sits 64 bytes before the
+/// guard, so the bounded fix touches only `src[0..n]` — well clear of the
+/// guard — while the old unbounded `strlen(src)` scans the rest of the page
+/// looking for a NUL and faults on the guard. A regression therefore segfaults
+/// the test binary (a loud, unmistakable signal); with the fix the test runs
+/// clean. Done in-process: forking from the multithreaded test harness and
+/// then entering membrane code can deadlock on a lock held across `fork()`.
+#[test]
+fn strncat_chk_does_not_overread_src_past_n() {
+    unsafe {
+        let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+        let region = libc::mmap(
+            std::ptr::null_mut(),
+            page * 2,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        );
+        assert_ne!(region, libc::MAP_FAILED, "mmap failed");
+        let base = region as *mut u8;
+        // Second page is unreadable: any read into it faults.
+        assert_eq!(
+            libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE),
+            0,
+            "mprotect failed"
+        );
+        // Fill the whole first page with non-NUL bytes — no terminator anywhere,
+        // so an unbounded scan runs straight off the end into the guard page.
+        for i in 0..page {
+            *base.add(i) = b'Z';
+        }
+
+        // Append point: 64 bytes before the guard. The bounded scan reads only
+        // src[0..n]; the old unbounded strlen(src) walks to the guard and dies.
+        let n = 16usize;
+        let src = base.add(page - 64);
+
+        let mut dest = [0u8; 64];
+        dest[0] = b'A';
+        dest[1] = 0;
+        __strncat_chk(
+            dest.as_mut_ptr().cast(),
+            src.cast::<c_char>(),
+            n,
+            dest.len(),
+        );
+
+        assert_eq!(dest[0], b'A');
+        assert!(
+            dest[1..=n].iter().all(|&b| b == b'Z'),
+            "expected {n} appended 'Z' bytes"
+        );
+        assert_eq!(dest[1 + n], 0, "result must be NUL-terminated");
+
+        assert_eq!(libc::munmap(region, page * 2), 0, "munmap failed");
+    }
+}
+
+#[test]
+fn stpcpy_chk_returns_end() {
+    let src = CString::new("test").unwrap();
+    let mut dest = [0u8; 16];
+    let end = unsafe { __stpcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 16) };
+    assert_eq!(&dest[..5], b"test\0");
+    // end should point to the NUL terminator
+    let offset = unsafe { end.offset_from(dest.as_ptr().cast::<c_char>()) };
+    assert_eq!(offset, 4);
+}
+
+#[test]
+fn stpcpy_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("stpcpy_chk src over real buffer", || {
+        let src = c"toolong";
+        let mut dest = [0u8; 4];
+        unsafe { __stpcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), dest.len()) };
+    });
+}
+
+#[test]
+fn stpncpy_chk_returns_position() {
+    let src = CString::new("ab").unwrap();
+    let mut dest = [0xFFu8; 8];
+    let end = unsafe { __stpncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 5, 8) };
+    // "ab" fits in 5. Copied "ab\0\0\0", end should point to first \0 (position 2)
+    let offset = unsafe { end.offset_from(dest.as_ptr().cast::<c_char>()) };
+    assert_eq!(offset, 2);
+    assert_eq!(&dest[..2], b"ab");
+}
+
+#[test]
+fn stpncpy_chk_exact_fill() {
+    let src = CString::new("abcde").unwrap();
+    let mut dest = [0u8; 5];
+    let end = unsafe { __stpncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 5, 5) };
+    // "abcde" fills all 5 bytes, no NUL within n
+    let offset = unsafe { end.offset_from(dest.as_ptr().cast::<c_char>()) };
+    assert_eq!(offset, 5);
+    assert_eq!(&dest, b"abcde");
+}
+
+#[test]
+fn stpncpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("stpncpy_chk n over real buffer", || {
+        let src = c"abcd";
+        let mut dest = [0u8; 2];
+        unsafe { __stpncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 4, dest.len()) };
+    });
+}
+
+// ===========================================================================
+// Wide string operations: __wcscpy_chk, __wcsncpy_chk, __wcscat_chk,
+//                         __wcsncat_chk, __wmemcpy_chk, __wmemmove_chk,
+//                         __wmemset_chk
+// ===========================================================================
+
+type WcharT = libc::wchar_t;
+
+unsafe extern "C" fn call_vsprintf_chk(
+    buf: *mut c_char,
+    buflen: usize,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vsprintf_chk(buf, 0, buflen, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vsnprintf_chk(
+    buf: *mut c_char,
+    maxlen: usize,
+    buflen: usize,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vsnprintf_chk(buf, maxlen, 0, buflen, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vswprintf_chk(
+    buf: *mut WcharT,
+    maxlen: usize,
+    buflen: usize,
+    fmt: *const WcharT,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vswprintf_chk(buf, maxlen, 0, buflen, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vfprintf_chk(
+    stream: *mut c_void,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vfprintf_chk(stream, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vprintf_chk(fmt: *const c_char, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vprintf_chk(0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vdprintf_chk(fd: c_int, fmt: *const c_char, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vdprintf_chk(fd, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vasprintf_chk(
+    strp: *mut *mut c_char,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vasprintf_chk(strp, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vfwprintf_chk(
+    stream: *mut c_void,
+    fmt: *const WcharT,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vfwprintf_chk(stream, 0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vwprintf_chk(fmt: *const WcharT, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vwprintf_chk(0, fmt, ap) }
+}
+
+unsafe extern "C" fn call_vsyslog_chk(priority: c_int, fmt: *const c_char, mut args: ...) {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vsyslog_chk(priority, 0, fmt, ap) };
+}
+
+#[test]
+fn wcscpy_chk_safe() {
+    let src: [WcharT; 4] = [b'H' as WcharT, b'i' as WcharT, b'!' as WcharT, 0];
+    let mut dest = [0 as WcharT; 8];
+    let ret = unsafe {
+        __wcscpy_chk(
+            dest.as_mut_ptr(),
+            src.as_ptr(),
+            8 * 4, // destlen in bytes
+        )
+    };
+    assert_eq!(ret, dest.as_mut_ptr());
+    assert_eq!(&dest[..4], &src);
+}
+
+#[test]
+fn wcscpy_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcscpy_chk src over real buffer", || {
+        let src: [WcharT; 4] = [b'H' as WcharT, b'i' as WcharT, b'!' as WcharT, 0];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wcscpy_chk(dest.as_mut_ptr(), src.as_ptr(), dest.len()) };
+    });
+}
+
+#[test]
+fn wcsncpy_chk_safe() {
+    let src: [WcharT; 3] = [b'A' as WcharT, b'B' as WcharT, 0];
+    let mut dest = [0xFF as WcharT; 4];
+    unsafe {
+        __wcsncpy_chk(dest.as_mut_ptr(), src.as_ptr(), 4, 4 * 4);
+    }
+    assert_eq!(dest[0], b'A' as WcharT);
+    assert_eq!(dest[1], b'B' as WcharT);
+    assert_eq!(dest[2], 0); // null terminator from src
+    assert_eq!(dest[3], 0); // padding
+}
+
+#[test]
+fn wcsncpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsncpy_chk n over real buffer", || {
+        let src: [WcharT; 4] = [b'A' as WcharT, b'B' as WcharT, b'C' as WcharT, 0];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wcsncpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, dest.len()) };
+    });
+}
+
+#[test]
+fn wcscat_chk_safe() {
+    let mut dest = [0 as WcharT; 8];
+    dest[0] = b'X' as WcharT;
+    dest[1] = 0;
+    let src: [WcharT; 3] = [b'Y' as WcharT, b'Z' as WcharT, 0];
+    unsafe {
+        __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), dest.len());
+    }
+    assert_eq!(dest[0], b'X' as WcharT);
+    assert_eq!(dest[1], b'Y' as WcharT);
+    assert_eq!(dest[2], b'Z' as WcharT);
+    assert_eq!(dest[3], 0);
+}
+
+#[test]
+fn wcscat_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcscat_chk src over real buffer", || {
+        let mut dest = [b'A' as WcharT, 0];
+        let src: [WcharT; 2] = [b'B' as WcharT, 0];
+        unsafe { __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), dest.len()) };
+    });
+}
+
+#[test]
+fn wcsncat_chk_safe() {
+    let mut dest = [0 as WcharT; 8];
+    dest[0] = b'A' as WcharT;
+    dest[1] = 0;
+    let src: [WcharT; 4] = [b'B' as WcharT, b'C' as WcharT, b'D' as WcharT, 0];
+    // Append at most 2 wide chars
+    unsafe {
+        __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 2, dest.len());
+    }
+    assert_eq!(dest[0], b'A' as WcharT);
+    assert_eq!(dest[1], b'B' as WcharT);
+    assert_eq!(dest[2], b'C' as WcharT);
+    assert_eq!(dest[3], 0);
+}
+
+#[test]
+fn wcsncat_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsncat_chk n over real buffer", || {
+        let mut dest = [b'A' as WcharT, 0];
+        let src: [WcharT; 2] = [b'B' as WcharT, 0];
+        unsafe { __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 1, dest.len()) };
+    });
+}
+
+#[test]
+fn wmemcpy_chk_safe() {
+    let src: [WcharT; 3] = [100, 200, 300];
+    let mut dest = [0 as WcharT; 4];
+    let ret = unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, 4 * 4) };
+    assert_eq!(ret, dest.as_mut_ptr());
+    assert_eq!(&dest[..3], &[100, 200, 300]);
+}
+
+#[test]
+fn wmemcpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wmemcpy_chk n over real buffer", || {
+        let src: [WcharT; 3] = [100, 200, 300];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, dest.len()) };
+    });
+}
+
+#[test]
+fn wmemmove_chk_safe() {
+    let mut buf: [WcharT; 6] = [1, 2, 3, 4, 0, 0];
+    // Overlapping move: shift right by 2
+    unsafe {
+        __wmemmove_chk(
+            buf.as_mut_ptr().add(2),
+            buf.as_ptr(),
+            3,
+            4 * 4, // destlen covers buf[2..6]
+        );
+    }
+    assert_eq!(&buf[2..5], &[1, 2, 3]);
+}
+
+#[test]
+fn wmemmove_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wmemmove_chk n over real buffer", || {
+        let src: [WcharT; 3] = [1, 2, 3];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wmemmove_chk(dest.as_mut_ptr(), src.as_ptr(), 3, dest.len()) };
+    });
+}
+
+#[test]
+fn wmemset_chk_safe() {
+    let mut buf = [0 as WcharT; 5];
+    let ret = unsafe { __wmemset_chk(buf.as_mut_ptr(), 42, 5, 5 * 4) };
+    assert_eq!(ret, buf.as_mut_ptr());
+    assert_eq!(buf, [42; 5]);
+}
+
+#[test]
+// The wide `*_chk` wrappers take their destination size in WIDE CHARACTERS, not
+// bytes: glibc's fortify headers pass `__glibc_objsize (dst) / sizeof (wchar_t)`.
+// These tests used to pass `size_of_val(&dest)` — bytes — which made the check
+// fire for the wrong reason and locked in a rule that aborted at a QUARTER of the
+// real capacity (bd-917hzv sibling). They now pass `dest.len()`, so the abort
+// they assert is the same one host glibc performs.
+fn wmemset_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wmemset_chk n over real buffer", || {
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wmemset_chk(dest.as_mut_ptr(), 42, 3, dest.len()) };
+    });
+}
+
+// ===========================================================================
+// Printf family: __vsnprintf_chk, __vsprintf_chk, __snprintf_chk
+// ===========================================================================
+
+#[test]
+fn vsnprintf_chk_safe() {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("value=%d").unwrap();
+    // Use __snprintf_chk (variadic) since we can't easily construct va_list
+    let ret = unsafe {
+        __snprintf_chk(
+            buf.as_mut_ptr().cast(),
+            64, // maxlen
+            0,  // flag
+            64, // buflen
+            fmt.as_ptr(),
+            42i32,
+        )
+    };
+    assert!(ret > 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "value=42");
+}
+
+#[test]
+fn sprintf_chk_safe() {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("hello %s").unwrap();
+    let arg = CString::new("world").unwrap();
+    let ret = unsafe {
+        __sprintf_chk(
+            buf.as_mut_ptr().cast(),
+            0,  // flag
+            64, // buflen
+            fmt.as_ptr(),
+            arg.as_ptr(),
+        )
+    };
+    assert_eq!(ret, 11); // "hello world"
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "hello world");
+}
+
+#[test]
+fn sprintf_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("sprintf_chk overflow", || {
+        let mut buf = [0u8; 4];
+        let fmt = CString::new("longstring").unwrap();
+        unsafe {
+            __sprintf_chk(buf.as_mut_ptr().cast(), 0, buf.len(), fmt.as_ptr());
+        }
+    });
+}
+
+#[test]
+fn snprintf_chk_truncates() {
+    let mut buf = [0u8; 8];
+    let fmt = CString::new("longstring").unwrap();
+    let ret = unsafe {
+        __snprintf_chk(
+            buf.as_mut_ptr().cast(),
+            8, // maxlen
+            0, // flag
+            8, // buflen
+            fmt.as_ptr(),
+        )
+    };
+    // vsnprintf returns full length even if truncated
+    assert_eq!(ret, 10);
+    // Buffer should have "longstr\0"
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "longstr");
+}
+
+#[test]
+fn snprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("snprintf_chk maxlen over real buffer", || {
+        let mut buf = [0u8; 4];
+        let fmt = CString::new("x").unwrap();
+        unsafe {
+            __snprintf_chk(
+                buf.as_mut_ptr().cast(),
+                buf.len() + 1,
+                0,
+                buf.len(),
+                fmt.as_ptr(),
+            );
+        }
+    });
+}
+
+// ===========================================================================
+// Read/pread operations: __read_chk, __pread_chk, __pread64_chk
+// ===========================================================================
+
+#[test]
+fn read_chk_safe() {
+    // Create a pipe to test read_chk
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+
+    let msg = b"test";
+    unsafe { libc::write(fds[1], msg.as_ptr().cast(), 4) };
+    unsafe { libc::close(fds[1]) };
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { __read_chk(fds[0], buf.as_mut_ptr().cast(), 4, 16) };
+    assert_eq!(n, 4);
+    assert_eq!(&buf[..4], b"test");
+
+    unsafe { libc::close(fds[0]) };
+}
+
+#[test]
+fn read_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("read_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __read_chk(-1, buf.as_mut_ptr().cast(), 16, buf.len()) };
+    });
+}
+
+#[test]
+fn pread_chk_safe() {
+    // Create a temp file
+    let path = CString::new("/tmp/fortify_pread_test").unwrap();
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o644,
+        )
+    };
+    assert!(fd >= 0);
+
+    let data = b"ABCDEFGH";
+    unsafe { libc::write(fd, data.as_ptr().cast(), 8) };
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __pread_chk(fd, buf.as_mut_ptr().cast(), 4, 2, 8) };
+    assert_eq!(n, 4);
+    assert_eq!(&buf[..4], b"CDEF");
+
+    unsafe {
+        libc::close(fd);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn pread_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("pread_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __pread_chk(-1, buf.as_mut_ptr().cast(), 16, 0, buf.len()) };
+    });
+}
+
+#[test]
+fn pread64_chk_safe() {
+    let path = CString::new("/tmp/fortify_pread64_test").unwrap();
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o644,
+        )
+    };
+    assert!(fd >= 0);
+
+    let data = b"0123456789";
+    unsafe { libc::write(fd, data.as_ptr().cast(), 10) };
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { __pread64_chk(fd, buf.as_mut_ptr().cast(), 3, 5, 16) };
+    assert_eq!(n, 3);
+    assert_eq!(&buf[..3], b"567");
+
+    unsafe {
+        libc::close(fd);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn pread64_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("pread64_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __pread64_chk(-1, buf.as_mut_ptr().cast(), 16, 0, buf.len()) };
+    });
+}
+
+// ===========================================================================
+// Path/name operations: __getcwd_chk, __getwd_chk, __readlink_chk,
+//                       __readlinkat_chk, __realpath_chk,
+//                       __gethostname_chk, __confstr_chk
+// ===========================================================================
+
+#[test]
+fn getcwd_chk_safe() {
+    let mut buf = [0u8; 4096];
+    let ret = unsafe { __getcwd_chk(buf.as_mut_ptr().cast(), 4096, 4096) };
+    assert!(!ret.is_null());
+    let cwd = unsafe { std::ffi::CStr::from_ptr(ret) };
+    assert!(cwd.to_str().unwrap().starts_with('/'));
+}
+
+#[test]
+fn getcwd_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getcwd_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __getcwd_chk(buf.as_mut_ptr().cast(), 4096, buf.len()) };
+    });
+}
+
+#[test]
+fn getwd_chk_safe() {
+    let mut buf = [0u8; 4096];
+    let ret = unsafe { __getwd_chk(buf.as_mut_ptr().cast(), 4096) };
+    assert!(!ret.is_null());
+    let cwd = unsafe { std::ffi::CStr::from_ptr(ret) };
+    assert!(cwd.to_str().unwrap().starts_with('/'));
+}
+
+#[test]
+fn getwd_chk_null_buffer_follows_getwd_error_contract() {
+    clear_errno();
+    let ret = unsafe { __getwd_chk(std::ptr::null_mut(), 4096) };
+    assert!(ret.is_null());
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+fn getwd_chk_short_buffer_aborts_child_process() {
+    assert_child_sigabrt("getwd_chk short buffer", || {
+        let mut buf = [0u8; 1];
+        unsafe { __getwd_chk(buf.as_mut_ptr().cast(), buf.len()) };
+    });
+}
+
+#[test]
+fn readlink_chk_safe() {
+    let path = CString::new("/proc/self/exe").unwrap();
+    let mut buf = [0u8; 4096];
+    let n = unsafe { __readlink_chk(path.as_ptr(), buf.as_mut_ptr().cast(), 4096, 4096) };
+    assert!(n > 0, "readlink /proc/self/exe should succeed");
+}
+
+#[test]
+fn readlink_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("readlink_chk len over real buffer", || {
+        let path = CString::new("/proc/self/exe").unwrap();
+        let mut buf = [0u8; 4];
+        unsafe { __readlink_chk(path.as_ptr(), buf.as_mut_ptr().cast(), 4096, buf.len()) };
+    });
+}
+
+#[test]
+fn readlinkat_chk_safe() {
+    let path = CString::new("/proc/self/exe").unwrap();
+    let mut buf = [0u8; 4096];
+    let n = unsafe {
+        __readlinkat_chk(
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            4096,
+            4096,
+        )
+    };
+    assert!(n > 0, "readlinkat /proc/self/exe should succeed");
+}
+
+#[test]
+fn readlinkat_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("readlinkat_chk len over real buffer", || {
+        let path = CString::new("/proc/self/exe").unwrap();
+        let mut buf = [0u8; 4];
+        unsafe {
+            __readlinkat_chk(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                4096,
+                buf.len(),
+            )
+        };
+    });
+}
+
+#[test]
+fn realpath_chk_safe() {
+    let path = CString::new("/tmp").unwrap();
+    let mut buf = [0u8; 4096];
+    let ret = unsafe { __realpath_chk(path.as_ptr(), buf.as_mut_ptr().cast(), 4096) };
+    assert!(!ret.is_null());
+    let resolved = unsafe { std::ffi::CStr::from_ptr(ret) };
+    // /tmp might be a symlink to /private/tmp on some systems, but should resolve
+    assert!(resolved.to_str().unwrap().contains("tmp"));
+}
+
+#[test]
+fn realpath_chk_short_resolved_buffer_aborts_child_process() {
+    assert_child_sigabrt("realpath_chk short resolved buffer", || {
+        let path = CString::new("/tmp").unwrap();
+        let mut buf = [0u8; 1];
+        unsafe { __realpath_chk(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+    });
+}
+
+#[test]
+fn gethostname_chk_safe() {
+    let mut buf = [0u8; 256];
+    let ret = unsafe { __gethostname_chk(buf.as_mut_ptr().cast(), 256, 256) };
+    assert_eq!(ret, 0);
+    // Should have a non-empty hostname
+    assert_ne!(buf[0], 0);
+}
+
+#[test]
+fn gethostname_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("gethostname_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __gethostname_chk(buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+#[test]
+fn confstr_chk_safe() {
+    let mut buf = [0u8; 256];
+    // _CS_PATH = 0 on Linux
+    let n = unsafe { __confstr_chk(0, buf.as_mut_ptr().cast(), 256, 256) };
+    // confstr returns the required size including NUL
+    assert!(n > 0, "confstr(_CS_PATH) should return a path");
+}
+
+#[test]
+fn confstr_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("confstr_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __confstr_chk(0, buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+#[test]
+fn getdomainname_chk_safe() {
+    let mut buf = [0u8; 256];
+    let ret = unsafe { __getdomainname_chk(buf.as_mut_ptr().cast(), 256, 256) };
+    // May return 0 (success) or -1 (no domain set), both are valid
+    assert!(ret == 0 || ret == -1);
+}
+
+#[test]
+fn getdomainname_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getdomainname_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __getdomainname_chk(buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+// ===========================================================================
+// Misc: __getgroups_chk, __ttyname_r_chk, __getlogin_r_chk
+// ===========================================================================
+
+#[test]
+fn getgroups_chk_safe() {
+    // First get count
+    let n = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    assert!(n >= 0);
+    if n > 0 {
+        let mut groups = vec![0u32; n as usize];
+        let listlen = (n as usize) * 4;
+        let ret = unsafe { __getgroups_chk(n, groups.as_mut_ptr(), listlen) };
+        assert_eq!(ret, n);
+    }
+}
+
+#[test]
+fn getgroups_chk_size_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getgroups_chk size over real buffer", || {
+        let mut groups = [0u32; 1];
+        unsafe { __getgroups_chk(2, groups.as_mut_ptr(), core::mem::size_of_val(&groups)) };
+    });
+}
+
+#[test]
+fn ttyname_r_chk_not_a_tty() {
+    let mut buf = [0u8; 256];
+    // fd=0 (stdin) in test environment is likely not a tty
+    let ret = unsafe { __ttyname_r_chk(0, buf.as_mut_ptr().cast(), 256, 256) };
+    // ENOTTY or success, either is valid
+    assert!(ret == 0 || ret == libc::ENOTTY || ret == libc::EBADF);
+}
+
+#[test]
+fn ttyname_r_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ttyname_r_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __ttyname_r_chk(0, buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+#[test]
+fn getlogin_r_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getlogin_r_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __getlogin_r_chk(buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+// ===========================================================================
+// Open variants: __open_2, __open64_2, __openat_2, __openat64_2
+// ===========================================================================
+
+#[test]
+fn open_2_safe() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { __open_2(path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "open /dev/null should succeed");
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn open_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open_2(path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+    });
+}
+
+#[test]
+fn open64_2_safe() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { __open64_2(path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "open64 /dev/null should succeed");
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn open64_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open64_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open64_2(path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+    });
+}
+
+#[test]
+fn openat_2_safe() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { __openat_2(libc::AT_FDCWD, path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "openat /dev/null should succeed");
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn openat_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe {
+            __openat_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_CREAT | libc::O_RDONLY,
+            )
+        };
+    });
+}
+
+#[test]
+fn openat64_2_safe() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { __openat64_2(libc::AT_FDCWD, path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "openat64 /dev/null should succeed");
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn openat64_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat64_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe {
+            __openat64_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_CREAT | libc::O_RDONLY,
+            )
+        };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// O_TMPFILE half of the mode-required guard (bd-3vz1f8).
+//
+// The guard is `(oflag & O_CREAT) != 0 || (oflag & O_TMPFILE) == O_TMPFILE`, but
+// every abort test above passes O_CREAT, so the second clause was completely
+// untested: deleting it left the whole target green. glibc aborts on it too —
+// its own message names both flags, measured on this host by calling glibc's
+// __open_2 directly in a forked child:
+//   __open_2("/tmp", O_RDONLY)         -> exit 0
+//   __open_2("/tmp", O_CREAT|O_RDONLY) -> SIGABRT
+//   __open_2("/tmp", O_TMPFILE|O_RDWR) -> SIGABRT
+//   *** invalid open call: O_CREAT or O_TMPFILE without mode ***: terminated
+//
+// O_TMPFILE is a multi-bit value that subsumes O_DIRECTORY, which is why the
+// guard tests it with `== O_TMPFILE` rather than `!= 0`; passing it here is what
+// keeps that distinction covered.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn open_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open_2(path.as_ptr(), libc::O_TMPFILE | libc::O_RDWR) };
+    });
+}
+
+#[test]
+fn open64_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open64_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open64_2(path.as_ptr(), libc::O_TMPFILE | libc::O_RDWR) };
+    });
+}
+
+#[test]
+fn openat_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe {
+            __openat_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_TMPFILE | libc::O_RDWR,
+            )
+        };
+    });
+}
+
+#[test]
+fn openat64_2_tmpfile_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat64_2 O_TMPFILE without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe {
+            __openat64_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_TMPFILE | libc::O_RDWR,
+            )
+        };
+    });
+}
+
+// ===========================================================================
+// FD_SET check: __fdelt_chk
+// ===========================================================================
+
+#[test]
+fn fdelt_chk_valid_fds() {
+    // fd 0 => element 0 (0 / 64 on x86_64)
+    let idx = unsafe { __fdelt_chk(0) };
+    assert_eq!(idx, 0);
+
+    // fd 63 => element 0
+    let idx = unsafe { __fdelt_chk(63) };
+    assert_eq!(idx, 0);
+
+    // fd 64 => element 1
+    let idx = unsafe { __fdelt_chk(64) };
+    assert_eq!(idx, 1);
+
+    // fd 1023 => element 15 (1023 / 64 on x86_64)
+    let bits = 8 * std::mem::size_of::<c_long>() as c_long;
+    let idx = unsafe { __fdelt_chk(1023) };
+    assert_eq!(idx, 1023 / bits);
+}
+
+#[test]
+fn fdelt_chk_negative_fd_aborts_child_process() {
+    assert_child_sigabrt("fdelt_chk negative fd", || unsafe {
+        __fdelt_chk(-1);
+    });
+}
+
+#[test]
+fn fdelt_chk_oversized_fd_aborts_child_process() {
+    assert_child_sigabrt("fdelt_chk oversized fd", || unsafe {
+        __fdelt_chk(libc::FD_SETSIZE as c_long);
+    });
+}
+
+// ===========================================================================
+// Poll: __poll_chk, __ppoll_chk
+// ===========================================================================
+
+#[test]
+fn poll_chk_safe() {
+    // Create a pipe and poll the read end
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+
+    let mut pfd = libc::pollfd {
+        fd: fds[0],
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let fdslen = std::mem::size_of::<libc::pollfd>();
+    let ret = unsafe {
+        __poll_chk(
+            (&mut pfd as *mut libc::pollfd).cast(),
+            1, // nfds
+            0, // timeout=0 (instant)
+            fdslen,
+        )
+    };
+    // Should return 0 (timeout, nothing ready) or >= 0
+    assert!(ret >= 0);
+
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+#[test]
+fn poll_chk_nfds_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("poll_chk nfds over real buffer", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let fdslen = std::mem::size_of::<libc::pollfd>();
+        unsafe { __poll_chk((&mut pfd as *mut libc::pollfd).cast(), 2, 0, fdslen) };
+    });
+}
+
+#[test]
+fn poll_chk_nfds_byte_count_overflow_aborts_child_process() {
+    assert_child_sigabrt("poll_chk nfds byte count overflow", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let overflowing_nfds = (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
+        unsafe {
+            __poll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                overflowing_nfds,
+                0,
+                usize::MAX,
+            )
+        };
+    });
+}
+
+#[test]
+fn ppoll_chk_safe() {
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+
+    let mut pfd = libc::pollfd {
+        fd: fds[0],
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let fdslen = std::mem::size_of::<libc::pollfd>();
+    let ret = unsafe {
+        __ppoll_chk(
+            (&mut pfd as *mut libc::pollfd).cast(),
+            1,
+            &timeout,
+            std::ptr::null(),
+            fdslen,
+        )
+    };
+    assert!(ret >= 0);
+
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+#[test]
+fn ppoll_chk_nfds_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ppoll_chk nfds over real buffer", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let fdslen = std::mem::size_of::<libc::pollfd>();
+        unsafe {
+            __ppoll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                2,
+                std::ptr::null(),
+                std::ptr::null(),
+                fdslen,
+            )
+        };
+    });
+}
+
+#[test]
+fn ppoll_chk_nfds_byte_count_overflow_aborts_child_process() {
+    assert_child_sigabrt("ppoll_chk nfds byte count overflow", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let overflowing_nfds = (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
+        unsafe {
+            __ppoll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                overflowing_nfds,
+                std::ptr::null(),
+                std::ptr::null(),
+                usize::MAX,
+            )
+        };
+    });
+}
+
+// ===========================================================================
+// Multibyte conversion: __mbstowcs_chk, __wcstombs_chk, __wctomb_chk
+// ===========================================================================
+
+#[test]
+fn mbstowcs_chk_safe() {
+    let src = CString::new("abc").unwrap();
+    let mut dest = [0 as WcharT; 8];
+    let n = unsafe { __mbstowcs_chk(dest.as_mut_ptr(), src.as_ptr(), 8, 8 * 4) };
+    assert_eq!(n, 3);
+    assert_eq!(dest[0], b'a' as WcharT);
+    assert_eq!(dest[1], b'b' as WcharT);
+    assert_eq!(dest[2], b'c' as WcharT);
+}
+
+#[test]
+fn mbstowcs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("mbstowcs_chk n over real buffer", || {
+        let src = CString::new("abcd").unwrap();
+        let mut dest = [0 as WcharT; 2];
+        unsafe {
+            // WIDE CHARACTERS, not bytes — see the note above the wmemset case.
+            // 4 requested into a 2-wide-character buffer is the overflow host
+            // glibc aborts on.
+            __mbstowcs_chk(dest.as_mut_ptr(), src.as_ptr(), 4, dest.len())
+        };
+    });
+}
+
+#[test]
+fn wcstombs_chk_safe() {
+    let src: [WcharT; 4] = [b'x' as WcharT, b'y' as WcharT, b'z' as WcharT, 0];
+    let mut dest = [0u8; 16];
+    let n = unsafe { __wcstombs_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 16, 16) };
+    assert_eq!(n, 3);
+    assert_eq!(&dest[..3], b"xyz");
+}
+
+#[test]
+fn wcstombs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcstombs_chk n over real buffer", || {
+        let src: [WcharT; 2] = [b'x' as WcharT, 0];
+        let mut dest = [0u8; 2];
+        unsafe { __wcstombs_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 8, dest.len()) };
+    });
+}
+
+#[test]
+fn wctomb_chk_safe() {
+    let mut buf = [0u8; 16];
+    let n = unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
+    assert!(n > 0);
+    assert_eq!(buf[0], b'Q');
+}
+
+#[test]
+fn wctomb_chk_short_buffer_aborts_child_process() {
+    // A 1-byte buffer is only SHORT where MB_CUR_MAX exceeds 1. fl now starts in
+    // the C locale, where MB_CUR_MAX is 1 and this call is legal -- as it is on
+    // glibc under LC_ALL=C. Select the locale whose contract this arm is about.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    assert_child_sigabrt("wctomb_chk short buffer", || {
+        let mut buf = [0u8; 1];
+        unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
+    });
+}
+
+/// Did the child die by SIGABRT? Reports rather than asserts, so a differential
+/// can compare fl's answer against the host's for the same input.
+fn child_aborted(label: &str, child: impl FnOnce()) -> bool {
+    let _fork_guard = FORK_LOCK.lock();
+    let pid = unsafe { fl_fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+    if pid == 0 {
+        drop(_fork_guard);
+        child();
+        unsafe { libc::_exit(0) };
+    }
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(_fork_guard);
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGABRT
+}
+
+unsafe extern "C" {
+    /// The HOST's fortify wrapper, a public glibc symbol since 2.4. Compared
+    /// against fl's below.
+    #[link_name = "__wctomb_chk"]
+    fn host_wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int;
+    fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
+}
+
+/// The UTF-8 locale's `MB_CUR_MAX` and `wctomb` must agree with each other.
+///
+/// This arm used to ASSERT THE DEFECT bd-1kxrmz is about: it asked for `"C"`
+/// and required the answer to be `"C.UTF-8"`, pinning the alias in place. It now
+/// asks for the locale it actually means. The C-locale side of the same contract
+/// is covered differentially in `conformance_diff_c_locale_codec`.
+#[test]
+fn locale_mb_cur_max_and_wctomb_share_the_utf8_contract() {
+    let selected =
+        unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+    assert!(!selected.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(selected) }.to_bytes(), b"C.UTF-8");
+
+    let queried = unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, std::ptr::null()) };
+    assert_eq!(unsafe { CStr::from_ptr(queried) }.to_bytes(), b"C.UTF-8");
+
+    let codeset = unsafe { frankenlibc_abi::locale_abi::nl_langinfo(libc::CODESET) };
+    assert_eq!(unsafe { CStr::from_ptr(codeset) }.to_bytes(), b"UTF-8");
+    assert_eq!(
+        unsafe { frankenlibc_abi::glibc_internal_abi::__ctype_get_mb_cur_max() },
+        6
+    );
+
+    let mut buffer = [0u8; 6];
+    assert_eq!(
+        unsafe { frankenlibc_abi::wchar_abi::wctomb(buffer.as_mut_ptr(), 0x20AC) },
+        3
+    );
+}
+
+/// `__wctomb_chk` must abort exactly when glibc does — which is
+/// `buflen < MB_CUR_MAX`, NOT `buflen < MB_LEN_MAX`.
+///
+/// The two constants are easy to confuse: the FORTIFY header macro uses
+/// MB_LEN_MAX (16) to decide whether to route the call here at all, while the
+/// runtime check inside uses the locale's current maximum. fl compared against
+/// 16, so it aborted for every buflen in 1..=15 — rejecting buffers glibc
+/// accepts, i.e. killing correct programs, which is the damaging direction for
+/// a fortify check. Probed on the live host, one process per row:
+///
+/// ```text
+///   C locale     MB_CUR_MAX=1  buflen 1, 5, 6, 15, 16 -> none abort
+///   C.UTF-8      MB_CUR_MAX=6  buflen 1, 5 abort; 6, 15, 16 return
+/// ```
+///
+/// FrankenLibC's bootstrap locale and conversion family are UTF-8, so this arm
+/// selects the matching UTF-8 locale for the host and exercises the same
+/// codec-wide guard in both implementations.
+#[test]
+fn wctomb_chk_abort_boundary_matches_host() {
+    let loc = CString::new("C.UTF-8").unwrap();
+    if unsafe { setlocale(libc::LC_ALL, loc.as_ptr()) }.is_null() {
+        eprintln!("SKIPPED wctomb_chk_abort_boundary: C.UTF-8 unavailable here");
+        return;
+    }
+    // fl starts in the C locale, as glibc does. This arm's whole subject is the
+    // buflen < MB_CUR_MAX boundary, so the two libraries must share a MB_CUR_MAX
+    // -- with fl left in C its boundary would be 1 and the host's 6, and the
+    // table below would diverge for a reason that is not the fortify check.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
+
+    let mut compared = 0usize;
+    for &n in &[1usize, 5, 6, 7, 15, 16] {
+        let host = child_aborted(&format!("host wctomb_chk buflen={n}"), || {
+            let mut buf = [0u8; 32];
+            unsafe { host_wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
+        });
+        let fl = child_aborted(&format!("fl wctomb_chk buflen={n}"), || {
+            let mut buf = [0u8; 32];
+            unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
+        });
+        assert_eq!(
+            fl, host,
+            "buflen={n}: fl aborted={fl}, host aborted={host} (MB_CUR_MAX is 6 here)"
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 6, "buflen table drifted");
+}
+
+/// Reference half: the host's own boundary, so the differential above cannot
+/// pass by fl and glibc agreeing on the wrong answer.
+#[test]
+fn host_wctomb_chk_boundary_is_mb_cur_max_not_mb_len_max() {
+    let loc = CString::new("C.UTF-8").unwrap();
+    if unsafe { setlocale(libc::LC_ALL, loc.as_ptr()) }.is_null() {
+        eprintln!("SKIPPED host_wctomb_chk_boundary: C.UTF-8 unavailable here");
+        return;
+    }
+    let probe = |n: usize| {
+        child_aborted(&format!("host boundary buflen={n}"), || {
+            let mut buf = [0u8; 32];
+            unsafe { host_wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, n) };
+        })
+    };
+    assert!(probe(5), "host should abort below MB_CUR_MAX (6)");
+    assert!(!probe(6), "host should accept buflen == MB_CUR_MAX (6)");
+    assert!(
+        !probe(15),
+        "host should accept buflen 15 — proof the bound is MB_CUR_MAX, not MB_LEN_MAX (16)"
+    );
+}
+
+#[test]
+fn mbsrtowcs_chk_safe() {
+    let src_str = CString::new("hi").unwrap();
+    let mut src_ptr: *const c_char = src_str.as_ptr();
+    let mut dest = [0 as WcharT; 8];
+    let n = unsafe {
+        __mbsrtowcs_chk(
+            dest.as_mut_ptr(),
+            &mut src_ptr,
+            8,
+            std::ptr::null_mut(), // NULL mbstate_t = initial state
+            8 * 4,
+        )
+    };
+    assert_eq!(n, 2);
+    assert_eq!(dest[0], b'h' as WcharT);
+    assert_eq!(dest[1], b'i' as WcharT);
+}
+
+#[test]
+fn mbsrtowcs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("mbsrtowcs_chk n over real buffer", || {
+        let src_str = CString::new("abcd").unwrap();
+        let mut src_ptr: *const c_char = src_str.as_ptr();
+        let mut dest = [0 as WcharT; 2];
+        unsafe {
+            __mbsrtowcs_chk(
+                dest.as_mut_ptr(),
+                &mut src_ptr,
+                4,
+                std::ptr::null_mut(),
+                dest.len(),
+            )
+        };
+    });
+}
+
+#[test]
+fn wcsrtombs_chk_safe() {
+    let src_arr: [WcharT; 3] = [b'A' as WcharT, b'B' as WcharT, 0];
+    let mut src_ptr: *const WcharT = src_arr.as_ptr();
+    let mut dest = [0u8; 16];
+    let n = unsafe {
+        __wcsrtombs_chk(
+            dest.as_mut_ptr().cast(),
+            &mut src_ptr as *mut *const WcharT,
+            16,
+            std::ptr::null_mut(),
+            16,
+        )
+    };
+    assert_eq!(n, 2);
+    assert_eq!(&dest[..2], b"AB");
+}
+
+#[test]
+fn wcsrtombs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsrtombs_chk n over real buffer", || {
+        let src_arr: [WcharT; 2] = [b'A' as WcharT, 0];
+        let mut src_ptr: *const WcharT = src_arr.as_ptr();
+        let mut dest = [0u8; 2];
+        unsafe {
+            __wcsrtombs_chk(
+                dest.as_mut_ptr().cast(),
+                &mut src_ptr as *mut *const WcharT,
+                8,
+                std::ptr::null_mut(),
+                dest.len(),
+            )
+        };
+    });
+}
+
+// ===========================================================================
+// Printf to buffer: edge cases
+// ===========================================================================
+
+#[test]
+fn sprintf_chk_integer_formats() {
+    let mut buf = [0u8; 128];
+    let fmt = CString::new("%d + %d = %d").unwrap();
+    let ret = unsafe {
+        __sprintf_chk(
+            buf.as_mut_ptr().cast(),
+            0,
+            128,
+            fmt.as_ptr(),
+            3i32,
+            4i32,
+            7i32,
+        )
+    };
+    assert!(ret > 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "3 + 4 = 7");
+}
+
+#[test]
+fn snprintf_chk_zero_maxlen() {
+    let mut buf = [0xFFu8; 8];
+    let fmt = CString::new("anything").unwrap();
+    // maxlen=0 means just measure
+    let ret = unsafe { __snprintf_chk(buf.as_mut_ptr().cast(), 0, 0, 8, fmt.as_ptr()) };
+    assert_eq!(ret, 8); // "anything" is 8 chars
+    // Buffer should be untouched
+    assert_eq!(buf[0], 0xFF);
+}
+
+#[test]
+fn vsnprintf_chk_direct_va_list() {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("via=%d").unwrap();
+    let ret = unsafe { call_vsnprintf_chk(buf.as_mut_ptr().cast(), 64, 64, fmt.as_ptr(), 17i32) };
+    assert_eq!(ret, 6);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "via=17");
+}
+
+#[test]
+fn vsprintf_chk_direct_va_list() {
+    let mut buf = [0u8; 64];
+    let fmt = CString::new("via %s").unwrap();
+    let arg = CString::new("list").unwrap();
+    let ret = unsafe { call_vsprintf_chk(buf.as_mut_ptr().cast(), 64, fmt.as_ptr(), arg.as_ptr()) };
+    assert_eq!(ret, 8);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "via list");
+}
+
+// ===========================================================================
+// __fprintf_chk
+// ===========================================================================
+
+#[test]
+fn fprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt = CString::new("test %d\n").unwrap();
+    let ret = unsafe { __fprintf_chk(fp.cast(), 0, fmt.as_ptr(), 42i32) };
+    assert!(ret > 0, "__fprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
+}
+
+#[test]
+fn vfprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt = CString::new("via %d\n").unwrap();
+    let ret = unsafe { call_vfprintf_chk(fp.cast(), fmt.as_ptr(), 7i32) };
+    assert!(ret > 0, "__vfprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
+}
+
+// ===========================================================================
+// __printf_chk (writes to stdout, test with redirect)
+// ===========================================================================
+
+#[test]
+fn printf_chk_basic() {
+    // __printf_chk writes to stdout; in tests just verify it doesn't crash
+    let fmt = CString::new("").unwrap(); // empty format = no output
+    let ret = unsafe { __printf_chk(0, fmt.as_ptr()) };
+    assert_eq!(ret, 0);
+}
+
+#[test]
+fn vprintf_chk_basic() {
+    let fmt = CString::new("").unwrap();
+    let ret = unsafe { call_vprintf_chk(fmt.as_ptr()) };
+    assert_eq!(ret, 0);
+}
+
+// ===========================================================================
+// __dprintf_chk (write to fd)
+// ===========================================================================
+
+#[test]
+fn dprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY) };
+    assert!(fd >= 0);
+
+    let fmt = CString::new("hello %d").unwrap();
+    let ret = unsafe { __dprintf_chk(fd, 0, fmt.as_ptr(), 99i32) };
+    assert!(ret > 0);
+
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn vdprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY) };
+    assert!(fd >= 0);
+
+    let fmt = CString::new("via %d").unwrap();
+    let ret = unsafe { call_vdprintf_chk(fd, fmt.as_ptr(), 19i32) };
+    assert!(ret > 0);
+
+    unsafe { libc::close(fd) };
+}
+
+// ===========================================================================
+// __asprintf_chk
+// ===========================================================================
+
+#[test]
+fn asprintf_chk_basic() {
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let fmt = CString::new("answer=%d").unwrap();
+    let ret = unsafe { __asprintf_chk(&mut result, 0, fmt.as_ptr(), 42i32) };
+    assert!(ret > 0);
+    assert!(!result.is_null());
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "answer=42");
+
+    // fl allocated it; the host free would reject it (bd-u439cu).
+    unsafe { frankenlibc_abi::malloc_abi::free(result.cast()) };
+}
+
+#[test]
+fn asprintf_chk_string_format() {
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let fmt = CString::new("%s+%s").unwrap();
+    let a = CString::new("foo").unwrap();
+    let b = CString::new("bar").unwrap();
+    let ret = unsafe { __asprintf_chk(&mut result, 0, fmt.as_ptr(), a.as_ptr(), b.as_ptr()) };
+    assert_eq!(ret, 7);
+    assert!(!result.is_null());
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "foo+bar");
+
+    // fl allocated it; the host free would reject it (bd-u439cu).
+    unsafe { frankenlibc_abi::malloc_abi::free(result.cast()) };
+}
+
+#[test]
+fn vasprintf_chk_direct_va_list() {
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let fmt = CString::new("%s=%d").unwrap();
+    let key = CString::new("answer").unwrap();
+    let ret = unsafe { call_vasprintf_chk(&mut result, fmt.as_ptr(), key.as_ptr(), 42i32) };
+    assert_eq!(ret, 9);
+    assert!(!result.is_null());
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "answer=42");
+
+    // fl allocated it; the host free would reject it (bd-u439cu).
+    unsafe { frankenlibc_abi::malloc_abi::free(result.cast()) };
+}
+
+// ===========================================================================
+// __fgets_chk (read from file)
+// ===========================================================================
+
+#[test]
+fn fgets_chk_reads_line() {
+    // Write a temp file, then read via __fgets_chk
+    let path = CString::new("/tmp/fortify_fgets_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("hello\nworld\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 32];
+    let ret = unsafe { __fgets_chk(buf.as_mut_ptr().cast(), 32, 32, fp.cast()) };
+    assert!(!ret.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "hello\n");
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fgets_unlocked_chk_reads_line() {
+    let path = CString::new("/tmp/fortify_fgets_unlocked_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("alpha\nbeta\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 32];
+    let ret = unsafe { __fgets_unlocked_chk(buf.as_mut_ptr().cast(), 32, 32, fp.cast()) };
+    assert!(!ret.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "alpha\n");
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fgets_chk_n_over_real_buffer_aborts_child_process() {
+    // UPDATED (bd-917hzv): this used to pass a NULL stream, relying on the abort
+    // firing from a STATIC `n > buflen` check before the stream was ever touched.
+    // Host glibc does not do that — probed fork-isolated, it runs `n = 257` into a
+    // 256-byte buffer happily when the line is short, and only aborts once a read
+    // actually overflows. fl now matches, so the NULL shortcut no longer reaches
+    // the check and the arm has to exercise the real overflow.
+    //
+    // The abort is still REQUIRED here and still asserted: 12 bytes of input into
+    // a 4-byte buffer with `n = 16` is a genuine overflow, and glibc aborts on the
+    // same shape (`buflen = 8, n = 64` -> SIGABRT in the probe matrix).
+    assert_child_sigabrt("fgets_chk n over real buffer", || {
+        let stream = overflowing_stdin_stream();
+        let mut buf = [0u8; 4];
+        unsafe { __fgets_chk(buf.as_mut_ptr().cast(), buf.len(), 16, stream) };
+    });
+}
+
+#[test]
+fn fgets_unlocked_chk_n_over_real_buffer_aborts_child_process() {
+    // Same update as the locked form directly above, and for the same reason.
+    assert_child_sigabrt("fgets_unlocked_chk n over real buffer", || {
+        let stream = overflowing_stdin_stream();
+        let mut buf = [0u8; 4];
+        unsafe { __fgets_unlocked_chk(buf.as_mut_ptr().cast(), buf.len(), 16, stream) };
+    });
+}
+
+/// A `FILE*` on stdin carrying more bytes than a 4-byte buffer can hold.
+///
+/// Used by the two arms above, which need a real readable stream now that the
+/// overflow check is reached by reading rather than by a static comparison.
+fn overflowing_stdin_stream() -> *mut std::ffi::c_void {
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let input = b"hello world\n";
+    assert_eq!(
+        unsafe { libc::write(fds[1], input.as_ptr().cast(), input.len()) },
+        input.len() as isize
+    );
+    unsafe { libc::close(fds[1]) };
+    assert_eq!(
+        unsafe { libc::dup2(fds[0], libc::STDIN_FILENO) },
+        libc::STDIN_FILENO
+    );
+    unsafe { libc::close(fds[0]) };
+    // fl's own `stdin`, matching the fl entry points under test. Other suites
+    // reach it the same way (see `wchar_abi_test`).
+    // SAFETY: reading fl's exported stdin handle.
+    unsafe { frankenlibc_abi::stdio_abi::stdin }
+}
+
+#[test]
+fn gets_chk_line_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("gets_chk line over real buffer", || {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+
+        let input = b"toolong\n";
+        assert_eq!(
+            unsafe { libc::write(fds[1], input.as_ptr().cast(), input.len()) },
+            input.len() as isize
+        );
+        unsafe { libc::close(fds[1]) };
+        assert_eq!(
+            unsafe { libc::dup2(fds[0], libc::STDIN_FILENO) },
+            libc::STDIN_FILENO
+        );
+        unsafe { libc::close(fds[0]) };
+
+        let mut buf = [0u8; 4];
+        unsafe { __gets_chk(buf.as_mut_ptr().cast(), buf.len()) };
+    });
+}
+
+// ===========================================================================
+// __fread_chk
+// ===========================================================================
+
+#[test]
+fn fread_chk_reads_data() {
+    let path = CString::new("/tmp/fortify_fread_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"ABCDEFGHIJ";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, 10, fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { __fread_chk(buf.as_mut_ptr().cast(), 16, 1, 10, fp.cast()) };
+    assert_eq!(n, 10);
+    assert_eq!(&buf[..10], b"ABCDEFGHIJ");
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fread_chk_short_reported_buffer_length_still_reads() {
+    let path = CString::new("/tmp/fortify_fread_short_buflen_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"ABCD";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __fread_chk(buf.as_mut_ptr().cast(), 1, 1, data.len(), fp.cast()) };
+    assert_eq!(n, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fread_unlocked_chk_short_reported_buffer_length_still_reads() {
+    let path = CString::new("/tmp/fortify_fread_unlocked_short_buflen_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"WXYZ";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __fread_unlocked_chk(buf.as_mut_ptr().cast(), 1, 1, data.len(), fp.cast()) };
+    assert_eq!(n, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+// ===========================================================================
+// __recv_chk (socket recv)
+// ===========================================================================
+
+#[test]
+fn recv_chk_on_socketpair() {
+    let mut fds = [0i32; 2];
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let msg = b"test";
+    unsafe { libc::send(fds[0], msg.as_ptr().cast(), 4, 0) };
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { __recv_chk(fds[1], buf.as_mut_ptr().cast(), 4, 16, 0) };
+    assert_eq!(n, 4);
+    assert_eq!(&buf[..4], b"test");
+
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+#[test]
+fn recv_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("recv_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __recv_chk(-1, buf.as_mut_ptr().cast(), 16, buf.len(), 0) };
+    });
+}
+
+// ===========================================================================
+// __recvfrom_chk
+// ===========================================================================
+
+#[test]
+fn recvfrom_chk_on_socketpair() {
+    let mut fds = [0i32; 2];
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let msg = b"data";
+    unsafe { libc::send(fds[0], msg.as_ptr().cast(), 4, 0) };
+
+    let mut buf = [0u8; 16];
+    let n = unsafe {
+        __recvfrom_chk(
+            fds[1],
+            buf.as_mut_ptr().cast(),
+            4,
+            16,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(n, 4);
+    assert_eq!(&buf[..4], b"data");
+
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+#[test]
+fn recvfrom_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("recvfrom_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe {
+            __recvfrom_chk(
+                -1,
+                buf.as_mut_ptr().cast(),
+                16,
+                buf.len(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+    });
+}
+
+// ===========================================================================
+// __ptsname_r_chk
+// ===========================================================================
+
+#[test]
+fn ptsname_r_chk_invalid_fd() {
+    let mut buf = [0u8; 256];
+    // fd=-1 is invalid
+    let ret = unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), 256, 256) };
+    assert_ne!(ret, 0, "invalid fd should fail");
+}
+
+#[test]
+fn ptsname_r_chk_short_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ptsname_r_chk short real buffer", || {
+        let mut buf = [0u8; 1];
+        unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+/// Boundary of the object-size guard: `buflen == nreal` fits EXACTLY and must
+/// be allowed through.
+///
+/// The existing abort arm uses buflen=256 against nreal=1, which is so far past
+/// the boundary that an off-by-one guard (`buflen >= nreal`) still satisfies it
+/// while rejecting every exactly-sized buffer — the single most common correct
+/// call. This arm is what discriminates the two.
+///
+/// Fork-isolated because a wrong guard aborts, and an abort in-process takes
+/// the whole binary down instead of failing one assertion.
+///
+/// An earlier draft here probed `nreal == usize::MAX` instead, on the theory
+/// that the `!= usize::MAX` clause needed covering. Mutation testing showed
+/// that arm was TAUTOLOGICAL: `buflen > usize::MAX` cannot hold for any buflen,
+/// so the clause is unreachable and deleting it changes nothing. Recorded so
+/// nobody re-adds that arm believing it covers something. bd-j87m1z.
+#[test]
+fn ptsname_r_chk_buflen_equal_to_real_buffer_does_not_abort() {
+    assert_child_exits_normally("ptsname_r_chk buflen == nreal", || {
+        let mut buf = [0u8; 256];
+        let n = buf.len();
+        // fd -1 keeps this free of any PTY dependency: the delegated call
+        // fails, which is fine — the arm is about NOT aborting.
+        unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), n, n) };
+    });
+}
+
+/// One byte past the object size must abort — the other side of the same
+/// boundary, so the pair pins `>` rather than `>=`.
+#[test]
+fn ptsname_r_chk_buflen_one_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ptsname_r_chk buflen == nreal + 1", || {
+        let mut buf = [0u8; 256];
+        let n = buf.len();
+        unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), n + 1, n) };
+    });
+}
+
+#[test]
+fn ptsname_r_chk_on_pty() {
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        // Say so out loud: a silent early return is indistinguishable from a
+        // passing assertion in the log.
+        eprintln!("SKIPPED ptsname_r_chk_on_pty: posix_openpt unavailable here");
+        return;
+    }
+    unsafe { libc::grantpt(master) };
+    unsafe { libc::unlockpt(master) };
+
+    let mut buf = [0u8; 256];
+    let ret = unsafe { __ptsname_r_chk(master, buf.as_mut_ptr().cast(), 256, 256) };
+    assert_eq!(ret, 0, "ptsname_r_chk on valid PTY master should succeed");
+    // Should start with /dev/pts/
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert!(
+        s.to_str().unwrap().starts_with("/dev/pts/"),
+        "PTY slave name should be /dev/pts/N"
+    );
+
+    unsafe { libc::close(master) };
+}
+
+// ===========================================================================
+// __syslog_chk
+// ===========================================================================
+
+#[test]
+fn syslog_chk_does_not_crash() {
+    let fmt = CString::new("frankenlibc test syslog_chk %d").unwrap();
+    // LOG_USER | LOG_DEBUG = 8 | 7 = 15
+    unsafe { __syslog_chk(15, 0, fmt.as_ptr(), 123i32) };
+    // Just verify it doesn't crash
+}
+
+#[test]
+fn vsyslog_chk_does_not_crash() {
+    let fmt = CString::new("frankenlibc test vsyslog_chk %d").unwrap();
+    unsafe { call_vsyslog_chk(15, fmt.as_ptr(), 456i32) };
+}
+
+// ===========================================================================
+// __mbsnrtowcs_chk
+// ===========================================================================
+
+#[test]
+fn mbsnrtowcs_chk_basic() {
+    let src_str = CString::new("abc").unwrap();
+    let mut src_ptr: *const c_char = src_str.as_ptr();
+    let mut dest = [0 as WcharT; 8];
+    let n = unsafe {
+        __mbsnrtowcs_chk(
+            dest.as_mut_ptr(),
+            &mut src_ptr,
+            3, // nms (max source bytes)
+            8, // len (max wchar_t to write)
+            std::ptr::null_mut(),
+            8 * 4, // destlen in bytes
+        )
+    };
+    assert_eq!(n, 3);
+    assert_eq!(dest[0], b'a' as WcharT);
+    assert_eq!(dest[1], b'b' as WcharT);
+    assert_eq!(dest[2], b'c' as WcharT);
+}
+
+#[test]
+fn mbsnrtowcs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("mbsnrtowcs_chk n over real buffer", || {
+        let src_str = CString::new("abcd").unwrap();
+        let mut src_ptr: *const c_char = src_str.as_ptr();
+        let mut dest = [0 as WcharT; 2];
+        unsafe {
+            __mbsnrtowcs_chk(
+                dest.as_mut_ptr(),
+                &mut src_ptr,
+                4,
+                4,
+                std::ptr::null_mut(),
+                dest.len(),
+            )
+        };
+    });
+}
+
+// ===========================================================================
+// __wcsnrtombs_chk
+// ===========================================================================
+
+#[test]
+fn wcsnrtombs_chk_basic() {
+    let src_arr: [WcharT; 4] = [b'X' as WcharT, b'Y' as WcharT, b'Z' as WcharT, 0];
+    let mut src_ptr: *const WcharT = src_arr.as_ptr();
+    let mut dest = [0u8; 16];
+    let n = unsafe {
+        __wcsnrtombs_chk(
+            dest.as_mut_ptr().cast(),
+            &mut src_ptr as *mut *const WcharT,
+            3,  // nwc (max wchar_t to consume)
+            16, // len (max bytes to write)
+            std::ptr::null_mut(),
+            16, // destlen
+        )
+    };
+    assert_eq!(n, 3);
+    assert_eq!(&dest[..3], b"XYZ");
+}
+
+#[test]
+fn wcsnrtombs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsnrtombs_chk n over real buffer", || {
+        let src_arr: [WcharT; 2] = [b'X' as WcharT, 0];
+        let mut src_ptr: *const WcharT = src_arr.as_ptr();
+        let mut dest = [0u8; 2];
+        unsafe {
+            __wcsnrtombs_chk(
+                dest.as_mut_ptr().cast(),
+                &mut src_ptr as *mut *const WcharT,
+                1,
+                8,
+                std::ptr::null_mut(),
+                dest.len(),
+            )
+        };
+    });
+}
+
+#[test]
+fn wprintf_chk_empty() {
+    let fmt: [WcharT; 1] = [0];
+    let ret = unsafe { __wprintf_chk(0, fmt.as_ptr()) };
+    assert!(
+        ret == 0 || ret == -1,
+        "__wprintf_chk should either print an empty wide string or report stream orientation failure"
+    );
+}
+
+#[test]
+fn vwprintf_chk_empty() {
+    let fmt: [WcharT; 1] = [0];
+    let ret = unsafe { call_vwprintf_chk(fmt.as_ptr()) };
+    assert!(
+        ret == 0 || ret == -1,
+        "__vwprintf_chk should either print an empty wide string or report stream orientation failure"
+    );
+}
+
+#[test]
+fn fwprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt: [WcharT; 3] = [b'%' as WcharT, b'd' as WcharT, 0];
+    let ret = unsafe { __fwprintf_chk(fp.cast(), 0, fmt.as_ptr(), 22i32) };
+    assert!(ret > 0, "__fwprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
+}
+
+#[test]
+fn vfwprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt: [WcharT; 3] = [b'%' as WcharT, b'd' as WcharT, 0];
+    let ret = unsafe { call_vfwprintf_chk(fp.cast(), fmt.as_ptr(), 33i32) };
+    assert!(ret > 0, "__vfwprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
+}
+
+// ===========================================================================
+// __swprintf_chk (wide printf to buffer)
+// ===========================================================================
+
+#[test]
+fn swprintf_chk_basic() {
+    let mut dest = [0 as WcharT; 32];
+    let fmt: [WcharT; 5] = [b'%' as WcharT, b'd' as WcharT, b'!' as WcharT, 0, 0];
+    let ret = unsafe {
+        __swprintf_chk(
+            dest.as_mut_ptr(),
+            32, // maxlen in wchar_t
+            0,  // flag
+            32, // destlen in wchar_t
+            fmt.as_ptr(),
+            99i32,
+        )
+    };
+    assert!(ret > 0, "__swprintf_chk should return positive count");
+    // Should produce "99!" as wide characters
+    assert_eq!(dest[0], b'9' as WcharT);
+    assert_eq!(dest[1], b'9' as WcharT);
+    assert_eq!(dest[2], b'!' as WcharT);
+    assert_eq!(dest[3], 0);
+}
+
+#[test]
+fn swprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("swprintf_chk maxlen over real buffer", || {
+        let mut dest = [0 as WcharT; 2];
+        let fmt: [WcharT; 1] = [0];
+        unsafe { __swprintf_chk(dest.as_mut_ptr(), 3, 0, dest.len(), fmt.as_ptr()) };
+    });
+}
+
+#[test]
+fn vswprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("vswprintf_chk maxlen over real buffer", || {
+        let mut dest = [0 as WcharT; 2];
+        let fmt: [WcharT; 1] = [0];
+        unsafe { call_vswprintf_chk(dest.as_mut_ptr(), 3, dest.len(), fmt.as_ptr()) };
+    });
+}
+
+// ===========================================================================
+// __fgetws_chk (wide fgets)
+// ===========================================================================
+
+#[test]
+fn fgetws_chk_reads_wide_chars() {
+    let path = CString::new("/tmp/fortify_fgetws_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("hello\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0 as WcharT; 32];
+    let ret = unsafe { __fgetws_chk(buf.as_mut_ptr(), 32 * 4, 32, fp.cast()) };
+    if !ret.is_null() {
+        // Should have read "hello\n" as wide chars
+        assert_eq!(buf[0], b'h' as WcharT);
+        assert_eq!(buf[1], b'e' as WcharT);
+    }
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fgetws_unlocked_chk_reads_wide_chars() {
+    let path = CString::new("/tmp/fortify_fgetws_unlocked_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("wide\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0 as WcharT; 32];
+    let ret = unsafe { __fgetws_unlocked_chk(buf.as_mut_ptr(), 32 * 4, 32, fp.cast()) };
+    if !ret.is_null() {
+        assert_eq!(buf[0], b'w' as WcharT);
+        assert_eq!(buf[1], b'i' as WcharT);
+    }
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+/// Opens a file whose single line is far longer than any small buffer here.
+///
+/// A REAL stream is required: the rule these wrappers implement is
+/// content-dependent, so a NULL stream cannot exercise it. The previous version
+/// of this test passed `NULL` and `n = 8` against a 16-byte buffer, which aborted
+/// only because fl's old rule was `n * 4 > buflen` — a rule host glibc does not
+/// have (bd-917hzv). Under the measured contract `8 <= 16` never aborts, and with
+/// a NULL stream glibc would fault rather than `__chk_fail`, so that case
+/// asserted something no oracle agrees with.
+fn open_long_line() -> *mut core::ffi::c_void {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!(
+        "fl_fortify_fgetws_long_{}_{:?}.txt",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let mut f = std::fs::File::create(&path).expect("create long-line file");
+    writeln!(f, "{}", "x".repeat(300)).expect("write long line");
+    let cpath = std::ffi::CString::new(path.to_str().expect("utf-8 path")).expect("path has NUL");
+    // SAFETY: NUL-terminated path and mode.
+    let fp = unsafe { libc::fopen(cpath.as_ptr(), c"r".as_ptr()) };
+    assert!(!fp.is_null(), "fopen long-line file");
+    fp.cast()
+}
+
+#[test]
+fn fgetws_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("fgetws_chk n over real buffer", || {
+        let mut buf = [0 as WcharT; 4];
+        let fp = open_long_line();
+        // n = 64 EXCEEDS the 16-byte buflen and the 300-character line cannot
+        // fit, which is the two-condition case host glibc aborts on.
+        unsafe { __fgetws_chk(buf.as_mut_ptr(), core::mem::size_of_val(&buf), 64, fp) };
+    });
+}
+
+#[test]
+fn fgetws_unlocked_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("fgetws_unlocked_chk n over real buffer", || {
+        let mut buf = [0 as WcharT; 4];
+        let fp = open_long_line();
+        // Same two-condition case as the locked form above.
+        unsafe { __fgetws_unlocked_chk(buf.as_mut_ptr(), core::mem::size_of_val(&buf), 64, fp) };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Overflow-abort coverage for the _chk wrappers that previously had only
+// happy-path arms (bd-w57ywx, bd-lsuhmq, bd-8aazre, bd-kzurp6, bd-e2je3m,
+// bd-i0naz6).
+//
+// Every one of these symbols was already exercised in this file with a
+// correctly-sized buffer, which proves the wrapper forwards but says nothing
+// about the guard. A _chk wrapper whose overflow branch is missing entirely
+// passes every happy-path arm — the object-size argument is simply ignored and
+// the call succeeds. These arms assert the other half of the contract: when the
+// requested length exceeds the compiler-supplied object size, the process must
+// die with SIGABRT rather than write past the end.
+//
+// Fork-isolated through the same `assert_child_sigabrt` helper the memcpy/
+// memmove/memset arms use, for the reason its counterpart documents: a guard
+// that fires in-process takes the whole test binary with it, which reads as a
+// harness crash rather than a failed assertion.
+
+#[test]
+fn confstr_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("confstr_chk overflow", || {
+        let mut buf = [0u8; 8];
+        // len (256) exceeds the object size (8): the guard must abort before
+        // confstr writes the answer.
+        unsafe {
+            __confstr_chk(0, buf.as_mut_ptr().cast(), 256, buf.len());
+        }
+    });
+}
+
+#[test]
+fn readlink_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("readlink_chk overflow", || {
+        let path = CString::new("/proc/self/exe").unwrap();
+        let mut buf = [0u8; 8];
+        // A real symlink, so the failure under test is the size guard rather
+        // than a readlink error path that would return before the guard runs.
+        unsafe {
+            __readlink_chk(path.as_ptr(), buf.as_mut_ptr().cast(), 4096, buf.len());
+        }
+    });
+}
+
+#[test]
+fn getlogin_r_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("getlogin_r_chk overflow", || {
+        let mut buf = [0u8; 4];
+        unsafe {
+            __getlogin_r_chk(buf.as_mut_ptr().cast(), 256, buf.len());
+        }
+    });
+}
+
+#[test]
+fn recv_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("recv_chk overflow", || {
+        let mut fds = [0i32; 2];
+        // socketpair rather than pipe: __recv_chk takes a socket. The guard is
+        // expected to fire on the length/object-size mismatch before any data
+        // is moved, so the socket never needs to carry a payload.
+        let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+        if rc != 0 {
+            // Cannot set up the precondition; abort so the arm does not report
+            // a false pass, and so the failure names itself in the parent.
+            unsafe { libc::abort() };
+        }
+        let mut buf = [0u8; 8];
+        unsafe {
+            __recv_chk(fds[0], buf.as_mut_ptr().cast(), 4096, buf.len(), 0);
+        }
+    });
+}
+
+#[test]
+fn poll_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("poll_chk overflow", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        // nfds claims two entries; the object holds one. glibc's __poll_chk
+        // compares nfds * sizeof(pollfd) against the object size.
+        unsafe {
+            __poll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                2,
+                0,
+                std::mem::size_of::<libc::pollfd>(),
+            );
+        }
+    });
+}

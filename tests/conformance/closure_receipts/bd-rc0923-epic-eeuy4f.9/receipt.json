@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.9",
+  "contract": {
+    "behavior": "Keep hardened membrane pointer validation fast-reject and TLS cache path within latency budget",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-membrane/src/ptr_validator.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs": "c3b2ab0eb7aee1e90eb72a8878c2c482be71ac4dbff989297ee82a6674333962",
+        "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "a7c121f132c0059881bd59eb8e85463572d90fb52a75dcd3bed2bd284681604e",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-09-24T01:47:16.537469519Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791",
+        "validation_latency_within_budget",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-membrane",
+        "--test",
+        "tsm_pipeline_e2e_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "validation_latency_within_budget"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-membrane",
+      "--test",
+      "tsm_pipeline_e2e_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:57.730543+00:00",
+    "finished_at": "2026-11-12T04:55:58.048205+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "89d6928efbb0667efc002deae24058decc6c572939adff4b9ed3cb48405647f6",
+    "stderr_sha256": "269e60d8144db02a25300d175fa390106d7e77351fc5d7889d1492c9691755b7",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791",
+      "validation_latency_within_budget",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:58.053189+00:00",
+    "finished_at": "2026-11-12T04:55:58.063980+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "f2e6bbd56ae43b439ff44a01af9c6460e6c2e14bca8fc3a9abddbdc501b63eaf",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 1
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791": "50e66d37b9748153cd122a65a0b9a0494472376a3f26ae0b200961279e4e71b3"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs": "c3b2ab0eb7aee1e90eb72a8878c2c482be71ac4dbff989297ee82a6674333962",
+    "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "a7c121f132c0059881bd59eb8e85463572d90fb52a75dcd3bed2bd284681604e",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "50e66d37b9748153cd122a65a0b9a0494472376a3f26ae0b200961279e4e71b3"
+}

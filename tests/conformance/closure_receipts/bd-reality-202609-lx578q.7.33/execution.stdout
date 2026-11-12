@@ -1,0 +1,9 @@
+
+running 4 tests
+test wide_signed_integer_contract ... ok
+test wide_signed_scan_window_contract ... ok
+test wide_unsigned_integer_contract ... ok
+test wide_unsigned_scan_window_contract ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.06s
+

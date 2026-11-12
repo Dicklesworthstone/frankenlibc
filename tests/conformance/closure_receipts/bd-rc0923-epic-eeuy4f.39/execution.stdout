@@ -1,0 +1,7 @@
+
+running 2 tests
+test operator_guides_reject_missing_l0_scope_phrase ... ok
+test operator_guides_reject_planted_l1_and_stale_claims ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 2.85s
+

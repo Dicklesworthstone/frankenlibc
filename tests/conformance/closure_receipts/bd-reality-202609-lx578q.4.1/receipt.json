@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.4.1",
+  "contract": {
+    "behavior": "Eliminate all 94 membrane GOT self-interposed libm/math_abi calls via pure-Rust IEEE-754 transcendentals, restore causally reachable UpgradeToSafeVariant and live QuarantineController/SOS allocator telemetry in cfg(not(test)), and enforce exact rational LDL^T SOS witness verification in membrane/build.rs",
+    "acceptance_sha256": "aa7423857d873fe36e795b8f9b02a92f4f05863dbe9eac253ca69e2a88659dd2",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-membrane/build.rs",
+      "crates/frankenlibc-membrane/src/ebr.rs",
+      "crates/frankenlibc-membrane/src/util.rs",
+      "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+      "crates/frankenlibc-membrane/src/runtime_math/design.rs",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "crates/frankenlibc-abi/src/runtime_policy.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs",
+      "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/malloc_abi.rs": "2ccd26d0e6c955c9a89a8d615ebe9690b64c4141bd9bf18c4c16f93890961100",
+        "crates/frankenlibc-abi/src/runtime_policy.rs": "e72589dd80b867ac18892e24d483613552c4c55d4544c0479af677fae14d1b8a",
+        "crates/frankenlibc-membrane/build.rs": "faa0b4ce53703fe3a095cd7318d2e818c9e802a7789cc3b193235b76e7f86206",
+        "crates/frankenlibc-membrane/src/ebr.rs": "ed792d8689d66446386ecc93453ceaae3600394899dab084442e3f1c38c4b927",
+        "crates/frankenlibc-membrane/src/runtime_math/control.rs": "ebed6ddfbe8b7b119b093150a315c7977529d68b3b9c34664a30725452db4e4a",
+        "crates/frankenlibc-membrane/src/runtime_math/design.rs": "220378e75d19b9889b97cb983613929d6bae89999378cebd3e609b674715da09",
+        "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "6e6e8cf45340dad911338043baab8b235dc9500fe1928f1e59abf804b25f6a7e",
+        "crates/frankenlibc-membrane/src/util.rs": "8714217026e03aae2c1f868c578cc34da84cf4a6cd36e0af0c98841e985c4684",
+        "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs": "8610cab99a3adc909a6b998738c850ced9e3078e933f8457f6c609fb815cdbcf",
+        "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs": "0343252da2f55a878cf1e8ac909ff25f76f4b51d2e058e196a86227c4298a251",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "release",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-11T18:40:00+00:00",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "--release",
+        "-p",
+        "frankenlibc-membrane",
+        "--test",
+        "sos_barrier_arch_independence_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "build_script_sos_witness_accepts_production_certificates_and_rejects_counterexamples",
+        "runtime_math_kernel_evaluates_live_allocator_sos_certificates_and_detects_violations"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "--release",
+      "-p",
+      "frankenlibc-membrane",
+      "--test",
+      "sos_barrier_arch_independence_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:50.970209+00:00",
+    "finished_at": "2026-11-12T04:55:51.297093+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "8b4ef00c3277ade2cb8413d9306a5b59056bbcb4e0439a7330a0af969f52f8ab",
+    "stderr_sha256": "f0f9c657004e2a2f5d4a67864446a9c90a0f0efe00700e41e1ef9700f22e167e",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:51.300582+00:00",
+    "finished_at": "2026-11-12T04:55:51.309923+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "b95698fab9474f31e7e7d9e9881a1b7a975401ee56e472419d574cb2a8a01555",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 8
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6": "280451715073056ac4424cc49d9423f3560333e44f13b54f8ce952464dae5771"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/release/build/frankenlibc-membrane/a6539a23e614d8d6/out/sos_barrier_arch_independence_test-a6539a23e614d8d6": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/malloc_abi.rs": "2ccd26d0e6c955c9a89a8d615ebe9690b64c4141bd9bf18c4c16f93890961100",
+    "crates/frankenlibc-abi/src/runtime_policy.rs": "e72589dd80b867ac18892e24d483613552c4c55d4544c0479af677fae14d1b8a",
+    "crates/frankenlibc-membrane/build.rs": "faa0b4ce53703fe3a095cd7318d2e818c9e802a7789cc3b193235b76e7f86206",
+    "crates/frankenlibc-membrane/src/ebr.rs": "ed792d8689d66446386ecc93453ceaae3600394899dab084442e3f1c38c4b927",
+    "crates/frankenlibc-membrane/src/runtime_math/control.rs": "ebed6ddfbe8b7b119b093150a315c7977529d68b3b9c34664a30725452db4e4a",
+    "crates/frankenlibc-membrane/src/runtime_math/design.rs": "220378e75d19b9889b97cb983613929d6bae89999378cebd3e609b674715da09",
+    "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "6e6e8cf45340dad911338043baab8b235dc9500fe1928f1e59abf804b25f6a7e",
+    "crates/frankenlibc-membrane/src/util.rs": "8714217026e03aae2c1f868c578cc34da84cf4a6cd36e0af0c98841e985c4684",
+    "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs": "8610cab99a3adc909a6b998738c850ced9e3078e933f8457f6c609fb815cdbcf",
+    "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs": "0343252da2f55a878cf1e8ac909ff25f76f4b51d2e058e196a86227c4298a251",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "280451715073056ac4424cc49d9423f3560333e44f13b54f8ce952464dae5771"
+}

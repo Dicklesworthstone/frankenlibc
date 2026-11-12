@@ -1,0 +1,76 @@
+name: Legacy host DNS integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/**'
+      - 'crates/frankenlibc-core/src/resolv/**'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/addrinfo.rs'
+      - 'crates/frankenlibc-core/src/addrinfo/**'
+      - 'tests/conformance/legacy_dns_fixture.c'
+      - 'tests/integration/fixture_nss_module_lib.c'
+      - '.github/workflows/legacy-host-dns.yml'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  legacy-dns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install repository toolchain
+        run: |
+          set -euo pipefail
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt
+          rustc --version
+      - name: Compile and run independent host oracle
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror tests/conformance/legacy_dns_fixture.c -lresolv -ldl -o "$RUNNER_TEMP/legacy-dns"
+          sudo "$RUNNER_TEMP/legacy-dns" forward
+          sudo "$RUNNER_TEMP/legacy-dns" reverse
+      - name: Build actual release ABI
+        run: cargo build --release -p frankenlibc-abi --lib --keep-going
+      - name: NSS module host ABI regression tests
+        shell: bash
+        env:
+          CARGO_INCREMENTAL: '0'
+          CARGO_PROFILE_DEV_DEBUG: '0'
+          CARGO_PROFILE_TEST_DEBUG: '0'
+        run: |
+          set -euo pipefail
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test --locked -p frankenlibc-abi --test nss_module_test --no-fail-fast hosts_modules_ -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/nss-hosts-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$RUNNER_TEMP/nss-hosts-$mode.log"
+          done
+      - name: Exercise native forward and reverse lookups in both modes
+        run: |
+          set -euo pipefail
+          so="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$so"
+          for mode in strict hardened; do
+            for direction in forward reverse; do
+              sudo env FRANKENLIBC_MODE="$mode" "$RUNNER_TEMP/legacy-dns" "$direction" "$so"
+            done
+          done
+      - name: DNS transport unit tests
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --lib --no-fail-fast dns_transport -- --test-threads=1 | tee "$RUNNER_TEMP/dns-transport-tests.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "$RUNNER_TEMP/dns-transport-tests.log"

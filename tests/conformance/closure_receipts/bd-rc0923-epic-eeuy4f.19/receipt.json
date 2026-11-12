@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.19",
+  "contract": {
+    "behavior": "Govern gethostbyname* and getaddrinfo hosts/DNS resolution under unified nsswitch hosts policy",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/resolv_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/resolv_abi_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/resolv_abi.rs": "557f921afbd26b6d0cb83db900553e07067308b77863eda42ec62780c13e682a",
+        "crates/frankenlibc-abi/tests/resolv_abi_test.rs": "570f05a793e1d71ed328558c98f58823d808631c80ccf56524a20c11d5799a70",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-09-24T01:47:25.020003265Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4144427aa3a5a9c9/out/resolv_abi_test-4144427aa3a5a9c9",
+        "gethostbyname_hosts_",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "resolv_abi_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4144427aa3a5a9c9/out/resolv_abi_test-4144427aa3a5a9c9"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "gethostbyname_hosts_merge_matches_glibc_discriminating_vectors"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "resolv_abi_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:32.294349+00:00",
+    "finished_at": "2026-11-12T05:03:32.510683+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "800742e4484de21b7be57123efef4e54749923eb4d55d4edec81b41a42ad365d",
+    "stderr_sha256": "472d3b2517cc2d45d0fb45d2c4890fd8699e5377261a381ab4bce382d84db702",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4144427aa3a5a9c9/out/resolv_abi_test-4144427aa3a5a9c9",
+      "gethostbyname_hosts_",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:32.534160+00:00",
+    "finished_at": "2026-11-12T05:03:32.564906+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "02bc6484289d78e42b67ddb4550aa63b82424b3ee11b8100c873e3a220fbd400",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 3
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4144427aa3a5a9c9/out/resolv_abi_test-4144427aa3a5a9c9": "97250ec5ad709bf25423766f02f1711df551904180973568f7587e0ce49d97e9"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4144427aa3a5a9c9/out/resolv_abi_test-4144427aa3a5a9c9": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/resolv_abi.rs": "557f921afbd26b6d0cb83db900553e07067308b77863eda42ec62780c13e682a",
+    "crates/frankenlibc-abi/tests/resolv_abi_test.rs": "570f05a793e1d71ed328558c98f58823d808631c80ccf56524a20c11d5799a70",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "97250ec5ad709bf25423766f02f1711df551904180973568f7587e0ce49d97e9"
+}

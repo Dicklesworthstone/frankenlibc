@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.16",
+  "contract": {
+    "behavior": "Wire real asupersync-conformance deterministic seeded Lab schedule replay (ConformanceRunner + TestConfig::with_seed) and enable frankentui-ui snapshot/diff harness in default frankenlibc-harness features while keeping runtime crates clean",
+    "acceptance_sha256": "32ddfc8fbe7b08847467bf0ac0da83beddf38fa15c9e6d796c4e21d6469e4ac8",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-harness/Cargo.toml",
+      "crates/frankenlibc-harness/src/asupersync_lab_replay.rs",
+      "crates/frankenlibc-harness/src/diff.rs",
+      "crates/frankenlibc-harness/src/snapshot_diff.rs",
+      "tests/conformance/tooling_dependency_boundary.v1.json"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/asupersync_lab_replay_contract_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/Cargo.toml": "ddde7323e84ec1ed4eedb07fcb52f51adc50975feb45be24ccbc9e76f536cf78",
+        "crates/frankenlibc-harness/src/asupersync_lab_replay.rs": "329ed25900daf793bafb46808b36405755ca6268437bbfe90b8950262c2c832d",
+        "crates/frankenlibc-harness/src/diff.rs": "c45ae45433591073d1fe96948bdd48d9ccd56ae8c0c66cb72c09c75a1c6666fd",
+        "crates/frankenlibc-harness/src/snapshot_diff.rs": "9ab70807669f7bcee7dd939b012e86f78fb875b21493f0d759ec6f60dc3debe9",
+        "crates/frankenlibc-harness/tests/asupersync_lab_replay_contract_test.rs": "41e6e5c2b784a7b90c32a32174de12b56072c7b302e08034c33cad98b31e6dd0",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "tests/conformance/tooling_dependency_boundary.v1.json": "ccecdd5ed4aa850a550754dfa6e6052606639e6e7fd5f6ea36a311eaa9542650"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-12T01:15:00+00:00",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/57599dd1a1d4801b/out/asupersync_lab_replay_contract_test-57599dd1a1d4801b",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "asupersync_lab_replay_contract_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/57599dd1a1d4801b/out/asupersync_lab_replay_contract_test-57599dd1a1d4801b"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "manifest_anchors_to_juvqm15_with_stdio_fread_small_trace",
+        "fixture_pass_outcome_when_observed_matches_expected",
+        "fixture_code_failure_outcome_when_observed_diverges",
+        "fixture_tool_failure_outcome_when_asupersync_unavailable"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "asupersync_lab_replay_contract_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:13.142359+00:00",
+    "finished_at": "2026-11-12T04:36:13.462155+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "84cebd21bb9fc3073d42de17ea0d260789dc764639ca72c69dbe2397ec3013f1",
+    "stderr_sha256": "81bead199562f7a4ab630ac9f25808364e988bc1d739721d11332e44744f1de7",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/57599dd1a1d4801b/out/asupersync_lab_replay_contract_test-57599dd1a1d4801b",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:13.474050+00:00",
+    "finished_at": "2026-11-12T04:36:13.491901+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "744efa1a2ecafe95ad3237199988e0ea112de130241792ade7980701f9a61667",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 21
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/57599dd1a1d4801b/out/asupersync_lab_replay_contract_test-57599dd1a1d4801b": "211729caf432a31c678d393583f7cf7ffd783e40abc4b1d8555381198e396fbc"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/57599dd1a1d4801b/out/asupersync_lab_replay_contract_test-57599dd1a1d4801b": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/Cargo.toml": "ddde7323e84ec1ed4eedb07fcb52f51adc50975feb45be24ccbc9e76f536cf78",
+    "crates/frankenlibc-harness/src/asupersync_lab_replay.rs": "329ed25900daf793bafb46808b36405755ca6268437bbfe90b8950262c2c832d",
+    "crates/frankenlibc-harness/src/diff.rs": "c45ae45433591073d1fe96948bdd48d9ccd56ae8c0c66cb72c09c75a1c6666fd",
+    "crates/frankenlibc-harness/src/snapshot_diff.rs": "9ab70807669f7bcee7dd939b012e86f78fb875b21493f0d759ec6f60dc3debe9",
+    "crates/frankenlibc-harness/tests/asupersync_lab_replay_contract_test.rs": "41e6e5c2b784a7b90c32a32174de12b56072c7b302e08034c33cad98b31e6dd0",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "tests/conformance/tooling_dependency_boundary.v1.json": "ccecdd5ed4aa850a550754dfa6e6052606639e6e7fd5f6ea36a311eaa9542650"
+  },
+  "executable_sha256": "211729caf432a31c678d393583f7cf7ffd783e40abc4b1d8555381198e396fbc"
+}

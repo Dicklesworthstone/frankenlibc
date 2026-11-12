@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.6",
+  "contract": {
+    "behavior": "Bound wide swprintf/vswprintf formatting at caller buffer capacity and reject unrepresentable positions",
+    "acceptance_sha256": "6545104e141179b7f9212701eb3c9b0f0f7ea1aa7d49430230469e7f949a1a5f",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/wchar_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/wchar_abi.rs": "239385b6ed576334c0f543abab0ec6ba143819cda03b90d26ff7ebd2e6f82757",
+        "crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs": "97f1c7e5500d8139dfe2b341fb82bb9b6a8c47a63b5b26ffcb6712bf103bb383",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-01T05:23:26.021137509Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f638888a9c79422a/out/conformance_diff_swprintf-f638888a9c79422a",
+        "swprintf_rejects_unrepresentable_argument_positions_before_allocation",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_diff_swprintf",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f638888a9c79422a/out/conformance_diff_swprintf-f638888a9c79422a"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "swprintf_rejects_unrepresentable_argument_positions_before_allocation"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_diff_swprintf",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:15.938283+00:00",
+    "finished_at": "2026-11-12T04:59:16.156542+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "7cf6bd0593ad5d6162aa311651e1048f89cc72597dfa52e950eced65b84de397",
+    "stderr_sha256": "cb90005141d5b96203a53c77858fd07c60f3f2abd12724240477f4a8ff143e55",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f638888a9c79422a/out/conformance_diff_swprintf-f638888a9c79422a",
+      "swprintf_rejects_unrepresentable_argument_positions_before_allocation",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:16.166563+00:00",
+    "finished_at": "2026-11-12T04:59:16.172596+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "fd05f888092349b47626ef0ef9b8d30ae310e9f40d987bc19bcedb8dbb226ea5",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 1
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f638888a9c79422a/out/conformance_diff_swprintf-f638888a9c79422a": "26b931d46b9cd856f6115059c444ae6e4029bc199280f5f77ac8a4c81e3744e4"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f638888a9c79422a/out/conformance_diff_swprintf-f638888a9c79422a": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/wchar_abi.rs": "239385b6ed576334c0f543abab0ec6ba143819cda03b90d26ff7ebd2e6f82757",
+    "crates/frankenlibc-abi/tests/conformance_diff_swprintf.rs": "97f1c7e5500d8139dfe2b341fb82bb9b6a8c47a63b5b26ffcb6712bf103bb383",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "26b931d46b9cd856f6115059c444ae6e4029bc199280f5f77ac8a4c81e3744e4"
+}

@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.15.2",
+  "contract": {
+    "behavior": "Adversarially verify S03 harm/silent-corruption/baseline-not-repro counterexamples, S05 unverified provider and candidate SHA-256 mismatch rejection, S07 fail-closed missing-isolation status, and S12 NOT_MITIGATED_BY_DESIGN scope boundary",
+    "acceptance_sha256": "0abce5613c0cd5ff336371b68b7c45b30f1f80f464a70bb8e20949cb258f3419",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "tests/cve_arena/runner.sh",
+      "scripts/cve_arena_gate.sh",
+      "scripts/gentoo/security_analyzer.py"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs",
+      "tests/gentoo/test_security_validation.py"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs": "3ee561ab65a2d512fa30065b3eba012db12207b598635933174dd8eac380cf1c",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/cve_arena_gate.sh": "dcc2d70d2163af98cfec453a05cd2f618bd31d3ccf67b819c9b5906ede5536bc",
+        "scripts/gentoo/security_analyzer.py": "f5ceb245ec0ed7646f8bee3c182fc52ccca3630f6b103edd53db703161d213c1",
+        "tests/cve_arena/runner.sh": "febd8fe0c6280b9b1e955693aabd75f3538ab3c8d62ad58bc73553e8c684dc44",
+        "tests/gentoo/test_security_validation.py": "95843d5b14692257e2b38a80694405faef5891df384dc477247e3e2f07261e53"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-11T13:48:43.856829+00:00",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/e896115c7a0e0ccd/out/cve_paired_mode_runner_test-e896115c7a0e0ccd",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "cve_paired_mode_runner_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/e896115c7a0e0ccd/out/cve_paired_mode_runner_test-e896115c7a0e0ccd"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "sq_m0_hsfp_counterexamples_and_confinement_controls",
+        "paired_mode_checker_accepts_completion_debt_bindings"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "cve_paired_mode_runner_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:56.133036+00:00",
+    "finished_at": "2026-11-12T04:36:56.524893+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "3096c3515844c9e7dfea4fffaa1832437c42f7706bbf6f05f26e8eef0c4d8025",
+    "stderr_sha256": "435d2f2c029864b35060d75b5e7885734f880d67fd6c9937c6e34d89e34db903",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/e896115c7a0e0ccd/out/cve_paired_mode_runner_test-e896115c7a0e0ccd",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:56.527908+00:00",
+    "finished_at": "2026-11-12T04:37:08.226289+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "2542e01a5479df922845d81b7a9cc41f4905032248ed8ac1ae64e4d75b288223",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 13
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/e896115c7a0e0ccd/out/cve_paired_mode_runner_test-e896115c7a0e0ccd": "f22ffbbd6a48c4421939234900b9e27647f55725a1a8bf755efcea705861e0f5"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/e896115c7a0e0ccd/out/cve_paired_mode_runner_test-e896115c7a0e0ccd": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/cve_paired_mode_runner_test.rs": "3ee561ab65a2d512fa30065b3eba012db12207b598635933174dd8eac380cf1c",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/cve_arena_gate.sh": "dcc2d70d2163af98cfec453a05cd2f618bd31d3ccf67b819c9b5906ede5536bc",
+    "scripts/gentoo/security_analyzer.py": "f5ceb245ec0ed7646f8bee3c182fc52ccca3630f6b103edd53db703161d213c1",
+    "tests/cve_arena/runner.sh": "febd8fe0c6280b9b1e955693aabd75f3538ab3c8d62ad58bc73553e8c684dc44",
+    "tests/gentoo/test_security_validation.py": "95843d5b14692257e2b38a80694405faef5891df384dc477247e3e2f07261e53"
+  },
+  "executable_sha256": "f22ffbbd6a48c4421939234900b9e27647f55725a1a8bf755efcea705861e0f5"
+}

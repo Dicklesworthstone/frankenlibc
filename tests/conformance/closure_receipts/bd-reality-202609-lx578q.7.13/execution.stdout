@@ -1,0 +1,12 @@
+
+running 7 tests
+test diff_mbsrtowcs_ascii_only ... ok
+test diff_mbsrtowcs_dst_null_returns_required_len ... ok
+test diff_mbsrtowcs_with_cjk ... ok
+test diff_wcsrtombs_ascii_round_trip ... ok
+test diff_wcsrtombs_invalid_codepoint_rejected ... ok
+test diff_wcsrtombs_with_cjk_emoji ... ok
+test mbsrtowcs_diff_coverage_report ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

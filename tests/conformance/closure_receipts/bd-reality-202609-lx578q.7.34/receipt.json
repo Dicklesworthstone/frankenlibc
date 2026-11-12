@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.34",
+  "contract": {
+    "behavior": "Bind existing wide, C23 and locale integer ABI bodies in native PLT/GOT plugins with per-symbol caller-relative versions",
+    "acceptance_sha256": "277db46126c7a9db5499e51b6eb03affdb402fe207f82cf3d7596d21dcceba2b",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/dlfcn_memory.rs",
+      "crates/frankenlibc-abi/src/dlfcn_unwind.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_strtol_family.rs",
+      "tests/integration/fixture_native_runtime_driver.c",
+      "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs",
+      "crates/frankenlibc-abi/tests/isoc_abi_test.rs",
+      "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs",
+      "crates/frankenlibc-abi/tests/strtol_family_differential_fuzz.rs",
+      "crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs",
+      "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs",
+      "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs"
+    ],
+    "source": {
+      "commit": "f5dcc0877052e070d14e4f6d11c6cec7cd7836fd",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/dlfcn_memory.rs": "ec15b06ac96541289c659e05b8227f11201d3170e91daaca5763fe779e0d24f2",
+        "crates/frankenlibc-abi/src/dlfcn_unwind.rs": "3a4cd3a78813c6cbbd495ce1c00c9ba3737c1ca834f850c06a88344579c679be",
+        "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
+        "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "6e90a0f6801969ee69975bdc287c8dd49bfedf71b476f1852d52e1538595e645",
+        "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs": "8d40939e0f2881c32608535a880a2b98a9d2ca7e97531d3cad8c236a10032603",
+        "crates/frankenlibc-abi/tests/conformance_strtol_family.rs": "06891e185f7904e94d2459150798b1e9996e1f11fa4fbf3553c1fb8711955800",
+        "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs": "7e72bbdf0450e433d357d8ade78558ba54876d21b58929860898f6955aaa0cde",
+        "crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs": "629219510c937f8763337afc827cfc67f9b2cfe6900356396f5c1d400c6f7ea2",
+        "crates/frankenlibc-abi/tests/isoc_abi_test.rs": "75f5880ff1ecdaaadfd5ce07b9206089d1d0c66f36023bd4b46e993d266e80c8",
+        "crates/frankenlibc-abi/tests/strtol_family_differential_fuzz.rs": "357f9966b26e1f5304a96d9c4ac36d6c0723ef5632149c5be448f3f3fa5bc6df",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "tests/integration/fixture_native_runtime_driver.c": "fe9545d2ed8c05879a720379eadf7b5d8dc1653f6e3f19cc14fa3845b2f2fb30"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-05T22:10:25.454915043Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/184a7ca57ee143ce/out/conformance_strtol_family-184a7ca57ee143ce",
+        "native_integer_extended_",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_strtol_family",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/184a7ca57ee143ce/out/conformance_strtol_family-184a7ca57ee143ce"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "native_integer_extended_plt_protocol",
+        "native_integer_extended_got_protocol"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_strtol_family",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:16:36.417636+00:00",
+    "finished_at": "2026-11-12T06:16:36.633050+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "f6c41b5c98c6d32f0e8ec8c53183f67e3e8a61c1c4d13dd8165ada3d3bbcfc38",
+    "stderr_sha256": "8ce4c715145f8c162c0ffd04edd2c0f7ec745b76ed85d67c412c3b5ae8de8935",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/184a7ca57ee143ce/out/conformance_strtol_family-184a7ca57ee143ce",
+      "native_integer_extended_",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:16:36.656708+00:00",
+    "finished_at": "2026-11-12T06:16:38.933655+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "8312ce84f03dc936e25b2f6bc05fd43a1bfcbb3b37b45fed80f19770d0026d1a",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/184a7ca57ee143ce/out/conformance_strtol_family-184a7ca57ee143ce": "588e4827d214cd889565e52aba6fd1bdfb8b2ce3cdbe2375a5bf280d8ed3af14"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/184a7ca57ee143ce/out/conformance_strtol_family-184a7ca57ee143ce": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/dlfcn_memory.rs": "ec15b06ac96541289c659e05b8227f11201d3170e91daaca5763fe779e0d24f2",
+    "crates/frankenlibc-abi/src/dlfcn_unwind.rs": "3a4cd3a78813c6cbbd495ce1c00c9ba3737c1ca834f850c06a88344579c679be",
+    "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
+    "crates/frankenlibc-abi/tests/conformance_diff_fscanf_host_stream.rs": "6e90a0f6801969ee69975bdc287c8dd49bfedf71b476f1852d52e1538595e645",
+    "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs": "8d40939e0f2881c32608535a880a2b98a9d2ca7e97531d3cad8c236a10032603",
+    "crates/frankenlibc-abi/tests/conformance_strtol_family.rs": "06891e185f7904e94d2459150798b1e9996e1f11fa4fbf3553c1fb8711955800",
+    "crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs": "7e72bbdf0450e433d357d8ade78558ba54876d21b58929860898f6955aaa0cde",
+    "crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs": "629219510c937f8763337afc827cfc67f9b2cfe6900356396f5c1d400c6f7ea2",
+    "crates/frankenlibc-abi/tests/isoc_abi_test.rs": "75f5880ff1ecdaaadfd5ce07b9206089d1d0c66f36023bd4b46e993d266e80c8",
+    "crates/frankenlibc-abi/tests/strtol_family_differential_fuzz.rs": "357f9966b26e1f5304a96d9c4ac36d6c0723ef5632149c5be448f3f3fa5bc6df",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "tests/integration/fixture_native_runtime_driver.c": "fe9545d2ed8c05879a720379eadf7b5d8dc1653f6e3f19cc14fa3845b2f2fb30"
+  },
+  "executable_sha256": "588e4827d214cd889565e52aba6fd1bdfb8b2ce3cdbe2375a5bf280d8ed3af14"
+}

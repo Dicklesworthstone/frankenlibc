@@ -1,0 +1,13 @@
+
+running 8 tests
+test build_script_sos_witness_accepts_production_certificates_and_rejects_counterexamples ... ok
+test fragmentation_barrier_golden_values_arch_independent ... ok
+test monotonicity_is_arch_independent ... ok
+test no_arch_specific_compilation_in_sos_barrier ... ok
+test overflow_saturation_is_arch_independent ... ok
+test runtime_math_kernel_evaluates_live_allocator_sos_certificates_and_detects_violations ... ok
+test size_class_barrier_golden_values_arch_independent ... ok
+test thread_safety_barrier_golden_values_arch_independent ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

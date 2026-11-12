@@ -1,0 +1,19 @@
+
+running 14 tests
+test actual_gate_consumes_nonzero_results_and_rejects_receipt_corruption ... ok
+test actual_gate_distinguishes_compiled_from_executed_evidence ... ok
+test actual_gate_keeps_source_checks_and_historical_exemptions_explicit ... ok
+test actual_gate_rejects_wrong_live_source_and_build_configuration ... ok
+test actual_gate_rejects_zero_tests_compile_failure_and_wrong_implementation ... ok
+test cargo_receipt_binds_named_artifact_and_rebuilds_backdated_source ... ok
+test gate_script_exists_and_executable ... ok
+test legacy_exempt_only_contains_closed_critique_beads ... ok
+test matrix_rows_have_evidence_fields ... ok
+test non_exempt_closed_beads_have_evidence ... ok
+test non_exempt_closed_beads_have_matrix_entries ... ok
+test schema_exists_and_valid ... ok
+test schema_has_required_evidence_fields ... ok
+test support_report_uses_explicit_rch_source_over_stale_worker_git ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.57s
+

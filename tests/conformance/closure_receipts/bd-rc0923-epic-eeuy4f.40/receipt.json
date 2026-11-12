@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.40",
+  "contract": {
+    "behavior": "Reject contradictory L0, smoke, and build claims across operator guides via claim reconciliation tests",
+    "acceptance_sha256": "665ce54b08f9d73a6cbadcb8145aee8f840ae8a39e9839d483a7b23cb225feca",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "scripts/check_claim_reconciliation.sh"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs": "9dadbf8f3140d8b0337fee8e3f8ac5df0e44522a4f2726a94ec2e846f484bc1d",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/check_claim_reconciliation.sh": "00f01b7268d591bd93cd9da5d1ee047ada0e095cf221deb696f46065eea1a91d"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-20T22:14:22.704189Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/033263e7090edf88/out/claim_reconciliation_test-033263e7090edf88",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "claim_reconciliation_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/033263e7090edf88/out/claim_reconciliation_test-033263e7090edf88"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "claim_reconciliation_gate_passes",
+        "claim_reconciliation_detects_readme_drift_and_routes_owner"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "claim_reconciliation_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:18.553092+00:00",
+    "finished_at": "2026-11-12T04:36:18.936293+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "d3ed1bac04ca1e03fa59b484e17efb54bdec0fa644cc2d439e9a5f48a37616f5",
+    "stderr_sha256": "7169ddec0200c56afb227669a9a55920b6da431784a365156831ed1792580a1b",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/033263e7090edf88/out/claim_reconciliation_test-033263e7090edf88",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:18.938899+00:00",
+    "finished_at": "2026-11-12T04:36:19.357492+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "6302fbe9ad917b068073d52a3a75d77b8dfe6317087a56b4c3bdb22bbc418f5f",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 5
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/033263e7090edf88/out/claim_reconciliation_test-033263e7090edf88": "9c5e2ce5117cee7388e3d55e7ab0edcdb7ffddfee16c8e4e237e3c768787ceb6"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/033263e7090edf88/out/claim_reconciliation_test-033263e7090edf88": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs": "9dadbf8f3140d8b0337fee8e3f8ac5df0e44522a4f2726a94ec2e846f484bc1d",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/check_claim_reconciliation.sh": "00f01b7268d591bd93cd9da5d1ee047ada0e095cf221deb696f46065eea1a91d"
+  },
+  "executable_sha256": "9c5e2ce5117cee7388e3d55e7ab0edcdb7ffddfee16c8e4e237e3c768787ceb6"
+}

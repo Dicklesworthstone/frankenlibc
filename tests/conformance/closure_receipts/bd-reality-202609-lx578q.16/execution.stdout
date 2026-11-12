@@ -1,0 +1,26 @@
+
+running 21 tests
+test asupersync_dir_present_branch_fires_when_dir_exists_and_no_override ... ok
+test binary_on_path_branch_fires_when_binary_exists_on_path ... ok
+test detect_returns_no_install_detected_on_empty_env ... ok
+test detection_env_from_process_env_does_not_panic ... ok
+test detection_is_deterministic_for_a_given_env ... ok
+test env_override_disabled_short_circuits_regardless_of_fs_state ... ok
+test env_override_enabled_short_circuits_regardless_of_fs_state ... ok
+test env_override_falsy_aliases_match ... ok
+test env_override_truthy_aliases_match ... ok
+test fallback_path_documents_tool_failure_reason_format ... ok
+test fixture_code_failure_outcome_when_observed_diverges ... ok
+test fixture_pass_outcome_when_observed_matches_expected ... ok
+test fixture_tool_failure_outcome_when_asupersync_unavailable ... ok
+test fixture_validate_rejects_invalid_source_commit ... ok
+test fixture_validate_rejects_replay_input_not_in_artifact_refs ... ok
+test fixture_validates_clean ... ok
+test manifest_anchors_to_juvqm15_with_stdio_fread_small_trace ... ok
+test manifest_detection_contract_locks_probe_order_and_override_var ... ok
+test manifest_required_fields_match_replay_record_struct ... ok
+test outcome_classification_carries_pass_codefailure_toolfailure_with_disjoint_signatures ... ok
+test policy_fails_closed_on_required_kinds ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

@@ -1,0 +1,14 @@
+
+running 9 tests
+test diff_getdelim_with_colon_delimiter ... ok
+test diff_getline_empty_input ... ok
+test diff_getline_single_long_line ... ok
+test diff_getline_via_fmemopen ... ok
+test fd_line_input_preserves_pushback_until_error_is_cleared ... ok
+test fwide_preserves_foreign_stream_orientation ... ok
+test getline_diff_coverage_report ... ok
+test host_getline_grows_a_frankenlibc_segment_buffer_safely ... ok
+test internal_line_input_matches_gnu_status_and_orientation ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

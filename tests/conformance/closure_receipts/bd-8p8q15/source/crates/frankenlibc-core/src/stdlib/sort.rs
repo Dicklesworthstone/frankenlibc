@@ -1,0 +1,2208 @@
+//! Sorting and searching functions.
+
+const I32_FAST_LANE_MIN: usize = 64;
+const I32_FAST_LANE_MAX: usize = 2048;
+const I64_FAST_LANE_MIN: usize = 64;
+const I64_FAST_LANE_MAX: usize = 2048;
+/// Above this element count, 4-/8-byte integer keys take an LSD radix lane
+/// instead of the comparison-sort fast lane. The crossover sits just past the
+/// comparison-lane window: radix's fixed per-pass overhead (256-bucket
+/// histogram + a full ping-pong scatter) only amortizes once N is large.
+const INTEGER_RADIX_LANE_MIN: usize = 2048;
+/// At this size, eight radix passes lose to fixed-width pdqsort when a short
+/// sample shows a very small key domain. Below it, radix still wins even on
+/// the same duplicate-heavy distribution.
+const U64_DUPLICATE_FALLBACK_MIN: usize = 65_536;
+/// 2-byte integer keys take the radix lane at a far lower threshold: they have
+/// no comparison fast lane and a 2-pass radix has negligible fixed cost, so it
+/// overtakes pdqsort early.
+const NARROW_RADIX_LANE_MIN: usize = 256;
+/// 1-byte keys take the dedicated counting-sort lane above this count.
+const U8_COUNTING_LANE_MIN: usize = 256;
+/// 16-byte fixed keys under byte-lexicographic comparators take a stable LSD
+/// radix lane. The verify guard makes this speculative: non-lexicographic
+/// comparators restore and fall through.
+const BYTE_LEX16_RADIX_LANE_MIN: usize = 1024;
+
+/// Generic qsort implementation, in 100% safe Rust: a STABLE sort, as glibc
+/// 2.43's qsort is (a merge sort; equal elements keep their input order).
+///
+/// `base`: the entire array as bytes.
+/// `width`: size of each element in bytes.
+/// `compare`: comparison function returning <0, 0, >0.
+///
+/// Integer/radix lanes handle common fixed-width keys without per-element
+/// comparator calls when their result is indistinguishable from the stable
+/// one; everything else takes `stable_sort`, an index merge sort that is
+/// O(n log n) worst case, about n comparisons on sorted input, and never
+/// panics on an inconsistent comparator.
+pub fn qsort<F>(base: &mut [u8], width: usize, compare: F)
+where
+    F: Fn(&[u8], &[u8]) -> i32 + Copy,
+{
+    if width == 0 || base.len() < width {
+        return;
+    }
+    let num = base.len() / width;
+    if num < 2 {
+        return;
+    }
+
+    // glibc 2.43's qsort is a stable merge sort (measured: equal keys keep
+    // their input order at every size; fl's pdqsort reordered them from
+    // n = 31 up, bd-8p8q15). A stable result is unique, so any stable sort
+    // reproduces glibc's for a consistent comparator.
+    //
+    // The integer/radix lanes order by value. That equals the stable order
+    // only when comparator-equal neighbours are byte-identical, so a lane's
+    // result is kept only then; otherwise the input is restored.
+    if lanes_may_apply(width, num) {
+        let original = base[..num * width].to_vec();
+        if try_integer_unstable_lanes(base, width, num, &compare, true) {
+            if equal_runs_are_uniform(&base[..num * width], width, &compare) {
+                return;
+            }
+            base[..num * width].copy_from_slice(&original);
+        }
+    }
+
+    stable_sort(base, width, num, &compare);
+}
+
+/// Whether any integer/radix lane in `try_integer_unstable_lanes` can fire.
+fn lanes_may_apply(width: usize, num: usize) -> bool {
+    match width {
+        1 => num > U8_COUNTING_LANE_MIN,
+        2 => num > NARROW_RADIX_LANE_MIN,
+        4 => num >= I32_FAST_LANE_MIN,
+        8 => num >= I64_FAST_LANE_MIN,
+        16 => num > BYTE_LEX16_RADIX_LANE_MIN,
+        _ => false,
+    }
+}
+
+/// True when every pair of neighbours the comparator calls equal is
+/// byte-identical: then reordering within equal runs is invisible.
+fn equal_runs_are_uniform<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    active
+        .chunks_exact(width)
+        .zip(active.chunks_exact(width).skip(1))
+        .all(|(a, b)| a == b || compare(a, b) != 0)
+}
+
+/// Stable sort of `num` elements of `width` bytes: a merge sort over an
+/// index permutation (comparisons through `compare`), then one pass that
+/// applies the permutation. Never panics, whatever the comparator returns.
+fn stable_sort<F>(base: &mut [u8], width: usize, num: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    // Small elements are merged directly, so comparisons read neighbouring
+    // memory; an index sort chases scattered elements on every comparison
+    // (2.5x slower on 1M 24-byte records). Larger ones are sorted by index,
+    // as glibc's merge sort does above 32 bytes.
+    if width <= 32 {
+        stable_merge_sort_direct(&mut base[..num * width], width, compare);
+        return;
+    }
+    let mut idx: Vec<usize> = (0..num).collect();
+    let less_eq = |a: usize, b: usize| compare(elem(base, width, a), elem(base, width, b)) <= 0;
+    stable_merge_sort_indices(&mut idx, &less_eq);
+    if idx.iter().enumerate().all(|(i, &j)| i == j) {
+        return;
+    }
+    let mut out = vec![0u8; num * width];
+    for (dst, &src) in idx.iter().enumerate() {
+        out[dst * width..(dst + 1) * width].copy_from_slice(elem(base, width, src));
+    }
+    base[..num * width].copy_from_slice(&out);
+}
+
+/// Dispatch to a width-specialised merge sort: with `W` a constant, element
+/// copies compile to plain moves instead of a memcpy call per element
+/// (pointer-sized elements -- qsort of `char *` -- were 1.5x glibc).
+fn stable_merge_sort_direct<F>(data: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    match width {
+        4 => stable_merge_sort_width::<4, F>(data, 4, compare),
+        8 => stable_merge_sort_width::<8, F>(data, 8, compare),
+        16 => stable_merge_sort_width::<16, F>(data, 16, compare),
+        24 => stable_merge_sort_width::<24, F>(data, 24, compare),
+        32 => stable_merge_sort_width::<32, F>(data, 32, compare),
+        _ => stable_merge_sort_width::<0, F>(data, width, compare),
+    }
+}
+
+/// Top-down stable merge sort of the elements themselves, as glibc's is:
+/// halves are sorted recursively, so small subarrays -- and whatever their
+/// elements point to -- are finished while still in cache. (Bottom-up passes
+/// re-walked all n elements per level; on 1M `char *` the comparator's
+/// string reads missed cache and the sort ran 1.9x glibc.) Leaves of up to 16
+/// are binary-insertion sorted; an already-ordered pair of halves is left as
+/// is. `W` is the element width when nonzero (then `width == W`).
+fn stable_merge_sort_width<const W: usize, F>(data: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let width = if W == 0 { width } else { W };
+    let mut scratch = vec![0u8; data.len()];
+    merge_sort_rec::<W, F>(data, &mut scratch, width, compare);
+}
+
+fn merge_sort_rec<const W: usize, F>(data: &mut [u8], scratch: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    const RUN: usize = 16;
+    let width = if W == 0 { width } else { W };
+    let n = data.len() / width;
+    if n <= RUN {
+        for i in 1..n {
+            // Binary search for the first element strictly greater than
+            // element i (comparisons are the dominant cost: they cross FFI).
+            let (mut lo, mut hi) = (0, i);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if compare(
+                    &data[mid * width..(mid + 1) * width],
+                    &data[i * width..(i + 1) * width],
+                ) <= 0
+                {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            if lo < i {
+                // Shift element by element through a stack copy: with `W`
+                // constant these are plain moves. (`rotate_right` lowered to
+                // a memmove call per insertion, and in this crate memmove is
+                // the exported ABI one.) Direct-path widths are <= 32.
+                let mut held = [0u8; 32];
+                held[..width].copy_from_slice(&data[i * width..(i + 1) * width]);
+                for j in (lo..i).rev() {
+                    let (head, tail) = data.split_at_mut((j + 1) * width);
+                    tail[..width].copy_from_slice(&head[j * width..]);
+                }
+                data[lo * width..(lo + 1) * width].copy_from_slice(&held[..width]);
+            }
+        }
+        return;
+    }
+    let mid = n / 2;
+    {
+        let (left, right) = data.split_at_mut(mid * width);
+        let (left_scratch, right_scratch) = scratch.split_at_mut(mid * width);
+        merge_sort_rec::<W, F>(left, left_scratch, width, compare);
+        merge_sort_rec::<W, F>(right, right_scratch, width, compare);
+    }
+    let at = |i: usize| i * width..(i + 1) * width;
+    if compare(&data[at(mid - 1)], &data[at(mid)]) <= 0 {
+        return;
+    }
+    let (mut i, mut j, mut k) = (0, mid, 0);
+    while i < mid && j < n {
+        // Take from the right only when strictly smaller.
+        let from = if compare(&data[at(i)], &data[at(j)]) <= 0 {
+            i += 1;
+            i - 1
+        } else {
+            j += 1;
+            j - 1
+        };
+        scratch[at(k)].copy_from_slice(&data[at(from)]);
+        k += 1;
+    }
+    // Any right-half remainder is already in place; the left remainder goes
+    // to the end, then the merged prefix is copied back.
+    if i < mid {
+        let rest = mid - i;
+        data.copy_within(i * width..mid * width, (n - rest) * width);
+    }
+    data[..k * width].copy_from_slice(&scratch[..k * width]);
+}
+
+/// Bottom-up stable merge sort of indices: binary-insertion-sorted runs of
+/// `RUN`, then merges, skipping a merge whose halves are already in order
+/// (so sorted input costs about n comparisons). `le(a, b)` is "a may stay
+/// before b"; ties take the left run first, which is what keeps it stable.
+fn stable_merge_sort_indices(idx: &mut [usize], le: &impl Fn(usize, usize) -> bool) {
+    const RUN: usize = 16;
+    let n = idx.len();
+    for start in (0..n).step_by(RUN) {
+        let run = &mut idx[start..(start + RUN).min(n)];
+        for i in 1..run.len() {
+            let x = run[i];
+            // First position whose element is strictly greater than x.
+            let (mut lo, mut hi) = (0, i);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if le(run[mid], x) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            run.copy_within(lo..i, lo + 1);
+            run[lo] = x;
+        }
+    }
+    let mut buf = vec![0usize; n];
+    let mut width = RUN;
+    while width < n {
+        let mut start = 0;
+        while start + width < n {
+            let mid = start + width;
+            let end = (start + 2 * width).min(n);
+            if !le(idx[mid - 1], idx[mid]) {
+                let (mut i, mut j, mut k) = (start, mid, start);
+                while i < mid && j < end {
+                    // Take from the right only when strictly smaller.
+                    if le(idx[i], idx[j]) {
+                        buf[k] = idx[i];
+                        i += 1;
+                    } else {
+                        buf[k] = idx[j];
+                        j += 1;
+                    }
+                    k += 1;
+                }
+                buf[k..k + (mid - i)].copy_from_slice(&idx[i..mid]);
+                k += mid - i;
+                buf[k..k + (end - j)].copy_from_slice(&idx[j..end]);
+                idx[start..end].copy_from_slice(&buf[start..end]);
+            }
+            start = end;
+        }
+        width *= 2;
+    }
+}
+
+/// Try the verify-then-commit integer sort lanes shared by the unstable entry points.
+/// Returns `true` iff a lane produced a result that is genuinely non-decreasing under
+/// the caller's comparator (so it has been committed in place); `false` leaves `base`
+/// holding the original bytes for the caller's generic sort to handle.
+fn try_integer_unstable_lanes<F>(
+    base: &mut [u8],
+    width: usize,
+    num: usize,
+    compare: &F,
+    prefer_fixed_width_duplicate_fallback: bool,
+) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    // 4-/8-byte comparison fast lanes (sort raw keys via the stdlib sort with no
+    // per-comparison FFI callback) for the mid-size window.
+    if width == 4
+        && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num)
+        && try_qsort_i32_natural_fast_lane(base, num, compare)
+    {
+        return true;
+    }
+    if width == 8
+        && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num)
+        && try_qsort_i64_natural_fast_lane(base, num, compare)
+    {
+        return true;
+    }
+
+    // 1-byte keys: a dedicated counting sort (O(n + 256)) — one histogram pass
+    // plus one memset run per value, no key widening.
+    if width == 1 && num > U8_COUNTING_LANE_MIN && try_qsort_u8_counting_lane(base, num, compare) {
+        return true;
+    }
+
+    // 2-/4-/8-byte keys above the radix threshold: an LSD radix sort, a
+    // different complexity class (O(n · key_bytes) linear passes, no per-element
+    // comparison) that wins decisively once N is large.
+    let radix_min = if width == 2 {
+        NARROW_RADIX_LANE_MIN
+    } else {
+        INTEGER_RADIX_LANE_MIN
+    };
+
+    // Float radix lane (width 4/8), gated by a strong float-order prefix probe.
+    if (width == 4 || width == 8)
+        && num > INTEGER_RADIX_LANE_MIN
+        && try_qsort_float_radix_lane(base, num, width, compare)
+    {
+        return true;
+    }
+
+    // Radix-eligible widths above the threshold. First scan for an already-monotonic
+    // run under the comparator: sorted/reverse input is the one case the LSD radix
+    // loses decisively (pdqsort is O(n) on runs while radix always pays O(n·width)
+    // scatter passes), and it needs no sorting at all.
+    if (width == 2 || width == 4 || width == 8) && num > radix_min {
+        match qsort_scan_order(&base[..num * width], width, compare) {
+            QsortOrder::Ascending => return true,
+            QsortOrder::Descending => {
+                reverse_fixed_width_elements(&mut base[..num * width], width);
+                return true;
+            }
+            QsortOrder::Unordered => {
+                if prefer_fixed_width_duplicate_fallback
+                    && width == 8
+                    && num >= U64_DUPLICATE_FALLBACK_MIN
+                    && qsort_u64_prefix_is_duplicate_dense(&base[..num * width])
+                {
+                    if (I64_FAST_LANE_MIN..=(1 << 22)).contains(&num)
+                        && try_qsort_i64_natural_fast_lane(base, num, compare)
+                    {
+                        return true;
+                    }
+                    return false;
+                }
+                if qsort_prefix_consistent_with_integer_order(&base[..num * width], width, compare)
+                    && try_qsort_integer_radix_lane(base, num, width, compare)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if width == 16
+        && num > BYTE_LEX16_RADIX_LANE_MIN
+        && try_qsort_byte_lex16_radix_lane(base, num, compare)
+    {
+        return true;
+    }
+
+    // Fallback: if radix lane did not commit, try natural fast lane for widths 4 and 8
+    // up to 1 << 22.
+    if width == 4
+        && num > I32_FAST_LANE_MAX
+        && num <= (1 << 22)
+        && try_qsort_i32_natural_fast_lane(base, num, compare)
+    {
+        return true;
+    }
+    if width == 8
+        && num > I64_FAST_LANE_MAX
+        && num <= (1 << 22)
+        && try_qsort_i64_natural_fast_lane(base, num, compare)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Element index helper: borrows the `i`-th element as a byte slice.
+#[inline]
+fn elem(buf: &[u8], width: usize, i: usize) -> &[u8] {
+    &buf[i * width..(i + 1) * width]
+}
+
+/// RESTORED, bd-nas5rt. 51c39dec3 replaced the four-ordering width-4 lane with a
+/// single-ordering one and its message says only that it "add[ed] a sorted i32
+/// natural fast lane". Signed DESCENDING, unsigned ascending and unsigned
+/// descending went with it, so every reverse-ordered or unsigned 32-bit sort
+/// dropped to the generic byte path and paid the caller's FFI comparator on all
+/// O(n log n) of its comparisons — the exact cost this lane exists to avoid.
+///
+/// The width-8 lane kept all four orderings (restored in 187b85580); this brings
+/// width 4 back into line with it.
+///
+/// The three extra orderings are nearly free to ATTEMPT: descending is the
+/// ascending result REVERSED, an O(n) pass rather than a second sort, and the
+/// unsigned pair is skipped entirely unless some key has its top bit set — in
+/// which case the unsigned order would equal the signed arrangement already
+/// rejected. Every candidate is still committed only if it verifies against the
+/// caller's own comparator, so a non-integer comparator falls through having
+/// paid one linear check per attempt.
+fn try_qsort_i32_natural_fast_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active_len = num * 4;
+    let active = &mut base[..active_len];
+    let mut original = Vec::with_capacity(num);
+    let mut values = Vec::with_capacity(num);
+    for &bytes in active.as_chunks::<4>().0 {
+        original.push(bytes);
+        values.push(i32::from_ne_bytes(bytes));
+    }
+
+    // See the 8-byte lane for the full rationale; this is the 4-byte analog.
+    macro_rules! commit_if_ordered {
+        () => {{
+            for (chunk, value) in active.as_chunks_mut::<4>().0.iter_mut().zip(&values) {
+                chunk.copy_from_slice(&value.to_ne_bytes());
+            }
+            if qsort_i32_candidate_is_ordered(active, compare) {
+                return true;
+            }
+        }};
+    }
+
+    // Signed ascending (the dominant int32_t case) then signed descending (its
+    // O(n) reverse — no second sort).
+    values.sort_unstable();
+    commit_if_ordered!();
+    values.reverse();
+    commit_if_ordered!();
+
+    // Unsigned ascending + descending (u32 sizes / indices / hashes / ids). Only
+    // when a key has the top bit set; `*v as u32` reinterprets the bits with no
+    // new allocation.
+    if values.iter().any(|&v| v < 0) {
+        values.sort_unstable_by_key(|&v| v as u32);
+        commit_if_ordered!();
+        values.reverse();
+        commit_if_ordered!();
+    }
+
+    for (chunk, bytes) in active.as_chunks_mut::<4>().0.iter_mut().zip(original) {
+        chunk.copy_from_slice(&bytes);
+    }
+    false
+}
+
+fn qsort_i32_candidate_is_ordered<F>(active: &[u8], compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let mut prev = &active[..4];
+    for current in active[4..].as_chunks::<4>().0 {
+        if compare(prev, current) > 0 {
+            return false;
+        }
+        prev = current;
+    }
+    true
+}
+
+fn try_qsort_i64_natural_fast_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active_len = num * 8;
+    let active = &mut base[..active_len];
+    let mut original = Vec::with_capacity(num);
+    let mut values = Vec::with_capacity(num);
+    for &bytes in active.as_chunks::<8>().0 {
+        original.push(bytes);
+        values.push(i64::from_ne_bytes(bytes));
+    }
+
+    // Each attempt writes the current `values` order into `active` and checks it
+    // against the caller's comparator, committing (returning) iff the arrangement
+    // is non-decreasing. A comparator matching none of the natural integer
+    // orderings (float, struct / partial key, …) falls through with the original
+    // bytes restored, exactly as before.
+    macro_rules! commit_if_ordered {
+        () => {{
+            for (chunk, value) in active.as_chunks_mut::<8>().0.iter_mut().zip(&values) {
+                chunk.copy_from_slice(&value.to_ne_bytes());
+            }
+            if qsort_i64_candidate_is_ordered(active, compare) {
+                return true;
+            }
+        }};
+    }
+
+    // Signed ascending (the dominant int64_t / pointer / index case) then signed
+    // descending (top-N / recent-first). Descending is the ascending sort
+    // reversed, so it costs an O(n) reverse, not a second O(n log n) sort.
+    values.sort_unstable();
+    commit_if_ordered!();
+    values.reverse();
+    commit_if_ordered!();
+
+    // Unsigned ascending + descending (u64 sizes / hashes / ids). Without these,
+    // unsigned keys in the fast-lane window verify-fail above and drop to the
+    // generic byte sort, which pays the caller's FFI comparator on every one of
+    // its O(n log n) comparisons — the exact cost the fast lane avoids. Only
+    // attempted when some key has the top bit set: otherwise the unsigned order
+    // equals the signed arrangement already rejected, so a non-integer comparator
+    // pays nothing extra. `*v as u64` reinterprets the bits (an `as` cast between
+    // equal-width ints is bit-preserving), reusing the buffer with no allocation.
+    if values.iter().any(|&v| v < 0) {
+        values.sort_unstable_by_key(|&v| v as u64);
+        commit_if_ordered!();
+        values.reverse();
+        commit_if_ordered!();
+    }
+
+    for (chunk, bytes) in active.as_chunks_mut::<8>().0.iter_mut().zip(original) {
+        chunk.copy_from_slice(&bytes);
+    }
+    false
+}
+
+fn qsort_i64_candidate_is_ordered<F>(active: &[u8], compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let mut prev = &active[..8];
+    for current in active[8..].as_chunks::<8>().0 {
+        if compare(prev, current) > 0 {
+            return false;
+        }
+        prev = current;
+    }
+    true
+}
+
+/// Return true when a 32-key prefix contains at most 16 distinct raw u64 keys.
+/// Random/high-cardinality data returns as soon as the 17th distinct key appears,
+/// bounding the admission cost independently of `num`.
+#[inline]
+fn qsort_u64_prefix_is_duplicate_dense(active: &[u8]) -> bool {
+    const SAMPLE_KEYS: usize = 32;
+    const MAX_UNIQUE: usize = 16;
+
+    let mut unique = [0u64; MAX_UNIQUE];
+    let mut unique_len = 0usize;
+    let mut sampled = 0usize;
+    for &chunk in active.as_chunks::<8>().0.iter().take(SAMPLE_KEYS) {
+        sampled += 1;
+        let key = u64::from_ne_bytes(chunk);
+        if !unique[..unique_len].contains(&key) {
+            if unique_len == MAX_UNIQUE {
+                return false;
+            }
+            unique[unique_len] = key;
+            unique_len += 1;
+        }
+    }
+    sampled == SAMPLE_KEYS
+}
+
+/// Counting-sort lane for 1-byte keys.
+fn try_qsort_u8_counting_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let active = &mut base[..num];
+
+    let mut count = [0usize; 256];
+    for &b in active.iter() {
+        count[b as usize] += 1;
+    }
+
+    let original = active.to_vec();
+
+    fn emit_and_check<F, I>(active: &mut [u8], count: &[usize; 256], order: I, compare: &F) -> bool
+    where
+        F: Fn(&[u8], &[u8]) -> i32,
+        I: Iterator<Item = usize>,
+    {
+        let mut pos = 0usize;
+        for v in order {
+            let c = count[v];
+            if c != 0 {
+                active[pos..pos + c].fill(v as u8);
+                pos += c;
+            }
+        }
+        let mut prev = &active[..1];
+        for cur in active[1..].as_chunks::<1>().0 {
+            if compare(prev, cur) > 0 {
+                return false;
+            }
+            prev = cur;
+        }
+        true
+    }
+
+    // Unsigned-ascending (the dominant `unsigned char` case).
+    if emit_and_check(active, &count, 0usize..256, compare) {
+        return true;
+    }
+    // Signed-ascending (`signed char`): negative bytes 0x80..=0xFF first.
+    if emit_and_check(active, &count, (128usize..256).chain(0..128), compare) {
+        return true;
+    }
+    // Unsigned-descending
+    if emit_and_check(active, &count, (0usize..256).rev(), compare) {
+        return true;
+    }
+    // Signed-descending
+    if emit_and_check(
+        active,
+        &count,
+        (0usize..128).rev().chain((128usize..256).rev()),
+        compare,
+    ) {
+        return true;
+    }
+
+    active.copy_from_slice(&original);
+    false
+}
+
+/// Stable LSD radix sort over 8-bit digits for an unsigned-integer key type. Runs `passes`
+/// counting passes (one per significant key byte) with a ping-pong aux buffer; a pass whose
+/// digit is constant across all keys is skipped. On return `keys` is ascending. Generated
+/// per key width so a 2-byte key moves 2 bytes per pass — not 8.
+macro_rules! radix_sort_lsd_for {
+    ($name:ident, $ty:ty) => {
+        fn $name(keys: &mut Vec<$ty>, passes: usize) {
+            let n = keys.len();
+            if n < 2 {
+                return;
+            }
+            let mut aux: Vec<$ty> = vec![0; n];
+            for p in 0..passes {
+                let shift = (p as u32) * 8;
+                let mut count = [0usize; 256];
+                for &k in keys.iter() {
+                    count[((k >> shift) & 0xff) as usize] += 1;
+                }
+                if count.contains(&n) {
+                    continue;
+                }
+                let mut sum = 0usize;
+                for c in count.iter_mut() {
+                    let cur = *c;
+                    *c = sum;
+                    sum += cur;
+                }
+                for &k in keys.iter() {
+                    let d = ((k >> shift) & 0xff) as usize;
+                    aux[count[d]] = k;
+                    count[d] += 1;
+                }
+                core::mem::swap(keys, &mut aux);
+            }
+        }
+    };
+}
+radix_sort_lsd_for!(radix_sort_u16_lsd, u16);
+radix_sort_lsd_for!(radix_sort_u32_lsd, u32);
+radix_sort_lsd_for!(radix_sort_u64_lsd, u64);
+
+/// Width-specialised integer radix lane. Builds NATIVE-width keys (no u64 widening), tries
+/// SIGNED rank order (XOR the sign bit) first then UNSIGNED (no XOR), and verify-then-
+/// commits against the caller's comparator.
+macro_rules! try_radix_lane_for {
+    ($name:ident, $ty:ty, $width:literal, $radix:ident) => {
+        fn $name<F>(active: &mut [u8], num: usize, compare: &F) -> bool
+        where
+            F: Fn(&[u8], &[u8]) -> i32,
+        {
+            let sign_mask: $ty = 1 << ($width * 8 - 1);
+            let original = active.to_vec();
+            let (mut hi, mut lo): (Option<usize>, Option<usize>) = (None, None);
+            for (k, chunk) in active.chunks_exact($width).take(32).enumerate() {
+                let raw: [u8; $width] = chunk.try_into().unwrap();
+                if <$ty>::from_ne_bytes(raw) & sign_mask != 0 {
+                    hi = hi.or(Some(k));
+                } else {
+                    lo = lo.or(Some(k));
+                }
+                if hi.is_some() && lo.is_some() {
+                    break;
+                }
+            }
+            let signed_first = match (hi, lo) {
+                (Some(h), Some(l)) => {
+                    compare(
+                        &active[h * $width..h * $width + $width],
+                        &active[l * $width..l * $width + $width],
+                    ) < 0
+                }
+                _ => true,
+            };
+            let masks: [$ty; 2] = if signed_first {
+                [sign_mask, 0]
+            } else {
+                [0, sign_mask]
+            };
+            for &mask in &masks {
+                let mut keys: Vec<$ty> = Vec::with_capacity(num);
+                for chunk in active.chunks_exact($width) {
+                    let raw: [u8; $width] = chunk.try_into().unwrap();
+                    keys.push(<$ty>::from_ne_bytes(raw) ^ mask);
+                }
+                $radix(&mut keys, $width);
+                for (chunk, &k) in active.chunks_exact_mut($width).zip(&keys) {
+                    chunk.copy_from_slice(&(k ^ mask).to_ne_bytes());
+                }
+                let mut ordered = true;
+                let mut prev = &active[..$width];
+                for current in active[$width..].chunks_exact($width) {
+                    if compare(prev, current) > 0 {
+                        ordered = false;
+                        break;
+                    }
+                    prev = current;
+                }
+                if ordered {
+                    return true;
+                }
+                // Try descending order (O(n) reverse)
+                reverse_fixed_width_elements(active, $width);
+                let mut desc_ordered = true;
+                let mut prev_desc = &active[..$width];
+                for current in active[$width..].chunks_exact($width) {
+                    if compare(prev_desc, current) > 0 {
+                        desc_ordered = false;
+                        break;
+                    }
+                    prev_desc = current;
+                }
+                if desc_ordered {
+                    return true;
+                }
+                active.copy_from_slice(&original);
+            }
+            false
+        }
+    };
+}
+try_radix_lane_for!(try_qsort_radix_u16, u16, 2, radix_sort_u16_lsd);
+try_radix_lane_for!(try_qsort_radix_u32, u32, 4, radix_sort_u32_lsd);
+try_radix_lane_for!(try_qsort_radix_u64, u64, 8, radix_sort_u64_lsd);
+
+fn try_qsort_integer_radix_lane<F>(base: &mut [u8], num: usize, width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 2 || width == 4 || width == 8);
+    let active = &mut base[..num * width];
+    match width {
+        2 => try_qsort_radix_u16(active, num, compare),
+        4 => try_qsort_radix_u32(active, num, compare),
+        8 => try_qsort_radix_u64(active, num, compare),
+        _ => false,
+    }
+}
+
+macro_rules! try_radix_float_lane_for {
+    ($name:ident, $uty:ty, $width:literal, $radix:ident) => {
+        fn $name<F>(active: &mut [u8], num: usize, compare: &F) -> bool
+        where
+            F: Fn(&[u8], &[u8]) -> i32,
+        {
+            const SIGN: $uty = 1 << ($width * 8 - 1);
+            let original = active.to_vec();
+
+            let mut keys: Vec<$uty> = Vec::with_capacity(num);
+            for chunk in active.chunks_exact($width) {
+                let raw: [u8; $width] = chunk.try_into().unwrap();
+                let bits = <$uty>::from_ne_bytes(raw);
+                let mask = if bits & SIGN != 0 { <$uty>::MAX } else { SIGN };
+                keys.push(bits ^ mask);
+            }
+
+            $radix(&mut keys, $width);
+
+            for (chunk, &k) in active.chunks_exact_mut($width).zip(&keys) {
+                let mask = if k & SIGN != 0 { SIGN } else { <$uty>::MAX };
+                chunk.copy_from_slice(&(k ^ mask).to_ne_bytes());
+            }
+
+            let mut ordered = true;
+            let mut prev = &active[..$width];
+            for current in active[$width..].chunks_exact($width) {
+                if compare(prev, current) > 0 {
+                    ordered = false;
+                    break;
+                }
+                prev = current;
+            }
+            if ordered {
+                return true;
+            }
+            active.copy_from_slice(&original);
+            false
+        }
+    };
+}
+try_radix_float_lane_for!(try_qsort_radix_f32, u32, 4, radix_sort_u32_lsd);
+try_radix_float_lane_for!(try_qsort_radix_f64, u64, 8, radix_sort_u64_lsd);
+
+#[inline]
+fn read_uint(chunk: &[u8], width: usize) -> u64 {
+    let mut v = 0u64;
+    for (i, &b) in chunk.iter().take(width).enumerate() {
+        v |= (b as u64) << (i * 8);
+    }
+    v
+}
+
+/// Bench-only: the cost of ONE integer-radix-lane attempt (build keys + LSD radix
+/// + verify) — i.e. the wasted work the prefix gate skips for non-integer data.
+#[doc(hidden)]
+pub fn __bench_integer_radix_attempt<F>(base: &mut [u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let num = base.len() / width;
+    try_qsort_integer_radix_lane(base, num, width, compare)
+}
+
+/// Bench-only: the cost of the prefix integer-order gate itself.
+#[doc(hidden)]
+pub fn __bench_integer_order_gate<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    qsort_prefix_consistent_with_integer_order(active, width, compare)
+}
+
+/// Pre-gate for the integer radix lane: returns `true` if a short prefix sample
+/// is consistent with EITHER unsigned OR signed native-width integer order under
+/// the caller's comparator, `false` only when NEITHER can possibly hold.
+fn qsort_prefix_consistent_with_integer_order<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 2 || width == 4 || width == 8);
+    let n = active.len() / width;
+    let pairs = (n - 1).min(8);
+    if pairs == 0 {
+        return true;
+    }
+    let sign_bit = 1u64 << (width * 8 - 1);
+    let mut unsigned_asc = true;
+    let mut unsigned_desc = true;
+    let mut signed_asc = true;
+    let mut signed_desc = true;
+
+    for k in 0..pairs {
+        let a = &active[k * width..k * width + width];
+        let b = &active[(k + 1) * width..(k + 1) * width + width];
+        let c = compare(a, b);
+        let (ua, ub) = (read_uint(a, width), read_uint(b, width));
+
+        let cons_asc = |ia: u64, ib: u64| -> bool {
+            use core::cmp::Ordering::*;
+            match ia.cmp(&ib) {
+                Less => c <= 0,
+                Greater => c >= 0,
+                Equal => c == 0,
+            }
+        };
+        let cons_desc = |ia: u64, ib: u64| -> bool {
+            use core::cmp::Ordering::*;
+            match ia.cmp(&ib) {
+                Less => c >= 0,
+                Greater => c <= 0,
+                Equal => c == 0,
+            }
+        };
+
+        if !cons_asc(ua, ub) {
+            unsigned_asc = false;
+        }
+        if !cons_desc(ua, ub) {
+            unsigned_desc = false;
+        }
+        if !cons_asc(ua ^ sign_bit, ub ^ sign_bit) {
+            signed_asc = false;
+        }
+        if !cons_desc(ua ^ sign_bit, ub ^ sign_bit) {
+            signed_desc = false;
+        }
+
+        if !unsigned_asc && !unsigned_desc && !signed_asc && !signed_desc {
+            return false;
+        }
+    }
+    unsigned_asc || unsigned_desc || signed_asc || signed_desc
+}
+
+/// Result of [`qsort_scan_order`].
+enum QsortOrder {
+    Ascending,
+    Descending,
+    Unordered,
+}
+
+/// Scan the data for an already-monotonic run under the caller's comparator.
+fn qsort_scan_order<F>(active: &[u8], width: usize, compare: &F) -> QsortOrder
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let n = active.len() / width;
+    if n < 2 {
+        return QsortOrder::Ascending;
+    }
+    let (mut asc, mut desc) = (true, true);
+    let mut prev = &active[..width];
+    for k in 1..n {
+        let cur = &active[k * width..(k + 1) * width];
+        let c = compare(prev, cur);
+        if c > 0 {
+            asc = false;
+        } else if c < 0 {
+            desc = false;
+        }
+        if !asc && !desc {
+            return QsortOrder::Unordered;
+        }
+        prev = cur;
+    }
+    if asc {
+        QsortOrder::Ascending
+    } else {
+        QsortOrder::Descending
+    }
+}
+
+/// Reverse the order of the `width`-byte elements in `active` in place.
+fn reverse_fixed_width_elements(active: &mut [u8], width: usize) {
+    let n = active.len() / width;
+    if n < 2 {
+        return;
+    }
+    let (mut lo, mut hi) = (0usize, n.wrapping_sub(1));
+    while lo < hi {
+        let (a, b) = (lo * width, hi * width);
+        for k in 0..width {
+            active.swap(a + k, b + k);
+        }
+        lo += 1;
+        hi -= 1;
+    }
+}
+
+/// Conservative IEEE-754 float-order probe over a short prefix.
+fn qsort_prefix_says_float<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 4 || width == 8);
+    let get = |i: usize| &active[i * width..i * width + width];
+    let msb_set = |chunk: &[u8]| chunk[width - 1] & 0x80 != 0;
+
+    let mut h_idx: Option<usize> = None;
+    let mut l_idx: Option<usize> = None;
+    let mut big_idx: Option<usize> = None;
+    let mut small_idx: Option<usize> = None;
+    for (k, chunk) in active.chunks_exact(width).take(64).enumerate() {
+        if msb_set(chunk) {
+            if h_idx.is_none() {
+                h_idx = Some(k);
+            }
+            let kb = read_uint(chunk, width);
+            if big_idx
+                .map(|b| kb > read_uint(get(b), width))
+                .unwrap_or(true)
+            {
+                big_idx = Some(k);
+            }
+            if small_idx
+                .map(|s| kb < read_uint(get(s), width))
+                .unwrap_or(true)
+            {
+                small_idx = Some(k);
+            }
+        } else if l_idx.is_none() {
+            l_idx = Some(k);
+        }
+    }
+
+    let (Some(big), Some(small)) = (big_idx, small_idx) else {
+        return false;
+    };
+    if read_uint(get(big), width) == read_uint(get(small), width) {
+        return false;
+    }
+    if compare(get(big), get(small)) >= 0 {
+        return false;
+    }
+    if let (Some(h), Some(l)) = (h_idx, l_idx)
+        && compare(get(h), get(l)) >= 0
+    {
+        return false;
+    }
+    true
+}
+
+/// Float radix lane dispatch for width 4 (`f32`) / 8 (`f64`), gated by a strong
+/// float-order probe so integer inputs never reach the float transform.
+fn try_qsort_float_radix_lane<F>(base: &mut [u8], num: usize, width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 4 || width == 8);
+    let active = &mut base[..num * width];
+    if !qsort_prefix_says_float(active, width, compare) {
+        return false;
+    }
+    match width {
+        4 => try_qsort_radix_f32(active, num, compare),
+        8 => try_qsort_radix_f64(active, num, compare),
+        _ => false,
+    }
+}
+
+/// Fixed-16-byte lexicographic byte radix lane.
+fn try_qsort_byte_lex16_radix_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    const WIDTH: usize = 16;
+    let active = &mut base[..num * WIDTH];
+    let original = active.to_vec();
+    let mut aux = vec![0u8; active.len()];
+
+    for pos in (0..WIDTH).rev() {
+        let mut count = [0usize; 256];
+        for chunk in active.as_chunks::<WIDTH>().0 {
+            count[chunk[pos] as usize] += 1;
+        }
+        if count.contains(&num) {
+            continue;
+        }
+
+        let mut sum = 0usize;
+        for c in &mut count {
+            let cur = *c;
+            *c = sum;
+            sum += cur;
+        }
+
+        for chunk in active.as_chunks::<WIDTH>().0 {
+            let d = chunk[pos] as usize;
+            let dst = count[d] * WIDTH;
+            aux[dst..dst + WIDTH].copy_from_slice(chunk);
+            count[d] += 1;
+        }
+        active.copy_from_slice(&aux);
+    }
+
+    let mut prev = &active[..WIDTH];
+    for current in active[WIDTH..].as_chunks::<WIDTH>().0 {
+        if compare(prev, current) > 0 {
+            active.copy_from_slice(&original);
+            return false;
+        }
+        prev = current;
+    }
+    true
+}
+
+/// Generic bsearch implementation.
+pub fn bsearch<'a, K, F>(key: &K, base: &'a [u8], width: usize, compare: F) -> Option<&'a [u8]>
+where
+    K: ?Sized,
+    F: Fn(&K, &[u8]) -> i32,
+{
+    if width == 0 || base.len() < width {
+        return None;
+    }
+
+    let count = base.len() / width;
+    let mut low = 0;
+    let mut high = count;
+
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let mid_elem = &base[mid * width..(mid + 1) * width];
+        let cmp = compare(key, mid_elem);
+
+        if cmp == 0 {
+            return Some(mid_elem);
+        } else if cmp < 0 {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// mergesort / heapsort — BSD libc sort variants
+// ---------------------------------------------------------------------------
+
+/// Stable BSD `mergesort`: same signature as `qsort` but preserves
+/// input order for elements that compare equal. Uses Rust's
+/// `Vec::sort_by` (timsort) on a copied-out element table, then
+/// writes the sorted elements back. This matches libbsd's contract
+/// of allocating temporary storage proportional to the input.
+pub fn mergesort<F>(base: &mut [u8], width: usize, compare: F)
+where
+    F: Fn(&[u8], &[u8]) -> i32 + Copy,
+{
+    if width == 0 || base.len() < width {
+        return;
+    }
+    let num = base.len() / width;
+    if num < 2 {
+        return;
+    }
+
+    // The same stable sort as qsort. (Vec::sort_by may panic on a C
+    // comparator that is not a total order; this never does.)
+    stable_sort(base, width, num, &compare);
+}
+
+/// In-place BSD `heapsort`: builds a max-heap on the byte buffer
+/// itself (via index manipulation + element swaps) then repeatedly
+/// extracts the maximum. NOT stable. Uses no auxiliary storage
+/// proportional to `nmemb`.
+pub fn heapsort<F>(base: &mut [u8], width: usize, compare: F)
+where
+    F: Fn(&[u8], &[u8]) -> i32 + Copy,
+{
+    if width == 0 || base.len() < width {
+        return;
+    }
+    let num = base.len() / width;
+    if num < 2 {
+        return;
+    }
+
+    // Build heap (heapify — sift down from the last non-leaf).
+    let mut start = num / 2;
+    while start > 0 {
+        start -= 1;
+        sift_down(base, width, &compare, start, num);
+    }
+
+    // Repeatedly swap the root (max) with the last element of the
+    // active region, then sift down from 0 in the shrunk region.
+    let mut end = num;
+    while end > 1 {
+        end -= 1;
+        swap_elements(base, width, 0, end);
+        sift_down(base, width, &compare, 0, end);
+    }
+}
+
+fn swap_elements(base: &mut [u8], width: usize, a: usize, b: usize) {
+    if a == b {
+        return;
+    }
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    let (left, right) = base.split_at_mut(hi * width);
+    let lo_slice = &mut left[lo * width..(lo + 1) * width];
+    let hi_slice = &mut right[..width];
+    for i in 0..width {
+        core::mem::swap(&mut lo_slice[i], &mut hi_slice[i]);
+    }
+}
+
+fn sift_down<F>(base: &mut [u8], width: usize, compare: &F, mut root: usize, end: usize)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    loop {
+        let left = 2 * root + 1;
+        if left >= end {
+            return;
+        }
+        let right = left + 1;
+        // Pick the larger child.
+        let mut largest = left;
+        if right < end {
+            let l_slice = &base[left * width..(left + 1) * width];
+            let r_slice = &base[right * width..(right + 1) * width];
+            if compare(l_slice, r_slice) < 0 {
+                largest = right;
+            }
+        }
+        // Compare against root.
+        let root_slice = &base[root * width..(root + 1) * width];
+        let largest_slice = &base[largest * width..(largest + 1) * width];
+        if compare(root_slice, largest_slice) >= 0 {
+            return;
+        }
+        swap_elements(base, width, root, largest);
+        root = largest;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// radixsort / sradixsort (NetBSD libutil radix sort family)
+// ---------------------------------------------------------------------------
+
+/// Sort `items` by translated-byte order and return the permutation
+/// that would produce sorted output: `out[i]` is the index in
+/// `items` of the i-th sorted element.
+///
+/// `table`, when supplied, maps each input byte to a sort key. When
+/// `None`, byte values are compared directly. The comparison reads
+/// items position by position; the shorter slice sorts before a
+/// longer slice that agrees on every byte of the shorter prefix.
+///
+/// `stable` controls whether equal-key items retain their input
+/// order. Set this to `true` to mirror NetBSD `sradixsort` and
+/// `false` for `radixsort` (which makes no stability promise — but
+/// since stable is a strict superset of unstable behavior, callers
+/// of `radixsort` cannot observe any regression from a stable
+/// implementation).
+pub fn radix_sort(items: &[&[u8]], table: Option<&[u8; 256]>, stable: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    if stable {
+        order.sort_by(|&a, &b| compare_translated(items[a], items[b], table));
+    } else {
+        order.sort_unstable_by(|&a, &b| compare_translated(items[a], items[b], table));
+    }
+    order
+}
+
+fn compare_translated(a: &[u8], b: &[u8], table: Option<&[u8; 256]>) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+    let n = a.len().min(b.len());
+    for i in 0..n {
+        let ak = table.map_or(a[i], |t| t[a[i] as usize]);
+        let bk = table.map_or(b[i], |t| t[b[i] as usize]);
+        match ak.cmp(&bk) {
+            Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+#[cfg(test)]
+mod sort_variant_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    /// qsort is stable at every size and width, as glibc 2.43's is
+    /// (bd-8p8q15): records sorted by a 4-byte key keep the input order of
+    /// equal keys. pdqsort broke it from n = 31. Widths 4 and 8 put the key
+    /// in the whole element, so the integer lanes run and must also hold.
+    #[test]
+    fn qsort_is_stable_like_glibc() {
+        let mut seed: u32 = 12345;
+        for n in [2usize, 5, 17, 31, 64, 100, 257, 1000, 5000, 70_000] {
+            for width in [4usize, 8, 12, 24] {
+                let mut buf = vec![0u8; n * width];
+                for i in 0..n {
+                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                    let key = (seed >> 16) % 5;
+                    let e = &mut buf[i * width..(i + 1) * width];
+                    e[..4].copy_from_slice(&key.to_ne_bytes());
+                    if width >= 8 {
+                        e[4..8].copy_from_slice(&(i as u32).to_ne_bytes());
+                    }
+                }
+                let key = |e: &[u8]| u32::from_ne_bytes(e[..4].try_into().unwrap());
+                qsort(&mut buf, width, |a: &[u8], b: &[u8]| {
+                    key(a).cmp(&key(b)) as i32
+                });
+                let elems: Vec<&[u8]> = buf.chunks_exact(width).collect();
+                for pair in elems.windows(2) {
+                    assert!(
+                        key(pair[0]) <= key(pair[1]),
+                        "n={n} width={width}: unsorted"
+                    );
+                    if width >= 8 && key(pair[0]) == key(pair[1]) {
+                        let seq = |e: &[u8]| u32::from_ne_bytes(e[4..8].try_into().unwrap());
+                        assert!(seq(pair[0]) < seq(pair[1]), "n={n} width={width}: unstable");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A comparator that is not a total order (C callers have them) must
+    /// not panic: Vec::sort_by may, so neither qsort nor mergesort uses it.
+    #[test]
+    fn inconsistent_comparator_never_panics() {
+        let mut buf: Vec<u8> = (0..4000u32).flat_map(|v| v.to_ne_bytes()).collect();
+        let state = core::cell::Cell::new(7u32);
+        let random = |_: &[u8], _: &[u8]| -> i32 {
+            state.set(state.get().wrapping_mul(1_103_515_245).wrapping_add(12345));
+            (state.get() >> 16) as i32 % 3 - 1
+        };
+        qsort(&mut buf, 12, random);
+        mergesort(&mut buf, 12, random);
+        let mut sorted: Vec<u32> = buf
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_ne_bytes(*c))
+            .collect();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            (0..4000).collect::<Vec<_>>(),
+            "elements lost or duplicated"
+        );
+    }
+
+    /// Whole elements must travel at widths that are NOT a multiple of 8.
+    ///
+    /// A struct of three `int`s is width 12 and C programs sort those, so the
+    /// tail is not a hypothetical. A swap that dropped or duplicated the tail
+    /// bytes would still produce a correctly ORDERED array whenever the
+    /// comparator only reads the leading bytes — which is exactly what the
+    /// existing golden-hash and isomorphism tests use — so this asserts the
+    /// FULL element travels, by giving every element a payload that the
+    /// comparator never looks at.
+    #[test]
+    fn qsort_moves_the_whole_element_at_unaligned_widths() {
+        for width in [12usize, 20, 7, 9] {
+            const NUM: usize = 64;
+            let mut buf = vec![0u8; NUM * width];
+            for i in 0..NUM {
+                let key = (NUM - i) as u32;
+                buf[i * width..i * width + 4].copy_from_slice(&key.to_ne_bytes());
+                // Payload derived from the key, never read by the comparator.
+                for b in 1..width {
+                    buf[i * width + b] = (key as u8).wrapping_mul(b as u8).wrapping_add(0x5a);
+                }
+                buf[i * width..i * width + 4].copy_from_slice(&key.to_ne_bytes());
+            }
+
+            qsort(&mut buf, width, |a: &[u8], b: &[u8]| -> i32 {
+                let av = u32::from_ne_bytes(a[..4].try_into().unwrap());
+                let bv = u32::from_ne_bytes(b[..4].try_into().unwrap());
+                av.cmp(&bv) as i32
+            });
+
+            let mut prev = 0u32;
+            for i in 0..NUM {
+                let e = &buf[i * width..(i + 1) * width];
+                let key = u32::from_ne_bytes(e[..4].try_into().unwrap());
+                assert!(key >= prev, "width {width}: not sorted at {i}");
+                prev = key;
+                for (b, &byte) in e.iter().enumerate().skip(4) {
+                    let want = (key as u8).wrapping_mul(b as u8).wrapping_add(0x5a);
+                    assert_eq!(
+                        byte, want,
+                        "width {width}: element {i} (key {key}) lost its payload at byte {b} — \
+                         only part of the element moved"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The DESCENDING orderings must be taken by the lane, not by pdqsort
+    /// (bd-nas5rt).
+    ///
+    /// 51c39dec3 deleted signed-descending and both unsigned orderings from the
+    /// width-4 lane, and no gate noticed for two months because they all compare
+    /// sorted OUTPUT and pdqsort sorts descending correctly too. Comparator CALL
+    /// COUNT separates them: the lane sorts once, REVERSES (an O(n) pass) and
+    /// verifies adjacent pairs, so a descending sort costs about 2n calls, while
+    /// pdqsort needs O(n log n).
+    ///
+    /// The input is SCRAMBLED on purpose. A reverse-ordered input would be served
+    /// by the monotonic-detect lane in one pass — a different fast path — and the
+    /// count would prove nothing about this one.
+    #[test]
+    fn descending_and_unsigned_orderings_take_the_lane() {
+        use std::cell::Cell;
+
+        const NUM: usize = 512;
+        let mut order: Vec<i64> = (0..NUM as i64).collect();
+        let mut x: u64 = 0x243F_6A88_85A3_08D3;
+        for i in (1..NUM).rev() {
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            order.swap(
+                i,
+                (x.wrapping_mul(0x2545_F491_4F6C_DD1D) as usize) % (i + 1),
+            );
+        }
+        assert!(
+            !order.windows(2).all(|w| w[0] <= w[1]) && !order.windows(2).all(|w| w[0] >= w[1]),
+            "shuffled input came out monotone; a monotonic lane could serve it"
+        );
+
+        // (width, build element, read key) for the two integer lanes.
+        for width in [4usize, 8] {
+            let mut buf = vec![0u8; NUM * width];
+            for (i, v) in order.iter().enumerate() {
+                if width == 4 {
+                    buf[i * 4..i * 4 + 4].copy_from_slice(&(*v as i32).to_ne_bytes());
+                } else {
+                    buf[i * 8..i * 8 + 8].copy_from_slice(&v.to_ne_bytes());
+                }
+            }
+            let calls = Cell::new(0usize);
+            let desc = |a: &[u8], b: &[u8]| -> i32 {
+                calls.set(calls.get() + 1);
+                if width == 4 {
+                    let av = i32::from_ne_bytes(a[..4].try_into().unwrap());
+                    let bv = i32::from_ne_bytes(b[..4].try_into().unwrap());
+                    bv.cmp(&av) as i32
+                } else {
+                    let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+                    let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+                    bv.cmp(&av) as i32
+                }
+            };
+
+            qsort(&mut buf, width, desc);
+
+            let read = |i: usize| -> i64 {
+                if width == 4 {
+                    i32::from_ne_bytes(buf[i * 4..i * 4 + 4].try_into().unwrap()) as i64
+                } else {
+                    i64::from_ne_bytes(buf[i * 8..i * 8 + 8].try_into().unwrap())
+                }
+            };
+            for i in 1..NUM {
+                assert!(
+                    read(i - 1) >= read(i),
+                    "width {width}: not descending at {i}"
+                );
+            }
+            assert_eq!(read(0), NUM as i64 - 1, "width {width}: wrong maximum");
+            assert_eq!(read(NUM - 1), 0, "width {width}: wrong minimum");
+            assert!(
+                calls.get() <= 4 * NUM,
+                "width {width}: {} comparator calls for {NUM} elements. The lane sorts, \
+                 reverses and verifies in about 2n; this many means the DESCENDING \
+                 ordering was not taken and pdqsort ran instead — which is exactly the \
+                 state 51c39dec3 left width 4 in for two months with every gate green",
+                calls.get()
+            );
+        }
+    }
+
+    /// The width-8 fast lane must actually be TAKEN, not merely produce sorted
+    /// output (bd-nas5rt).
+    ///
+    /// This is the shape the four existing qsort gates lack, and it is why the
+    /// lane's deletion in 51c39dec3 went unnoticed for two months: they compare
+    /// sorted output against glibc, and `pdqsort_recurse` sorts correctly too,
+    /// so every one of them stayed green while the lane was gone.
+    ///
+    /// Comparator CALL COUNT separates the two paths without needing a counter
+    /// in production code. The lane sorts the raw `i64` values with the
+    /// standard-library sort and then verifies the candidate against the
+    /// caller's comparator on adjacent pairs only — exactly `num - 1` calls.
+    /// `pdqsort_recurse` needs O(num log num); for num = 512 that is several
+    /// thousand. A bound of `2 * num` cannot be met by any comparison sort, so
+    /// this assertion cannot pass on the fallback path.
+    #[test]
+    fn width8_fast_lane_is_taken_not_just_correct() {
+        use std::cell::Cell;
+
+        const NUM: usize = 512;
+        // SCRAMBLED input, and the choice is load-bearing. A descending array is
+        // the obvious way to make the lane's own sort do real work, and it makes
+        // this test HOLLOW: the surviving monotonic-detect lane recognises
+        // reverse order in one n-1 pass and reverses in place, so the assertion
+        // below passed with the i64 lane DISABLED (verified by building that arm).
+        // A scrambled permutation is monotone in neither direction, so nothing
+        // but the natural lane can reach the bound.
+        let mut buf = Vec::with_capacity(NUM * 8);
+        let mut x: u64 = 0x243F_6A88_85A3_08D3;
+        let mut order: Vec<i64> = (0..NUM as i64).collect();
+        for i in (1..NUM).rev() {
+            // xorshift64*, so the permutation is fixed and reproducible.
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            order.swap(
+                i,
+                (x.wrapping_mul(0x2545_F491_4F6C_DD1D) as usize) % (i + 1),
+            );
+        }
+        assert!(
+            !order.windows(2).all(|w| w[0] <= w[1]) && !order.windows(2).all(|w| w[0] >= w[1]),
+            "the shuffled input came out monotone, so a monotonic lane could serve \
+             it and this test would not exercise the width-8 natural lane"
+        );
+        for i in &order {
+            buf.extend_from_slice(&i.to_ne_bytes());
+        }
+
+        let calls = Cell::new(0usize);
+        let counting = |a: &[u8], b: &[u8]| -> i32 {
+            calls.set(calls.get() + 1);
+            let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+            let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+            av.cmp(&bv) as i32
+        };
+
+        qsort(&mut buf, 8, counting);
+
+        let out: Vec<i64> = buf
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&c| i64::from_ne_bytes(c))
+            .collect();
+        assert!(out.windows(2).all(|w| w[0] <= w[1]), "output is not sorted");
+        assert_eq!(out[0], 0);
+        assert_eq!(out[NUM - 1], NUM as i64 - 1);
+
+        let lane_calls = calls.get();
+
+        // NEGATIVE CONTROL, in the same binary and the same run: the identical
+        // values at width 16, which has no fast lane, so pdqsort must serve it.
+        // Without this the bound below is an unchecked constant, and an
+        // out-of-band "disable the lane and rebuild" arm proved a poor substitute
+        // -- run twice, it reported the test as hollow both times because rch had
+        // served a STALE artifact (identical overlay hash across a source change,
+        // frankenlibc-core recompiled zero times). A control that travels with the
+        // test cannot go stale relative to it.
+        let mut wide = Vec::with_capacity(NUM * 16);
+        for i in &order {
+            wide.extend_from_slice(&i.to_ne_bytes());
+            wide.extend_from_slice(&0i64.to_ne_bytes());
+        }
+        let wide_calls = Cell::new(0usize);
+        let wide_cmp = |a: &[u8], b: &[u8]| -> i32 {
+            wide_calls.set(wide_calls.get() + 1);
+            let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+            let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+            av.cmp(&bv) as i32
+        };
+        qsort(&mut wide, 16, wide_cmp);
+        let wide_out: Vec<i64> = wide
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(|c| i64::from_ne_bytes(c[..8].try_into().unwrap()))
+            .collect();
+        assert!(
+            wide_out.windows(2).all(|w| w[0] <= w[1]),
+            "width-16 control did not sort"
+        );
+        assert!(
+            wide_calls.get() > 2 * NUM,
+            "the width-16 control took only {} comparator calls for {NUM} elements, \
+             so SOME fast path served it too and it is not a valid no-lane baseline",
+            wide_calls.get()
+        );
+
+        assert!(
+            lane_calls <= 2 * NUM,
+            "qsort made {lane_calls} comparator calls for {NUM} width-8 elements \
+             against {} for the identical values at width 16. The width-8 fast lane \
+             verifies adjacent pairs in {} calls, so this many means the lane was \
+             NOT taken and pdqsort ran instead (bd-nas5rt: the lane was deleted once \
+             already and every output-only gate stayed green through it)",
+            wide_calls.get(),
+            NUM - 1
+        );
+    }
+
+    /// The lane must ROLL BACK when the caller's comparator disagrees with
+    /// integer order, and the result must obey the caller's comparator.
+    ///
+    /// This is the other half: a lane that committed unconditionally would pass
+    /// the test above and silently reorder data for every caller whose
+    /// comparator is not natural `i64` ascending.
+    ///
+    /// Choosing the key took two wrong answers, and the test now ASSERTS ITS OWN
+    /// PREMISE so it cannot take a third.
+    ///
+    /// A descending comparator is the obvious choice and it is wrong: this file
+    /// still has a monotonic-detect lane that recognises reverse-ordered input in
+    /// one n-1 pass and reverses in place, so descending is served correctly and
+    /// cheaply by a DIFFERENT fast path. `v.rotate_left(17)` is also wrong: for
+    /// `v < 2^47` it is just `v << 17`, which is ORDER-PRESERVING, so the natural
+    /// lane commits and is right to. Both times every correctness assertion
+    /// passed and only the call-count bound failed — the test was wrong, not the
+    /// code.
+    ///
+    /// A Fibonacci-hash multiply scrambles the order thoroughly, and the
+    /// `expected != natural` assertion below proves that for the actual data
+    /// rather than trusting the arithmetic.
+    #[test]
+    fn width8_fast_lane_rolls_back_for_a_disagreeing_comparator() {
+        use std::cell::Cell;
+
+        const NUM: usize = 512;
+        let mut buf = Vec::with_capacity(NUM * 8);
+        for i in 0..NUM as i64 {
+            buf.extend_from_slice(&i.to_ne_bytes());
+        }
+
+        let key = |v: i64| (v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let calls = Cell::new(0usize);
+        let rotated = |a: &[u8], b: &[u8]| -> i32 {
+            calls.set(calls.get() + 1);
+            let av = i64::from_ne_bytes(a[..8].try_into().unwrap());
+            let bv = i64::from_ne_bytes(b[..8].try_into().unwrap());
+            key(av).cmp(&key(bv)) as i32
+        };
+
+        qsort(&mut buf, 8, rotated);
+
+        let out: Vec<i64> = buf
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&c| i64::from_ne_bytes(c))
+            .collect();
+        assert!(
+            out.windows(2).all(|w| key(w[0]) <= key(w[1])),
+            "output does not obey the caller's comparator — the fast lane \
+             committed a natural-order arrangement it should have rolled back"
+        );
+        let natural: Vec<i64> = (0..NUM as i64).collect();
+        let mut expected = natural.clone();
+        expected.sort_by_key(|v| key(*v));
+        // THE PREMISE, asserted rather than assumed: this comparator must really
+        // disagree with natural i64 order on this data, or the lane is entitled
+        // to commit and the count bound below would be testing nothing.
+        assert_ne!(
+            expected, natural,
+            "the chosen key is order-preserving on this data, so it cannot force \
+             the lane to roll back — pick a key that actually permutes"
+        );
+        assert_eq!(out, expected, "output is not the comparator's total order");
+        assert!(
+            calls.get() > 2 * NUM,
+            "only {} comparator calls: the lane appears to have COMMITTED for a \
+             comparator that disagrees with integer order",
+            calls.get()
+        );
+    }
+
+    fn cmp_u32_le(a: &[u8], b: &[u8]) -> i32 {
+        let av = u32::from_le_bytes(a[..4].try_into().unwrap());
+        let bv = u32::from_le_bytes(b[..4].try_into().unwrap());
+        av.cmp(&bv) as i32
+    }
+
+    fn flatten_u32(values: &[u32]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len() * 4);
+        for &v in values {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    fn cmp_i32_ne(a: &[u8], b: &[u8]) -> i32 {
+        let av = i32::from_ne_bytes(a[..4].try_into().unwrap());
+        let bv = i32::from_ne_bytes(b[..4].try_into().unwrap());
+        av.cmp(&bv) as i32
+    }
+
+    fn flatten_i32_ne(values: &[i32]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len() * 4);
+        for &v in values {
+            out.extend_from_slice(&v.to_ne_bytes());
+        }
+        out
+    }
+
+    fn unflatten_i32_ne(bytes: &[u8]) -> Vec<i32> {
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| i32::from_ne_bytes(c))
+            .collect()
+    }
+
+    fn unflatten_u32(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_le_bytes(c))
+            .collect()
+    }
+
+    fn cmp_key_u32(key: &u32, elem: &[u8]) -> i32 {
+        let ev = u32::from_le_bytes(elem[..4].try_into().unwrap());
+        key.cmp(&ev) as i32
+    }
+
+    // ---- cross-sort/search metamorphic invariants ----
+
+    #[test]
+    fn qsort_preserves_partial_element_tails_across_lane_thresholds() {
+        for width in [1usize, 2, 4, 8, 16] {
+            for num in [0usize, 1, 63, 64, 257, 2049] {
+                let mut seed = 0x7a21_b943_d650_8ecfu64;
+                let elements: Vec<Vec<u8>> = (0..num)
+                    .map(|_| (0..width).map(|_| (lcg(&mut seed) >> 56) as u8).collect())
+                    .collect();
+                for descending in [false, true] {
+                    let compare = |a: &[u8], b: &[u8]| {
+                        if descending { b.cmp(a) } else { a.cmp(b) }
+                    };
+                    let mut reference = elements.clone();
+                    reference.sort_unstable_by(|a, b| compare(a, b));
+                    let expected: Vec<u8> = reference.into_iter().flatten().collect();
+                    for tail_len in 0..width {
+                        let tail: Vec<u8> = (0..tail_len).map(|i| 0xa5 ^ i as u8).collect();
+                        let mut buf: Vec<u8> = elements.iter().flatten().copied().collect();
+                        buf.extend_from_slice(&tail);
+                        qsort(&mut buf, width, |a, b| compare(a, b) as i32);
+                        assert_eq!(
+                            &buf[..num * width],
+                            expected,
+                            "width={width} num={num} tail={tail_len} descending={descending}"
+                        );
+                        assert_eq!(
+                            &buf[num * width..],
+                            tail,
+                            "partial element overwritten: width={width} num={num} tail={tail_len}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn qsort_permutation_invariance_matches_reversed_input() {
+        let values = [42, 7, 19, 7, 0, 255, 3, 19, 88, 1, 144, 2];
+        let reversed: Vec<u32> = values.iter().copied().rev().collect();
+
+        let mut original_buf = flatten_u32(&values);
+        let mut reversed_buf = flatten_u32(&reversed);
+        qsort(&mut original_buf, 4, cmp_u32_le);
+        qsort(&mut reversed_buf, 4, cmp_u32_le);
+
+        assert_eq!(unflatten_u32(&original_buf), unflatten_u32(&reversed_buf));
+    }
+
+    #[test]
+    fn qsort_small_partition_cutoff_preserves_sorted_multiset() {
+        let values = [11, 7, 3, 7, 0, 19, 2, 2, 5, 13, 17, 1, 11, 23, 5, 29];
+        let mut expected = values.to_vec();
+        expected.sort_unstable();
+
+        let mut buf = flatten_u32(&values);
+        qsort(&mut buf, 4, cmp_u32_le);
+
+        assert_eq!(unflatten_u32(&buf), expected);
+    }
+
+    #[test]
+    fn qsort_small_partition_block_move_preserves_equal_order() {
+        let values = [(3_u32, 0_u32), (1, 1), (3, 2), (2, 3), (1, 4), (2, 5)];
+        let mut buf = Vec::with_capacity(values.len() * 8);
+        for &(key, position) in &values {
+            buf.extend_from_slice(&key.to_le_bytes());
+            buf.extend_from_slice(&position.to_le_bytes());
+        }
+
+        qsort(&mut buf, 8, |a, b| cmp_u32_le(&a[..4], &b[..4]));
+        let sorted: Vec<(u32, u32)> = buf
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| {
+                (
+                    u32::from_le_bytes(chunk[..4].try_into().unwrap()),
+                    u32::from_le_bytes(chunk[4..].try_into().unwrap()),
+                )
+            })
+            .collect();
+
+        assert_eq!(sorted, [(1, 1), (1, 4), (2, 3), (2, 5), (3, 0), (3, 2)]);
+    }
+
+    #[test]
+    fn sort_variants_agree_under_total_order() {
+        let values = [13, 5, 8, 5, 21, 3, 34, 2, 1, 1, 55, 0, 89];
+        let mut qsort_buf = flatten_u32(&values);
+        let mut mergesort_buf = flatten_u32(&values);
+        let mut heapsort_buf = flatten_u32(&values);
+
+        qsort(&mut qsort_buf, 4, cmp_u32_le);
+        mergesort(&mut mergesort_buf, 4, cmp_u32_le);
+        heapsort(&mut heapsort_buf, 4, cmp_u32_le);
+
+        assert_eq!(qsort_buf, mergesort_buf);
+        assert_eq!(qsort_buf, heapsort_buf);
+    }
+
+    #[test]
+    fn bsearch_finds_each_distinct_key_after_qsort() {
+        let mut buf = flatten_u32(&[12, 4, 12, 9, 1, 0, 4, 16, 25, 9]);
+        qsort(&mut buf, 4, cmp_u32_le);
+
+        for key in [0, 1, 4, 9, 12, 16, 25] {
+            let found = bsearch(&key, &buf, 4, cmp_key_u32).expect("key should be present");
+            assert_eq!(u32::from_le_bytes(found.try_into().unwrap()), key);
+        }
+        assert!(bsearch(&11, &buf, 4, cmp_key_u32).is_none());
+    }
+
+    #[test]
+    fn radix_sort_identity_table_matches_untranslated_order() {
+        let mut identity = [0u8; 256];
+        for (i, slot) in identity.iter_mut().enumerate() {
+            *slot = i as u8;
+        }
+        let items: Vec<&[u8]> = vec![b"beta", b"alpha", b"alphabet", b"gamma", b""];
+
+        assert_eq!(
+            radix_sort(&items, Some(&identity), true),
+            radix_sort(&items, None, true)
+        );
+        assert_eq!(
+            radix_sort(&items, Some(&identity), false),
+            radix_sort(&items, None, false)
+        );
+    }
+
+    // ---- mergesort (stable) ----
+
+    #[test]
+    fn mergesort_handles_sorted_input() {
+        let mut buf = flatten_u32(&[1, 2, 3, 4, 5]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn mergesort_handles_reverse_input() {
+        let mut buf = flatten_u32(&[5, 4, 3, 2, 1]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn mergesort_handles_random_input() {
+        let mut buf = flatten_u32(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+    }
+
+    #[test]
+    fn mergesort_is_stable() {
+        // Encode (key, original_index) as 8 bytes: low 4 = key, high 4 = idx.
+        // Compare on key only; verify that equal-key elements preserve
+        // their original index ordering.
+        let pairs = [(5u32, 0u32), (3, 1), (5, 2), (1, 3), (3, 4), (5, 5), (1, 6)];
+        let mut buf = Vec::with_capacity(pairs.len() * 8);
+        for &(k, i) in &pairs {
+            buf.extend_from_slice(&k.to_le_bytes());
+            buf.extend_from_slice(&i.to_le_bytes());
+        }
+        mergesort(&mut buf, 8, |a, b| cmp_u32_le(&a[..4], &b[..4]));
+        let sorted: Vec<(u32, u32)> = buf
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| {
+                (
+                    u32::from_le_bytes(c[0..4].try_into().unwrap()),
+                    u32::from_le_bytes(c[4..8].try_into().unwrap()),
+                )
+            })
+            .collect();
+        // For each key group, the indices must be in their original
+        // ascending order — that's the stability guarantee.
+        let mut expected = pairs.to_vec();
+        expected.sort_by_key(|a| a.0);
+        assert_eq!(sorted, expected);
+    }
+
+    #[test]
+    fn mergesort_single_element_no_op() {
+        let mut buf = flatten_u32(&[42]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![42]);
+    }
+
+    #[test]
+    fn mergesort_empty_no_op() {
+        let mut buf: Vec<u8> = Vec::new();
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn mergesort_zero_width_no_op() {
+        let mut buf = flatten_u32(&[3, 1, 2]);
+        mergesort(&mut buf, 0, cmp_u32_le);
+        // Untouched.
+        assert_eq!(unflatten_u32(&buf), vec![3, 1, 2]);
+    }
+
+    // ---- heapsort (in-place, not stable) ----
+
+    #[test]
+    fn heapsort_handles_sorted_input() {
+        let mut buf = flatten_u32(&[1, 2, 3, 4, 5]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn heapsort_handles_reverse_input() {
+        let mut buf = flatten_u32(&[5, 4, 3, 2, 1]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn heapsort_handles_random_input() {
+        let mut buf = flatten_u32(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+    }
+
+    #[test]
+    fn heapsort_handles_all_equal() {
+        let mut buf = flatten_u32(&[7, 7, 7, 7, 7]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![7, 7, 7, 7, 7]);
+    }
+
+    #[test]
+    fn heapsort_single_element_no_op() {
+        let mut buf = flatten_u32(&[42]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![42]);
+    }
+
+    #[test]
+    fn heapsort_large_random() {
+        // 100 elements pseudorandom to exercise heap depth. Use u64
+        // arithmetic to avoid overflow, then narrow.
+        let mut values: Vec<u32> = (0..100u64)
+            .map(|i| ((i.wrapping_mul(1103515245).wrapping_add(12345)) % 256) as u32)
+            .collect();
+        let mut buf = flatten_u32(&values);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        values.sort();
+        assert_eq!(unflatten_u32(&buf), values);
+    }
+
+    #[test]
+    fn radix_sort_default_table_is_byte_order() {
+        let items: Vec<&[u8]> = vec![b"banana", b"apple", b"cherry"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn radix_sort_shorter_string_sorts_first() {
+        // Both prefixes match; the shorter slice ("ab") wins.
+        let items: Vec<&[u8]> = vec![b"abc", b"ab", b"abcd"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn radix_sort_table_can_invert_order() {
+        // Inverse table: each byte maps to 255 - byte.
+        let mut table = [0u8; 256];
+        for (i, slot) in table.iter_mut().enumerate() {
+            *slot = 255 - i as u8;
+        }
+        let items: Vec<&[u8]> = vec![b"a", b"c", b"b"];
+        let order = radix_sort(&items, Some(&table), true);
+        // 'c' (0x63) translates to 0x9c, smallest under inverse → first.
+        assert_eq!(order, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn radix_sort_collapses_keys_via_table() {
+        // Map all letters to the same key — every comparison ties on
+        // every position, so output ordering is decided by length.
+        // Stable sort then preserves input order among equal-length
+        // items.
+        let table = [0u8; 256];
+        let items: Vec<&[u8]> = vec![b"abc", b"x", b"yz", b"d"];
+        let order = radix_sort(&items, Some(&table), true);
+        // Lengths: 3, 1, 2, 1 → sorted by length then input order:
+        // (idx 1, len 1), (idx 3, len 1), (idx 2, len 2), (idx 0, len 3).
+        assert_eq!(order, vec![1, 3, 2, 0]);
+    }
+
+    #[test]
+    fn radix_sort_stable_preserves_input_order_for_equal_keys() {
+        // Three identical strings — stable sort keeps them in the
+        // input order 0, 1, 2.
+        let items: Vec<&[u8]> = vec![b"x", b"x", b"x"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn radix_sort_empty_input_returns_empty() {
+        let items: Vec<&[u8]> = vec![];
+        let order = radix_sort(&items, None, true);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn radix_sort_single_element() {
+        let items: Vec<&[u8]> = vec![b"only"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![0]);
+    }
+
+    // ---- pdqsort isomorphism + golden-output proof ----
+    //
+    // Behavior parity for an *unstable* sort means: the output is a permutation
+    // of the input (multiset preserved) that is non-decreasing under the
+    // comparator. We verify both invariants against `slice::sort_unstable` (the
+    // trusted reference) across an adversarial corpus that specifically targets
+    // the cases pdqsort changes complexity class on: sorted, reverse-sorted,
+    // all-equal, low-cardinality, sawtooth, organ-pipe, and a median-of-three
+    // killer — at sizes that exercise the deep recursion / heapsort fallback.
+
+    /// Deterministic LCG so the corpus is fixed (no `rand`, no clock).
+    fn lcg(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        *state
+    }
+
+    fn adversarial_corpus() -> Vec<Vec<u32>> {
+        let sizes = [21usize, 50, 97, 128, 257, 1000, 5000];
+        let mut corpus = Vec::new();
+        for &n in &sizes {
+            // sorted ascending
+            corpus.push((0..n as u32).collect());
+            // sorted descending
+            corpus.push((0..n as u32).rev().collect());
+            // all equal
+            corpus.push(vec![7u32; n]);
+            // low cardinality (mod 4) — drives the equal-partition path
+            corpus.push((0..n as u32).map(|i| i % 4).collect());
+            // low cardinality (mod 16)
+            corpus.push((0..n as u32).map(|i| (i * 7) % 16).collect());
+            // sawtooth
+            corpus.push((0..n as u32).map(|i| i % 50).collect());
+            // organ pipe: 0..n/2 then n/2..0
+            corpus.push(
+                (0..n)
+                    .map(|i| if i < n / 2 { i } else { n - i } as u32)
+                    .collect(),
+            );
+            // median-of-three killer-ish: the bench template generalized
+            corpus.push((0..n as u32).rev().map(|v| (v * 17) % 97).collect());
+            // pseudo-random
+            let mut s = 0x1234_5678_9abc_def0u64 ^ (n as u64);
+            corpus.push((0..n).map(|_| (lcg(&mut s) % 1000) as u32).collect());
+        }
+        corpus
+    }
+
+    #[test]
+    fn qsort_isomorphic_to_reference_over_adversarial_corpus() {
+        for input in adversarial_corpus() {
+            let mut reference = input.clone();
+            reference.sort_unstable();
+
+            let mut buf = flatten_u32(&input);
+            qsort(&mut buf, 4, cmp_u32_le);
+            let got = unflatten_u32(&buf);
+
+            // Output equals the trusted reference (this simultaneously proves
+            // sorted order AND multiset preservation, since both are the same
+            // total order applied to the same elements).
+            assert_eq!(got, reference, "qsort diverged on n={}", input.len());
+        }
+    }
+
+    /// FNV-1a over the byte stream of every sorted output in the corpus. A
+    /// stable golden value pins the exact bytes pdqsort produces; any future
+    /// change to ordering or element handling trips this.
+    #[test]
+    fn qsort_golden_corpus_hash_is_stable() {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for input in adversarial_corpus() {
+            let mut buf = flatten_u32(&input);
+            qsort(&mut buf, 4, cmp_u32_le);
+            for &b in &buf {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        assert_eq!(
+            h, GOLDEN_QSORT_CORPUS_FNV1A,
+            "qsort golden corpus hash changed: 0x{h:016x}"
+        );
+    }
+
+    // Pinned from a run that also passed the isomorphism check above (so the
+    // bytes are known-correct, not merely self-consistent).
+    const GOLDEN_QSORT_CORPUS_FNV1A: u64 = 0x9a03_8cb3_bfb2_d40e;
+
+    fn i32_fast_lane_corpus() -> Vec<Vec<i32>> {
+        let sizes = [1usize, 2, 7, 20, 21, 50, 97, 128, 257];
+        let mut corpus = Vec::new();
+        for &n in &sizes {
+            corpus.push((0..n as i32).map(|v| v - 64).collect());
+            corpus.push((0..n as i32).rev().map(|v| v - 64).collect());
+            corpus.push(vec![0; n]);
+            corpus.push((0..n as i32).rev().map(|v| (v * 17) % 97 - 48).collect());
+            let mut s = 0x9e37_79b9_7f4a_7c15u64 ^ (n as u64);
+            corpus.push((0..n).map(|_| (lcg(&mut s) % 2001) as i32 - 1000).collect());
+        }
+        corpus
+    }
+
+    #[test]
+    fn qsort_i32_fast_lane_preserves_sorted_sha256() {
+        let mut hash = Sha256::new();
+        for input in i32_fast_lane_corpus() {
+            let mut reference = input.clone();
+            reference.sort_unstable();
+
+            let mut buf = flatten_i32_ne(&input);
+            qsort(&mut buf, 4, cmp_i32_ne);
+            let got = unflatten_i32_ne(&buf);
+
+            assert_eq!(got, reference, "i32 qsort diverged on n={}", input.len());
+            hash.update(&buf);
+        }
+
+        #[cfg(target_endian = "little")]
+        let expected = [
+            0xde, 0xea, 0x99, 0x6e, 0x63, 0x1c, 0xd5, 0x92, 0xe8, 0xbc, 0x3d, 0x2b, 0x05, 0xf8,
+            0xc6, 0x8d, 0x6c, 0x08, 0xae, 0x89, 0x42, 0x52, 0x50, 0x79, 0xbe, 0xba, 0x77, 0x3c,
+            0x0d, 0x24, 0x1a, 0x75,
+        ];
+        #[cfg(target_endian = "big")]
+        let expected = [
+            0xe5, 0x91, 0xad, 0x2b, 0xcd, 0x8c, 0x5a, 0x7f, 0x6b, 0xfb, 0x20, 0xdb, 0x38, 0x69,
+            0x7d, 0x93, 0xef, 0x8a, 0x55, 0x57, 0x7b, 0xc0, 0xe0, 0x7c, 0x57, 0x39, 0x20, 0xd7,
+            0x55, 0x77, 0xa5, 0xd7,
+        ];
+        let digest: [u8; 32] = hash.finalize().into();
+        assert_eq!(digest, expected);
+    }
+
+    #[test]
+    fn qsort_i32_fast_lane_restores_and_falls_back_for_non_i32_order() {
+        let input: Vec<i32> = (0..128).map(|v| v - 64).collect();
+        let mut expected = input.clone();
+        expected.sort_unstable_by(|a, b| b.cmp(a));
+
+        let mut buf = flatten_i32_ne(&input);
+        qsort(&mut buf, 4, |a, b| -cmp_i32_ne(a, b));
+
+        assert_eq!(unflatten_i32_ne(&buf), expected);
+    }
+
+    #[test]
+    fn qsort_handles_wide_elements_isomorphically() {
+        // 24-byte records keyed on the first u32; exercises the swap/move paths
+        // for widths above the stack-scratch threshold.
+        let mut s = 0xdead_beef_0000_0001u64;
+        let n = 2000usize;
+        let width = 24usize;
+        let mut buf = vec![0u8; n * width];
+        let mut keys = Vec::with_capacity(n);
+        for i in 0..n {
+            let k = (lcg(&mut s) % 50) as u32; // low cardinality, wide records
+            keys.push(k);
+            buf[i * width..i * width + 4].copy_from_slice(&k.to_le_bytes());
+        }
+        qsort(&mut buf, width, |a, b| {
+            let av = u32::from_le_bytes(a[..4].try_into().unwrap());
+            let bv = u32::from_le_bytes(b[..4].try_into().unwrap());
+            av.cmp(&bv) as i32
+        });
+        keys.sort_unstable();
+        let got: Vec<u32> = buf
+            .chunks_exact(width)
+            .map(|c| u32::from_le_bytes(c[..4].try_into().unwrap()))
+            .collect();
+        assert_eq!(got, keys, "wide-element qsort diverged");
+    }
+}

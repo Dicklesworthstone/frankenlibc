@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-fr97mh",
+  "contract": {
+    "behavior": "Execute __cxa_atexit and process exit finalizers in LIFO order and filter by DSO handle safely across teardown",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/stdlib_abi.rs",
+      "crates/frankenlibc-abi/src/stdio_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/startup_abi_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+        "crates/frankenlibc-abi/src/stdlib_abi.rs": "a90dd4f550c9005f909b52a6b178a08a1b46f9cb6f36032bdd7ce170f56b0c02",
+        "crates/frankenlibc-abi/tests/startup_abi_test.rs": "91b106c5b3adb04f121a5724147118720f47b85a9e5d9ca1399d83917b9ce007",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-09-28T05:33:54.164232982Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/ef13c6baf03af23a/out/startup_abi_test-ef13c6baf03af23a",
+        "cxa_",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "startup_abi_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/ef13c6baf03af23a/out/startup_abi_test-ef13c6baf03af23a"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "cxa_atexit_finalize_filters_dso_and_runs_lifo_once"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "startup_abi_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:33.919939+00:00",
+    "finished_at": "2026-11-12T05:03:34.136915+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "fe6f149e40fc0b9c99382e6a70e7ba41c4117c4cad89c9eb6faacbe223aa90d5",
+    "stderr_sha256": "8ce4c715145f8c162c0ffd04edd2c0f7ec745b76ed85d67c412c3b5ae8de8935",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/ef13c6baf03af23a/out/startup_abi_test-ef13c6baf03af23a",
+      "cxa_",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:34.146924+00:00",
+    "finished_at": "2026-11-12T05:03:34.156979+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "f48fc7e22d10e53e6c86d3c39b402a037ac774024cd8e1fde31f7d6c01ca363d",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 3
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/ef13c6baf03af23a/out/startup_abi_test-ef13c6baf03af23a": "a747b0e4d9516b8351604a6b393213b38fd933c344e0cf5bd403aae1adab9f69"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/ef13c6baf03af23a/out/startup_abi_test-ef13c6baf03af23a": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+    "crates/frankenlibc-abi/src/stdlib_abi.rs": "a90dd4f550c9005f909b52a6b178a08a1b46f9cb6f36032bdd7ce170f56b0c02",
+    "crates/frankenlibc-abi/tests/startup_abi_test.rs": "91b106c5b3adb04f121a5724147118720f47b85a9e5d9ca1399d83917b9ce007",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "a747b0e4d9516b8351604a6b393213b38fd933c344e0cf5bd403aae1adab9f69"
+}

@@ -1,0 +1,10 @@
+
+running 5 tests
+test smoke_runner_contract_has_required_fields ... ok
+test smoke_runner_contract_is_valid_json ... ok
+test smoke_runner_missing_artifact_cannot_pass_or_skip ... ok
+test smoke_runner_rejects_existing_non_elf_artifact ... ok
+test smoke_runner_script_exists ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+

@@ -1,0 +1,7434 @@
+#![cfg(target_os = "linux")]
+
+//! Integration tests for `<stdio.h>` ABI entrypoints.
+
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::fs;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+use frankenlibc_abi::io_internal_abi::{
+    _IO_2_1_stderr_, _IO_2_1_stdin_, _IO_2_1_stdout_, _IO_feof, _IO_ferror, _IO_getc, _IO_putc,
+    GLIBC_234_IO_FILE_PLUS_SIZE, GlibcIoFilePlus, visible_stdio_stream_ptr,
+};
+use frankenlibc_abi::io_internal_abi::{
+    _IO_fclose, _IO_fdopen, _IO_fflush, _IO_fgetpos, _IO_fgetpos64, _IO_fgets, _IO_file_close,
+    _IO_file_close_it, _IO_file_overflow, _IO_file_read, _IO_file_seek, _IO_file_seekoff,
+    _IO_file_setbuf, _IO_file_stat, _IO_file_sync, _IO_file_underflow, _IO_file_write,
+    _IO_file_xsputn, _IO_flush_all, _IO_fopen, _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos,
+    _IO_fsetpos64, _IO_ftell, _IO_fwrite, _IO_printf, _IO_setbuffer, _IO_setvbuf, _IO_sprintf,
+    _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf, native_stdio_stream_ptr,
+    verify_native_file,
+};
+use frankenlibc_abi::stdio_abi::{
+    __getline,
+    __isoc99_fscanf,
+    __isoc99_sscanf,
+    _IO_flockfile,
+    _IO_ftrylockfile,
+    _IO_funlockfile,
+    _IO_padn,
+    _IO_puts,
+    _IO_seekoff,
+    _IO_seekpos,
+    _IO_sgetn,
+    CookieIoFuncs,
+    asprintf,
+    clearerr,
+    clearerr_unlocked,
+    dprintf,
+    fclose,
+    fdopen,
+    feof,
+    feof_unlocked,
+    ferror,
+    ferror_unlocked,
+    fflush,
+    fflush_unlocked,
+    fgetc,
+    fgetc_unlocked,
+    fgetln,
+    fgetpos,
+    fgetpos64,
+    fgets,
+    fgets_unlocked,
+    fileno,
+    fileno_unlocked,
+    flockfile,
+    fmemopen,
+    fopen,
+    fopen64,
+    fopencookie,
+    fparseln,
+    fprintf,
+    fpurge,
+    fputc,
+    fputc_unlocked,
+    fputs,
+    fputs_unlocked,
+    fread,
+    fread_unlocked,
+    freopen,
+    freopen64,
+    fscanf,
+    fseek,
+    fseeko,
+    fseeko64,
+    fsetpos,
+    fsetpos64,
+    ftell,
+    ftello,
+    ftello64,
+    ftrylockfile,
+    funlockfile,
+    funopen,
+    fwrite,
+    fwrite_unlocked,
+    getc,
+    getc_unlocked,
+    getdelim,
+    getline,
+    getw,
+    init_host_stdio_streams_for_tests,
+    mktemp,
+    nvis,
+    // Newly tested:
+    open_memstream,
+    pclose,
+    perror,
+    popen,
+    printf,
+    putc,
+    putc_unlocked,
+    putchar,
+    putchar_unlocked,
+    puts,
+    putw,
+    remove as stdio_remove,
+    rewind,
+    setbuf,
+    setbuffer,
+    setlinebuf,
+    setvbuf,
+    signal_runtime_ready_for_tests,
+    snprintb,
+    snprintb_m,
+    snprintf,
+    snvis,
+    sprintf,
+    sscanf,
+    stderr,
+    stdin,
+    stdout,
+    stravis,
+    strenvisx,
+    strnunvis,
+    strnunvis_netbsd,
+    strnunvisx,
+    strnvis,
+    strnvis_netbsd,
+    strnvisx,
+    strsenvisx,
+    strsnvis,
+    strsnvisx,
+    strsvis,
+    strsvisx,
+    strunvis,
+    strunvisx,
+    strvis,
+    strvisx,
+    svis,
+    take_last_decision_gate_for_tests,
+    tmpfile,
+    tmpfile64,
+    tmpnam,
+    ungetc,
+    unvis,
+    vasprintf,
+    vis,
+};
+
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
+const IOFBF: i32 = 0;
+const IONBF: i32 = 2;
+
+static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
+static STDOUT_REDIRECT_LOCK: Mutex<()> = Mutex::new(());
+
+/// Text only libtest writes, never the stdio entrypoints under test.
+///
+/// ` ... ` is libtest's separator between a test's name and its verdict, and it
+/// is the one fragment that catches every verdict — including the `ignored` line
+/// measured below, whose two halves arrived on either side of the payload.
+const LIBTEST_SIGNATURES: [&[u8]; 4] = [
+    b"has been running for over",
+    b" ... ",
+    b"test result:",
+    b"\ntest ",
+];
+
+/// Set by the parent test on the child that runs the fd-1 capture arms.
+const STDOUT_CAPTURE_HELPER_ENV: &str = "FRANKENLIBC_STDIO_STDOUT_CAPTURE_HELPER";
+
+/// Check a redirected-stdout capture against the byte count the call returned
+/// (bd-ug42ol step 2).
+///
+/// This is the highest-exposure capture in the suite: it points the PROCESS's
+/// fd 1 at a file while up to 303 other tests run in parallel, and libtest
+/// writes `test <name> ... ok` to fd 1 from its own threads when any of them
+/// completes — plus a watchdog line no arrangement can prevent. Those bytes land
+/// in the very file this reads back.
+///
+/// `printf` and `_IO_printf` RETURN the number of bytes they transmitted, which
+/// is exactly the discriminator that case needs: the file must hold that many
+/// bytes and no more. A longer capture carrying libtest's own text is reported
+/// as CONTAMINATION with the bytes attached; anything else is a real divergence
+/// and is compared byte-for-byte.
+///
+/// The assertion this replaces was `bytes.windows(n).any(|w| w == payload)` — a
+/// containment check, which passes just as happily with a libtest line wrapped
+/// around the payload. It could not have caught a stdio bug that emitted extra
+/// output, because tolerating extra output is precisely what it did.
+fn assert_counted_stdout_capture(label: &str, returned: c_int, captured: &[u8], expected: &[u8]) {
+    if captured.len() != returned as usize {
+        if let Some(sig) = LIBTEST_SIGNATURES
+            .iter()
+            .find(|sig| captured.windows(sig.len()).any(|w| w == **sig))
+        {
+            panic!(
+                "CONTAMINATED {label} capture: {} returned {returned} bytes but the file holds \
+                 {} and contains {:?}, which libtest writes to fd 1 and no stdio entrypoint \
+                 does. This is foreign traffic in the capture, NOT a divergence — bd-ug42ol. \
+                 Captured: {:?}",
+                label,
+                captured.len(),
+                String::from_utf8_lossy(sig),
+                String::from_utf8_lossy(captured)
+            );
+        }
+        panic!(
+            "{label} returned {returned} but wrote {} bytes to the redirected stdout: {:?}",
+            captured.len(),
+            String::from_utf8_lossy(captured)
+        );
+    }
+    assert_eq!(
+        captured,
+        expected,
+        "{label} redirected-stdout bytes: got {:?}, want {:?}",
+        String::from_utf8_lossy(captured),
+        String::from_utf8_lossy(expected)
+    );
+}
+
+/// The isolation that makes the two fd-1 capture arms assertable at all
+/// (bd-ug42ol step 1).
+///
+/// Those arms point the PROCESS's fd 1 at a temp file while up to 303 siblings
+/// run in parallel, and libtest writes each sibling's verdict to fd 1 from its
+/// own threads. MEASURED on worker hz4 the moment the counted check went in:
+///
+/// ```text
+/// _IO_printf returned 5 but wrote 128 bytes to the redirected stdout:
+///   "test fopen_regular_file_uses_full_buffering ... io-9\nignored, requires LD_PRELOAD: ..."
+/// ```
+///
+/// The payload landed INSIDE a foreign line — libtest's name-and-separator
+/// before it, the rest of that verdict after it. Both arms passed anyway,
+/// because both asserted `bytes.windows(n).any(..)`: a containment check cannot
+/// see 119 bytes of anyone else's text wrapped around the payload.
+///
+/// So the arms run where there is no sibling: a child process on this same
+/// binary with `--exact <one name> --test-threads 1`. libtest's writes there
+/// bracket the test rather than land inside it. What remains is the 60-second
+/// watchdog, which no arrangement prevents and which
+/// [`assert_counted_stdout_capture`] reports as contamination instead of
+/// comparing.
+#[test]
+fn process_global_stdio_arms_run_in_an_isolated_child() {
+    let current_exe = std::env::current_exe().expect("current test binary path");
+    let output = std::process::Command::new(current_exe)
+        .args([
+            "--exact",
+            "process_global_stdio_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(STDOUT_CAPTURE_HELPER_ENV, "1")
+        .output()
+        .expect("run isolated redirected-stdout helper");
+    // Not `stdout`: this file imports fl's `stdout` STATIC, and a let binding
+    // may not shadow a static (E0530).
+    let child_stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "isolated redirected-stdout helper failed:\nstdout={child_stdout}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // ZERO IS NOT EVIDENCE: libtest prints `test result: ok.` for a filter that
+    // matched nothing, so a renamed child test would turn this green while
+    // running neither arm.
+    assert!(
+        child_stdout.contains("1 passed"),
+        "the child ran no test — the filter matched nothing, so neither redirected-stdout \
+         arm executed:\nstdout={child_stdout}"
+    );
+}
+
+/// The child half of [`process_global_stdio_arms_run_in_an_isolated_child`].
+///
+/// Inert unless the parent set the env var, so a plain run of this binary never
+/// redirects fd 1 with 303 tests in flight.
+#[test]
+fn process_global_stdio_child_invocation() {
+    if std::env::var_os(STDOUT_CAPTURE_HELPER_ENV).is_none() {
+        return;
+    }
+    printf_writes_to_redirected_stdout();
+    io_internal_printf_and_sscanf_use_native_stdio_paths();
+    // Not a capture, but the same hazard class: a process-global side effect
+    // that the tests around it observe. See its own comment for the 6-in-20
+    // measurement.
+    fcloseall_keeps_the_standard_streams_registered();
+}
+
+/// Serializes tests that assert specific addresses are absent from the
+/// native stream registry after fclose. Without this, a parallel test
+/// can fmemopen a NEW stream that happens to land at the same address
+/// as the just-freed stream from another test, making the
+/// `verify_native_file(stream).is_none()` post-fclose check spuriously
+/// fail. (bd-el0v8)
+static STREAM_REGISTRY_PROBE_LOCK: Mutex<()> = Mutex::new(());
+
+/// For a test whose assertions probe a process-global resource after fclose
+/// (a registry slot by address, an fd number): in the normal (parallel) run, re-run this binary with only `test`
+/// and require it to pass, returning `true` (the caller returns); in that
+/// child, return `false` so the caller runs its assertions with no other test
+/// thread able to reuse the freed slot. STREAM_REGISTRY_PROBE_LOCK alone was
+/// not enough -- any stream-opening test can take the slot -- and the
+/// assertions still failed 1 run in 15-60 (2026-10-06).
+fn run_alone_in_child(test: &str) -> bool {
+    if std::env::var_os("FRANKENLIBC_REGISTRY_PROBE_CHILD").is_some() {
+        return false;
+    }
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path"))
+            .args(["--exact", test, "--nocapture", "--test-threads", "1"])
+            .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
+            .output()
+            .expect("re-run the test alone");
+    let child_out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && child_out.contains("1 passed"),
+        "isolated {test} failed:\nstdout={child_out}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
+fn temp_path(tag: &str) -> PathBuf {
+    let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "frankenlibc_stdio_{}_{}_{}.tmp",
+        tag,
+        std::process::id(),
+        id
+    ));
+    path
+}
+
+#[allow(dead_code)] // kept for future tests that need /tmp enumeration
+fn temp_dir_entries_with_prefix(prefix: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let tmp_dir = std::env::temp_dir();
+    let Ok(entries) = fs::read_dir(&tmp_dir) else {
+        return matches;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(prefix.as_bytes()))
+        {
+            matches.push(path);
+        }
+    }
+    matches.sort();
+    matches
+}
+
+unsafe extern "C" fn call_io_vfprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe {
+        _IO_vfprintf(
+            stream,
+            format,
+            std::ptr::addr_of_mut!(args).cast::<c_void>(),
+        )
+    }
+}
+
+unsafe extern "C" fn call_io_vsprintf(
+    buf: *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe { _IO_vsprintf(buf, format, std::ptr::addr_of_mut!(args).cast::<c_void>()) }
+}
+
+unsafe extern "C" fn call_vasprintf(
+    out: *mut *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe { vasprintf(out, format, std::ptr::addr_of_mut!(args).cast::<c_void>()) }
+}
+
+unsafe extern "C" fn call_vfprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe {
+        frankenlibc_abi::stdio_abi::vfprintf(
+            stream,
+            format,
+            std::ptr::addr_of_mut!(args).cast::<c_void>(),
+        )
+    }
+}
+
+fn path_cstring(path: &Path) -> CString {
+    CString::new(path.as_os_str().as_bytes()).expect("temp path must not contain interior NUL")
+}
+
+#[derive(Default)]
+struct CookieState {
+    data: Vec<u8>,
+    pos: usize,
+    closed: bool,
+    inject_read_eintr_once: bool,
+    inject_write_eintr_once: bool,
+    read_eintr_emitted: bool,
+    write_eintr_emitted: bool,
+    max_write_chunk: usize,
+    write_calls: usize,
+}
+
+unsafe extern "C-unwind" fn cookie_read(
+    cookie: *mut c_void,
+    buf: *mut c_char,
+    count: usize,
+) -> isize {
+    if cookie.is_null() || buf.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    if state.inject_read_eintr_once && !state.read_eintr_emitted {
+        state.read_eintr_emitted = true;
+        // SAFETY: libc exposes thread-local errno pointer on Linux.
+        unsafe {
+            *libc::__errno_location() = libc::EINTR;
+        }
+        return -1;
+    }
+    if state.pos >= state.data.len() {
+        return 0;
+    }
+    let n = count.min(state.data.len() - state.pos);
+    // SAFETY: caller provides writable buffer for `count` bytes.
+    unsafe { std::ptr::copy_nonoverlapping(state.data[state.pos..].as_ptr(), buf.cast::<u8>(), n) };
+    state.pos += n;
+    n as isize
+}
+
+unsafe extern "C-unwind" fn cookie_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    count: usize,
+) -> isize {
+    if cookie.is_null() || buf.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    if state.inject_write_eintr_once && !state.write_eintr_emitted {
+        state.write_eintr_emitted = true;
+        // SAFETY: libc exposes thread-local errno pointer on Linux.
+        unsafe {
+            *libc::__errno_location() = libc::EINTR;
+        }
+        return -1;
+    }
+    state.write_calls = state.write_calls.saturating_add(1);
+    let to_write = if state.max_write_chunk == 0 {
+        count
+    } else {
+        count.min(state.max_write_chunk)
+    };
+    let src = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), to_write) };
+    let end = state.pos.saturating_add(to_write);
+    if state.data.len() < end {
+        state.data.resize(end, 0);
+    }
+    state.data[state.pos..end].copy_from_slice(src);
+    state.pos = end;
+    to_write as isize
+}
+
+unsafe extern "C-unwind" fn cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    if cookie.is_null() || offset.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    let req = unsafe { *offset };
+    let base = match whence {
+        libc::SEEK_SET => 0i64,
+        libc::SEEK_CUR => state.pos as i64,
+        libc::SEEK_END => state.data.len() as i64,
+        _ => return -1,
+    };
+    let new_pos = match base.checked_add(req) {
+        Some(v) if v >= 0 => v as usize,
+        _ => return -1,
+    };
+    state.pos = new_pos;
+    unsafe { *offset = new_pos as i64 };
+    0
+}
+
+unsafe extern "C-unwind" fn cookie_close(cookie: *mut c_void) -> c_int {
+    if cookie.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    state.closed = true;
+    0
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_fputs_fflush_fclose_round_trip() {
+    let path = temp_path("puts");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: `stream` is an open FILE* sentinel managed by stdio_abi.
+    assert_eq!(unsafe { fputs(c"hello from stdio\n".as_ptr(), stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("round-trip file read should succeed");
+    assert_eq!(bytes, b"hello from stdio\n");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fputc_fgetc_and_ungetc_behave_consistently() {
+    let path = temp_path("chars");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: `stream` is valid and writable.
+    assert_eq!(unsafe { fputc(b'A' as i32, stream) }, b'A' as i32);
+    // SAFETY: `stream` is valid and writable.
+    assert_eq!(unsafe { fputc(b'B' as i32, stream) }, b'B' as i32);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as i32);
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { ungetc(b'Z' as i32, stream) }, b'Z' as i32);
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { fgetc(stream) }, b'Z' as i32);
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { fgetc(stream) }, b'B' as i32);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fread_drains_ungetc_and_prefetched_buffer_after_fgetc() {
+    let path = temp_path("fread_ungetc");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: `stream` is valid and writable.
+    assert_eq!(unsafe { fputs(c"abc\nxyz".as_ptr(), stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    for expected in b"abc\nx" {
+        // SAFETY: `stream` is valid and readable.
+        assert_eq!(unsafe { fgetc(stream) }, *expected as i32);
+    }
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { ungetc(b'x' as i32, stream) }, b'x' as i32);
+    // SAFETY: `stream` is valid and readable.
+    assert_eq!(unsafe { fgetc(stream) }, b'x' as i32);
+
+    let mut tail = [0u8; 2];
+    // SAFETY: destination is valid for two bytes and `stream` is readable.
+    let read = unsafe { fread(tail.as_mut_ptr().cast(), 1, tail.len(), stream) };
+    assert_eq!(read, tail.len());
+    assert_eq!(&tail, b"yz");
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fwrite_then_fread_round_trip_matches_bytes() {
+    let path = temp_path("rw");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let expected = b"frankenlibc-stdio";
+    // SAFETY: source pointer is valid for `expected.len()` bytes and stream is open.
+    let wrote = unsafe { fwrite(expected.as_ptr().cast(), 1, expected.len(), stream) };
+    assert_eq!(wrote, expected.len());
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut actual = vec![0u8; expected.len()];
+    // SAFETY: destination pointer is valid and stream is open.
+    let read = unsafe { fread(actual.as_mut_ptr().cast(), 1, actual.len(), stream) };
+    assert_eq!(read, expected.len());
+    assert_eq!(actual, expected);
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fopencookie_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'w' as c_char };
+    let funcs = CookieIoFuncs::default();
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let stream = unsafe { fopencookie(std::ptr::null_mut(), mode.cast_const(), funcs) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(
+        stream.is_null(),
+        "fopencookie should reject unterminated mode"
+    );
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopencookie_routes_io_callbacks_for_read_write_seek_close() {
+    let cookie = Box::into_raw(Box::new(CookieState::default()));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+
+    let mode = CString::new("w+").expect("valid mode");
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe { fopencookie(cookie.cast::<c_void>(), mode.as_ptr(), funcs) };
+    assert!(!stream.is_null());
+
+    let payload = b"cookie-io";
+    // SAFETY: pointers and stream are valid.
+    let wrote = unsafe { fwrite(payload.as_ptr().cast::<c_void>(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    // SAFETY: stream is valid.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 9];
+    // SAFETY: destination pointer and stream are valid.
+    let read = unsafe { fread(out.as_mut_ptr().cast::<c_void>(), 1, out.len(), stream) };
+    assert_eq!(read, out.len());
+    assert_eq!(&out, payload);
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert!(state.closed);
+    assert_eq!(state.data, payload);
+}
+
+#[test]
+fn fopencookie_fread_reports_eintr() {
+    let cookie = Box::into_raw(Box::new(CookieState {
+        data: b"retry-read".to_vec(),
+        pos: 0,
+        closed: false,
+        inject_read_eintr_once: true,
+        inject_write_eintr_once: false,
+        read_eintr_emitted: false,
+        write_eintr_emitted: false,
+        max_write_chunk: 0,
+        write_calls: 0,
+    }));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+    let mode = CString::new("r+").expect("valid mode");
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe { fopencookie(cookie.cast::<c_void>(), mode.as_ptr(), funcs) };
+    assert!(!stream.is_null());
+
+    let mut out = [0u8; 10];
+    // SAFETY: destination pointer and stream are valid.
+    let read = unsafe { fread(out.as_mut_ptr().cast::<c_void>(), 1, out.len(), stream) };
+    // glibc reports the callback error without retrying or changing the destination.
+    assert_eq!(read, 0);
+    assert_eq!(out, [0; 10]);
+    // SAFETY: errno is thread-local and stream is still open.
+    assert_eq!(unsafe { *libc::__errno_location() }, libc::EINTR);
+    assert_ne!(unsafe { ferror(stream) }, 0);
+    assert_eq!(unsafe { feof(stream) }, 0);
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert!(state.read_eintr_emitted);
+    assert!(state.closed);
+}
+
+#[test]
+fn fopencookie_fclose_reports_write_eintr() {
+    let cookie = Box::into_raw(Box::new(CookieState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+        inject_read_eintr_once: false,
+        inject_write_eintr_once: true,
+        read_eintr_emitted: false,
+        write_eintr_emitted: false,
+        max_write_chunk: 0,
+        write_calls: 0,
+    }));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+    let mode = CString::new("w+").expect("valid mode");
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe { fopencookie(cookie.cast::<c_void>(), mode.as_ptr(), funcs) };
+    assert!(!stream.is_null());
+
+    let payload = b"retry-write";
+    // SAFETY: pointers and stream are valid.
+    let wrote = unsafe { fwrite(payload.as_ptr().cast::<c_void>(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, -1);
+    // SAFETY: errno is thread-local; fclose preserved the callback error.
+    assert_eq!(unsafe { *libc::__errno_location() }, libc::EINTR);
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert!(state.write_eintr_emitted);
+    assert!(state.data.is_empty(), "failed output must not be retried");
+    assert!(
+        state.closed,
+        "close hook must still run after a write error"
+    );
+}
+
+#[test]
+fn fopencookie_close_short_write_matches_glibc() {
+    // max_write_chunk = 2 makes every cookie write hook return a short count,
+    // the same shape as the live-glibc oracle in
+    // conformance_diff_fopencookie.rs::cookie_flush_short_write_does_not_retry_or_replay_output.
+    // glibc treats a short cookie write as an error for that one flush, sets
+    // the error indicator, discards the un-writable remainder, and reports the
+    // failure from the next flush attempt and from fclose — it does NOT retry.
+    unsafe extern "C-unwind" fn short_write(
+        cookie: *mut c_void,
+        buf: *const c_char,
+        count: usize,
+    ) -> isize {
+        // SAFETY: the Box below keeps the vector alive until the stream closes.
+        let output = unsafe { &mut *cookie.cast::<Vec<u8>>() };
+        let count = count.min(2);
+        output.extend_from_slice(unsafe { std::slice::from_raw_parts(buf.cast(), count) });
+        count as isize
+    }
+    unsafe extern "C-unwind" fn noop_close(_cookie: *mut c_void) -> c_int {
+        0
+    }
+
+    let mut output = Vec::<u8>::new();
+    let funcs = CookieIoFuncs {
+        write: Some(short_write),
+        seek: None,
+        close: Some(noop_close),
+        read: None,
+    };
+    let mode = CString::new("w").expect("valid mode");
+    // SAFETY: cookie and mode pointers are valid, and callbacks match their signatures.
+    let stream = unsafe {
+        fopencookie(
+            (&mut output as *mut Vec<u8>).cast::<c_void>(),
+            mode.as_ptr(),
+            funcs,
+        )
+    };
+    assert!(!stream.is_null());
+
+    // SAFETY: pointers and stream are valid.
+    let wrote = unsafe { fwrite(b"abcde".as_ptr().cast::<c_void>(), 1, 5, stream) };
+    assert_eq!(wrote, 5, "buffered fwrite still accepts the full payload");
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(
+        unsafe { fclose(stream) },
+        -1,
+        "close must report the short write"
+    );
+    assert_eq!(
+        output,
+        b"ab".to_vec(),
+        "unwritable remainder must be discarded, not replayed"
+    );
+}
+
+#[test]
+fn fopencookie_partial_flush_preserves_buffered_suffix() {
+    for mode in [libc::_IOLBF, libc::_IOFBF] {
+        for api in ["fwrite", "fputs", "fprintf", "vfprintf"] {
+            for explicit_flush in [false, true] {
+                let mut state = CookieState::default();
+                let mut buffer = [0u8; 128];
+                let payload = if mode == libc::_IOLBF {
+                    b"first\nsecond".to_vec()
+                } else {
+                    vec![b'Q'; 145]
+                };
+                let mut expected = b"lead-".to_vec();
+                expected.extend_from_slice(&payload);
+                expected.push(b'!');
+                let mut terminated_payload = payload.clone();
+                terminated_payload.push(0);
+                let flushed_prefix = if mode == libc::_IOLBF { 11 } else { 128 };
+                let funcs = CookieIoFuncs {
+                    write: Some(cookie_write),
+                    close: Some(cookie_close),
+                    ..CookieIoFuncs::default()
+                };
+                // SAFETY: state and the caller buffer outlive the stream; every
+                // write supplies live bytes, and fclose runs before assertions.
+                unsafe {
+                    let stream = fopencookie(
+                        (&mut state as *mut CookieState).cast(),
+                        c"w".as_ptr(),
+                        funcs,
+                    );
+                    assert!(!stream.is_null());
+                    let buffered = setvbuf(stream, buffer.as_mut_ptr().cast(), mode, buffer.len());
+                    let prefix_written = fwrite(c"lead-".as_ptr().cast(), 1, 5, stream);
+                    let written = match api {
+                        "fwrite" => {
+                            fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) as isize
+                        }
+                        "fputs" => {
+                            if fputs(terminated_payload.as_ptr().cast(), stream) == libc::EOF {
+                                -1
+                            } else {
+                                payload.len() as isize
+                            }
+                        }
+                        "fprintf" => fprintf(
+                            stream,
+                            c"%s".as_ptr(),
+                            terminated_payload.as_ptr().cast::<c_char>(),
+                        ) as isize,
+                        "vfprintf" => call_vfprintf(
+                            stream,
+                            c"%s".as_ptr(),
+                            terminated_payload.as_ptr().cast::<c_char>(),
+                        ) as isize,
+                        _ => unreachable!(),
+                    };
+                    let after_write = state.data.clone();
+                    let suffix_written = fwrite(c"!".as_ptr().cast(), 1, 1, stream);
+                    let flushed = if explicit_flush { fflush(stream) } else { 0 };
+                    let repeated_flush = if explicit_flush { fflush(stream) } else { 0 };
+                    let error = ferror(stream);
+                    let closed = fclose(stream);
+                    assert_eq!(
+                        (buffered, flushed, repeated_flush, closed, error),
+                        (0, 0, 0, 0, 0)
+                    );
+                    assert_eq!(
+                        (prefix_written, written, suffix_written),
+                        (5, payload.len() as isize, 1),
+                        "mode={mode} api={api} explicit_flush={explicit_flush}"
+                    );
+                    assert_eq!(after_write, expected[..flushed_prefix]);
+                    assert_eq!(
+                        state.data, expected,
+                        "accepted cookie output lost: mode={mode} api={api} explicit_flush={explicit_flush}"
+                    );
+                    assert!(state.closed);
+                    assert_eq!(state.write_calls, 2, "output must not be replayed");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn mixed_buffered_and_unbuffered_same_fd_completes_without_deadlock() {
+    let path = temp_path("mixed_buffer_modes");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    // SAFETY: stream is valid and setvbuf pre-I/O configuration is valid.
+    assert_eq!(
+        unsafe { setvbuf(stream, std::ptr::null_mut(), IOFBF, 4096) },
+        0
+    );
+
+    // SAFETY: stream is valid.
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    let iterations = 256usize;
+    let stream_addr = stream as usize;
+    let (done_tx, done_rx) = mpsc::channel::<&'static str>();
+    let tx_a = done_tx.clone();
+    let tx_b = done_tx.clone();
+    drop(done_tx);
+
+    let writer_stream = thread::spawn(move || {
+        let stream = stream_addr as *mut c_void;
+        for _ in 0..iterations {
+            let byte = *b"A";
+            // SAFETY: stream and pointer are valid for 1-byte write.
+            let wrote = unsafe { fwrite(byte.as_ptr().cast::<c_void>(), 1, 1, stream) };
+            if wrote != 1 {
+                break;
+            }
+        }
+        let _ = tx_a.send("stream");
+    });
+
+    let writer_fd = thread::spawn(move || {
+        for _ in 0..iterations {
+            let byte = *b"B";
+            // SAFETY: fd is valid while stream remains open.
+            let rc = unsafe { libc::write(fd, byte.as_ptr().cast::<c_void>(), 1) };
+            if rc != 1 {
+                break;
+            }
+        }
+        let _ = tx_b.send("fd");
+    });
+
+    let first = done_rx.recv_timeout(Duration::from_secs(2));
+    let second = done_rx.recv_timeout(Duration::from_secs(2));
+    assert!(first.is_ok(), "first writer did not finish in time");
+    assert!(second.is_ok(), "second writer did not finish in time");
+
+    writer_stream
+        .join()
+        .expect("stream writer thread should join");
+    writer_fd.join().expect("fd writer thread should join");
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("mixed mode output should be readable");
+    assert!(!bytes.is_empty(), "mixed-mode writes should persist data");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fgets_reads_a_line_and_nul_terminates() {
+    let path = temp_path("fgets");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: `stream` is valid and writable.
+    assert_eq!(unsafe { fputs(c"alpha\nbeta\n".as_ptr(), stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0_i8; 16];
+    // SAFETY: destination buffer is writable and stream is valid.
+    let out = unsafe { fgets(buf.as_mut_ptr(), buf.len() as i32, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+
+    // SAFETY: `fgets` guarantees NUL-termination on success.
+    let line = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(line.to_bytes(), b"alpha\n");
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fileno_and_setvbuf_contracts_hold() {
+    let path = temp_path("buf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: `stream` is valid and open.
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    // SAFETY: setvbuf before any I/O is valid.
+    assert_eq!(
+        unsafe { setvbuf(stream, std::ptr::null_mut(), IONBF, 0) },
+        0
+    );
+    // SAFETY: `stream` remains valid after setvbuf.
+    assert_eq!(unsafe { fputc(b'X' as i32, stream) }, b'X' as i32);
+
+    let on_disk = || fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    assert_eq!(on_disk(), 1, "unbuffered fputc reaches the file");
+
+    // glibc accepts setvbuf after I/O (iosetvbuf.c): with no caller buffer,
+    // _IOFBF just flips the mode, so later output is buffered.
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(
+        unsafe { setvbuf(stream, std::ptr::null_mut(), IOFBF, 1024) },
+        0
+    );
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fputc(b'Y' as i32, stream) }, b'Y' as i32);
+    assert_eq!(on_disk(), 1, "fully buffered fputc stays staged");
+
+    // _IONBF syncs first: the staged byte is written, not dropped.
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(
+        unsafe { setvbuf(stream, std::ptr::null_mut(), IONBF, 0) },
+        0
+    );
+    assert_eq!(on_disk(), 2, "switching to _IONBF flushes staged output");
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fputc(b'Z' as i32, stream) }, b'Z' as i32);
+    assert_eq!(on_disk(), 3, "unbuffered again");
+
+    // setbuf should remain callable without crashing.
+    // SAFETY: wrapper over setvbuf for this valid stream.
+    unsafe { setbuf(stream, std::ptr::null_mut()) };
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn rejects_invalid_open_mode_and_null_stream_handles() {
+    let path = temp_path("invalid_mode");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let invalid = unsafe { fopen(path_c.as_ptr(), c"z".as_ptr()) };
+    assert!(invalid.is_null());
+
+    // SAFETY: null stream is explicitly rejected by ABI functions.
+    assert_eq!(unsafe { fclose(std::ptr::null_mut()) }, libc::EOF);
+    // SAFETY: null stream is explicitly rejected by ABI functions.
+    assert_eq!(unsafe { fileno(std::ptr::null_mut()) }, -1);
+    let mut scanned = 0;
+    // SAFETY: null stream is explicitly rejected before scanning writes.
+    assert_eq!(
+        unsafe {
+            fscanf(
+                std::ptr::null_mut(),
+                c"%d".as_ptr(),
+                &mut scanned as *mut c_int,
+            )
+        },
+        -1
+    );
+}
+
+#[test]
+fn null_and_zero_length_io_paths_are_safe_defaults() {
+    let path = temp_path("null_io");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let mut read_buf = [0_u8; 8];
+
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(
+        unsafe { fread(read_buf.as_mut_ptr().cast(), 0, 8, stream) },
+        0
+    );
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(
+        unsafe { fread(read_buf.as_mut_ptr().cast(), 1, 0, stream) },
+        0
+    );
+    // SAFETY: null pointer is rejected by ABI implementation.
+    assert_eq!(unsafe { fread(std::ptr::null_mut(), 1, 8, stream) }, 0);
+
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(
+        unsafe { fwrite(read_buf.as_ptr().cast(), 0, read_buf.len(), stream) },
+        0
+    );
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(unsafe { fwrite(read_buf.as_ptr().cast(), 1, 0, stream) }, 0);
+    // SAFETY: null pointer is rejected by ABI implementation.
+    assert_eq!(
+        unsafe { fwrite(std::ptr::null(), 1, read_buf.len(), stream) },
+        0
+    );
+
+    // SAFETY: null string pointer is rejected by ABI implementation.
+    assert_eq!(unsafe { fputs(std::ptr::null(), stream) }, libc::EOF);
+    // SAFETY: EOF cannot be pushed back by contract.
+    assert_eq!(unsafe { ungetc(libc::EOF, stream) }, libc::EOF);
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fgets_rejects_invalid_destination_or_size() {
+    let path = temp_path("fgets_invalid");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: destination buffer null is rejected.
+    assert!(unsafe { fgets(std::ptr::null_mut(), 8, stream) }.is_null());
+
+    let mut buf = [0_i8; 8];
+    // SAFETY: non-positive size is rejected.
+    assert!(unsafe { fgets(buf.as_mut_ptr(), 0, stream) }.is_null());
+    // SAFETY: non-positive size is rejected.
+    assert!(unsafe { fgets(buf.as_mut_ptr(), -1, stream) }.is_null());
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_returns_native_handle_usable_by_our_stdio() {
+    let path = temp_path("fopen_host_interop");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert!(unsafe { fileno(stream) } >= 0);
+    assert_eq!(unsafe { fputs(c"host-write".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("host-written fopen file should exist");
+    assert_eq!(bytes, b"host-write");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: foreign stream handling needs adoption path"]
+fn fclose_accepts_host_streams() {
+    let path = temp_path("host_fopen_our_fclose");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let host_stream = unsafe { libc::fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!host_stream.is_null());
+    assert_ne!(
+        unsafe { libc::fputs(c"mixed-close".as_ptr(), host_stream) },
+        libc::EOF
+    );
+
+    let rc = unsafe { fclose(host_stream.cast::<c_void>()) };
+    assert_eq!(rc, 0);
+    let bytes = fs::read(&path).expect("host fopen output should exist");
+    assert_eq!(bytes, b"mixed-close");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn snprintf_truncates_and_reports_full_length() {
+    let mut buf = [0_i8; 5];
+
+    // SAFETY: destination is writable; format string is valid C string.
+    let written = unsafe { snprintf(buf.as_mut_ptr(), buf.len(), c"abcdef".as_ptr()) };
+    assert_eq!(written, 6);
+
+    // SAFETY: snprintf guarantees NUL-termination when size > 0.
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"abcd");
+}
+
+#[test]
+fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
+    let mut buf = [0x5a_i8; 64];
+    let mut count = -77_i32;
+    // SAFETY: every variadic operand matches the directive; buffers/count are
+    // live writable objects, and the string argument is NUL-terminated.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%0*.*lQ:%d:%s:%.1f%n".as_ptr(),
+            -7_i32,
+            -3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    // SAFETY: the successful nontruncated call terminated this live buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-07Q:701:tail:1.5"
+    );
+    assert!(buf[19..].iter().all(|&v| v == 0x5a));
+    // SAFETY: the positional types and capacities match the live objects.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            5,
+            c"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n".as_ptr(),
+            7_i32,
+            3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    // SAFETY: positive capacity guarantees a terminator inside this buffer.
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"%7.3");
+    assert_eq!(buf[5] as u8, b':');
+    // SAFETY: GNU I-flag unknown conversions consume one promoted int width
+    // and no value; the following int and output buffers match the format.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%I*Q:%d".as_ptr(),
+            i32::MIN,
+            701_i32,
+        )
+    };
+    assert_eq!(written, 28);
+    // SAFETY: the successful nontruncated snprintf terminated this buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-I18446744071562067968Q:701"
+    );
+}
+
+#[test]
+fn snprintf_percent_m_formats_errno_message() {
+    let mut buf = [0_i8; 64];
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
+    }
+
+    let written = unsafe { snprintf(buf.as_mut_ptr(), buf.len(), c"%m".as_ptr()) };
+    assert_eq!(written, "Invalid argument".len() as c_int);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"Invalid argument");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn snprintf_records_ffi_pcc_gate_when_runtime_ready() {
+    signal_runtime_ready_for_tests();
+    let _ = take_last_decision_gate_for_tests();
+
+    let mut buf = [0_i8; 16];
+    let written = unsafe { snprintf(buf.as_mut_ptr(), buf.len(), c"hello".as_ptr()) };
+
+    assert_eq!(written, 5);
+    assert_eq!(
+        take_last_decision_gate_for_tests(),
+        Some("runtime_policy.ffi_pcc.decide")
+    );
+}
+
+#[test]
+fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
+    signal_runtime_ready_for_tests();
+
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(unsafe { fputc(b'X' as c_int, stream) }, b'X' as c_int);
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(unsafe { fputs(c"YZ".as_ptr(), stream) }, 0);
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+
+    let bulk = b"bulk";
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(
+        unsafe { fwrite(bulk.as_ptr().cast(), 1, bulk.len(), stream) },
+        bulk.len()
+    );
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(unsafe { puts(c"".as_ptr()) }, 0);
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+}
+
+#[test]
+fn io_2_1_aliases_resolve_to_native_stdio_storage() {
+    init_host_stdio_streams_for_tests();
+
+    assert_eq!(
+        std::mem::size_of::<GlibcIoFilePlus>(),
+        GLIBC_234_IO_FILE_PLUS_SIZE
+    );
+    assert_eq!(GLIBC_234_IO_FILE_PLUS_SIZE, 224);
+
+    let stdin_slot = native_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_slot = native_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_slot = native_stdio_stream_ptr(libc::STDERR_FILENO);
+    let stdin_vis = visible_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_vis = visible_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_vis = visible_stdio_stream_ptr(libc::STDERR_FILENO);
+    let stdin_global = unsafe { std::ptr::addr_of_mut!(stdin).read() };
+    let stdout_global = unsafe { std::ptr::addr_of_mut!(stdout).read() };
+    let stderr_global = unsafe { std::ptr::addr_of_mut!(stderr).read() };
+    let io_stdin = (&raw mut _IO_2_1_stdin_).cast::<std::ffi::c_void>();
+    let io_stdout = (&raw mut _IO_2_1_stdout_).cast::<std::ffi::c_void>();
+    let io_stderr = (&raw mut _IO_2_1_stderr_).cast::<std::ffi::c_void>();
+
+    assert_eq!(stdin_global, stdin_vis);
+    assert_eq!(stdout_global, stdout_vis);
+    assert_eq!(stderr_global, stderr_vis);
+    assert_eq!(io_stdin, stdin_vis);
+    assert_eq!(io_stdout, stdout_vis);
+    assert_eq!(io_stderr, stderr_vis);
+    assert_eq!(io_stdin, stdin_global);
+    assert_eq!(io_stdout, stdout_global);
+    assert_eq!(io_stderr, stderr_global);
+
+    assert_eq!(verify_native_file(io_stdin), Some(0));
+    assert_eq!(verify_native_file(io_stdout), Some(1));
+    assert_eq!(verify_native_file(io_stderr), Some(2));
+    assert_eq!(verify_native_file(stdin_slot), Some(0));
+    assert_eq!(verify_native_file(stdout_slot), Some(1));
+    assert_eq!(verify_native_file(stderr_slot), Some(2));
+    assert_eq!(unsafe { fileno(io_stdin) }, libc::STDIN_FILENO);
+    assert_eq!(unsafe { fileno(io_stdout) }, libc::STDOUT_FILENO);
+    assert_eq!(unsafe { fileno(io_stderr) }, libc::STDERR_FILENO);
+}
+
+#[test]
+fn snprintf_supports_positional_value_reordering() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%2$s is %1$d".as_ptr(),
+            42_i32,
+            c"answer".as_ptr(),
+        )
+    };
+    assert_eq!(written, 12);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"answer is 42");
+}
+
+#[test]
+fn snprintf_supports_positional_width_and_precision() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%3$*2$.*1$f".as_ptr(),
+            2_i32,
+            8_i32,
+            core::f64::consts::PI,
+        )
+    };
+    assert_eq!(written, 8);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"    3.14");
+}
+
+#[test]
+fn snprintf_normalizes_positional_negative_star_width() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"|%1$*2$d|".as_ptr(),
+            42_i32,
+            -5_i32,
+        )
+    };
+    assert_eq!(written, 7);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"|42   |");
+}
+
+#[test]
+fn snprintf_normalizes_positional_negative_star_precision() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%1$.*2$d".as_ptr(),
+            42_i32,
+            -1_i32,
+        )
+    };
+    assert_eq!(written, 2);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"42");
+}
+
+#[test]
+fn snprintf_percent_n_records_bytes_before_directive() {
+    let mut buf = [0_i8; 64];
+    let mut count = -1_i32;
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"abc%n:%s".as_ptr(),
+            std::ptr::addr_of_mut!(count),
+            c"tail".as_ptr(),
+        )
+    };
+    assert_eq!(written, 8);
+    assert_eq!(count, 3);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"abc:tail");
+}
+
+#[test]
+fn sprintf_supports_reusing_positional_argument() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe { sprintf(buf.as_mut_ptr(), c"%1$d %1$d %1$d".as_ptr(), 7_i32) };
+    assert_eq!(written, 5);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"7 7 7");
+}
+
+#[test]
+fn sprintf_formats_integer_and_string_arguments() {
+    let mut buf = [0_i8; 64];
+
+    // SAFETY: destination is writable; variadic args match format specifiers.
+    let written = unsafe {
+        sprintf(
+            buf.as_mut_ptr(),
+            c"x=%d %s".as_ptr(),
+            17_i32,
+            c"ok".as_ptr(),
+        )
+    };
+    assert_eq!(written, 7);
+
+    // SAFETY: sprintf writes a trailing NUL on success.
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"x=17 ok");
+}
+
+#[test]
+fn fprintf_formats_and_persists_to_stream() {
+    let path = temp_path("fprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: path/mode pointers are valid C strings.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: stream is valid; variadic args match format specifiers.
+    let written = unsafe { fprintf(stream, c"v=%u:%c".as_ptr(), 42_u32, b'Z' as i32) };
+    assert_eq!(written, 6);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("fprintf output file should exist");
+    assert_eq!(bytes, b"v=42:Z");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fprintf_writes_to_native_tmpfile_handle() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let written = unsafe { fprintf(stream, c"host=%d:%s".as_ptr(), 11_i32, c"ok".as_ptr()) };
+    assert_eq!(written, 10);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+
+    unsafe { rewind(stream) };
+    let mut buf = [0 as c_char; 32];
+    let out = unsafe { fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+    let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(rendered.to_bytes(), b"host=11:ok");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn vfprintf_writes_to_native_tmpfile_handle() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let written = unsafe { call_vfprintf(stream, c"%s=%d".as_ptr(), c"host".as_ptr(), 21_i32) };
+    assert_eq!(written, 7);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+
+    unsafe { rewind(stream) };
+    let mut buf = [0 as c_char; 32];
+    let out = unsafe { fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+    let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(rendered.to_bytes(), b"host=21");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+/// Runs in the isolated child; see
+/// [`process_global_stdio_arms_run_in_an_isolated_child`].
+fn printf_writes_to_redirected_stdout() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        // A panic in ANY holder poisons this lock, and `.expect()` here turned
+        // that into a failure of whichever test asked for it next — three reds
+        // for one defect, two of them naming innocent tests (bd-ug42ol). The
+        // failure is already reported by the test that caused it; taking the
+        // data anyway keeps this one honest.
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let path = temp_path("printf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: path pointer is valid and open mode bits are valid.
+    let out_fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
+            0o600,
+        )
+    };
+    assert!(out_fd >= 0);
+
+    // The `assert_eq!(written, 9)` below sits INSIDE the redirect window, and a
+    // straight-line restore is skipped when it panics — leaving this process's
+    // stdout pointed at the temp file for all 303 remaining tests, which then
+    // swallows libtest's report of this very failure (bd-ug42ol). Block-scoped
+    // so stdout is restored before the file is read back.
+    let written = {
+        // SAFETY: duplicates the live stdout; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDOUT_FILENO) };
+        // SAFETY: redirect stdout to the temp file.
+        assert_eq!(
+            unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
+            libc::STDOUT_FILENO
+        );
+
+        // SAFETY: variadic args match the format string.
+        let written = unsafe { printf(c"printf-%d\n".as_ptr(), 9_i32) };
+        assert_eq!(written, 9);
+        // stdout on a file is fully buffered, as in glibc: flush while fd 1
+        // still points at the file.
+        assert_eq!(unsafe { fflush(std::ptr::null_mut()) }, 0);
+        written
+    };
+
+    // SAFETY: our copy of the output descriptor, closed once stdout is restored.
+    unsafe { libc::close(out_fd) };
+
+    let bytes = fs::read(&path).expect("redirected printf output file should exist");
+    assert_counted_stdout_capture("printf", written, &bytes, b"printf-9\n");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn dprintf_writes_to_fd() {
+    let path = temp_path("dprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: path pointer is valid and open mode bits are valid.
+    let out_fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
+            0o600,
+        )
+    };
+    assert!(out_fd >= 0);
+
+    // SAFETY: file descriptor is valid and variadic args match format string.
+    let written = unsafe { dprintf(out_fd, c"dprintf-%u".as_ptr(), 77_u32) };
+    assert_eq!(written, 10);
+
+    // SAFETY: file descriptor was returned by open and is still owned here.
+    unsafe {
+        libc::close(out_fd);
+    }
+
+    let bytes = fs::read(&path).expect("dprintf output file should exist");
+    assert_eq!(bytes, b"dprintf-77");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn asprintf_allocates_and_formats_output() {
+    let mut out: *mut i8 = std::ptr::null_mut();
+    // SAFETY: out-pointer and format are valid; variadic args match specifiers.
+    let written = unsafe { asprintf(&mut out, c"asprintf-%d:%s".as_ptr(), 55_i32, c"ok".as_ptr()) };
+    assert_eq!(written, 14);
+    assert!(!out.is_null());
+
+    // SAFETY: asprintf returns a NUL-terminated allocated string on success.
+    let rendered = unsafe { CStr::from_ptr(out) };
+    assert_eq!(rendered.to_bytes(), b"asprintf-55:ok");
+
+    // SAFETY: `asprintf` in this crate allocates via frankenlibc's allocator,
+    // so release with the matching frankenlibc free entrypoint.
+    unsafe { frankenlibc_abi::malloc_abi::free(out.cast()) };
+}
+
+#[test]
+fn asprintf_rejects_null_arguments() {
+    let mut out: *mut i8 = std::ptr::null_mut();
+    // SAFETY: null out-pointer is rejected by contract.
+    assert_eq!(unsafe { asprintf(std::ptr::null_mut(), c"x".as_ptr()) }, -1);
+    // SAFETY: null format pointer is rejected by contract.
+    assert_eq!(unsafe { asprintf(&mut out, std::ptr::null()) }, -1);
+}
+
+#[test]
+fn vasprintf_allocates_and_formats_output() {
+    let mut out: *mut c_char = std::ptr::null_mut();
+    // SAFETY: out-pointer and format are valid; variadic args match specifiers.
+    let written = unsafe {
+        call_vasprintf(
+            &mut out,
+            c"vasprintf-%u:%s".as_ptr(),
+            66_u32,
+            c"ok".as_ptr(),
+        )
+    };
+    assert_eq!(written, 15);
+    assert!(!out.is_null());
+
+    // SAFETY: vasprintf returns a NUL-terminated allocated string on success.
+    let rendered = unsafe { CStr::from_ptr(out) };
+    assert_eq!(rendered.to_bytes(), b"vasprintf-66:ok");
+
+    // SAFETY: `vasprintf` in this crate allocates via frankenlibc's allocator,
+    // so release with the matching frankenlibc free entrypoint.
+    unsafe { frankenlibc_abi::malloc_abi::free(out.cast()) };
+}
+
+#[test]
+fn vasprintf_rejects_null_arguments() {
+    let mut out: *mut c_char = std::ptr::null_mut();
+    // SAFETY: null out-pointer is rejected by contract.
+    assert_eq!(
+        unsafe { vasprintf(std::ptr::null_mut(), c"x".as_ptr(), std::ptr::null_mut()) },
+        -1
+    );
+    // SAFETY: null format pointer is rejected by contract.
+    assert_eq!(
+        unsafe { vasprintf(&mut out, std::ptr::null(), std::ptr::null_mut()) },
+        -1
+    );
+}
+
+#[test]
+fn getc_and_putc_behave_like_fgetc_fputc() {
+    let path = temp_path("getc_putc");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: stream is valid and writable.
+    assert_eq!(unsafe { putc(b'X' as i32, stream) }, b'X' as i32);
+    assert_eq!(unsafe { putc(b'Y' as i32, stream) }, b'Y' as i32);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    // SAFETY: stream is valid and readable.
+    assert_eq!(unsafe { getc(stream) }, b'X' as i32);
+    assert_eq!(unsafe { getc(stream) }, b'Y' as i32);
+    // At EOF.
+    assert_eq!(unsafe { getc(stream) }, libc::EOF);
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn unlocked_stdio_variants_follow_locked_semantics() {
+    let path = temp_path("unlocked");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: lock helpers are valid on an open stream in this phase contract.
+    unsafe { flockfile(stream) };
+    assert_eq!(unsafe { ftrylockfile(stream) }, 0);
+
+    // SAFETY: stream is valid and writable.
+    assert_eq!(unsafe { fputc_unlocked(b'Q' as i32, stream) }, b'Q' as i32);
+    assert_eq!(unsafe { putc_unlocked(b'R' as i32, stream) }, b'R' as i32);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    // SAFETY: stream is valid and readable.
+    assert_eq!(unsafe { fgetc_unlocked(stream) }, b'Q' as i32);
+    assert_eq!(unsafe { getc_unlocked(stream) }, b'R' as i32);
+    assert_eq!(unsafe { getc_unlocked(stream) }, libc::EOF);
+    unsafe { funlockfile(stream) };
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    // SAFETY: null stream is rejected in this phase contract.
+    assert_eq!(unsafe { ftrylockfile(std::ptr::null_mut()) }, -1);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn setlinebuf_is_callable_for_valid_streams() {
+    let path = temp_path("setlinebuf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: setlinebuf is a valid pre-I/O operation for this stream.
+    unsafe { setlinebuf(stream) };
+    assert_eq!(unsafe { fputc(b'X' as i32, stream) }, b'X' as i32);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("setlinebuf file should exist");
+    assert_eq!(bytes, b"X");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn stdio_64bit_aliases_match_base_contracts() {
+    let path = temp_path("stdio64");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen64(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: stream is valid and writable.
+    assert_eq!(unsafe { fputs(c"ABCDE".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseeko64(stream, 0, libc::SEEK_SET) }, 0);
+    assert_eq!(unsafe { ftello64(stream) }, 0);
+
+    // Advance by reading two characters.
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as i32);
+    assert_eq!(unsafe { fgetc(stream) }, b'B' as i32);
+
+    // Save 64-bit position.
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+    let pos_ptr = pos.as_mut_ptr().cast();
+    assert_eq!(unsafe { fgetpos64(stream, pos_ptr) }, 0);
+    let pos = unsafe { pos.assume_init() };
+
+    // Consume two more bytes, then restore.
+    assert_eq!(unsafe { fgetc(stream) }, b'C' as i32);
+    assert_eq!(unsafe { fgetc(stream) }, b'D' as i32);
+    let pos_const_ptr = (&pos as *const libc::fpos_t).cast();
+    assert_eq!(unsafe { fsetpos64(stream, pos_const_ptr) }, 0);
+    assert_eq!(unsafe { fgetc(stream) }, b'C' as i32);
+
+    // SAFETY: null position pointers are rejected.
+    assert_eq!(unsafe { fgetpos64(stream, std::ptr::null_mut()) }, -1);
+    assert_eq!(unsafe { fsetpos64(stream, std::ptr::null()) }, -1);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fgetpos_fsetpos_save_and_restore_position() {
+    let path = temp_path("fpos");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // Write some data.
+    // SAFETY: stream is valid and writable.
+    assert_eq!(unsafe { fputs(c"ABCDE".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    // Read 2 chars to advance position.
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as i32);
+    assert_eq!(unsafe { fgetc(stream) }, b'B' as i32);
+
+    // Save position (should be at offset 2).
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+    // SAFETY: stream is valid and pos is a valid fpos_t.
+    assert_eq!(unsafe { fgetpos(stream, pos.as_mut_ptr()) }, 0);
+    let pos = unsafe { pos.assume_init() };
+
+    // Read 2 more chars.
+    assert_eq!(unsafe { fgetc(stream) }, b'C' as i32);
+    assert_eq!(unsafe { fgetc(stream) }, b'D' as i32);
+
+    // Restore saved position (back to offset 2).
+    // SAFETY: pos was saved by fgetpos.
+    assert_eq!(unsafe { fsetpos(stream, &pos) }, 0);
+
+    // Should read 'C' again.
+    assert_eq!(unsafe { fgetc(stream) }, b'C' as i32);
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fgetpos_rejects_null_arguments() {
+    let path = temp_path("fpos_null");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+    // SAFETY: null stream is rejected.
+    assert_eq!(
+        unsafe { fgetpos(std::ptr::null_mut(), pos.as_mut_ptr()) },
+        -1
+    );
+    // SAFETY: null pos is rejected.
+    assert_eq!(unsafe { fgetpos(stream, std::ptr::null_mut()) }, -1);
+    // SAFETY: null stream is rejected.
+    assert_eq!(unsafe { fsetpos(std::ptr::null_mut(), pos.as_ptr()) }, -1);
+    // SAFETY: null pos is rejected.
+    assert_eq!(unsafe { fsetpos(stream, std::ptr::null()) }, -1);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fdopen_wraps_existing_fd() {
+    let path = temp_path("fdopen");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // Open a raw fd via libc.
+    // SAFETY: path and flags are valid.
+    let fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_RDWR | libc::O_TRUNC,
+            0o600,
+        )
+    };
+    assert!(fd >= 0);
+
+    // Wrap fd as a FILE stream.
+    // SAFETY: fd is valid and mode is a valid C string.
+    let stream = unsafe { fdopen(fd, c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // Write through the stream.
+    // SAFETY: stream is valid and writable.
+    assert_eq!(unsafe { fputs(c"fdopen-test".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("fdopen output should exist");
+    assert_eq!(bytes, b"fdopen-test");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fdopen_rejects_invalid_fd_and_null_mode() {
+    // SAFETY: invalid fd is rejected.
+    assert!(unsafe { fdopen(-1, c"r".as_ptr()) }.is_null());
+    // SAFETY: null mode is rejected.
+    assert!(unsafe { fdopen(0, std::ptr::null()) }.is_null());
+}
+
+#[test]
+fn freopen_reopens_stream_with_new_file() {
+    let path1 = temp_path("freopen1");
+    let path2 = temp_path("freopen2");
+    let _ = fs::remove_file(&path1);
+    let _ = fs::remove_file(&path2);
+    let path1_c = path_cstring(&path1);
+    let path2_c = path_cstring(&path2);
+
+    // Open first file.
+    // SAFETY: pointers are valid C strings.
+    let stream = unsafe { fopen(path1_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { fputs(c"file1".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+
+    // Reopen the same stream onto a different file.
+    // SAFETY: all pointers are valid C strings, stream is open.
+    let reopened = unsafe { freopen(path2_c.as_ptr(), c"w".as_ptr(), stream) };
+    assert!(!reopened.is_null());
+    // Stream pointer identity is preserved.
+    assert_eq!(reopened, stream);
+
+    assert_eq!(unsafe { fputs(c"file2".as_ptr(), reopened) }, 0);
+    assert_eq!(unsafe { fflush(reopened) }, 0);
+    assert_eq!(unsafe { fclose(reopened) }, 0);
+
+    let bytes1 = fs::read(&path1).expect("first file should exist");
+    assert_eq!(bytes1, b"file1");
+    let bytes2 = fs::read(&path2).expect("second file should exist");
+    assert_eq!(bytes2, b"file2");
+
+    let _ = fs::remove_file(path1);
+    let _ = fs::remove_file(path2);
+}
+
+#[test]
+fn remove_deletes_a_file() {
+    let path = temp_path("remove");
+    let _ = fs::remove_file(&path);
+    fs::write(&path, b"to_delete").expect("should write test file");
+    assert!(path.exists());
+
+    let path_c = path_cstring(&path);
+    // SAFETY: pathname is a valid C string pointing to an existing file.
+    assert_eq!(unsafe { stdio_remove(path_c.as_ptr()) }, 0);
+    assert!(!path.exists());
+}
+
+#[test]
+fn remove_rejects_null_and_nonexistent() {
+    // SAFETY: null pathname is rejected.
+    assert_eq!(unsafe { stdio_remove(std::ptr::null()) }, -1);
+
+    // Non-existent file should fail.
+    assert_eq!(
+        unsafe { stdio_remove(c"/tmp/frankenlibc_no_such_file_ever".as_ptr()) },
+        -1
+    );
+}
+
+#[test]
+fn getline_reads_complete_lines() {
+    let path = temp_path("getline");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { fputs(c"hello\nworld\n".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+
+    // Read first line.
+    // SAFETY: lineptr and n are valid pointers, stream is open.
+    let len = unsafe { getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, 6); // "hello\n"
+    assert!(!lineptr.is_null());
+    let line1 = unsafe { CStr::from_ptr(lineptr) };
+    assert_eq!(line1.to_bytes(), b"hello\n");
+
+    // Read second line.
+    let len = unsafe { getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, 6); // "world\n"
+    let line2 = unsafe { CStr::from_ptr(lineptr) };
+    assert_eq!(line2.to_bytes(), b"world\n");
+
+    // At EOF.
+    let len = unsafe { getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, -1);
+
+    // SAFETY: lineptr was allocated by FrankenLibC's getline allocator.
+    unsafe { frankenlibc_abi::malloc_abi::free(lineptr.cast()) };
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn getdelim_reads_until_custom_delimiter() {
+    let path = temp_path("getdelim");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // Write data with ';' as delimiter.
+    assert_eq!(unsafe { fputs(c"alpha;beta;gamma".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+
+    // Read until first ';'.
+    let len = unsafe { getdelim(&mut lineptr, &mut n, b';' as i32, stream) };
+    assert_eq!(len, 6); // "alpha;"
+    let seg1 = unsafe { CStr::from_ptr(lineptr) };
+    assert_eq!(seg1.to_bytes(), b"alpha;");
+
+    // Read until next ';'.
+    let len = unsafe { getdelim(&mut lineptr, &mut n, b';' as i32, stream) };
+    assert_eq!(len, 5); // "beta;"
+    let seg2 = unsafe { CStr::from_ptr(lineptr) };
+    assert_eq!(seg2.to_bytes(), b"beta;");
+
+    // Read remaining (no trailing ';', hits EOF).
+    let len = unsafe { getdelim(&mut lineptr, &mut n, b';' as i32, stream) };
+    assert_eq!(len, 5); // "gamma"
+    let seg3 = unsafe { CStr::from_ptr(lineptr) };
+    assert_eq!(seg3.to_bytes(), b"gamma");
+
+    // SAFETY: lineptr was allocated by FrankenLibC's getdelim allocator.
+    unsafe { frankenlibc_abi::malloc_abi::free(lineptr.cast()) };
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn getdelim_rejects_null_arguments() {
+    let path = temp_path("getdelim_null");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+
+    // SAFETY: null lineptr is rejected.
+    assert_eq!(
+        unsafe { getdelim(std::ptr::null_mut(), &mut n, b'\n' as i32, stream) },
+        -1
+    );
+    // SAFETY: null n is rejected.
+    assert_eq!(
+        unsafe { getdelim(&mut lineptr, std::ptr::null_mut(), b'\n' as i32, stream) },
+        -1
+    );
+    // SAFETY: null stream is rejected.
+    assert_eq!(
+        unsafe { getdelim(&mut lineptr, &mut n, b'\n' as i32, std::ptr::null_mut()) },
+        -1
+    );
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn tmpfile_creates_writable_anonymous_stream() {
+    // SAFETY: tmpfile creates an anonymous temp file.
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    // Write and read back.
+    assert_eq!(unsafe { fputs(c"tmpfile-test".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0_i8; 32];
+    let out = unsafe { fgets(buf.as_mut_ptr(), buf.len() as i32, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+    let content = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(content.to_bytes(), b"tmpfile-test");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn tmpfile_closes_without_leaking_named_tmp_entries() {
+    // The "(deleted)" check on /proc/self/fd/N below is the
+    // authoritative oracle for "tmpfile unlinked its backing file
+    // while open" — POSIX requires the file be unreachable from any
+    // pathname the moment tmpfile() returns. The previous
+    // before/after enumeration of `frankenlibc_*` entries was
+    // redundant (tmpfile uses glibc's own `tmpXXXXXX` naming, never
+    // `frankenlibc_`) and was the source of bd-el0v8 flakiness:
+    // any concurrent test using `temp_path()` would create a
+    // frankenlibc_-prefixed file that flickered through the snapshot
+    // window. Drop the snapshot.
+
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    let proc_fd_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    let target =
+        fs::read_link(&proc_fd_path).expect("tmpfile fd should be visible in /proc/self/fd");
+    let rendered = target.to_string_lossy();
+    assert!(
+        rendered.contains("/tmp/"),
+        "tmpfile backing path should live under /tmp: {rendered}"
+    );
+    assert!(
+        rendered.contains("(deleted)"),
+        "tmpfile backing file should already be unlinked while open: {rendered}"
+    );
+
+    assert_eq!(unsafe { fputs(c"tmpfile-cleanup".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn tmpnam_generates_unique_names() {
+    let mut buf1 = [0_i8; 64];
+    let mut buf2 = [0_i8; 64];
+
+    // SAFETY: buffers are 64 bytes, sufficient for tmpnam output.
+    let p1 = unsafe { tmpnam(buf1.as_mut_ptr()) };
+    let p2 = unsafe { tmpnam(buf2.as_mut_ptr()) };
+
+    assert!(!p1.is_null());
+    assert!(!p2.is_null());
+
+    let name1 = unsafe { CStr::from_ptr(p1) };
+    let name2 = unsafe { CStr::from_ptr(p2) };
+
+    // Names should start with /tmp/.
+    assert!(name1.to_bytes().starts_with(b"/tmp/"));
+    assert!(name2.to_bytes().starts_with(b"/tmp/"));
+
+    // Consecutive calls must produce different names.
+    assert_ne!(name1, name2);
+}
+
+#[test]
+fn tmpnam_null_uses_static_buffer() {
+    // SAFETY: NULL s uses internal static buffer.
+    let p1 = unsafe { tmpnam(std::ptr::null_mut()) };
+    assert!(!p1.is_null());
+    let name = unsafe { CStr::from_ptr(p1) };
+    assert!(name.to_bytes().starts_with(b"/tmp/"));
+}
+
+// ===========================================================================
+// feof / ferror / clearerr / rewind / ftell
+// ===========================================================================
+
+#[test]
+fn feof_and_ferror_report_stream_state() {
+    let path = temp_path("feof");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // Write a single byte then rewind
+    assert_eq!(unsafe { fputc(b'X' as i32, stream) }, b'X' as i32);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    // Not at EOF yet
+    assert_eq!(unsafe { feof(stream) }, 0);
+    assert_eq!(unsafe { ferror(stream) }, 0);
+
+    // Read the one byte
+    assert_eq!(unsafe { fgetc(stream) }, b'X' as i32);
+    // Now read past EOF
+    assert_eq!(unsafe { fgetc(stream) }, libc::EOF);
+    // EOF flag should now be set
+    assert_ne!(unsafe { feof(stream) }, 0);
+
+    // clearerr should clear the EOF flag
+    unsafe { clearerr(stream) };
+    assert_eq!(unsafe { feof(stream) }, 0);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn rewind_and_ftell_position_tracking() {
+    let path = temp_path("rewind");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { fputs(c"ABCDE".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+
+    // ftell should report position 5
+    assert_eq!(unsafe { ftell(stream) }, 5);
+
+    // rewind should set position to 0
+    unsafe { rewind(stream) };
+    assert_eq!(unsafe { ftell(stream) }, 0);
+
+    // Should be able to read from the beginning
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as i32);
+    assert_eq!(unsafe { ftell(stream) }, 1);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+// ===========================================================================
+// sscanf
+// ===========================================================================
+
+#[test]
+fn sscanf_parses_integers_and_strings() {
+    let input = c"42 hello";
+    let mut num: c_int = 0;
+    let mut buf = [0_i8; 32];
+
+    // SAFETY: format matches arguments.
+    let n = unsafe {
+        sscanf(
+            input.as_ptr(),
+            c"%d %s".as_ptr(),
+            &mut num,
+            buf.as_mut_ptr(),
+        )
+    };
+    assert_eq!(n, 2);
+    assert_eq!(num, 42);
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(s.to_bytes(), b"hello");
+}
+
+#[test]
+fn sscanf_returns_zero_on_mismatch() {
+    let input = c"not_a_number";
+    let mut num: c_int = -1;
+
+    let n = unsafe { sscanf(input.as_ptr(), c"%d".as_ptr(), &mut num) };
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn sscanf_returns_eof_on_empty_input() {
+    let input = c"";
+    let mut num: c_int = -1;
+
+    let n = unsafe { sscanf(input.as_ptr(), c"%d".as_ptr(), &mut num) };
+    assert!(n <= 0, "sscanf on empty input should return 0 or EOF");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn sscanf_rejects_tracked_unterminated_input() {
+    let input = unsafe { frankenlibc_abi::malloc_abi::malloc(2).cast::<c_char>() };
+    assert!(!input.is_null());
+    unsafe {
+        *input.add(0) = b'4' as c_char;
+        *input.add(1) = b'2' as c_char;
+    }
+    let mut num: c_int = -1;
+
+    let n = unsafe { sscanf(input.cast_const(), c"%d".as_ptr(), &mut num) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(input.cast::<c_void>()) };
+
+    assert_eq!(n, libc::EOF);
+    assert_eq!(num, -1, "unterminated input must not write outputs");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn sscanf_rejects_tracked_unterminated_format() {
+    let format = unsafe { frankenlibc_abi::malloc_abi::malloc(2).cast::<c_char>() };
+    assert!(!format.is_null());
+    unsafe {
+        *format.add(0) = b'%' as c_char;
+        *format.add(1) = b'd' as c_char;
+    }
+    let mut num: c_int = -1;
+
+    let n = unsafe { sscanf(c"42".as_ptr(), format.cast_const(), &mut num) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(format.cast::<c_void>()) };
+
+    assert_eq!(n, libc::EOF);
+    assert_eq!(num, -1, "unterminated format must not write outputs");
+}
+
+// ===========================================================================
+// mktemp
+// ===========================================================================
+
+#[test]
+fn mktemp_generates_unique_name() {
+    let mut tmpl = *b"/tmp/frankenlibc_XXXXXX\0";
+    let ptr = unsafe { mktemp(tmpl.as_mut_ptr().cast::<c_char>()) };
+    assert!(!ptr.is_null());
+
+    let name = unsafe { CStr::from_ptr(ptr) };
+    let name_str = name.to_string_lossy();
+    // The X's should have been replaced
+    assert!(
+        !name_str.contains("XXXXXX"),
+        "template should be filled: {name_str}"
+    );
+    assert!(name_str.starts_with("/tmp/frankenlibc_"));
+}
+
+#[test]
+fn mktemp_consecutive_calls_produce_different_names() {
+    let mut tmpl1 = *b"/tmp/frankenlibc_XXXXXX\0";
+    let mut tmpl2 = *b"/tmp/frankenlibc_XXXXXX\0";
+
+    let p1 = unsafe { mktemp(tmpl1.as_mut_ptr().cast::<c_char>()) };
+    let p2 = unsafe { mktemp(tmpl2.as_mut_ptr().cast::<c_char>()) };
+    assert!(!p1.is_null());
+    assert!(!p2.is_null());
+
+    let n1 = unsafe { CStr::from_ptr(p1) };
+    let n2 = unsafe { CStr::from_ptr(p2) };
+    assert_ne!(
+        n1, n2,
+        "consecutive mktemp calls should produce different names"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// popen / pclose
+// ---------------------------------------------------------------------------
+//
+// Note: popen tests that use glibc functions (fgets, fputs) on the returned
+// stream are skipped in unit test mode because glibc's vtable validation
+// rejects NativeFile streams. These tests pass under LD_PRELOAD integration.
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn popen_reads_command_output() {
+    let cmd = CString::new("echo hello").unwrap();
+    let mode = CString::new("r").unwrap();
+    let stream = unsafe { popen(cmd.as_ptr(), mode.as_ptr()) };
+    assert!(!stream.is_null(), "popen should succeed");
+
+    let mut buf = [0i8; 64];
+    let line = unsafe { fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert!(!line.is_null());
+    let output = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy();
+    assert!(output.starts_with("hello"), "got: {output}");
+
+    let status = unsafe { pclose(stream) };
+    assert!(status >= 0, "pclose should return valid status: {status}");
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn popen_write_mode() {
+    // Write to /dev/null, just verify it works
+    let cmd = CString::new("cat > /dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let stream = unsafe { popen(cmd.as_ptr(), mode.as_ptr()) };
+    assert!(!stream.is_null());
+
+    let data = c"test data\n";
+    unsafe { fputs(data.as_ptr(), stream) };
+    let status = unsafe { pclose(stream) };
+    assert!(status >= 0);
+}
+
+#[test]
+fn popen_rejects_invalid_modes() {
+    let cmd = CString::new("echo hello").unwrap();
+    let bad_modes = ["", "r+", "w+", "rw", "x", "rr", "we+", "re+"];
+    for mode in bad_modes {
+        let mode = CString::new(mode).unwrap();
+        // SAFETY: use FrankenLibC errno to match the ABI under test.
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = 0;
+        }
+        let stream = unsafe { popen(cmd.as_ptr(), mode.as_ptr()) };
+        assert!(stream.is_null(), "mode '{mode:?}' should be rejected");
+        let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert_eq!(err, libc::EINVAL, "mode '{mode:?}' should set EINVAL");
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn popen_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'r' as c_char };
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let stream = unsafe { popen(c"echo hello".as_ptr(), mode.cast_const()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(stream.is_null(), "popen should reject unterminated mode");
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
+// ---------------------------------------------------------------------------
+// perror
+// ---------------------------------------------------------------------------
+
+#[test]
+fn perror_does_not_crash_with_null_or_empty() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        // See the note at the first holder: poisoning is another test's failure,
+        // not this one's (bd-ug42ol).
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    // perror writes to stderr; we just verify it doesn't crash
+    unsafe { perror(std::ptr::null()) };
+    unsafe { perror(c"test_prefix".as_ptr()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn perror_ignores_tracked_unterminated_prefix() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        // See the note at the first holder: poisoning is another test's failure,
+        // not this one's (bd-ug42ol).
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let mut pipe_fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+
+    // Block-scoped guard (bd-ug42ol): restores stderr on unwind, and releases
+    // the second reference to the pipe's WRITE end before the read below — at
+    // wider scope the reader would never see EOF and this would HANG.
+    {
+        // SAFETY: duplicates the live stderr; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDERR_FILENO) };
+        assert_eq!(
+            unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
+            libc::STDERR_FILENO
+        );
+
+        let prefix = unsafe { tracked_bytes_without_nul(b"unterminated_prefix") };
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
+            perror(prefix.cast_const());
+            frankenlibc_abi::malloc_abi::free(prefix.cast::<c_void>());
+        }
+    }
+    // SAFETY: our copy of the write end, closed once stderr is restored.
+    unsafe { libc::close(pipe_fds[1]) };
+
+    let mut captured = Vec::new();
+    let mut buf = [0u8; 128];
+    loop {
+        let n = unsafe { libc::read(pipe_fds[0], buf.as_mut_ptr().cast(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        captured.extend_from_slice(&buf[..n as usize]);
+    }
+    unsafe { libc::close(pipe_fds[0]) };
+
+    assert_eq!(captured, b"Invalid argument\n");
+}
+
+// ---------------------------------------------------------------------------
+// Unlocked stdio variants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fputs_unlocked_and_fgets_unlocked_round_trip() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let msg = c"hello unlocked\n";
+    assert!(unsafe { fputs_unlocked(msg.as_ptr(), stream) } >= 0);
+
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0i8; 64];
+    let ptr = unsafe { fgets_unlocked(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert!(!ptr.is_null());
+    let line = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(line, b"hello unlocked\n");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fwrite_unlocked_and_fread_unlocked_round_trip() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let data = b"ABCDEF";
+    let written = unsafe { fwrite_unlocked(data.as_ptr().cast(), 1, data.len(), stream) };
+    assert_eq!(written, data.len());
+
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0u8; 16];
+    let read_n = unsafe { fread_unlocked(buf.as_mut_ptr().cast(), 1, buf.len(), stream) };
+    assert_eq!(read_n, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fflush_unlocked_succeeds_on_writable_stream() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { fflush_unlocked(stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn clearerr_unlocked_clears_error_and_eof() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    // Read on empty file sets EOF
+    let mut buf = [0u8; 1];
+    unsafe { fread(buf.as_mut_ptr().cast(), 1, 1, stream) };
+    assert_ne!(unsafe { feof_unlocked(stream) }, 0);
+
+    unsafe { clearerr_unlocked(stream) };
+    assert_eq!(unsafe { feof_unlocked(stream) }, 0);
+    assert_eq!(unsafe { ferror_unlocked(stream) }, 0);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fileno_unlocked_returns_valid_fd() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+    let fd = unsafe { fileno_unlocked(stream) };
+    assert!(fd >= 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// fseeko / ftello
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fseeko_and_ftello_track_position() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let data = b"0123456789";
+    unsafe { fwrite(data.as_ptr().cast(), 1, data.len(), stream) };
+
+    assert_eq!(unsafe { fseeko(stream, 5, libc::SEEK_SET) }, 0);
+    assert_eq!(unsafe { ftello(stream) }, 5);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// setbuffer
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setbuffer_with_null_buf_sets_unbuffered() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+    // NULL buffer with size 0 -> unbuffered
+    unsafe { setbuffer(stream, std::ptr::null_mut(), 0) };
+    // Just verify it doesn't crash and we can still write
+    unsafe { fputc(b'X' as c_int, stream) };
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// putw / getw
+// ---------------------------------------------------------------------------
+
+#[test]
+fn putw_and_getw_round_trip() {
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { putw(42, stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+    let val = unsafe { getw(stream) };
+    assert_eq!(val, 42);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// tmpfile64
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tmpfile64_creates_writable_stream() {
+    let stream = unsafe { tmpfile64() };
+    assert!(!stream.is_null());
+    let data = b"test64";
+    let written = unsafe { fwrite(data.as_ptr().cast(), 1, data.len(), stream) };
+    assert_eq!(written, data.len());
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn tmpfile64_alias_uses_unlinked_update_stream() {
+    let stream = unsafe { tmpfile64() };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+    let proc_fd_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    let target =
+        fs::read_link(&proc_fd_path).expect("tmpfile64 fd should be visible in /proc/self/fd");
+    let rendered = target.to_string_lossy();
+    assert!(
+        rendered.contains("/tmp/"),
+        "tmpfile64 backing path should live under /tmp: {rendered}"
+    );
+    assert!(
+        rendered.contains("(deleted)"),
+        "tmpfile64 backing file should already be unlinked while open: {rendered}"
+    );
+
+    let data = b"tmpfile64-alias";
+    let written = unsafe { fwrite(data.as_ptr().cast(), 1, data.len(), stream) };
+    assert_eq!(written, data.len());
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0_u8; 32];
+    let read = unsafe { fread(buf.as_mut_ptr().cast(), 1, data.len(), stream) };
+    assert_eq!(read, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// vsnprintf / vsprintf (via variadic wrapper)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vsnprintf_truncates_correctly() {
+    let mut buf = [0i8; 8];
+    // Use snprintf as the test vehicle (vsnprintf is called internally)
+    let fmt = c"%d-%s";
+    let n = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            fmt.as_ptr(),
+            42i32,
+            c"hello".as_ptr(),
+        )
+    };
+    assert!(n > 0);
+    let result = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(result, b"42-hell"); // Truncated to fit in 8 bytes
+}
+
+#[test]
+fn vsprintf_normalizes_negative_star_width_from_va_list() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe { call_io_vsprintf(buf.as_mut_ptr(), c"|%*d|".as_ptr(), -5_i32, 42_i32) };
+    assert_eq!(written, 7);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"|42   |");
+}
+
+// ---------------------------------------------------------------------------
+// fmemopen
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fmemopen_readonly_close_does_not_write_back_caller_buffer() {
+    // bd-rv2gv6 regression: closing a read-only "r" fmemopen stream used to copy
+    // fl's snapshot over the caller's buffer, clobbering mutations the caller made
+    // after fmemopen. Reading and closing this stream must preserve those edits.
+    let mut buf: [u8; 48] = *b"hello world, this is read-only fmemopen content!";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
+    assert!(!stream.is_null());
+    // Mutate before the first refill: the read must observe caller storage.
+    buf[0] = b'Z';
+    let mut dst = [0u8; 8];
+    let n = unsafe { fread(dst.as_mut_ptr().cast(), 1, dst.len(), stream) };
+    assert_eq!(n, 8);
+    assert_eq!(&dst, b"Zello wo");
+    // Pre-fix this failed: fclose synced the pre-mutation snapshot back.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(
+        buf[0], b'Z',
+        "read-only fclose must not write back over the caller's buffer"
+    );
+}
+
+#[test]
+fn fmemopen_writable_close_still_syncs_caller_buffer() {
+    // Load-bearing counterpart: for WRITABLE modes the close-time write-back is
+    // the contract (fl-owned contents land in the caller's buffer). Pins BOTH
+    // writable mode shapes — "w" (truncate) and "r+" (read/write, existing
+    // content) — so a future over-narrowing of the `open_flags.writable`
+    // registration gate in fmemopen (bd-rv2gv6) fails here instead of silently
+    // dropping the "r+" sync.
+    for mode in ["w", "r+"] {
+        let mode_c = std::ffi::CString::new(mode).unwrap();
+        let mut buf = [0u8; 32];
+        if mode == "r+" {
+            buf[..8].copy_from_slice(b"PREEXIST");
+        }
+        let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), mode_c.as_ptr()) };
+        if stream.is_null() {
+            continue;
+        }
+        let payload = b"written via fmemopen";
+        let n = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+        assert_eq!(n, payload.len(), "mode {mode}: fwrite failed");
+        assert_eq!(unsafe { fclose(stream) }, 0, "mode {mode}: fclose failed");
+        assert_eq!(
+            &buf[..payload.len()],
+            payload,
+            "mode {mode}: writable fclose must sync contents to the caller's buffer"
+        );
+    }
+}
+
+#[test]
+fn fmemopen_write_creates_stream() {
+    // Probes the registry by address after fclose: see run_alone_in_child.
+    if run_alone_in_child("fmemopen_write_creates_stream") {
+        return;
+    }
+    let _registry_probe = STREAM_REGISTRY_PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut buf = [0u8; 64];
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
+    // fmemopen may not work fully without LD_PRELOAD, just check it returns something
+    if !stream.is_null() {
+        assert!(verify_native_file(stream).is_some());
+        assert_eq!(unsafe { fileno(stream) }, -1);
+        assert_eq!(unsafe { fclose(stream) }, 0);
+        assert!(verify_native_file(stream).is_none());
+    }
+}
+
+#[test]
+fn fmemopen_read_cursor_tracks_seek_ftell_and_eof() {
+    let mut buf = *b"abcdef";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+
+    assert_eq!(unsafe { fgetc(stream) }, b'a' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'b' as c_int);
+    assert_eq!(unsafe { ftell(stream) }, 2);
+    assert_eq!(unsafe { fseek(stream, -1, libc::SEEK_CUR) }, 0);
+    assert_eq!(unsafe { fgetc(stream) }, b'b' as c_int);
+
+    unsafe { rewind(stream) };
+    assert_eq!(unsafe { ftell(stream) }, 0);
+    assert_eq!(unsafe { fgetc(stream) }, b'a' as c_int);
+
+    while unsafe { fgetc(stream) } != libc::EOF {}
+    assert_ne!(unsafe { feof(stream) }, 0);
+    unsafe { clearerr(stream) };
+    assert_eq!(unsafe { feof(stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fscanf_leaves_unparsed_input_on_mem_stream() {
+    // bd-2g7oyh.180: fscanf must consume exactly the parsed prefix and leave
+    // the rest of the stream readable, like glibc. The bulk read previously
+    // consumed the whole backing, so a following fgetc wrongly saw EOF.
+    let mut buf = *b"5 abc";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
+    if stream.is_null() {
+        return; // fmemopen may be unavailable in some preload-less configs
+    }
+    let mut n: c_int = -1;
+    // SAFETY: valid stream + format + matching destination pointer.
+    let rc = unsafe { fscanf(stream, c"%d".as_ptr(), &mut n as *mut c_int) };
+    assert_eq!(rc, 1, "fscanf should match exactly one integer");
+    assert_eq!(n, 5);
+    // The unparsed remainder " abc" must still be readable byte-for-byte.
+    assert_eq!(unsafe { fgetc(stream) }, b' ' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'a' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'b' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'c' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, libc::EOF);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fscanf_leaves_unparsed_input_on_file_stream() {
+    // bd-2g7oyh.180: the seekable-fd path must consume only the parsed prefix
+    // and leave the remainder readable. Previously the bulk read swallowed the
+    // whole file, so a following fgetc saw EOF and any second fscanf lost data.
+    let path = temp_path("fscanf_tail");
+    let _ = fs::remove_file(&path);
+    fs::write(&path, b"10 20 30 tail\n").expect("write temp file");
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let (mut a, mut b, mut c): (c_int, c_int, c_int) = (0, 0, 0);
+    // SAFETY: valid stream + format + three matching destination pointers.
+    let rc = unsafe {
+        fscanf(
+            stream,
+            c"%d %d %d".as_ptr(),
+            &mut a as *mut c_int,
+            &mut b as *mut c_int,
+            &mut c as *mut c_int,
+        )
+    };
+    assert_eq!(rc, 3, "fscanf should match three integers");
+    assert_eq!((a, b, c), (10, 20, 30));
+
+    // The remainder " tail\n" must still be readable byte-for-byte.
+    let mut rest = Vec::new();
+    loop {
+        let ch = unsafe { fgetc(stream) };
+        if ch == libc::EOF {
+            break;
+        }
+        rest.push(ch as u8);
+    }
+    assert_eq!(&rest, b" tail\n", "unparsed tail must survive the fscanf");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn fscanf_leaves_unparsed_input_on_pipe_stream() {
+    // bd-2g7oyh.180: non-seekable fds cannot be repaired with lseek after the
+    // scanf bulk read. The unread suffix must be staged in the stream buffer.
+    let mut pipe_fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+
+    let payload = b"5 abc";
+    let written = unsafe { libc::write(pipe_fds[1], payload.as_ptr().cast(), payload.len()) };
+    assert_eq!(written, payload.len() as isize);
+    assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+    let stream = unsafe { fdopen(pipe_fds[0], c"r".as_ptr()) };
+    if stream.is_null() {
+        unsafe {
+            libc::close(pipe_fds[0]);
+        }
+        panic!("fdopen should wrap the pipe read end");
+    }
+
+    let mut n: c_int = -1;
+    let rc = unsafe { fscanf(stream, c"%d".as_ptr(), &mut n as *mut c_int) };
+    assert_eq!(rc, 1, "fscanf should match exactly one integer");
+    assert_eq!(n, 5);
+
+    let mut rest = Vec::new();
+    loop {
+        let ch = unsafe { fgetc(stream) };
+        if ch == libc::EOF {
+            break;
+        }
+        rest.push(ch as u8);
+    }
+    assert_eq!(&rest, b" abc", "pipe tail must survive the fscanf");
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fmemopen_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'w' as c_char };
+    let mut buf = [0u8; 8];
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), mode.cast_const()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(stream.is_null(), "fmemopen should reject unterminated mode");
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
+#[test]
+fn fmemopen_writes_sync_on_flush_not_immediately() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"xyz";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"xyzDEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_fseek_syncs_pending_write() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"xyz";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+    assert_eq!(&buf, b"xyzDEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_wplus_truncate_sets_initial_nul_only() {
+    let mut buf = [b'Z'; 8];
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    assert_eq!(buf, [0, b'Z', b'Z', b'Z', b'Z', b'Z', b'Z', b'Z']);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(buf, [0, b'Z', b'Z', b'Z', b'Z', b'Z', b'Z', b'Z']);
+}
+
+#[test]
+fn fmemopen_w_truncate_without_write_leaves_caller_buffer_unchanged() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(&buf, b"ABCDEFGH");
+}
+
+#[test]
+fn fmemopen_w_truncate_defers_caller_buffer_change_until_flush() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    assert_eq!(&buf, b"ABCDEFGH");
+    let payload = b"xy";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"xy\0DEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_w_truncate_exact_capacity_preserves_final_nul_slot() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"01234567";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"0123456\0");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_wplus_exact_capacity_readback_sees_terminal_nul() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"01234567";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"0123456\0");
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 8];
+    let got = unsafe { fread(out.as_mut_ptr().cast(), 1, out.len(), stream) };
+    assert_eq!(got, out.len());
+    assert_eq!(&out, b"0123456\0");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_rplus_exact_capacity_does_not_reserve_final_nul_slot() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"01234567";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"01234567");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_append_flush_writes_nul_after_appended_content() {
+    let mut buf = *b"ABC\0ZZZZ";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"a".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"xy";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABC\0ZZZZ");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"ABCxy\0ZZ");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+// ===========================================================================
+// open_memstream
+// ===========================================================================
+
+#[test]
+fn open_memstream_returns_stream_or_null() {
+    // Probes the registry by address after fclose: see run_alone_in_child.
+    if run_alone_in_child("open_memstream_returns_stream_or_null") {
+        return;
+    }
+    let mut ptr: *mut c_char = std::ptr::null_mut();
+    let mut size: usize = 0;
+    let stream = unsafe { open_memstream(&mut ptr, &mut size) };
+    // open_memstream may not be fully functional without LD_PRELOAD
+    if stream.is_null() {
+        return;
+    }
+    assert!(verify_native_file(stream).is_some());
+    assert_eq!(unsafe { fileno(stream) }, -1);
+    // Just close it — don't free ptr as it may be managed internally
+    unsafe { fclose(stream) };
+    assert!(verify_native_file(stream).is_none());
+}
+
+#[test]
+fn open_memstream_grows_and_syncs_on_flush_and_close() {
+    let mut ptr: *mut c_char = std::ptr::null_mut();
+    let mut size: usize = 0;
+    let stream = unsafe { open_memstream(&mut ptr, &mut size) };
+    assert!(!stream.is_null());
+
+    let payload = vec![b'x'; 8192];
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(size, payload.len());
+    assert!(!ptr.is_null());
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), size) };
+    assert_eq!(bytes, payload.as_slice());
+    assert_eq!(unsafe { *ptr.add(size) }, 0);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(size, payload.len());
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), size) };
+    assert_eq!(bytes, payload.as_slice());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast::<c_void>()) };
+}
+
+// ===========================================================================
+// puts / putchar / putchar_unlocked — test via file stream (fdopen)
+// ===========================================================================
+
+#[test]
+fn puts_calls_without_crash() {
+    // We can't easily capture stdout in the interposition layer,
+    // so just verify puts doesn't crash and returns a non-negative value
+    let rc = unsafe { puts(c"".as_ptr()) };
+    // puts returns non-negative on success or EOF on error
+    assert!(rc >= 0 || rc == libc::EOF, "puts returned unexpected {rc}");
+}
+
+#[test]
+fn putchar_returns_char_or_eof() {
+    // putchar writes to stdout; verify it returns the character or EOF
+    let rc = unsafe { putchar(b'A' as c_int) };
+    assert!(
+        rc == b'A' as c_int || rc == libc::EOF,
+        "putchar should return the char or EOF, got {rc}"
+    );
+}
+
+#[test]
+fn putchar_unlocked_returns_char_or_eof() {
+    let rc = unsafe { putchar_unlocked(b'B' as c_int) };
+    assert!(
+        rc == b'B' as c_int || rc == libc::EOF,
+        "putchar_unlocked should return the char or EOF, got {rc}"
+    );
+}
+
+// ===========================================================================
+// freopen64
+// ===========================================================================
+
+#[test]
+fn freopen64_reopens_file() {
+    let p = temp_path("freopen64");
+    let pc = path_cstring(&p);
+
+    // Create a file with known content
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+    unsafe { fputs(c"original".as_ptr(), f) };
+    unsafe { fclose(f) };
+
+    // Open for writing, then reopen for reading
+    let f = unsafe { fopen(pc.as_ptr(), c"r".as_ptr()) };
+    assert!(!f.is_null());
+    let f2 = unsafe { freopen64(pc.as_ptr(), c"r".as_ptr(), f) };
+    if !f2.is_null() {
+        let mut buf = [0u8; 32];
+        let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, buf.len(), f2) };
+        // The file should have "original" (8 bytes)
+        assert!(n > 0, "freopen64 should allow reading, got {n} bytes");
+        unsafe { fclose(f2) };
+    } else {
+        // freopen64 returned null, original stream is closed by freopen semantics
+    }
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// __isoc99_sscanf / __isoc99_fscanf
+// ===========================================================================
+
+#[test]
+fn isoc99_sscanf_basic() {
+    let input = c"42 hello";
+    let mut val: c_int = 0;
+    let mut buf = [0u8; 32];
+    let n = unsafe {
+        __isoc99_sscanf(
+            input.as_ptr(),
+            c"%d %31s".as_ptr(),
+            &mut val as *mut c_int,
+            buf.as_mut_ptr(),
+        )
+    };
+    assert_eq!(n, 2);
+    assert_eq!(val, 42);
+    let s = unsafe { CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "hello");
+}
+
+#[test]
+fn isoc99_fscanf_from_file() {
+    let p = temp_path("isoc99_fscanf");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+    unsafe { fputs(c"99 bottles".as_ptr(), f) };
+    unsafe { fclose(f) };
+
+    let f = unsafe { fopen(pc.as_ptr(), c"r".as_ptr()) };
+    assert!(!f.is_null());
+    let mut val: c_int = 0;
+    let n = unsafe { __isoc99_fscanf(f, c"%d".as_ptr(), &mut val as *mut c_int) };
+    assert_eq!(n, 1);
+    assert_eq!(val, 99);
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// _IO_putc / _IO_getc
+// ===========================================================================
+
+#[test]
+fn io_putc_getc_roundtrip() {
+    let p = temp_path("io_putc_getc");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w+".as_ptr()) };
+    assert!(!f.is_null());
+
+    let rc = unsafe { _IO_putc(b'X' as c_int, f) };
+    assert_eq!(rc, b'X' as c_int);
+
+    unsafe { rewind(f) };
+
+    let ch = unsafe { _IO_getc(f) };
+    assert_eq!(ch, b'X' as c_int);
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// _IO_feof / _IO_ferror
+// ===========================================================================
+
+#[test]
+fn io_feof_at_end() {
+    let p = temp_path("io_feof");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w+".as_ptr()) };
+    assert!(!f.is_null());
+    unsafe { _IO_putc(b'A' as c_int, f) };
+    unsafe { rewind(f) };
+
+    assert_eq!(unsafe { _IO_feof(f) }, 0, "not at EOF yet");
+    unsafe { _IO_getc(f) }; // read the 'A'
+    unsafe { _IO_getc(f) }; // trigger EOF
+    assert_ne!(unsafe { _IO_feof(f) }, 0, "should be at EOF");
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+#[test]
+fn io_ferror_on_good_stream() {
+    let p = temp_path("io_ferror");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+    assert_eq!(unsafe { _IO_ferror(f) }, 0, "no error on fresh stream");
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// _IO_flockfile / _IO_funlockfile / _IO_ftrylockfile
+// ===========================================================================
+
+#[test]
+fn io_flockfile_funlockfile_basic() {
+    let p = temp_path("io_flock");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+
+    // Should not deadlock: lock then unlock
+    unsafe { _IO_flockfile(f) };
+    unsafe { _IO_funlockfile(f) };
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+#[test]
+fn io_ftrylockfile_succeeds_when_unlocked() {
+    let p = temp_path("io_ftrylock");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+
+    let rc = unsafe { _IO_ftrylockfile(f) };
+    assert_eq!(rc, 0, "ftrylockfile on unlocked stream should return 0");
+    unsafe { _IO_funlockfile(f) };
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// _IO_puts (writes to stdout like puts)
+// ===========================================================================
+
+#[test]
+fn io_puts_does_not_crash() {
+    // _IO_puts writes to stdout; just verify it doesn't crash
+    let rc = unsafe { _IO_puts(c"io_puts_ok".as_ptr()) };
+    assert!(
+        rc >= 0 || rc == libc::EOF,
+        "_IO_puts returned unexpected {rc}"
+    );
+}
+
+// ===========================================================================
+// _IO_padn (write padding characters)
+// ===========================================================================
+
+#[test]
+fn io_padn_writes_padding() {
+    let p = temp_path("io_padn");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+
+    let n = unsafe { _IO_padn(f, b' ' as c_int, 5) };
+    // Should write 5 space characters (or return error if not supported)
+    if n >= 0 {
+        assert_eq!(n, 5, "_IO_padn should write 5 bytes");
+    }
+
+    unsafe { fclose(f) };
+
+    if n >= 0 {
+        let content = fs::read_to_string(&p).unwrap();
+        assert_eq!(content, "     ", "should have 5 spaces");
+    }
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// _IO_sgetn (read n bytes from stream)
+// ===========================================================================
+
+#[test]
+fn io_sgetn_reads_bytes() {
+    let p = temp_path("io_sgetn");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w".as_ptr()) };
+    assert!(!f.is_null());
+    unsafe { fputs(c"abcdefgh".as_ptr(), f) };
+    unsafe { fclose(f) };
+
+    let f = unsafe { fopen(pc.as_ptr(), c"r".as_ptr()) };
+    assert!(!f.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { _IO_sgetn(f, buf.as_mut_ptr().cast(), 4) };
+    assert_eq!(n, 4, "_IO_sgetn should read 4 bytes");
+    assert_eq!(&buf[..4], b"abcd");
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+// ===========================================================================
+// _IO_seekoff / _IO_seekpos
+// ===========================================================================
+
+#[test]
+fn io_seekoff_resets_position() {
+    let p = temp_path("io_seekoff");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w+".as_ptr()) };
+    assert!(!f.is_null());
+    unsafe { fputs(c"seektest".as_ptr(), f) };
+
+    // Seek to beginning using _IO_seekoff (offset=0, whence=SEEK_SET=0)
+    let pos = unsafe { _IO_seekoff(f, 0, 0, 0) };
+    // pos should be 0 (beginning of file)
+    if pos >= 0 {
+        assert_eq!(pos, 0);
+        let ch = unsafe { fgetc(f) };
+        assert_eq!(ch, b's' as c_int);
+    }
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+#[test]
+fn io_seekpos_to_beginning() {
+    let p = temp_path("io_seekpos");
+    let pc = path_cstring(&p);
+
+    let f = unsafe { fopen(pc.as_ptr(), c"w+".as_ptr()) };
+    assert!(!f.is_null());
+    unsafe { fputs(c"postest".as_ptr(), f) };
+
+    let pos = unsafe { _IO_seekpos(f, 0, 0) };
+    if pos >= 0 {
+        assert_eq!(pos, 0);
+        let ch = unsafe { fgetc(f) };
+        assert_eq!(ch, b'p' as c_int);
+    }
+
+    unsafe { fclose(f) };
+    let _ = fs::remove_file(&p);
+}
+
+#[test]
+fn io_internal_fopen_fputs_fflush_fgets_fclose_round_trip() {
+    let path = temp_path("io_internal_fopen");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { _IO_fputs(c"alpha\nbeta\n".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0 as c_char; 16];
+    let out = unsafe { _IO_fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+    let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(rendered.to_bytes(), b"alpha\n");
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_fdopen_fwrite_and_fread_round_trip() {
+    let path = temp_path("io_internal_fdopen");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_TRUNC | libc::O_RDWR,
+            0o600,
+        )
+    };
+    assert!(fd >= 0);
+
+    let stream = unsafe { _IO_fdopen(fd, c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let payload = b"io-internal-data";
+    let wrote = unsafe { _IO_fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0u8; 16];
+    let read = unsafe { _IO_fread(buf.as_mut_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(read, payload.len());
+    assert_eq!(&buf[..payload.len()], payload);
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_fgetpos_variants_restore_position() {
+    let path = temp_path("io_internal_fpos");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { _IO_fputs(c"ABCDE".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as c_int);
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+    assert_eq!(unsafe { _IO_fgetpos(stream, pos.as_mut_ptr().cast()) }, 0);
+    let pos = unsafe { pos.assume_init() };
+    assert_eq!(unsafe { fgetc(stream) }, b'B' as c_int);
+    assert_eq!(
+        unsafe { _IO_fsetpos(stream, (&pos as *const libc::fpos_t).cast()) },
+        0
+    );
+    assert_eq!(unsafe { _IO_ftell(stream) }, 1);
+    assert_eq!(unsafe { fgetc(stream) }, b'B' as c_int);
+
+    let mut pos64 = 0_i64;
+    assert_eq!(
+        unsafe { _IO_fgetpos64(stream, (&mut pos64 as *mut i64).cast()) },
+        0
+    );
+    assert_eq!(unsafe { fgetc(stream) }, b'C' as c_int);
+    assert_eq!(
+        unsafe { _IO_fsetpos64(stream, (&pos64 as *const i64).cast()) },
+        0
+    );
+    assert_eq!(unsafe { _IO_ftell(stream) }, pos64);
+    assert_eq!(unsafe { fgetc(stream) }, b'C' as c_int);
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_fprintf_and_sprintf_use_native_formatting() {
+    let path = temp_path("io_internal_fprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let written = unsafe { _IO_fprintf(stream, c"v=%d:%s".as_ptr(), 7_i32, c"ok".as_ptr()) };
+    assert_eq!(written, 6);
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut file_buf = [0 as c_char; 16];
+    let out = unsafe { _IO_fgets(file_buf.as_mut_ptr(), file_buf.len() as c_int, stream) };
+    assert_eq!(out, file_buf.as_mut_ptr());
+    let file_rendered = unsafe { CStr::from_ptr(file_buf.as_ptr()) };
+    assert_eq!(file_rendered.to_bytes(), b"v=7:ok");
+
+    let mut mem_buf = [0 as c_char; 32];
+    let rendered = unsafe {
+        _IO_sprintf(
+            mem_buf.as_mut_ptr(),
+            c"%d-%s".as_ptr(),
+            42_i32,
+            c"wave".as_ptr(),
+        )
+    };
+    assert_eq!(rendered, 7);
+    let mem_rendered = unsafe { CStr::from_ptr(mem_buf.as_ptr()) };
+    assert_eq!(mem_rendered.to_bytes(), b"42-wave");
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+/// Runs in the isolated child; see
+/// [`process_global_stdio_arms_run_in_an_isolated_child`].
+fn io_internal_printf_and_sscanf_use_native_stdio_paths() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        // A panic in ANY holder poisons this lock, and `.expect()` here turned
+        // that into a failure of whichever test asked for it next — three reds
+        // for one defect, two of them naming innocent tests (bd-ug42ol). The
+        // failure is already reported by the test that caused it; taking the
+        // data anyway keeps this one honest.
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let path = temp_path("io_internal_printf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let out_fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
+            0o600,
+        )
+    };
+    assert!(out_fd >= 0);
+
+    // Same treatment as `printf_writes_to_redirected_stdout` above, and for the
+    // same reason: `assert_eq!(written, 5)` runs inside the window (bd-ug42ol).
+    let written = {
+        // SAFETY: duplicates the live stdout; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(libc::STDOUT_FILENO) };
+        assert_eq!(
+            unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
+            libc::STDOUT_FILENO
+        );
+
+        let written = unsafe { _IO_printf(c"io-%d\n".as_ptr(), 9_i32) };
+        assert_eq!(written, 5);
+        // Fully buffered on a file, as in glibc: flush before restoring fd 1.
+        assert_eq!(unsafe { fflush(std::ptr::null_mut()) }, 0);
+        written
+    };
+
+    // SAFETY: our copy of the output descriptor, closed once stdout is restored.
+    unsafe { libc::close(out_fd) };
+
+    let bytes = fs::read(&path).expect("redirected _IO_printf output file should exist");
+    assert_counted_stdout_capture("_IO_printf", written, &bytes, b"io-9\n");
+
+    let input = c"11 parsed";
+    let mut value = 0_i32;
+    let mut word = [0 as c_char; 16];
+    let parsed = unsafe {
+        _IO_sscanf(
+            input.as_ptr(),
+            c"%d %15s".as_ptr(),
+            &mut value,
+            word.as_mut_ptr(),
+        )
+    };
+    assert_eq!(parsed, 2);
+    assert_eq!(value, 11);
+    let parsed_word = unsafe { CStr::from_ptr(word.as_ptr()) };
+    assert_eq!(parsed_word.to_bytes(), b"parsed");
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn io_internal_flush_all_uses_native_fflush_null_semantics() {
+    let path = temp_path("io_internal_flush_all");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { _IO_fputs(c"pending-flush".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { _IO_flush_all() }, 0);
+
+    let bytes = fs::read(&path).expect("flush_all should materialize buffered data on disk");
+    assert_eq!(bytes, b"pending-flush");
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_setvbuf_setbuffer_and_ungetc_use_native_stdio_paths() {
+    let path = temp_path("io_internal_setvbuf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(
+        unsafe { _IO_setvbuf(stream, std::ptr::null_mut(), IONBF, 0) },
+        0
+    );
+    assert_eq!(unsafe { _IO_fputs(c"AB".as_ptr(), stream) }, 0);
+
+    let mut user_buf = [0 as c_char; 32];
+    unsafe { _IO_setbuffer(stream, user_buf.as_mut_ptr(), user_buf.len()) };
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as c_int);
+    assert_eq!(unsafe { _IO_ungetc(b'Z' as c_int, stream) }, b'Z' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'Z' as c_int);
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_file_ops_use_native_stdio_paths() {
+    let path = temp_path("io_internal_file_ops");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let payload = b"native-file-ops";
+    let wrote = unsafe { _IO_file_write(stream, payload.as_ptr().cast::<c_void>(), 6) };
+    assert_eq!(wrote, 6);
+    let wrote_rest = unsafe { _IO_file_xsputn(stream, payload[6..].as_ptr().cast::<c_void>(), 9) };
+    assert_eq!(wrote_rest, payload.len() - 6);
+
+    let mut user_buf = [0 as c_char; 64];
+    assert_eq!(
+        unsafe { _IO_file_setbuf(stream, user_buf.as_mut_ptr(), user_buf.len() as isize) },
+        stream
+    );
+    assert_eq!(unsafe { _IO_file_sync(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 32];
+    let read = unsafe {
+        _IO_file_read(
+            stream,
+            out.as_mut_ptr().cast::<c_void>(),
+            payload.len() as isize,
+        )
+    };
+    assert_eq!(read, payload.len() as isize);
+    assert_eq!(&out[..payload.len()], payload);
+
+    assert_eq!(unsafe { _IO_file_close(stream) }, 0);
+    assert_eq!(fs::read(&path).expect("file should flush to disk"), payload);
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn io_internal_file_close_it_closes_stream_natively() {
+    let path = temp_path("io_internal_file_close_it");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { _IO_fputs(c"close-it".as_ptr(), stream) }, 0);
+
+    assert_eq!(unsafe { _IO_file_close_it(stream) }, 0);
+    assert_eq!(
+        fs::read(&path).expect("close_it should flush data"),
+        b"close-it"
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_file_seek_stat_and_buffer_edges_use_native_stdio_paths() {
+    let path = temp_path("io_internal_file_seek_stat");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(
+        unsafe { _IO_file_overflow(stream, b'A' as c_int) },
+        b'A' as c_int
+    );
+    assert_eq!(
+        unsafe { _IO_file_overflow(stream, b'B' as c_int) },
+        b'B' as c_int
+    );
+    assert_eq!(unsafe { _IO_file_overflow(stream, libc::EOF) }, 0);
+
+    assert_eq!(unsafe { _IO_file_seek(stream, 1, libc::SEEK_SET) }, 1);
+    assert_eq!(unsafe { _IO_file_underflow(stream) }, b'B' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'B' as c_int);
+
+    assert_eq!(unsafe { _IO_file_seekoff(stream, 0, libc::SEEK_END, 0) }, 2);
+
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    assert_eq!(
+        unsafe { _IO_file_stat(stream, stat_buf.as_mut_ptr().cast::<c_void>()) },
+        0
+    );
+    let stat_buf = unsafe { stat_buf.assume_init() };
+    assert_eq!(stat_buf.st_size, 2);
+
+    assert_eq!(unsafe { _IO_file_close(stream) }, 0);
+    assert_eq!(
+        fs::read(&path).expect("overflow writes should flush to disk"),
+        b"AB"
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_vfprintf_and_vsprintf_use_native_stdio_paths() {
+    let path = temp_path("io_internal_vfprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let written =
+        unsafe { call_io_vfprintf(stream, c"%s=%d".as_ptr(), c"native".as_ptr(), 21_i32) };
+    assert_eq!(written, 9);
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut file_buf = [0 as c_char; 32];
+    let out = unsafe { _IO_fgets(file_buf.as_mut_ptr(), file_buf.len() as c_int, stream) };
+    assert_eq!(out, file_buf.as_mut_ptr());
+    let file_rendered = unsafe { CStr::from_ptr(file_buf.as_ptr()) };
+    assert_eq!(file_rendered.to_bytes(), b"native=21");
+
+    let mut mem_buf = [0 as c_char; 32];
+    let rendered = unsafe {
+        call_io_vsprintf(
+            mem_buf.as_mut_ptr(),
+            c"%d:%s".as_ptr(),
+            5_i32,
+            c"ok".as_ptr(),
+        )
+    };
+    assert_eq!(rendered, 4);
+    let mem_rendered = unsafe { CStr::from_ptr(mem_buf.as_ptr()) };
+    assert_eq!(mem_rendered.to_bytes(), b"5:ok");
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+// ===========================================================================
+// bd-9chy.47: Comprehensive fopen/fdopen test suite
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Mode parsing tests (1-10)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_r_opens_readonly() {
+    let path = temp_path("fopen_mode_r");
+    fs::write(&path, b"content").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(
+        !stream.is_null(),
+        "fopen(r) should succeed for existing file"
+    );
+
+    // Verify readable
+    let mut buf = [0u8; 8];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 7, stream) };
+    assert_eq!(n, 7);
+    assert_eq!(&buf[..7], b"content");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_w_creates_and_truncates() {
+    let path = temp_path("fopen_mode_w");
+    fs::write(&path, b"old content").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(w) should succeed");
+
+    // Write new content
+    let written = unsafe { fputs(c"new".as_ptr(), stream) };
+    assert!(written >= 0);
+    unsafe { fclose(stream) };
+
+    // Verify truncation and new content
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"new");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_a_appends() {
+    let path = temp_path("fopen_mode_a");
+    fs::write(&path, b"start").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"a".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(a) should succeed");
+
+    let written = unsafe { fputs(c"_end".as_ptr(), stream) };
+    assert!(written >= 0);
+    unsafe { fclose(stream) };
+
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"start_end");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_rplus_opens_readwrite() {
+    let path = temp_path("fopen_mode_rplus");
+    fs::write(&path, b"ABCDE").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r+".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(r+) should succeed");
+
+    // Read first
+    let ch = unsafe { fgetc(stream) };
+    assert_eq!(ch, b'A' as c_int);
+
+    // Write at position 1
+    let written = unsafe { fputc(b'X' as c_int, stream) };
+    assert_eq!(written, b'X' as c_int);
+    unsafe { fclose(stream) };
+
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"AXCDE");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_wplus_truncates_and_readwrite() {
+    let path = temp_path("fopen_mode_wplus");
+    fs::write(&path, b"old").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(w+) should succeed");
+
+    // Write
+    let written = unsafe { fputs(c"new".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    // Seek back and read
+    unsafe { rewind(stream) };
+    let mut buf = [0u8; 4];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 3, stream) };
+    assert_eq!(n, 3);
+    assert_eq!(&buf[..3], b"new");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_aplus_appends_and_reads() {
+    let path = temp_path("fopen_mode_aplus");
+    fs::write(&path, b"base").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"a+".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(a+) should succeed");
+
+    // Append
+    let written = unsafe { fputs(c"+ext".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    // Seek to start and read
+    unsafe { rewind(stream) };
+    let mut buf = [0u8; 16];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 16, stream) };
+    assert_eq!(n, 8);
+    assert_eq!(&buf[..8], b"base+ext");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_b_binary_is_noop() {
+    let path = temp_path("fopen_mode_b");
+    fs::write(&path, b"\n\r\n").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"rb".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(rb) should succeed");
+
+    let mut buf = [0u8; 4];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 3, stream) };
+    assert_eq!(n, 3);
+    // Binary mode preserves bytes exactly on Linux
+    assert_eq!(&buf[..3], b"\n\r\n");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_x_exclusive_fails_if_exists() {
+    let path = temp_path("fopen_mode_x");
+    fs::write(&path, b"exists").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"wx".as_ptr()) };
+    assert!(stream.is_null(), "fopen(wx) should fail for existing file");
+
+    // Should set errno to EEXIST
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EEXIST);
+
+    // Create non-existing path
+    let path2 = temp_path("fopen_mode_x_new");
+    let _ = fs::remove_file(&path2);
+    let path2_c = path_cstring(&path2);
+
+    let stream2 = unsafe { fopen(path2_c.as_ptr(), c"wx".as_ptr()) };
+    assert!(!stream2.is_null(), "fopen(wx) should succeed for new file");
+    unsafe { fclose(stream2) };
+
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_file(path2);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_mode_e_cloexec_sets_flag() {
+    let path = temp_path("fopen_mode_e");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"we".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(we) should succeed");
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    // Check FD_CLOEXEC flag
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    assert!(flags >= 0);
+    assert_ne!(flags & libc::FD_CLOEXEC, 0, "CLOEXEC should be set");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_bad_modes_return_null_with_einval() {
+    let path = temp_path("fopen_bad_modes");
+    fs::write(&path, b"test").unwrap();
+    let path_c = path_cstring(&path);
+
+    // Invalid mode strings: empty or a bad first character. ("rw" and "ar"
+    // were listed here, but glibc opens both -- unknown modifier characters
+    // are ignored -- so they are not invalid.)
+    let bad_modes = [c"".as_ptr(), c"z".as_ptr(), c"tr".as_ptr(), c"+r".as_ptr()];
+
+    for mode in &bad_modes {
+        unsafe { *libc::__errno_location() = 0 };
+        let stream = unsafe { fopen(path_c.as_ptr(), *mode) };
+        assert!(stream.is_null(), "fopen with bad mode should return NULL");
+        let err = unsafe { *libc::__errno_location() };
+        assert_eq!(err, libc::EINVAL, "bad mode should set EINVAL");
+    }
+
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// errno preservation tests (18-19)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_failed_sets_errno() {
+    let path = temp_path("fopen_nonexistent_asdfqwer");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(stream.is_null());
+
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::ENOENT, "nonexistent file should set ENOENT");
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_success_does_not_touch_errno() {
+    let path = temp_path("fopen_errno_preserve");
+    fs::write(&path, b"test").unwrap();
+    let path_c = path_cstring(&path);
+
+    // Set errno to a known value
+    unsafe { *libc::__errno_location() = libc::EBUSY };
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // errno should be unchanged
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBUSY, "successful fopen should not touch errno");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// fd lifecycle tests (20-22)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_returns_fresh_fd() {
+    let path = temp_path("fopen_fresh_fd");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    // FD should be >= 3 (0, 1, 2 are stdin/stdout/stderr)
+    assert!(fd >= 3, "fopen should return fresh fd >= 3, got {fd}");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fclose_closes_fd() {
+    // The closed fd number can be reused at once by any parallel test that
+    // opens a file (1 run in 150, 2026-10-06): see run_alone_in_child.
+    if run_alone_in_child("fclose_closes_fd") {
+        return;
+    }
+    let path = temp_path("fclose_closes_fd");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    unsafe { fclose(stream) };
+
+    // fd should now be invalid
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let rc = unsafe { libc::fstat(fd, stat_buf.as_mut_ptr()) };
+    assert_eq!(rc, -1, "fstat on closed fd should fail");
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBADF, "closed fd should report EBADF");
+
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// fdopen tests (23-25)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fdopen_wraps_valid_fd() {
+    let path = temp_path("fdopen_valid");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600) };
+    assert!(fd >= 0);
+
+    let stream = unsafe { fdopen(fd, c"w+".as_ptr()) };
+    assert!(!stream.is_null(), "fdopen should wrap valid fd");
+
+    let written = unsafe { fputs(c"fdopen-test".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    unsafe { fclose(stream) };
+    // Note: fclose also closes the underlying fd
+
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"fdopen-test");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fdopen_invalid_fd_returns_null() {
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fdopen(-1, c"r".as_ptr()) };
+    assert!(stream.is_null(), "fdopen(-1) should fail");
+
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBADF, "fdopen(-1) should set EBADF");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fdopen_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'w' as c_char };
+
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fdopen(0, mode.cast_const()) };
+    let err = unsafe { *libc::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(stream.is_null(), "fdopen should reject unterminated mode");
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
+#[test]
+fn fdopen_mode_mismatch_fails() {
+    let path = temp_path("fdopen_mismatch");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // Open as read-only
+    fs::write(&path, b"test").unwrap();
+    let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0);
+
+    // Try to fdopen as write
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fdopen(fd, c"w".as_ptr()) };
+
+    // Note: POSIX allows this to succeed or fail; if it fails, EINVAL expected
+    if stream.is_null() {
+        // `fdopen` above is FrankenLibC's direct ABI entry point, so observe
+        // the errno slot exported by that same implementation.  Reading the
+        // host crate's separately linked `__errno_location` makes this arm
+        // depend on unrelated parallel host-libc activity instead.
+        let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert_eq!(err, libc::EINVAL, "mode mismatch should set EINVAL");
+    } else {
+        // If it succeeded (some systems allow this), clean up
+        unsafe { fclose(stream) };
+    }
+
+    unsafe { libc::close(fd) };
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// Path handling tests (11-14)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_long_path_accepted() {
+    // Create a long path using nested directories
+    let base = temp_path("fopen_long");
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+
+    // Create a file with a reasonably long name (not PATH_MAX but still long)
+    let long_name = "a".repeat(200);
+    let path = base.join(&long_name);
+    fs::write(&path, b"content").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "fopen should accept long path");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_path_with_spaces_accepted() {
+    let path = temp_path("fopen with spaces in name");
+    let _ = fs::remove_file(&path);
+    fs::write(&path, b"spaced").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "fopen should accept path with spaces");
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 6, stream) };
+    assert_eq!(n, 6);
+    assert_eq!(&buf[..6], b"spaced");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// isatty buffering tests (15-17)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_regular_file_uses_full_buffering() {
+    let path = temp_path("fopen_fullbuf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // Write some data - with full buffering it should be buffered
+    let written = unsafe { fputs(c"buffered".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    // Before flush, file might be empty due to buffering
+    // This is implementation-specific but demonstrates buffering is active
+
+    unsafe { fclose(stream) };
+
+    // After close, data should be there
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"buffered");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+#[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
+fn fopen_dev_null_succeeds() {
+    let stream = unsafe { fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(/dev/null) should succeed");
+
+    // Write to /dev/null should succeed
+    let written = unsafe { fputs(c"discarded".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    unsafe { fclose(stream) };
+}
+
+// ---------------------------------------------------------------------------
+// Path handling edge cases (13-14)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_path_with_embedded_null_truncates() {
+    // A path with an embedded null byte will be truncated at the first null by
+    // C string handling. "/tmp\0bogus" becomes just "/tmp".
+    // Build this manually since c-string literals don't allow embedded nulls.
+    let path_bytes: &[u8] = b"/tmp\0bogus\0";
+
+    // Opening "/tmp" (directory) for writing should fail with EISDIR.
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fopen(path_bytes.as_ptr() as *const c_char, c"w".as_ptr()) };
+
+    // fopen on a directory should fail.
+    if stream.is_null() {
+        let err = unsafe { *libc::__errno_location() };
+        assert!(
+            err == libc::EISDIR || err == libc::EACCES || err == libc::ENOENT,
+            "Opening directory for write should fail, got errno {err}"
+        );
+    } else {
+        // If somehow succeeded (unlikely), clean up.
+        unsafe { fclose(stream) };
+    }
+}
+
+#[test]
+fn fopen_null_path_fails() {
+    // NULL path should fail with EINVAL (our implementation) or EFAULT.
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fopen(std::ptr::null(), c"r".as_ptr()) };
+    assert!(stream.is_null(), "fopen(NULL, ...) should fail");
+    let err = unsafe { *libc::__errno_location() };
+    assert!(
+        err == libc::EINVAL || err == libc::EFAULT,
+        "NULL path should set EINVAL or EFAULT, got {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Double-close detection (22)
+// ---------------------------------------------------------------------------
+//
+// Note: Double-close testing is skipped in this test file because the test
+// environment triggers glibc's vtable validation when using NativeFile.
+// Double-close detection is tested via the LD_PRELOAD integration tests.
+
+// ---------------------------------------------------------------------------
+// fgetln (BSD: read a logical line into a thread-local buffer)
+// ---------------------------------------------------------------------------
+
+fn temp_text_file(content: &[u8]) -> std::path::PathBuf {
+    let seq = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-fgetln-{}-{seq}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+fn open_for_read(path: &std::path::Path) -> *mut c_void {
+    let cstr = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mode = c"r";
+    let fp = unsafe { fopen(cstr.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null(), "fopen({:?}) failed", path);
+    fp
+}
+
+#[test]
+fn fgetln_reads_line_with_newline() {
+    let path = temp_text_file(b"hello\nworld\n");
+    let fp = open_for_read(&path);
+    let mut len: usize = 0;
+    let p = unsafe { fgetln(fp, &mut len) };
+    assert!(!p.is_null());
+    assert_eq!(len, 6, "expected 'hello\\n' = 6 bytes");
+    let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len) };
+    assert_eq!(bytes, b"hello\n");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_reads_two_consecutive_lines() {
+    let path = temp_text_file(b"alpha\nbeta\n");
+    let fp = open_for_read(&path);
+
+    let mut len: usize = 0;
+    let p1 = unsafe { fgetln(fp, &mut len) };
+    let bytes1 = unsafe { std::slice::from_raw_parts(p1 as *const u8, len).to_vec() };
+    assert_eq!(bytes1, b"alpha\n");
+
+    let p2 = unsafe { fgetln(fp, &mut len) };
+    assert!(!p2.is_null());
+    let bytes2 = unsafe { std::slice::from_raw_parts(p2 as *const u8, len) };
+    assert_eq!(bytes2, b"beta\n");
+
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_returns_last_line_without_trailing_newline() {
+    let path = temp_text_file(b"first\nlast-no-nl");
+    let fp = open_for_read(&path);
+
+    let mut len: usize = 0;
+    let _ = unsafe { fgetln(fp, &mut len) };
+    let p2 = unsafe { fgetln(fp, &mut len) };
+    assert!(
+        !p2.is_null(),
+        "last line without \\n should still return non-NULL"
+    );
+    let bytes = unsafe { std::slice::from_raw_parts(p2 as *const u8, len) };
+    assert_eq!(bytes, b"last-no-nl");
+
+    // Subsequent call returns NULL on EOF.
+    let p3 = unsafe { fgetln(fp, &mut len) };
+    assert!(p3.is_null());
+    assert_eq!(len, 0, "len must be zeroed on EOF");
+
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_eof_immediately_returns_null() {
+    let path = temp_text_file(b"");
+    let fp = open_for_read(&path);
+    let mut len: usize = 99;
+    let p = unsafe { fgetln(fp, &mut len) };
+    assert!(p.is_null());
+    assert_eq!(len, 0, "len must be zeroed on EOF");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_null_stream_returns_null() {
+    let mut len: usize = 99;
+    let p = unsafe { fgetln(std::ptr::null_mut(), &mut len) };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+}
+
+#[test]
+fn fgetln_null_len_pointer_is_safe() {
+    let path = temp_text_file(b"x\n");
+    let fp = open_for_read(&path);
+    let p = unsafe { fgetln(fp, std::ptr::null_mut()) };
+    assert!(!p.is_null());
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// fpurge (BSD wrapper around our existing __fpurge)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fpurge_returns_zero_on_valid_stream() {
+    let path = temp_text_file(b"data");
+    let fp = open_for_read(&path);
+    let rc = unsafe { fpurge(fp) };
+    assert_eq!(rc, 0);
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fpurge_returns_minus_one_for_null_stream() {
+    let rc = unsafe { fpurge(std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+}
+
+// ---------------------------------------------------------------------------
+// fparseln (NetBSD libutil logical-line reader)
+// ---------------------------------------------------------------------------
+
+fn fparseln_temp_file(content: &[u8]) -> std::path::PathBuf {
+    let seq = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-fparseln-{}-{seq}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+fn fparseln_open_for_read(path: &std::path::Path) -> *mut c_void {
+    let cstr = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mode = c"r";
+    let fp = unsafe { fopen(cstr.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+    fp
+}
+
+fn fparseln_collect_string(p: *mut c_char, len: usize) -> Vec<u8> {
+    assert!(!p.is_null());
+    let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len).to_vec() };
+    // SAFETY: fparseln returns an allocation from FrankenLibC's malloc ABI.
+    unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) };
+    bytes
+}
+
+#[test]
+fn fparseln_plain_line_no_decoration() {
+    let path = fparseln_temp_file(b"hello\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    let mut lineno: usize = 0;
+    let p = unsafe { fparseln(fp, &mut len, &mut lineno, std::ptr::null(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"hello");
+    assert_eq!(lineno, 1);
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_strips_comment() {
+    let path = fparseln_temp_file(b"foo # bar\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), std::ptr::null(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"foo ");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_joins_continuation_lines() {
+    let path = fparseln_temp_file(b"foo \\\nbar\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    let mut lineno: usize = 5;
+    let p = unsafe { fparseln(fp, &mut len, &mut lineno, std::ptr::null(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"foo bar");
+    assert_eq!(lineno, 7, "lineno must increment by 2 physical lines");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_returns_null_on_eof() {
+    let path = fparseln_temp_file(b"");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 99;
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), std::ptr::null(), 0) };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_unesc_all_returns_raw_line() {
+    let path = fparseln_temp_file(b"foo # bar \\\nbaz\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    // FPARSELN_UNESCALL = 0x0f
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), std::ptr::null(), 0x0f) };
+    let s = fparseln_collect_string(p, len);
+    // No comment strip, no continuation, no escape processing.
+    assert_eq!(s, b"foo # bar \\");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_custom_delimiters() {
+    // delim = ['$', ';', '%']: escape='$', sep=';', comment='%'.
+    let path = fparseln_temp_file(b"foo$;bar;baz%comment;");
+    let fp = fparseln_open_for_read(&path);
+    let delim = [b'$' as c_char, b';' as c_char, b'%' as c_char];
+    let mut len: usize = 0;
+    // First call: "foo$;bar" — $; is continuation; assembles as
+    // "foo" + "bar" = "foobar".
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), delim.as_ptr(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"foobar");
+
+    // Second call: "baz%comment" — % strips the comment, returns
+    // "baz". The trailing ';' (separator) is consumed.
+    let mut len2: usize = 0;
+    let p2 = unsafe { fparseln(fp, &mut len2, std::ptr::null_mut(), delim.as_ptr(), 0) };
+    let s2 = fparseln_collect_string(p2, len2);
+    assert_eq!(s2, b"baz");
+
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_null_stream_returns_null() {
+    let mut len: usize = 99;
+    let p = unsafe {
+        fparseln(
+            std::ptr::null_mut(),
+            &mut len,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+}
+
+#[test]
+fn fparseln_null_len_pointer_safe() {
+    let path = fparseln_temp_file(b"x\n");
+    let fp = fparseln_open_for_read(&path);
+    let p = unsafe {
+        fparseln(
+            fp,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert!(!p.is_null());
+    // SAFETY: fparseln returns an allocation from FrankenLibC's malloc ABI.
+    unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) };
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// strvis / strnvis / strunvis / strnunvis (NetBSD vis(3) family)
+// ---------------------------------------------------------------------------
+
+fn vis_buf<const N: usize>() -> [c_char; N] {
+    [0; N]
+}
+
+fn vis_string(buf: &[c_char], n: c_int) -> Vec<u8> {
+    buf[..n as usize].iter().map(|&c| c as u8).collect()
+}
+
+const ABI_VIS_OCTAL: c_int = 0x01;
+const ABI_VIS_CSTYLE: c_int = 0x02;
+const ABI_VIS_SP: c_int = 0x04;
+const ABI_VIS_TAB: c_int = 0x08;
+const ABI_VIS_NL: c_int = 0x10;
+const ABI_VIS_SAFE: c_int = 0x20;
+const ABI_VIS_NOSLASH: c_int = 0x40;
+const ABI_VIS_HTTPSTYLE: c_int = 0x80;
+const ABI_VIS_HTTP1808: c_int = ABI_VIS_HTTPSTYLE;
+const ABI_VIS_MIMESTYLE: c_int = 0x100;
+const ABI_VIS_WHITE: c_int = ABI_VIS_SP | ABI_VIS_TAB | ABI_VIS_NL;
+const ABI_VIS_GLOB: c_int = 0x1000;
+const ABI_VIS_SHELL: c_int = 0x2000;
+const ABI_VIS_META: c_int = ABI_VIS_WHITE | ABI_VIS_GLOB | ABI_VIS_SHELL;
+const ABI_VIS_DQ: c_int = 0x8000;
+
+unsafe fn tracked_bytes_without_nul(bytes: &[u8]) -> *mut c_char {
+    let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<c_char>() };
+    assert!(!ptr.is_null());
+    let usable = unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(ptr.cast()) };
+    unsafe { std::ptr::write_bytes(ptr.cast::<u8>(), 0x7f, usable.max(bytes.len())) };
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len()) };
+    ptr
+}
+
+#[test]
+fn strvis_encodes_printable_unchanged() {
+    let src = c"hello";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(n, 5);
+    assert_eq!(vis_string(&buf, n), b"hello");
+}
+
+#[test]
+fn strvis_doubles_backslash() {
+    let src = c"a\\b";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(vis_string(&buf, n), b"a\\\\b");
+}
+
+#[test]
+fn strvis_keeps_safe_whitespace_by_default() {
+    let src = c"a\t\nb";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(vis_string(&buf, n), b"a\t\nb");
+}
+
+#[test]
+fn strvis_whitespace_flags_force_default_escapes() {
+    let src = c" \t\n";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), ABI_VIS_WHITE) };
+    assert_eq!(vis_string(&buf, n), b"\\040\\^I\\^J");
+}
+
+#[test]
+fn strvis_range_flags_force_documented_printable_sets() {
+    let src = c"\"*?[#'`$";
+    let mut buf = vis_buf::<96>();
+    let n = unsafe {
+        strvis(
+            buf.as_mut_ptr(),
+            src.as_ptr(),
+            ABI_VIS_DQ | ABI_VIS_GLOB | ABI_VIS_SHELL,
+        )
+    };
+    assert_eq!(
+        vis_string(&buf, n),
+        b"\\042\\052\\077\\133\\043\\047\\140\\044"
+    );
+}
+
+#[test]
+fn strvis_safe_leaves_documented_control_bytes_unescaped() {
+    let payload: &[u8] = b"\x07\x08\r\x01";
+    let mut buf = [0 as c_char; 32];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_SAFE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"\x07\x08\r\\^A");
+}
+
+#[test]
+fn strvis_noslash_suppresses_default_escape_prefix() {
+    let payload: &[u8] = b"\\\x01\x7f";
+    let mut buf = [0 as c_char; 32];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_NOSLASH,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"\\^A^?");
+}
+
+#[test]
+fn strvis_noslash_does_not_change_octal_or_cstyle_forms() {
+    let mut oct = [0 as c_char; 16];
+    let oct_n = unsafe {
+        strvis(
+            oct.as_mut_ptr(),
+            c"\x01".as_ptr(),
+            ABI_VIS_NOSLASH | ABI_VIS_OCTAL,
+        )
+    };
+    assert_eq!(vis_string(&oct, oct_n), b"\\001");
+
+    let mut cstyle = [0 as c_char; 16];
+    let cstyle_n = unsafe {
+        strvis(
+            cstyle.as_mut_ptr(),
+            c"\n".as_ptr(),
+            ABI_VIS_NOSLASH | ABI_VIS_CSTYLE | ABI_VIS_NL,
+        )
+    };
+    assert_eq!(vis_string(&cstyle, cstyle_n), b"\\n");
+}
+
+#[test]
+fn strvis_httpstyle_uses_percent_lower_hex() {
+    let payload: &[u8] = b"AZaz09$-_.+!*'(), /\\\x01\x7f\xff";
+    let mut buf = [0 as c_char; 96];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_HTTPSTYLE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"AZaz09$-_.+!*'(),%20%2f%5c%01%7f%ff");
+    assert_eq!(ABI_VIS_HTTP1808, ABI_VIS_HTTPSTYLE);
+}
+
+#[test]
+fn strvis_mimestyle_uses_quoted_printable_upper_hex() {
+    let payload: &[u8] = b"#=@[\\]^`{|}~\x01\x7f\xff";
+    let mut buf = [0 as c_char; 96];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_MIMESTYLE,
+        )
+    };
+    assert_eq!(
+        vis_string(&buf, n),
+        b"=23=3D=40=5B=5C=5D=5E=60=7B=7C=7D=7E=01=7F=FF"
+    );
+}
+
+#[test]
+fn strvis_mimestyle_encodes_trailing_whitespace_only() {
+    let payload: &[u8] = b" \t\r\n";
+    let mut buf = [0 as c_char; 32];
+    let n = unsafe {
+        strvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            ABI_VIS_MIMESTYLE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b" =09=0D\n");
+}
+
+#[test]
+fn strvis_cstyle_whitespace_uses_named_escapes() {
+    let src = c" \t\n";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe {
+        strvis(
+            buf.as_mut_ptr(),
+            src.as_ptr(),
+            ABI_VIS_CSTYLE | ABI_VIS_WHITE,
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"\\s\\t\\n");
+}
+
+#[test]
+fn strvis_with_octal_flag_renders_three_digit_octal() {
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strnvis(buf.as_mut_ptr(), buf.len(), c"\xff".as_ptr(), ABI_VIS_OCTAL) };
+    assert_eq!(vis_string(&buf, n), b"\\377");
+}
+
+#[test]
+fn strnvis_truncates_and_returns_minus_one() {
+    let src = c"\x01\x02";
+    let mut buf = vis_buf::<4>(); // can fit at most 3 chars + NUL
+    let n = unsafe { strnvis(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
+    assert_eq!(n, -1, "must signal overflow");
+    assert_eq!(buf[buf.len() - 1], 0);
+}
+
+#[test]
+fn strnvis_fits_exactly() {
+    let src = c"ab";
+    let mut buf = vis_buf::<3>();
+    let n = unsafe { strnvis(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
+    assert_eq!(n, 2);
+    assert_eq!(vis_string(&buf, n), b"ab");
+}
+
+#[test]
+fn strunvis_decodes_caret_escape() {
+    let src = c"\\^A\\^B";
+    let mut buf = vis_buf::<8>();
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.as_ptr()) };
+    assert_eq!(n, 2);
+    assert_eq!(vis_string(&buf, n), b"\x01\x02");
+}
+
+#[test]
+fn strunvis_decodes_octal_triple() {
+    let src = c"\\377\\000A";
+    let mut buf = vis_buf::<8>();
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.as_ptr()) };
+    // The middle "\\000" decodes to a literal NUL byte; vis_string
+    // collects the raw decoded bytes regardless of NUL.
+    assert_eq!(n, 3);
+    let bytes = vis_string(&buf, n);
+    assert_eq!(bytes, vec![0xff, 0x00, b'A']);
+}
+
+#[test]
+fn strunvis_returns_minus_one_on_malformed_input() {
+    let src = c"abc\\";
+    let mut buf = vis_buf::<8>();
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.as_ptr()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strnunvis_returns_minus_one_when_decoded_too_big() {
+    let src = c"\\^A\\^B\\^C\\^D";
+    let mut buf = vis_buf::<3>(); // can fit 2 decoded + NUL
+    let n = unsafe { strnunvis(buf.as_mut_ptr(), buf.len(), src.as_ptr()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn vis_round_trip_via_abi() {
+    let payload = c"hello \\ world\x01\x02\x03";
+    let mut enc_buf = vis_buf::<128>();
+    let enc_n = unsafe { strvis(enc_buf.as_mut_ptr(), payload.as_ptr(), 0) };
+    assert!(enc_n > 0);
+    let mut dec_buf = vis_buf::<64>();
+    let dec_n = unsafe { strunvis(dec_buf.as_mut_ptr(), enc_buf.as_ptr()) };
+    assert_eq!(dec_n, payload.to_bytes().len() as c_int);
+    assert_eq!(vis_string(&dec_buf, dec_n), payload.to_bytes());
+}
+
+#[test]
+fn strvis_null_args_return_minus_one() {
+    let src = c"x";
+    let mut buf = vis_buf::<8>();
+    assert_eq!(unsafe { strvis(std::ptr::null_mut(), src.as_ptr(), 0) }, -1);
+    assert_eq!(unsafe { strvis(buf.as_mut_ptr(), std::ptr::null(), 0) }, -1);
+}
+
+#[test]
+fn strunvis_null_args_return_minus_one() {
+    let src = c"x";
+    let mut buf = vis_buf::<8>();
+    assert_eq!(unsafe { strunvis(std::ptr::null_mut(), src.as_ptr()) }, -1);
+    assert_eq!(unsafe { strunvis(buf.as_mut_ptr(), std::ptr::null()) }, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strvis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"abc") };
+    let mut buf = vis_buf::<16>();
+
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.cast_const(), 0) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strunvis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"\\^A") };
+    let mut buf = vis_buf::<16>();
+
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strsvis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"a#b") };
+    let extra = c"#";
+    let mut buf = vis_buf::<16>();
+
+    let n = unsafe { strsvis(buf.as_mut_ptr(), src.cast_const(), 0, extra.as_ptr()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// vis / nvis (NetBSD vis(3) single-byte encoders)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vis_encodes_printable_byte() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), b'A' as c_int, 0, 0) };
+    assert!(!end.is_null());
+    let written = unsafe { end.offset_from(buf.as_ptr()) };
+    assert_eq!(written, 1);
+    assert_eq!(buf[0], b'A' as c_char);
+    assert_eq!(buf[1], 0);
+}
+
+#[test]
+fn vis_encodes_control_as_caret_escape() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0x01, 0, 0) };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\^A");
+}
+
+#[test]
+fn vis_keeps_tab_and_newline_by_default() {
+    let mut tab = [0 as c_char; 8];
+    let tab_end = unsafe { vis(tab.as_mut_ptr(), b'\t' as c_int, 0, 0) };
+    assert_eq!(unsafe { tab_end.offset_from(tab.as_ptr()) }, 1);
+    assert_eq!(tab[0], b'\t' as c_char);
+
+    let mut newline = [0 as c_char; 8];
+    let nl_end = unsafe { vis(newline.as_mut_ptr(), b'\n' as c_int, 0, 0) };
+    assert_eq!(unsafe { nl_end.offset_from(newline.as_ptr()) }, 1);
+    assert_eq!(newline[0], b'\n' as c_char);
+}
+
+#[test]
+fn vis_cstyle_uses_nextc_to_disambiguate_nul() {
+    let mut short = [0 as c_char; 8];
+    let short_end = unsafe { vis(short.as_mut_ptr(), 0, ABI_VIS_CSTYLE, b'x' as c_int) };
+    assert!(!short_end.is_null());
+    let short_bytes: Vec<u8> = short
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(short_bytes, b"\\0");
+
+    let mut octal = [0 as c_char; 8];
+    let octal_end = unsafe { vis(octal.as_mut_ptr(), 0, ABI_VIS_CSTYLE, b'7' as c_int) };
+    assert!(!octal_end.is_null());
+    let octal_bytes: Vec<u8> = octal
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(octal_bytes, b"\\000");
+}
+
+#[test]
+fn vis_safe_bit_does_not_enable_cstyle() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0, ABI_VIS_SAFE, b'x' as c_int) };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\^@");
+}
+
+#[test]
+fn vis_cstyle_forced_whitespace_uses_named_escapes() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe {
+        vis(
+            buf.as_mut_ptr(),
+            b'\n' as c_int,
+            ABI_VIS_CSTYLE | ABI_VIS_NL,
+            0,
+        )
+    };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\n");
+}
+
+#[test]
+fn vis_encodes_with_octal_flag() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, ABI_VIS_OCTAL, 0) };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\377");
+}
+
+#[test]
+fn vis_returns_pointer_to_trailing_nul() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, ABI_VIS_OCTAL, 0) };
+    assert!(!end.is_null());
+    // The byte at `end` must be the NUL terminator.
+    assert_eq!(unsafe { *end }, 0);
+}
+
+#[test]
+fn vis_null_dst_returns_null() {
+    let p = unsafe { vis(std::ptr::null_mut(), b'A' as c_int, 0, 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn nvis_writes_when_dlen_sufficient() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { nvis(buf.as_mut_ptr(), buf.len(), b'A' as c_int, 0, 0) };
+    assert!(!end.is_null());
+    assert_eq!(buf[0], b'A' as c_char);
+}
+
+#[test]
+fn nvis_returns_null_when_dlen_too_small() {
+    let mut buf = [0 as c_char; 2]; // octal needs 4 bytes + NUL
+    let end = unsafe { nvis(buf.as_mut_ptr(), buf.len(), 0xff, ABI_VIS_OCTAL, 0) };
+    assert!(end.is_null());
+}
+
+#[test]
+fn nvis_returns_null_for_zero_dlen() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { nvis(buf.as_mut_ptr(), 0, b'A' as c_int, 0, 0) };
+    assert!(end.is_null());
+}
+
+#[test]
+fn nvis_null_dst_returns_null() {
+    let p = unsafe { nvis(std::ptr::null_mut(), 16, b'A' as c_int, 0, 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn vis_handles_high_bit_via_meta_prefix() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xc1, 0, 0) }; // \M-A
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\M-A");
+
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0x80, 0, 0) }; // \M^@
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\M^@");
+}
+
+// ---------------------------------------------------------------------------
+// strvisx / strnvisx / strunvisx / strnunvisx (NetBSD vis(3) extended length)
+// ---------------------------------------------------------------------------
+
+fn vis_collect(buf: &[c_char], n: c_int) -> Vec<u8> {
+    buf[..n as usize].iter().map(|&c| c as u8).collect()
+}
+
+#[test]
+fn strvisx_encodes_buffer_with_embedded_nul() {
+    // Input: "ab\0c" (4 bytes including the embedded NUL).
+    let src: [c_char; 4] = [b'a' as c_char, b'b' as c_char, 0, b'c' as c_char];
+    let mut dst = [0 as c_char; 16];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), src.len(), 0) };
+    assert!(n > 0);
+    let bytes = vis_collect(&dst, n);
+    // Default-mode encoding of NUL is "\^@".
+    assert_eq!(bytes, b"ab\\^@c");
+}
+
+#[test]
+fn strvisx_cstyle_encodes_embedded_nul_and_whitespace_names() {
+    let src: [c_char; 5] = [
+        0,
+        b'\t' as c_char,
+        b'\n' as c_char,
+        b' ' as c_char,
+        b'7' as c_char,
+    ];
+    let mut dst = [0 as c_char; 32];
+    let flags = ABI_VIS_CSTYLE | ABI_VIS_WHITE;
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), src.len(), flags) };
+    assert_eq!(vis_collect(&dst, n), b"\\0\\t\\n\\s7");
+}
+
+#[test]
+fn strvisx_cstyle_uses_octal_nul_before_octal_digit() {
+    let src: [c_char; 2] = [0, b'7' as c_char];
+    let mut dst = [0 as c_char; 16];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), src.len(), ABI_VIS_CSTYLE) };
+    assert_eq!(vis_collect(&dst, n), b"\\0007");
+}
+
+#[test]
+fn strvisx_with_octal_flag_renders_three_digit_octal() {
+    let src: [c_char; 1] = [-1 as c_char];
+    let mut dst = [0 as c_char; 8];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), 1, ABI_VIS_OCTAL) };
+    let bytes = vis_collect(&dst, n);
+    assert_eq!(bytes, b"\\377");
+}
+
+#[test]
+fn strvisx_zero_srclen_produces_empty_output() {
+    let mut dst = [0 as c_char; 8];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), std::ptr::null(), 0, 0) };
+    assert_eq!(n, 0);
+    assert_eq!(dst[0], 0);
+}
+
+#[test]
+fn strvisx_null_dst_returns_minus_one() {
+    let src: [c_char; 1] = [b'a' as c_char];
+    assert_eq!(
+        unsafe { strvisx(std::ptr::null_mut(), src.as_ptr(), 1, 0) },
+        -1
+    );
+}
+
+#[test]
+fn strnvisx_truncates_and_returns_minus_one() {
+    let src: [c_char; 2] = [1, 2];
+    let mut dst = [0 as c_char; 4]; // can't fit 2 × \^X = 6 bytes + NUL
+    let n = unsafe { strnvisx(dst.as_mut_ptr(), dst.len(), src.as_ptr(), 2, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(dst[3], 0, "must NUL-terminate within bounds");
+}
+
+#[test]
+fn strnvisx_fits_exactly() {
+    let src: [c_char; 2] = [b'a' as c_char, b'b' as c_char];
+    let mut dst = [0 as c_char; 3]; // "ab\0" — exactly 3 bytes
+    let n = unsafe { strnvisx(dst.as_mut_ptr(), dst.len(), src.as_ptr(), 2, 0) };
+    assert_eq!(n, 2);
+    assert_eq!(vis_collect(&dst, n), b"ab");
+}
+
+#[test]
+fn strunvisx_decodes_round_trip() {
+    let src = c"\\^@xyz\\377";
+    let mut dst = [0 as c_char; 16];
+    let n = unsafe { strunvisx(dst.as_mut_ptr(), src.as_ptr(), 0) };
+    let bytes = vis_collect(&dst, n);
+    assert_eq!(bytes, vec![0x00, b'x', b'y', b'z', 0xff]);
+}
+
+#[test]
+fn strnunvisx_returns_minus_one_when_too_small() {
+    let src = c"\\^A\\^B\\^C";
+    let mut dst = [0 as c_char; 2]; // can fit 1 + NUL
+    let n = unsafe { strnunvisx(dst.as_mut_ptr(), dst.len(), src.as_ptr(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strvisx_then_strunvisx_round_trip() {
+    let payload = b"hello\0\xffworld\x01\x02";
+    let mut enc = [0 as c_char; 64];
+    let enc_n = unsafe {
+        strvisx(
+            enc.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+        )
+    };
+    assert!(enc_n > 0);
+    let mut dec = [0 as c_char; 64];
+    let dec_n = unsafe { strunvisx(dec.as_mut_ptr(), enc.as_ptr(), 0) };
+    assert_eq!(dec_n as usize, payload.len());
+    assert_eq!(vis_collect(&dec, dec_n), payload);
+}
+
+#[test]
+fn strunvisx_null_args_return_minus_one() {
+    let src = c"x";
+    let mut dst = [0 as c_char; 8];
+    assert_eq!(
+        unsafe { strunvisx(std::ptr::null_mut(), src.as_ptr(), 0) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strunvisx(dst.as_mut_ptr(), std::ptr::null(), 0) },
+        -1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// unvis (NetBSD vis(3) streaming byte decoder)
+// ---------------------------------------------------------------------------
+
+const ABI_UNVIS_VALID: c_int = 1;
+const ABI_UNVIS_VALIDPUSH: c_int = 2;
+const ABI_UNVIS_NOCHAR: c_int = 3;
+const ABI_UNVIS_SYNBAD: c_int = -1;
+const ABI_UNVIS_END: c_int = 1;
+
+/// Drive the streaming `unvis` shim across a whole input buffer
+/// the way a libutil caller would, returning the decoded bytes.
+fn unvis_drain(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+    let mut state: c_int = 0;
+    let mut scratch: c_char = 0;
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0usize;
+    while i < input.len() {
+        let r = unsafe { unvis(&mut scratch, input[i] as c_int, &mut state, 0) };
+        match r {
+            ABI_UNVIS_VALID => {
+                out.push(scratch as u8);
+                i += 1;
+            }
+            ABI_UNVIS_VALIDPUSH => {
+                out.push(scratch as u8);
+                // Re-feed the same input byte without advancing.
+            }
+            ABI_UNVIS_NOCHAR => i += 1,
+            ABI_UNVIS_SYNBAD => return Err("synbad"),
+            other => {
+                return Err(if other == 0 {
+                    "unexpected end"
+                } else {
+                    "unknown"
+                });
+            }
+        }
+    }
+    let r = unsafe { unvis(&mut scratch, 0, &mut state, ABI_UNVIS_END) };
+    if r != 0 {
+        return Err("end did not return 0");
+    }
+    Ok(out)
+}
+
+#[test]
+fn unvis_passthrough_printable_byte() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    let r = unsafe { unvis(&mut cp, b'A' as c_int, &mut state, 0) };
+    assert_eq!(r, ABI_UNVIS_VALID);
+    assert_eq!(cp as u8, b'A');
+    assert_eq!(state, 0, "decoder should be back at Initial");
+}
+
+#[test]
+fn unvis_decodes_caret_escape() {
+    let decoded = unvis_drain(b"\\^A").unwrap();
+    assert_eq!(decoded, vec![0x01]);
+}
+
+#[test]
+fn unvis_decodes_double_backslash() {
+    let decoded = unvis_drain(b"\\\\").unwrap();
+    assert_eq!(decoded, vec![b'\\']);
+}
+
+#[test]
+fn unvis_decodes_octal_triple() {
+    let decoded = unvis_drain(b"\\101").unwrap();
+    assert_eq!(decoded, vec![b'A']);
+}
+
+#[test]
+fn unvis_decodes_meta_sequence() {
+    let decoded = unvis_drain(b"\\M-A").unwrap();
+    assert_eq!(decoded, vec![0xc1]);
+}
+
+#[test]
+fn unvis_decodes_meta_caret_sequence() {
+    let decoded = unvis_drain(b"\\M^A").unwrap();
+    assert_eq!(decoded, vec![0x81]);
+}
+
+#[test]
+fn unvis_decodes_meta_octal_sequence() {
+    let decoded = unvis_drain(b"\\M-\\012").unwrap();
+    assert_eq!(decoded, vec![0o12 | 0x80]);
+}
+
+#[test]
+fn unvis_decodes_meta_named_escape() {
+    let decoded = unvis_drain(b"\\M-\\n").unwrap();
+    assert_eq!(decoded, vec![b'\n' | 0x80]);
+}
+
+#[test]
+fn unvis_round_trips_every_byte() {
+    // Use the in-process core encoder so the test doesn't depend on
+    // strvis's NUL-terminated string contract (NUL itself is a
+    // perfectly valid input byte for the streaming decoder).
+    for b in 0u8..=255 {
+        let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(&[b], 0);
+        assert_eq!(
+            unvis_drain(&encoded),
+            Ok(vec![b]),
+            "round-trip mismatch for byte {b:#x}; encoded={encoded:?}"
+        );
+    }
+}
+
+#[test]
+fn unvis_returns_synbad_on_malformed_meta() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    // "\M" then a non-'-' byte → SYNBAD.
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'M' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'X' as c_int, &mut state, 0) },
+        ABI_UNVIS_SYNBAD
+    );
+}
+
+#[test]
+fn unvis_returns_validpush_on_short_octal_non_octal_tail() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'1' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'8' as c_int, &mut state, 0) },
+        ABI_UNVIS_VALIDPUSH
+    );
+    assert_eq!(cp as u8, 0o1);
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'8' as c_int, &mut state, 0) },
+        ABI_UNVIS_VALID
+    );
+    assert_eq!(cp as u8, b'8');
+}
+
+#[test]
+fn unvis_returns_synbad_on_overflowing_octal() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'4' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'0' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'0' as c_int, &mut state, 0) },
+        ABI_UNVIS_SYNBAD
+    );
+}
+
+#[test]
+fn unvis_end_flag_returns_zero_on_idle_state() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    let r = unsafe { unvis(&mut cp, 0, &mut state, ABI_UNVIS_END) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn unvis_end_flag_returns_synbad_on_partial_state() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    // Open a backslash sequence, then immediately flag end.
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    let r = unsafe { unvis(&mut cp, 0, &mut state, ABI_UNVIS_END) };
+    assert_eq!(r, ABI_UNVIS_SYNBAD);
+}
+
+#[test]
+fn unvis_null_astate_returns_synbad() {
+    let mut cp: c_char = 0;
+    let r = unsafe { unvis(&mut cp, b'A' as c_int, std::ptr::null_mut(), 0) };
+    assert_eq!(r, ABI_UNVIS_SYNBAD);
+}
+
+#[test]
+fn unvis_null_cp_does_not_crash() {
+    // Caller may pass NULL `cp` if it doesn't care about output; the
+    // shim must still drive the state machine correctly.
+    let mut state: c_int = 0;
+    let r = unsafe { unvis(std::ptr::null_mut(), b'A' as c_int, &mut state, 0) };
+    assert_eq!(r, ABI_UNVIS_VALID);
+}
+
+#[test]
+fn unvis_state_persists_across_calls() {
+    // "\\101" decodes to 'A' across four calls; verify the
+    // packed-state cell threads correctly.
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_ne!(state, 0, "state should be non-zero mid-sequence");
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'1' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'0' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'1' as c_int, &mut state, 0) },
+        ABI_UNVIS_VALID
+    );
+    assert_eq!(cp as u8, b'A');
+    assert_eq!(state, 0, "state should be back to Initial after Valid");
+}
+
+// ---------------------------------------------------------------------------
+// svis / snvis / strsvis / strsnvis / strsvisx / strsnvisx
+// (NetBSD vis(3) extra-bytes family)
+// ---------------------------------------------------------------------------
+
+fn svis_collect(buf: &[c_char], end: *mut c_char) -> Vec<u8> {
+    let len = (end as usize).saturating_sub(buf.as_ptr() as usize);
+    (0..len).map(|i| buf[i] as u8).collect()
+}
+
+fn svisx_collect(buf: &[c_char], n: c_int) -> Vec<u8> {
+    (0..n as usize).map(|i| buf[i] as u8).collect()
+}
+
+#[test]
+fn svis_passthrough_byte_not_in_extras() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { svis(buf.as_mut_ptr(), b'A' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    assert_eq!(svis_collect(&buf, end), vec![b'A']);
+    // Trailing NUL written.
+    assert_eq!(buf[1] as u8, 0);
+}
+
+#[test]
+fn svis_escapes_byte_listed_in_extras() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { svis(buf.as_mut_ptr(), b'#' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    // Extra-forced printable bytes use octal so the output remains
+    // C-string safe for bytes whose caret spelling would be control.
+    assert_eq!(svis_collect(&buf, end), b"\\043".to_vec());
+}
+
+#[test]
+fn svis_extra_at_sign_does_not_emit_embedded_nul() {
+    let extra = c"@";
+    let mut buf = [0xeeu8 as c_char; 8];
+    let end = unsafe { svis(buf.as_mut_ptr(), b'@' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    assert_eq!(svis_collect(&buf, end), b"\\100".to_vec());
+    assert_eq!(buf[4] as u8, 0);
+}
+
+#[test]
+fn svis_with_octal_flag_uses_octal_for_extras() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe {
+        svis(
+            buf.as_mut_ptr(),
+            b'#' as c_int,
+            frankenlibc_core::stdio::vis::VIS_OCTAL as c_int,
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert!(!end.is_null());
+    // 0x23 = 0o43 → \043
+    assert_eq!(svis_collect(&buf, end), b"\\043".to_vec());
+}
+
+#[test]
+fn svis_null_extra_matches_vis_behavior() {
+    let mut a = [0 as c_char; 8];
+    let mut b = [0 as c_char; 8];
+    let end_a = unsafe { svis(a.as_mut_ptr(), b'A' as c_int, 0, 0, std::ptr::null()) };
+    let end_b = unsafe { vis(b.as_mut_ptr(), b'A' as c_int, 0, 0) };
+    assert!(!end_a.is_null() && !end_b.is_null());
+    assert_eq!(svis_collect(&a, end_a), svis_collect(&b, end_b));
+}
+
+#[test]
+fn svis_null_dst_returns_null() {
+    let extra = c"#";
+    let r = unsafe { svis(std::ptr::null_mut(), b'A' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(r.is_null());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn svis_rejects_tracked_unterminated_extra() {
+    let extra = unsafe { tracked_bytes_without_nul(b"#") };
+    let mut buf = [0 as c_char; 8];
+
+    let end = unsafe { svis(buf.as_mut_ptr(), b'#' as c_int, 0, 0, extra.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(extra.cast::<c_void>()) };
+
+    assert!(end.is_null());
+}
+
+#[test]
+fn snvis_returns_null_on_overflow() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 2];
+    // '#' encodes to \043 (4 bytes) + NUL = 5. Buffer of 2 must fail.
+    let r = unsafe { snvis(buf.as_mut_ptr(), 2, b'#' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(r.is_null());
+}
+
+#[test]
+fn snvis_succeeds_with_exact_room() {
+    let extra = c"#";
+    let mut buf = [0xeeu8 as c_char; 8];
+    let end = unsafe { snvis(buf.as_mut_ptr(), 5, b'#' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    assert_eq!(svis_collect(&buf[..4], end), b"\\043".to_vec());
+    assert_eq!(buf[4] as u8, 0);
+}
+
+#[test]
+fn strsvis_escapes_only_listed_extras() {
+    let src = c"a#b/c";
+    let extra = c"#/";
+    let mut dst = [0 as c_char; 32];
+    let n = unsafe { strsvis(dst.as_mut_ptr(), src.as_ptr(), 0, extra.as_ptr()) };
+    assert!(n >= 0);
+    // 'a' passthrough; forced extras use C-string-safe octal.
+    assert_eq!(svisx_collect(&dst, n), b"a\\043b\\057c".to_vec());
+    assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsvis_null_extras_matches_strvis() {
+    let src = c"hello\nworld";
+    let mut a = [0 as c_char; 64];
+    let mut b = [0 as c_char; 64];
+    let na = unsafe { strsvis(a.as_mut_ptr(), src.as_ptr(), 0, std::ptr::null()) };
+    let nb = unsafe { strvis(b.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(na, nb);
+    assert_eq!(svisx_collect(&a, na), svisx_collect(&b, nb));
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strsvis_rejects_tracked_unterminated_extra() {
+    let src = c"a#b";
+    let extra = unsafe { tracked_bytes_without_nul(b"#") };
+    let mut dst = [0 as c_char; 32];
+
+    let n = unsafe { strsvis(dst.as_mut_ptr(), src.as_ptr(), 0, extra.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(extra.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsvis_null_args_return_minus_one() {
+    let src = c"hi";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 8];
+    assert_eq!(
+        unsafe { strsvis(std::ptr::null_mut(), src.as_ptr(), 0, extra.as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strsvis(dst.as_mut_ptr(), std::ptr::null(), 0, extra.as_ptr()) },
+        -1
+    );
+}
+
+#[test]
+fn strsnvis_returns_minus_one_on_overflow() {
+    let src = c"###";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 4];
+    // Encoded length is 12 (\043 x 3) + NUL = 13. Buffer of 4 must fail.
+    let n = unsafe { strsnvis(dst.as_mut_ptr(), 4, src.as_ptr(), 0, extra.as_ptr()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsnvis_succeeds_with_room() {
+    let src = c"#";
+    let extra = c"#";
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe { strsnvis(dst.as_mut_ptr(), 8, src.as_ptr(), 0, extra.as_ptr()) };
+    assert_eq!(n, 4);
+    assert_eq!(svisx_collect(&dst, n), b"\\043".to_vec());
+    assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsvisx_handles_embedded_nul() {
+    let payload: &[u8] = b"a\0b#c";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 32];
+    let n = unsafe {
+        strsvisx(
+            dst.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert!(n >= 0);
+    // 'a' passthrough; \0 -> \^@; 'b' passthrough; '#' -> \043;
+    // 'c' passthrough.
+    assert_eq!(svisx_collect(&dst, n), b"a\\^@b\\043c".to_vec());
+}
+
+#[test]
+fn strsvisx_zero_srclen_allows_null_src() {
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe { strsvisx(dst.as_mut_ptr(), std::ptr::null(), 0, 0, std::ptr::null()) };
+    assert_eq!(n, 0);
+    assert_eq!(dst[0] as u8, 0);
+}
+
+#[test]
+fn strsnvisx_returns_minus_one_on_overflow() {
+    let payload: &[u8] = b"###";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 4];
+    let n = unsafe {
+        strsnvisx(
+            dst.as_mut_ptr(),
+            4,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsnvisx_succeeds_with_room() {
+    let payload: &[u8] = b"#";
+    let extra = c"#";
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe {
+        strsnvisx(
+            dst.as_mut_ptr(),
+            8,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert_eq!(n, 4);
+    assert_eq!(svisx_collect(&dst, n), b"\\043".to_vec());
+    assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsnvisx_zero_srclen_allows_null_src() {
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe {
+        strsnvisx(
+            dst.as_mut_ptr(),
+            dst.len(),
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(n, 0);
+    assert_eq!(dst[0] as u8, 0);
+}
+
+#[test]
+fn strsvis_then_strunvis_round_trips_extras() {
+    // svis-encoding plus strunvis decoding must round-trip — strunvis
+    // doesn't care which subset of bytes was forced to escape; it
+    // just decodes whatever escape forms appear.
+    let src = c"hello#world/test";
+    let extra = c"#/";
+    let mut enc = [0 as c_char; 64];
+    let n = unsafe { strsvis(enc.as_mut_ptr(), src.as_ptr(), 0, extra.as_ptr()) };
+    assert!(n >= 0);
+    let mut dec = [0 as c_char; 64];
+    let m = unsafe { strunvis(dec.as_mut_ptr(), enc.as_ptr()) };
+    assert!(m >= 0);
+    let decoded = svisx_collect(&dec, m);
+    assert_eq!(decoded, b"hello#world/test".to_vec());
+}
+
+#[test]
+fn strsvisx_null_args_return_minus_one() {
+    let src = c"hi";
+    let mut dst = [0 as c_char; 8];
+    assert_eq!(
+        unsafe { strsvisx(std::ptr::null_mut(), src.as_ptr(), 2, 0, std::ptr::null(),) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strsvisx(dst.as_mut_ptr(), std::ptr::null(), 2, 0, std::ptr::null()) },
+        -1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// stravis (NetBSD allocating strvis)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stravis_allocates_buffer_matching_strvis_output() {
+    let src = c"hello\nworld\t!";
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, src.as_ptr(), 0) };
+    assert!(n >= 0);
+    assert!(!outp.is_null());
+
+    // Compare against strvis output for the same input.
+    let mut ref_buf = [0 as c_char; 64];
+    let n_ref = unsafe { strvis(ref_buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(n, n_ref);
+    let alloc_bytes: Vec<u8> = (0..n as usize)
+        .map(|i| unsafe { *outp.add(i) } as u8)
+        .collect();
+    let ref_bytes: Vec<u8> = (0..n_ref as usize).map(|i| ref_buf[i] as u8).collect();
+    assert_eq!(alloc_bytes, ref_bytes);
+
+    // Trailing NUL.
+    assert_eq!(unsafe { *outp.add(n as usize) } as u8, 0);
+
+    // Free the allocated buffer via our matching free shim.
+    unsafe { frankenlibc_abi::malloc_abi::free(outp as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn stravis_handles_high_bit_bytes() {
+    // 0xff round-trips through encode/decode; verify the malloc'd
+    // buffer is sized correctly for the worst-case encoding.
+    let src = c"\xff\xff\xff";
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, src.as_ptr(), 0) };
+    assert!(n >= 0);
+    assert!(!outp.is_null());
+    // Round-trip via strunvis.
+    let mut decoded = [0 as c_char; 16];
+    let m = unsafe { strunvis(decoded.as_mut_ptr(), outp) };
+    assert_eq!(m, 3);
+    let dec_bytes: Vec<u8> = (0..3).map(|i| decoded[i] as u8).collect();
+    assert_eq!(dec_bytes, vec![0xff, 0xff, 0xff]);
+    unsafe { frankenlibc_abi::malloc_abi::free(outp as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn stravis_empty_string_succeeds() {
+    let src = c"";
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, src.as_ptr(), 0) };
+    assert_eq!(n, 0);
+    assert!(!outp.is_null());
+    // Just the NUL terminator.
+    assert_eq!(unsafe { *outp } as u8, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(outp as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn stravis_null_outp_returns_minus_one() {
+    let src = c"x";
+    let n = unsafe { stravis(std::ptr::null_mut(), src.as_ptr(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn stravis_null_src_returns_minus_one() {
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, std::ptr::null(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn stravis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"abc") };
+    let mut outp: *mut c_char = std::ptr::null_mut();
+
+    let n = unsafe { stravis(&mut outp, src.cast_const(), 0) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+    assert!(outp.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// strnvis_netbsd / strnunvis_netbsd (libbsd disambiguation aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strnvis_netbsd_matches_strnvis() {
+    let src = c"control\t\n\x01char";
+    let mut a = [0 as c_char; 64];
+    let mut b = [0 as c_char; 64];
+    let na = unsafe { strnvis(a.as_mut_ptr(), a.len(), src.as_ptr(), 0) };
+    let nb = unsafe { strnvis_netbsd(b.as_mut_ptr(), b.len(), src.as_ptr(), 0) };
+    assert_eq!(na, nb);
+    assert!(na > 0);
+    let abytes: Vec<u8> = (0..na as usize).map(|i| a[i] as u8).collect();
+    let bbytes: Vec<u8> = (0..nb as usize).map(|i| b[i] as u8).collect();
+    assert_eq!(abytes, bbytes);
+}
+
+#[test]
+fn strnunvis_netbsd_matches_strnunvis() {
+    let src = c"\\^A\\042";
+    let mut a = [0 as c_char; 32];
+    let mut b = [0 as c_char; 32];
+    let na = unsafe { strnunvis(a.as_mut_ptr(), a.len(), src.as_ptr()) };
+    let nb = unsafe { strnunvis_netbsd(b.as_mut_ptr(), b.len(), src.as_ptr()) };
+    assert_eq!(na, nb);
+    assert!(na > 0);
+    let abytes: Vec<u8> = (0..na as usize).map(|i| a[i] as u8).collect();
+    let bbytes: Vec<u8> = (0..nb as usize).map(|i| b[i] as u8).collect();
+    assert_eq!(abytes, bbytes);
+}
+
+#[test]
+fn strnvis_netbsd_overflow_returns_minus_one() {
+    let src = c"hello, world";
+    let mut buf = [0 as c_char; 4];
+    let n = unsafe { strnvis_netbsd(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
+    assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// strenvisx / strsenvisx (NetBSD env-aware vis(3) variants)
+// ---------------------------------------------------------------------------
+
+/// Serialize tests that touch the VIS_OPTIONS env var so they can't
+/// race against each other. Acquire it poison-tolerantly, so a failing assertion reports as
+/// one failure instead of poisoning this guard and taking every later test with it
+/// (bd-9ri7g1).
+static VIS_OPTIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct VisOptionsGuard {
+    prior: Option<std::ffi::CString>,
+}
+
+impl VisOptionsGuard {
+    fn set(value: Option<&std::ffi::CStr>) -> Self {
+        let key = c"VIS_OPTIONS";
+        let prior = unsafe {
+            let p = libc::getenv(key.as_ptr());
+            if p.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(p).to_owned())
+            }
+        };
+        match value {
+            Some(v) => unsafe {
+                libc::setenv(key.as_ptr(), v.as_ptr(), 1);
+            },
+            None => unsafe {
+                libc::unsetenv(key.as_ptr());
+            },
+        }
+        VisOptionsGuard { prior }
+    }
+}
+
+impl Drop for VisOptionsGuard {
+    fn drop(&mut self) {
+        let key = c"VIS_OPTIONS";
+        unsafe {
+            match &self.prior {
+                Some(v) => {
+                    libc::setenv(key.as_ptr(), v.as_ptr(), 1);
+                }
+                None => {
+                    libc::unsetenv(key.as_ptr());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strenvisx_without_env_matches_strvisx() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"hello\nworld";
+    let mut a = [0 as c_char; 64];
+    let mut b = [0 as c_char; 64];
+    let mut cerr: c_int = 99;
+    let na = unsafe {
+        strenvisx(
+            a.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    let nb = unsafe {
+        strvisx(
+            b.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+        )
+    };
+    assert_eq!(na, nb);
+    assert_eq!(cerr, 0);
+    let abytes: Vec<u8> = (0..na as usize).map(|i| a[i] as u8).collect();
+    let bbytes: Vec<u8> = (0..nb as usize).map(|i| b[i] as u8).collect();
+    assert_eq!(abytes, bbytes);
+}
+
+#[test]
+fn strenvisx_honors_vis_octal_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
+    // Encode a non-whitespace control byte with no flags from the
+    // caller; env should force octal representation.
+    let payload: &[u8] = b"\x01";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, 4);
+    assert_eq!(cerr, 0);
+    // 0x01 in octal = "\001".
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\001".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_cstyle_and_newline_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_CSTYLE,VIS_NL"));
+    let payload: &[u8] = b"\n";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, 2);
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\n".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_meta_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_META"));
+    let payload: &[u8] = b" \t\n*?[`";
+    let mut buf = [0 as c_char; 64];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\040\\^I\\^J\\052\\077\\133\\140".to_vec());
+    assert_eq!(ABI_VIS_META, ABI_VIS_WHITE | ABI_VIS_GLOB | ABI_VIS_SHELL);
+}
+
+#[test]
+fn strenvisx_honors_noslash_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_NOSLASH"));
+    let payload: &[u8] = b"\x01";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"^A".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_httpstyle_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_HTTPSTYLE"));
+    let payload: &[u8] = b" /";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"%20%2f".to_vec());
+}
+
+#[test]
+fn strenvisx_honors_mimestyle_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_MIMESTYLE"));
+    let payload: &[u8] = b"=\x7f";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(cerr, 0);
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"=3D=7F".to_vec());
+}
+
+#[test]
+fn strenvisx_unknown_env_tokens_are_ignored() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_FOO,VIS_BAR,VIS_OCTAL"));
+    let payload: &[u8] = b"\x01";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 0;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    // Only VIS_OCTAL is recognized; bytes match the octal-mode form.
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\001".to_vec());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strenvisx_ignores_tracked_unterminated_vis_options() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let assignment = b"VIS_OPTIONS=VIS_OCTAL\0";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(assignment.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast());
+        std::ptr::write_bytes(raw, 0x7f, usable.max(assignment.len()));
+        std::ptr::copy_nonoverlapping(assignment.as_ptr(), raw, assignment.len());
+        assert_eq!(frankenlibc_abi::stdlib_abi::putenv(raw.cast()), 0);
+        *raw.add(assignment.len() - 1) = b'X';
+
+        let payload: &[u8] = b"\n";
+        let mut env_buf = [0 as c_char; 16];
+        let mut base_buf = [0 as c_char; 16];
+        let mut cerr: c_int = 99;
+        let env_len = strenvisx(
+            env_buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        );
+        let base_len = strvisx(
+            base_buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+        );
+
+        *raw.add(assignment.len() - 1) = 0;
+        libc::unsetenv(c"VIS_OPTIONS".as_ptr());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(env_len, base_len);
+        assert_eq!(cerr, 0);
+        assert_eq!(
+            vis_string(&env_buf, env_len),
+            vis_string(&base_buf, base_len)
+        );
+    }
+}
+
+#[test]
+fn strenvisx_null_cerr_does_not_crash() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"x";
+    let mut buf = [0 as c_char; 8];
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn strenvisx_zero_srclen_allows_null_src() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0xeeu8 as c_char; 8];
+    let mut cerr: c_int = 99;
+    let n = unsafe { strenvisx(buf.as_mut_ptr(), std::ptr::null(), 0, 0, &mut cerr) };
+    assert_eq!(n, 0);
+    assert_eq!(cerr, 0);
+    assert_eq!(buf[0] as u8, 0);
+}
+
+#[test]
+fn strenvisx_null_args_return_minus_one() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0 as c_char; 8];
+    let mut cerr: c_int = 0;
+    assert_eq!(
+        unsafe { strenvisx(std::ptr::null_mut(), c"x".as_ptr(), 1, 0, &mut cerr,) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strenvisx(buf.as_mut_ptr(), std::ptr::null(), 1, 0, &mut cerr) },
+        -1
+    );
+}
+
+#[test]
+fn strsenvisx_combines_env_flags_with_extras() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
+    let payload: &[u8] = b"a#b";
+    let extra = c"#";
+    let mut buf = [0 as c_char; 32];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+            &mut cerr,
+        )
+    };
+    assert!(n > 0);
+    assert_eq!(cerr, 0);
+    // 'a' passthrough; '#' (0x23 = 0o43) octal-extra → "\\043"; 'b' passthrough.
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"a\\043b".to_vec());
+}
+
+#[test]
+fn strsenvisx_overflow_returns_minus_one() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"###";
+    let extra = c"#";
+    let mut buf = [0 as c_char; 4];
+    let mut cerr: c_int = 0;
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsenvisx_zero_srclen_allows_null_src() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0xeeu8 as c_char; 8];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, 0);
+    assert_eq!(cerr, 0);
+    assert_eq!(buf[0] as u8, 0);
+}
+
+#[test]
+fn strsenvisx_null_args_return_minus_one() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0 as c_char; 8];
+    let mut cerr: c_int = 0;
+    assert_eq!(
+        unsafe {
+            strsenvisx(
+                std::ptr::null_mut(),
+                8,
+                c"x".as_ptr(),
+                1,
+                0,
+                std::ptr::null(),
+                &mut cerr,
+            )
+        },
+        -1
+    );
+    assert_eq!(
+        unsafe {
+            strsenvisx(
+                buf.as_mut_ptr(),
+                8,
+                std::ptr::null(),
+                1,
+                0,
+                std::ptr::null(),
+                &mut cerr,
+            )
+        },
+        -1
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strsenvisx_rejects_tracked_unterminated_extra() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"a#";
+    let extra = unsafe { tracked_bytes_without_nul(b"#") };
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 7;
+
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            payload.as_ptr().cast::<c_char>(),
+            payload.len(),
+            0,
+            extra.cast_const(),
+            &mut cerr,
+        )
+    };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(extra.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+    assert_eq!(cerr, 7, "invalid extra should fail before writing cerr");
+}
+
+// ---------------------------------------------------------------------------
+// snprintb / snprintb_m (BSD libutil bit-name formatter)
+// ---------------------------------------------------------------------------
+
+fn snprintb_collect(buf: &[c_char], n: c_int) -> Vec<u8> {
+    let len = (n as usize).min(buf.len());
+    (0..len).map(|i| buf[i] as u8).collect()
+}
+
+#[test]
+fn snprintb_renders_hex_with_named_bits() {
+    let mut buf = [0 as c_char; 64];
+    // \020 base = hex; bit1=FOO, bit2=BAR, bit3=BAZ
+    let fmt = c"\x10\x01FOO\x02BAR\x03BAZ";
+    // bits 0 + 2 set -> val=5, expect "0x5<FOO,BAZ>"
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 5) };
+    assert!(n > 0);
+    assert_eq!(snprintb_collect(&buf, n), b"0x5<FOO,BAZ>".to_vec());
+    // Trailing NUL.
+    assert_eq!(buf[n as usize] as u8, 0);
+}
+
+#[test]
+fn snprintb_renders_octal_with_named_bits() {
+    let mut buf = [0 as c_char; 64];
+    let fmt = c"\x08\x01READ\x02WRITE\x03EXEC";
+    // val=3 (READ + WRITE) -> "03<READ,WRITE>"
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 3) };
+    assert!(n > 0);
+    assert_eq!(snprintb_collect(&buf, n), b"03<READ,WRITE>".to_vec());
+}
+
+#[test]
+fn snprintb_omits_brackets_when_no_bits_set() {
+    let mut buf = [0 as c_char; 32];
+    let fmt = c"\x10\x01A\x02B";
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 0) };
+    assert_eq!(n, 3);
+    assert_eq!(snprintb_collect(&buf, n), b"0x0".to_vec());
+}
+
+#[test]
+fn snprintb_truncates_to_bufsize_returns_full_length() {
+    let mut buf = [0 as c_char; 6];
+    let fmt = c"\x10\x01FOO\x02BAR";
+    // val=3 -> "0x3<FOO,BAR>" (12 chars)
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 3) };
+    assert_eq!(n, 12);
+    // Buffer holds 5 chars + NUL.
+    let truncated: Vec<u8> = (0..5).map(|i| buf[i] as u8).collect();
+    assert_eq!(truncated, b"0x3<F".to_vec());
+    assert_eq!(buf[5] as u8, 0);
+}
+
+#[test]
+fn snprintb_zero_bufsize_returns_required_length() {
+    let fmt = c"\x10\x01FOO";
+    let n = unsafe { snprintb(std::ptr::null_mut(), 0, fmt.as_ptr(), 1) };
+    // "0x1<FOO>" = 8 chars.
+    assert_eq!(n, 8);
+}
+
+#[test]
+fn snprintb_null_fmt_returns_minus_one() {
+    let mut buf = [0 as c_char; 16];
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), std::ptr::null(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn snprintb_rejects_tracked_unterminated_fmt() {
+    let fmt = unsafe { tracked_bytes_without_nul(b"\x10\x01FOO") };
+    let mut buf = [0xeeu8 as c_char; 16];
+
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.cast_const(), 1) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(fmt.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn snprintb_unknown_base_returns_zero_length() {
+    let mut buf = [0xeeu8 as c_char; 8];
+    // First byte 0x01 is neither octal nor hex base.
+    let fmt = c"\x01\x01FOO";
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 1) };
+    assert_eq!(n, 0);
+    // Buffer should have a NUL at position 0.
+    assert_eq!(buf[0] as u8, 0);
+}
+
+#[test]
+fn snprintb_m_zero_max_falls_back_to_single_line() {
+    let mut buf = [0 as c_char; 64];
+    let fmt = c"\x10\x01A\x02B";
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 3, 0) };
+    assert_eq!(snprintb_collect(&buf, n), b"0x3<A,B>".to_vec());
+}
+
+#[test]
+fn snprintb_m_splits_long_lines() {
+    let mut buf = [0 as c_char; 128];
+    // val=7 -> all three names; force splits with a small max.
+    let fmt = c"\x10\x01ABC\x02DEF\x03GHI";
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 7, 10) };
+    assert!(n > 0);
+    let bytes = snprintb_collect(&buf, n);
+    // Output must contain a newline and every line begins with "0x7<".
+    assert!(bytes.contains(&b'\n'));
+    for line in bytes.split(|&b| b == b'\n') {
+        assert!(line.starts_with(b"0x7<"), "bad line: {:?}", line);
+        assert!(line.ends_with(b">"));
+    }
+}
+
+#[test]
+fn snprintb_m_null_fmt_returns_minus_one() {
+    let mut buf = [0 as c_char; 16];
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), std::ptr::null(), 0, 8) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn snprintb_m_rejects_tracked_unterminated_fmt() {
+    let fmt = unsafe { tracked_bytes_without_nul(b"\x10\x01FOO\x02BAR") };
+    let mut buf = [0xeeu8 as c_char; 32];
+
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), fmt.cast_const(), 3, 8) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(fmt.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// __getline (glibc reserved-namespace alias of getline)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_getline_matches_getline() {
+    let path = temp_path("under_getline");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { fputs(c"first\nsecond\n".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+    let len = unsafe { __getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, 6); // "first\n"
+    assert_eq!(unsafe { CStr::from_ptr(lineptr) }.to_bytes(), b"first\n");
+
+    let len = unsafe { __getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, 7); // "second\n"
+    assert_eq!(unsafe { CStr::from_ptr(lineptr) }.to_bytes(), b"second\n");
+
+    if !lineptr.is_null() {
+        // SAFETY: lineptr was allocated by FrankenLibC's __getline allocator.
+        unsafe { frankenlibc_abi::malloc_abi::free(lineptr.cast()) };
+    }
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn under_getline_null_args_return_minus_one() {
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+    let r = unsafe { __getline(std::ptr::null_mut(), &mut n, std::ptr::null_mut()) };
+    assert_eq!(r, -1);
+    let r = unsafe { __getline(&mut lineptr, std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert_eq!(r, -1);
+}
+
+// ---------------------------------------------------------------------------
+// funopen — BSD callback-based stdio over fopencookie
+// ---------------------------------------------------------------------------
+
+struct FunopenState {
+    data: Vec<u8>,
+    pos: usize,
+    closed: bool,
+}
+
+unsafe extern "C-unwind" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    let avail = s.data.len().saturating_sub(s.pos);
+    let take = avail.min(n as usize);
+    if take == 0 {
+        return 0;
+    }
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, take) };
+    dst.copy_from_slice(&s.data[s.pos..s.pos + take]);
+    s.pos += take;
+    take as c_int
+}
+
+unsafe extern "C-unwind" fn funop_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    n: c_int,
+) -> c_int {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, n as usize) };
+    s.data.extend_from_slice(bytes);
+    s.pos = s.data.len();
+    n
+}
+
+unsafe extern "C-unwind" fn funop_seek(cookie: *mut c_void, offset: i64, whence: c_int) -> i64 {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    let new_pos = match whence {
+        libc::SEEK_SET => offset,
+        libc::SEEK_CUR => s.pos as i64 + offset,
+        libc::SEEK_END => s.data.len() as i64 + offset,
+        _ => return -1,
+    };
+    if new_pos < 0 || new_pos > s.data.len() as i64 {
+        return -1;
+    }
+    s.pos = new_pos as usize;
+    new_pos
+}
+
+unsafe extern "C-unwind" fn funop_close(cookie: *mut c_void) -> c_int {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    s.closed = true;
+    0
+}
+
+#[test]
+fn funopen_with_no_io_callbacks_returns_null_einval() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let stream = unsafe { funopen(std::ptr::null(), None, None, None, None) };
+    assert!(stream.is_null());
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EINVAL
+    );
+}
+
+#[test]
+fn funopen_close_invokes_user_closefn_and_frees_trampoline() {
+    let state = Box::into_raw(Box::new(FunopenState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+    }));
+    let stream = unsafe {
+        funopen(
+            state as *const c_void,
+            None,
+            Some(funop_write),
+            None,
+            Some(funop_close),
+        )
+    };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let s = unsafe { Box::from_raw(state) };
+    assert!(s.closed, "user closefn must run via the close trampoline");
+}
+
+#[test]
+fn funopen_round_trips_write_seek_read() {
+    let state = Box::into_raw(Box::new(FunopenState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+    }));
+    let stream = unsafe {
+        funopen(
+            state as *const c_void,
+            Some(funop_read),
+            Some(funop_write),
+            Some(funop_seek),
+            Some(funop_close),
+        )
+    };
+    assert!(!stream.is_null());
+
+    let payload = b"funopen-rw";
+    let wrote = unsafe { fwrite(payload.as_ptr() as *const c_void, 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 10];
+    let read = unsafe { fread(out.as_mut_ptr() as *mut c_void, 1, out.len(), stream) };
+    assert_eq!(read, out.len());
+    assert_eq!(&out, payload);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let s = unsafe { Box::from_raw(state) };
+    assert!(s.closed);
+    assert_eq!(s.data, payload);
+}
+
+// ---------------------------------------------------------------------------
+// fcloseall must not unregister the standard streams (bd-0ftdgt)
+// ---------------------------------------------------------------------------
+
+/// `fcloseall` used to remove `stdin`/`stdout`/`stderr` from the stream
+/// registry. Every stdio entry point maps those three to a SENTINEL id
+/// (`0x1000_0001..=0x1000_0003`) and falls back to HOST stdio for any id the
+/// registry does not contain — passing the sentinel through as if it were a
+/// `FILE *`. So after `fcloseall`, the next standard-stream call handed glibc
+/// the address `0x1000_0002`, and glibc killed the process with
+/// "Fatal error: glibc detected an invalid stdio handle".
+///
+/// That is why this asserts the REGISTRY INVARIANT rather than demonstrating it
+/// by writing to `stdout`: a regression aborts the process, and an aborted test
+/// binary reports nothing — which is exactly how this stayed invisible while it
+/// took 44 of 173 conformance tests down mid-run.
+///
+/// Calling it twice matters: the second call is the one that used to find the
+/// sentinels already missing.
+/// Driven from the isolated child, NOT as a `#[test]` of its own.
+///
+/// `fcloseall()` closes every registered stream in the PROCESS, including ones
+/// other tests in this binary opened microseconds earlier and are about to use.
+/// STDOUT_REDIRECT_LOCK did not close that hole: the victims never take it.
+/// MEASURED on worker hz4 with a filter selecting only the `fclose*` tests —
+/// none of them touched by bd-ug42ol — `fclose_closes_fd` failed 6 times in 20
+/// runs (30%) on `assert!(fd >= 0)`, because `fileno` cannot find a stream that
+/// `fcloseall` unregistered between its `fopen` and its `fileno`. Running it
+/// here instead: 0 failures in 20.
+///
+/// A process-global destructive call is the same hazard as a process-global
+/// redirect, and takes the same cure: run it where no other test is running.
+fn fcloseall_keeps_the_standard_streams_registered() {
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
+        "precondition: the standard streams should be registered before fcloseall"
+    );
+
+    let first = frankenlibc_abi::stdio_abi::fcloseall();
+    assert_eq!(first, 0, "fcloseall should report success");
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
+        "fcloseall unregistered a standard stream; its sentinel id would now be \
+         passed to host stdio as a FILE pointer"
+    );
+
+    let second = frankenlibc_abi::stdio_abi::fcloseall();
+    assert_eq!(second, 0, "a second fcloseall should still report success");
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_standard_streams_registered_for_tests(),
+        "a second fcloseall unregistered a standard stream"
+    );
+
+    // And the process is still able to flush every stream, which is the call
+    // the conformance suite made next when it died.
+    let rc = unsafe { frankenlibc_abi::stdio_abi::fflush(std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "fflush(NULL) after fcloseall should succeed");
+}
+
+/// bd-xmlbtg: a SENTINEL id must never leave fl as a `FILE *`.
+///
+/// `stdin`/`stdout`/`stderr` canonicalise to `0x1000_0001..=0x1000_0003`, and
+/// every host-delegating stdio entry point used to gate purely on registry
+/// membership. Any internal caller that rebuilt a pointer as `id as *mut c_void`
+/// — the shape `fcloseall` used before bd-0ftdgt — therefore produced a `stream`
+/// that WAS the sentinel value, and handing that to glibc aborts the process
+/// with "Fatal error: glibc detected an invalid stdio handle".
+///
+/// Asserted through the delegation predicate rather than by making the call,
+/// because the failure mode is an abort: it would kill the test binary instead
+/// of failing this test, and an aborted binary reports nothing at all.
+///
+/// Both directions matter. Refusing the sentinel is the fix; still delegating a
+/// genuine foreign stream is what proves the fix did not simply block the host
+/// path outright.
+#[test]
+fn host_delegation_refuses_a_synthesized_sentinel_but_allows_a_foreign_stream() {
+    let sentinel = frankenlibc_abi::stdio_abi::stdio_stdout_sentinel_ptr_for_tests();
+    assert!(
+        !frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(sentinel),
+        "a synthesized standard-stream sentinel must never be delegated to host stdio; \
+         glibc would dereference {sentinel:?} as a FILE pointer"
+    );
+
+    // A real host FILE * that fl does not own must still delegate, otherwise the
+    // guard has broken foreign-stream support instead of fixing the sentinel.
+    let path = temp_path("xmlbtg_foreign");
+    fs::write(&path, b"foreign").expect("seed foreign stream file");
+    let c_path = CString::new(path.as_os_str().as_bytes()).expect("path has no NUL");
+    let mode = CString::new("r").expect("mode has no NUL");
+    let foreign = unsafe { libc::fopen(c_path.as_ptr(), mode.as_ptr()) };
+    assert!(!foreign.is_null(), "host fopen should succeed");
+    assert!(
+        frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests(foreign.cast::<c_void>()),
+        "a genuine host FILE * that fl does not own must still be delegated"
+    );
+    unsafe { libc::fclose(foreign) };
+    let _ = fs::remove_file(&path);
+}
+
+/// bd-f8gdsy companion: the same write / seek / read round trip, but seeking to
+/// a NON-ZERO offset, so a fix that only special-cases `SEEK_SET 0` fails here.
+///
+/// Cookie writes are buffered, so the seek has to flush them to the cookie
+/// before repositioning; otherwise the read observes an empty cookie and
+/// returns 0 while the final contents still look right, because `fclose`
+/// flushes at the end.
+#[test]
+fn funopen_reads_back_from_a_nonzero_offset_after_write() {
+    struct Cookie {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    unsafe extern "C-unwind" fn read_fn(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
+        // SAFETY: cookie is the Box we handed to funopen and is live for the call.
+        let state = unsafe { &mut *(cookie as *mut Cookie) };
+        let want = (n as usize).min(state.data.len().saturating_sub(state.pos));
+        // SAFETY: buf has room for at least `n` bytes per the BSD contract.
+        unsafe {
+            std::ptr::copy_nonoverlapping(state.data[state.pos..].as_ptr(), buf.cast::<u8>(), want)
+        };
+        state.pos += want;
+        want as c_int
+    }
+
+    unsafe extern "C-unwind" fn write_fn(
+        cookie: *mut c_void,
+        buf: *const c_char,
+        n: c_int,
+    ) -> c_int {
+        // SAFETY: as above.
+        let state = unsafe { &mut *(cookie as *mut Cookie) };
+        // SAFETY: buf holds `n` readable bytes per the BSD contract.
+        let bytes = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), n as usize) };
+        if state.pos > state.data.len() {
+            state.data.resize(state.pos, 0);
+        }
+        state.data.truncate(state.pos);
+        state.data.extend_from_slice(bytes);
+        state.pos = state.data.len();
+        n
+    }
+
+    unsafe extern "C-unwind" fn seek_fn(
+        cookie: *mut c_void,
+        off: libc::off_t,
+        whence: c_int,
+    ) -> libc::off_t {
+        // SAFETY: as above.
+        let state = unsafe { &mut *(cookie as *mut Cookie) };
+        let base = match whence {
+            libc::SEEK_SET => 0i64,
+            libc::SEEK_CUR => state.pos as i64,
+            libc::SEEK_END => state.data.len() as i64,
+            _ => return -1,
+        };
+        let target = base + off;
+        if target < 0 {
+            return -1;
+        }
+        state.pos = target as usize;
+        target as libc::off_t
+    }
+
+    unsafe extern "C-unwind" fn close_fn(_cookie: *mut c_void) -> c_int {
+        0
+    }
+
+    let state = Box::into_raw(Box::new(Cookie {
+        data: Vec::new(),
+        pos: 0,
+    }));
+    // SAFETY: the four callbacks match the BSD funopen signatures and `state`
+    // outlives the stream (reclaimed below).
+    let stream = unsafe {
+        funopen(
+            state.cast::<c_void>(),
+            Some(read_fn),
+            Some(write_fn),
+            Some(seek_fn),
+            Some(close_fn),
+        )
+    };
+    assert!(!stream.is_null(), "funopen should build a stream");
+
+    let payload = b"0123456789";
+    let wrote = unsafe { fwrite(payload.as_ptr() as *const c_void, 1, payload.len(), stream) };
+    assert_eq!(
+        wrote,
+        payload.len(),
+        "the cookie write callback should accept all bytes"
+    );
+
+    // Seek to 4, NOT 0: the flush must happen for any target, not just rewind.
+    assert_eq!(
+        unsafe { fseek(stream, 4, libc::SEEK_SET) },
+        0,
+        "fseek should succeed"
+    );
+
+    let mut out = [0u8; 6];
+    let read = unsafe { fread(out.as_mut_ptr() as *mut c_void, 1, out.len(), stream) };
+    assert_eq!(
+        read,
+        out.len(),
+        "the pending write must have been flushed to the cookie before the seek, \
+         so the read returns the tail of the payload"
+    );
+    assert_eq!(
+        &out, b"456789",
+        "reading from offset 4 should yield the tail"
+    );
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    // SAFETY: the stream is closed, so nothing else references the cookie.
+    let recovered = unsafe { Box::from_raw(state) };
+    assert_eq!(
+        recovered.data, payload,
+        "the cookie should hold the full payload"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// printf output-buffer pooling must not leak stale bytes (bd-9e0yka)
+// ---------------------------------------------------------------------------
+
+/// `render_segments` borrows its output buffer from a thread-local single-slot
+/// pool and returns it on drop, so the SAME allocation serves consecutive
+/// printf calls on a thread. The bead that designed this named the one way it
+/// can go wrong: the buffer must be cleared when taken, or a short result
+/// inherits the tail of a longer previous one.
+///
+/// This formats a long value first, then a short one into a generous
+/// destination, and requires the short result to be exactly itself — return
+/// value, NUL position, and no surviving bytes past the NUL. A pool that handed
+/// back an uncleared buffer would append the short text to the long one and
+/// fail on the return value alone.
+#[test]
+fn printf_pooled_output_buffer_does_not_leak_stale_bytes() {
+    let long_fmt = CString::new("%s").expect("no NUL");
+    let long_arg = CString::new("X".repeat(200)).expect("no NUL");
+    let mut big = [0u8; 512];
+    // SAFETY: big has room for the 200-byte payload and its NUL.
+    let long_n = unsafe {
+        snprintf(
+            big.as_mut_ptr() as *mut c_char,
+            big.len(),
+            long_fmt.as_ptr(),
+            long_arg.as_ptr(),
+        )
+    };
+    assert_eq!(long_n, 200, "the long call should report 200 bytes");
+
+    // Same thread, so this call receives the pooled buffer the previous one used.
+    let short_fmt = CString::new("%s").expect("no NUL");
+    let short_arg = CString::new("ab").expect("no NUL");
+    let mut dst = [0xAAu8; 512];
+    // SAFETY: dst is far larger than the 2-byte payload and its NUL.
+    let short_n = unsafe {
+        snprintf(
+            dst.as_mut_ptr() as *mut c_char,
+            dst.len(),
+            short_fmt.as_ptr(),
+            short_arg.as_ptr(),
+        )
+    };
+    assert_eq!(
+        short_n, 2,
+        "a pooled buffer that was not cleared would make this 202"
+    );
+    assert_eq!(
+        &dst[..3],
+        b"ab\0",
+        "short result should be exactly \"ab\\0\""
+    );
+    assert!(
+        dst[3..].iter().all(|&b| b == 0xAA),
+        "snprintf wrote past the NUL, so stale pooled bytes reached the caller"
+    );
+
+    // asprintf takes OWNERSHIP of the buffer (into_vec), removing it from the
+    // pooling path. Exercise it between pooled calls so a mistake there — such
+    // as returning a pooled buffer that is later reused — shows up as corruption
+    // in the following call rather than silently.
+    let mut owned: *mut c_char = std::ptr::null_mut();
+    let a_fmt = CString::new("%s").expect("no NUL");
+    let a_arg = CString::new("owned-value").expect("no NUL");
+    // SAFETY: owned is a valid out-parameter; freed below on success.
+    let a_n = unsafe { asprintf(&mut owned, a_fmt.as_ptr(), a_arg.as_ptr()) };
+    assert_eq!(a_n, 11, "asprintf should report the payload length");
+    assert!(!owned.is_null());
+    // SAFETY: asprintf returned a NUL-terminated allocation.
+    let got = unsafe { CStr::from_ptr(owned) }.to_bytes().to_vec();
+    assert_eq!(got, b"owned-value");
+    // SAFETY: the allocation came from fl's allocator via asprintf.
+    unsafe { frankenlibc_abi::malloc_abi::free(owned.cast()) };
+
+    let mut after = [0xBBu8; 64];
+    // SAFETY: after has room for the payload and its NUL.
+    let after_n = unsafe {
+        snprintf(
+            after.as_mut_ptr() as *mut c_char,
+            after.len(),
+            short_fmt.as_ptr(),
+            short_arg.as_ptr(),
+        )
+    };
+    assert_eq!(
+        after_n, 2,
+        "the pooled path should still be intact after asprintf"
+    );
+    assert_eq!(&after[..3], b"ab\0");
+}
+
+#[test]
+fn printf_pooled_output_survives_thread_local_destruction() {
+    use std::cell::Cell;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    struct LateRender(Arc<AtomicBool>);
+
+    fn render() {
+        let mut out = [0xa5u8; 32];
+        // Positional arguments force the general renderer and its output pool.
+        // SAFETY: the arguments match the format and out includes room for NUL.
+        let count = unsafe {
+            snprintf(
+                out.as_mut_ptr().cast(),
+                out.len(),
+                c"%2$s:%1$d".as_ptr(),
+                42 as c_int,
+                c"late".as_ptr(),
+            )
+        };
+        assert_eq!(count, 7);
+        assert_eq!(&out[..8], b"late:42\0");
+        assert!(out[8..].iter().all(|byte| *byte == 0xa5));
+    }
+
+    impl Drop for LateRender {
+        fn drop(&mut self) {
+            // The printf pool was initialized after this slot and is destroyed
+            // first. Both taking and returning a scratch buffer must still work.
+            render();
+            render();
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    thread_local! {
+        static LATE_RENDER: Cell<Option<LateRender>> = const { Cell::new(None) };
+    }
+
+    let completed = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&completed);
+    thread::spawn(move || {
+        LATE_RENDER.with(|slot| slot.set(Some(LateRender(observed))));
+        render();
+    })
+    .join()
+    .expect("rendering thread must finish without a teardown panic");
+    assert!(completed.load(Ordering::SeqCst));
+}
+
+#[test]
+fn stream_orientation_enforcement_matches_c99_and_glibc() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::glibc_internal_abi::fwide;
+    use frankenlibc_abi::wchar_abi::{
+        fgetwc, fgetws, fputwc, fputws, fwprintf, fwscanf, open_wmemstream, ungetwc,
+    };
+
+    const WEOF_U32: u32 = u32::MAX;
+
+    unsafe {
+        // 1. Narrow I/O orients an unoriented stream to byte (-1) and rejects wide I/O with EBADF + ferror.
+        let f = tmpfile();
+        assert!(!f.is_null());
+        assert_eq!(fwide(f, 0), 0, "fresh tmpfile must be unoriented");
+        assert_eq!(fputc(b'a' as c_int, f), b'a' as c_int);
+        assert!(fwide(f, 0) < 0, "fputc must orient stream to byte (< 0)");
+        assert!(
+            fwide(f, 1) < 0,
+            "fwide(f, 1) must not flip byte-oriented stream"
+        );
+
+        *__errno_location() = 0;
+        assert_eq!(fputwc(b'x' as u32, f), WEOF_U32);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let ws_hello = [b'h' as libc::wchar_t, 0];
+        *__errno_location() = 0;
+        assert_eq!(fputws(ws_hello.as_ptr(), f), libc::EOF);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let wfmt_d = [b'%' as libc::wchar_t, b'd' as libc::wchar_t, 0];
+        *__errno_location() = 0;
+        assert_eq!(fwprintf(f, wfmt_d.as_ptr(), 42 as c_int), -1);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        rewind(f);
+        *__errno_location() = 0;
+        assert_eq!(fgetwc(f), WEOF_U32);
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let mut wbuf = [0 as libc::wchar_t; 8];
+        *__errno_location() = 0;
+        assert!(fgetws(wbuf.as_mut_ptr(), 8, f).is_null());
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        let mut parsed: c_int = 0;
+        *__errno_location() = 0;
+        assert_eq!(
+            fwscanf(f, wfmt_d.as_ptr(), &mut parsed as *mut c_int),
+            libc::EOF
+        );
+        assert_ne!(ferror(f), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(f);
+
+        // ungetwc on byte-oriented stream fails with WEOF without setting ferror.
+        assert_eq!(ungetwc(b'z' as u32, f), WEOF_U32);
+        assert_eq!(ferror(f), 0);
+        assert_eq!(fclose(f), 0);
+
+        // 2. Wide I/O orients an unoriented stream to wide (> 0) and rejects narrow I/O with EBADF + ferror.
+        // Also verify fflush/fseek on an unoriented stream do not poison byte caches before wide I/O.
+        let wf = tmpfile();
+        assert!(!wf.is_null());
+        assert_eq!(fflush(wf), 0);
+        assert_eq!(fseek(wf, 0, libc::SEEK_SET), 0);
+        assert_eq!(fwide(wf, 0), 0, "fflush/fseek must leave stream unoriented");
+        assert_eq!(fputwc(b'7' as u32, wf), b'7' as u32);
+        assert!(wf_mode_is_wide(fwide(wf, 0)));
+        assert!(
+            wf_mode_is_wide(fwide(wf, -1)),
+            "fwide(wf, -1) must not flip wide-oriented stream"
+        );
+
+        *__errno_location() = 0;
+        assert_eq!(fputc(b'a' as c_int, wf), libc::EOF);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fputs(c"hi".as_ptr(), wf), libc::EOF);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fwrite(b"hi".as_ptr().cast(), 1, 2, wf), 0);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fprintf(wf, c"%d".as_ptr(), 7 as c_int), -1);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        rewind(wf);
+        *__errno_location() = 0;
+        assert_eq!(fgetc(wf), libc::EOF);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        let mut nbuf = [0 as c_char; 8];
+        *__errno_location() = 0;
+        assert!(fgets(nbuf.as_mut_ptr(), 8, wf).is_null());
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(fread(nbuf.as_mut_ptr().cast(), 1, 4, wf), 0);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        *__errno_location() = 0;
+        assert_eq!(
+            fscanf(wf, c"%d".as_ptr(), &mut parsed as *mut c_int),
+            libc::EOF
+        );
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+
+        let mut lineptr: *mut c_char = std::ptr::null_mut();
+        let mut linecap: usize = 0;
+        *__errno_location() = 0;
+        assert_eq!(getline(&mut lineptr, &mut linecap, wf), -1);
+        assert_ne!(ferror(wf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wf);
+        if !lineptr.is_null() {
+            frankenlibc_abi::malloc_abi::free(lineptr.cast());
+        }
+
+        // ungetc on wide-oriented stream fails with EOF without setting ferror.
+        assert_eq!(ungetc(b'z' as c_int, wf), libc::EOF);
+        assert_eq!(ferror(wf), 0);
+
+        // Wide read on the wide-oriented stream still succeeds!
+        assert_eq!(fgetwc(wf), b'7' as u32);
+        assert_eq!(fclose(wf), 0);
+
+        // 3. ungetc and ungetwc orient an unoriented stream.
+        let uf1 = tmpfile();
+        assert_eq!(ungetc(b'q' as c_int, uf1), b'q' as c_int);
+        assert!(fwide(uf1, 0) < 0, "ungetc must orient stream to byte (< 0)");
+        assert_eq!(fclose(uf1), 0);
+
+        let uf2 = tmpfile();
+        assert_eq!(ungetwc(b'q' as u32, uf2), b'q' as u32);
+        assert!(
+            fwide(uf2, 0) > 0,
+            "ungetwc must orient stream to wide (> 0)"
+        );
+        assert_eq!(fclose(uf2), 0);
+
+        // 4. open_memstream starts byte-oriented; open_wmemstream starts wide-oriented;
+        //    fopencookie starts byte-oriented.
+        let mut mptr: *mut c_char = std::ptr::null_mut();
+        let mut msize: usize = 0;
+        let mf = open_memstream(&mut mptr, &mut msize);
+        assert!(!mf.is_null());
+        assert!(
+            fwide(mf, 0) < 0,
+            "open_memstream must start byte-oriented (< 0)"
+        );
+        *__errno_location() = 0;
+        assert_eq!(fputwc(b'x' as u32, mf), WEOF_U32);
+        assert_ne!(ferror(mf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        assert_eq!(fclose(mf), 0);
+        if !mptr.is_null() {
+            frankenlibc_abi::malloc_abi::free(mptr.cast());
+        }
+
+        let mut wmptr: *mut u32 = std::ptr::null_mut();
+        let mut wmsize: usize = 0;
+        let wmf = open_wmemstream(&mut wmptr, &mut wmsize);
+        assert!(!wmf.is_null());
+        assert!(
+            fwide(wmf, 0) > 0,
+            "open_wmemstream must start wide-oriented (> 0)"
+        );
+        *__errno_location() = 0;
+        assert_eq!(fputc(b'x' as c_int, wmf), libc::EOF);
+        assert_ne!(ferror(wmf), 0);
+        assert_eq!(*__errno_location(), libc::EBADF);
+        clearerr(wmf);
+        assert_eq!(fputwc(b'W' as u32, wmf), b'W' as u32);
+        assert_eq!(fclose(wmf), 0);
+        if !wmptr.is_null() {
+            frankenlibc_abi::malloc_abi::free(wmptr.cast());
+        }
+
+        let cf = fopencookie(
+            std::ptr::null_mut(),
+            c"w".as_ptr(),
+            CookieIoFuncs {
+                read: None,
+                write: None,
+                seek: None,
+                close: None,
+            },
+        );
+        assert!(!cf.is_null());
+        assert!(
+            fwide(cf, 0) < 0,
+            "fopencookie must start byte-oriented (< 0)"
+        );
+        assert_eq!(fclose(cf), 0);
+
+        // 5. freopen resets stream orientation to unoriented (0).
+        let rf = tmpfile();
+        assert_eq!(fwide(rf, 1), 1);
+        let rf2 = freopen(c"/dev/null".as_ptr(), c"r+".as_ptr(), rf);
+        assert!(!rf2.is_null());
+        assert_eq!(fwide(rf2, 0), 0, "freopen must reset orientation to 0");
+        assert_eq!(fclose(rf2), 0);
+    }
+
+    fn wf_mode_is_wide(m: c_int) -> bool {
+        m > 0
+    }
+}

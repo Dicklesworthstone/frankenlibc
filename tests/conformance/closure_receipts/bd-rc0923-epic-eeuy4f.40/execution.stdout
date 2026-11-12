@@ -1,0 +1,10 @@
+
+running 5 tests
+test claim_reconciliation_detects_readme_drift_and_routes_owner ... ok
+test claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner ... ok
+test claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner ... ok
+test claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner ... ok
+test claim_reconciliation_gate_passes ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+

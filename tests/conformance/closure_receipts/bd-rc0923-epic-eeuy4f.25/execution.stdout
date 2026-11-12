@@ -1,0 +1,9 @@
+
+running 4 tests
+test fork_and_waitpid_child_exits_nonzero ... ok
+test fork_and_waitpid_child_exits_zero ... ok
+test fork_child_gets_zero_pid ... ok
+test fork_inside_forked_child_does_not_hang ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.01s
+

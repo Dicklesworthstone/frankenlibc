@@ -1,0 +1,8 @@
+
+running 3 tests
+test gethostbyname_hosts_merge_matches_glibc_discriminating_vectors ... ok
+test gethostbyname_hosts_result_preserves_aliases_and_duplicate_addresses ... ok
+test gethostbyname_hosts_row_with_unusable_ipv6_address_returns_null ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 245 filtered out; finished in 0.02s
+

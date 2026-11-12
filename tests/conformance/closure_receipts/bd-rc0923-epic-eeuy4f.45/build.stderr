@@ -1,0 +1,4 @@
+[1m[33mwarning[0m: frankenlibc-core@0.1.0: No SMT solver found for /data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-core/320f418196e30a30/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+[1m[92m    Finished[0m `test` profile [unoptimized] target(s) in 0.31s
+[1m[33mwarning[0m: the following packages contain code that will be rejected by a future version of Rust: nix v0.31.2
+[1m[92mnote[0m: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`

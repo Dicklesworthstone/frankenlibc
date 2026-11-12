@@ -1,0 +1,15 @@
+
+running 10 tests
+test fscanf_and_its_isoc_aliases_agree_on_a_host_owned_stream ... ok
+test fscanf_exact_char_on_an_fl_owned_stream_matches_glibc_cursor_and_eof ... ok
+test scanf_and_its_isoc_aliases_exact_char_matches_glibc_on_stdin ... ok
+test scanf_dialects_match_gnu_on_owned_and_foreign_narrow_and_wide_streams ... ok
+test streaming_narrow::byte_stream_wide_fields_decode_characters_but_count_and_restore_bytes ... ok
+test streaming_narrow::count_only_formats_reject_write_only_streams_before_assigning ... ok
+test streaming_narrow::incomplete_character_fields_fail_and_release_allocations_on_eof_or_error ... ok
+test streaming_narrow::long_fields_and_leading_whitespace_cross_refills_without_losing_bytes ... ok
+test streaming_narrow::open_pipe_uses_buffered_tokens_and_count_only_formats_without_refilling ... ok
+test streaming_narrow::short_cookie_reads_do_not_end_numbers_or_text_fields ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.38s
+

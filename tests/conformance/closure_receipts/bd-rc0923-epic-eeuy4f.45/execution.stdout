@@ -1,0 +1,13 @@
+
+running 8 tests
+test actual_gate_rejects_incomplete_stale_and_promoted_export_groups ... ok
+test artifact_exists_and_has_required_shape ... ok
+test declared_surface_covers_both_census_profiles_without_semantic_promotion ... ok
+test gate_script_passes_and_emits_structured_report_and_log ... ok
+test refreshed_surface_cannot_hide_a_stale_source_line ... ok
+test seed_overlay_entries_are_all_covered ... ok
+test summary_counts_match_entries_and_sources_are_linked ... ok
+test unannotated_fallback_off_platform_dead_branch_and_missing_alias_stay_unknown ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 329.09s
+

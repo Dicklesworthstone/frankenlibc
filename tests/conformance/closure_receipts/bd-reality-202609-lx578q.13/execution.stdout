@@ -1,0 +1,13 @@
+
+running 8 tests
+test checker_accepts_canonical_evidence_ledger ... ok
+test checker_preserves_history_and_rejects_snapshot_corruption ... ok
+test checker_rejects_artifact_hash_drift ... ok
+test checker_rejects_mutated_ledger_entry_chain ... ok
+test declared_source_identity_is_checked_before_success ... ok
+test evidence_ledger_anchors_ws0_regenerated_artifacts ... ok
+test evidence_ledger_rows_bind_existing_artifacts ... ok
+test freshness_counts_current_artifacts_without_history_dilution ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.71s
+

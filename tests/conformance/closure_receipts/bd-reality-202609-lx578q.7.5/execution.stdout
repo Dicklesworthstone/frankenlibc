@@ -1,0 +1,17 @@
+
+running 12 tests
+test fmemopen_append_position_after_seek_and_owned_buffer_round_trip ... ok
+test fmemopen_buffering_and_repositioning_match_live_storage ... ok
+test fmemopen_custom_input_windows_refill_from_live_storage ... ok
+test fmemopen_failed_seek_and_input_flush_preserve_status ... ok
+test fmemopen_first_read_observes_caller_edits_for_all_reader_paths ... ok
+test fmemopen_global_flush_preserves_input_and_unbuffering_discards_it ... ok
+test fmemopen_large_successful_write_keeps_buffered_tail ... ok
+test fmemopen_repeated_flush_and_close_preserve_edits_after_output_flush ... ok
+test fmemopen_scan_pushback_flush_eof_and_update_transitions_match_glibc ... ok
+test fmemopen_size0_read_is_valid_eof ... ok
+test fmemopen_write_nul_terminates_like_glibc ... ok
+test fmemopen_write_overflow_deferred_to_flush_like_glibc ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

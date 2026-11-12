@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.8.4",
+  "contract": {
+    "behavior": "Adversarially verify warm-TLS heap-overflow and header-tampering detection, header-leak non-derivability across CSPRNG dual keys, fork preservation + execve reseeding, and wired ld_preload_smoke.sh canary gates within <=2.0x hardened_over_strict budget",
+    "acceptance_sha256": "9b73b641b957e3fb60f06af8e2036105b33bc68550bc62137d4242701c599478",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-membrane/src/fingerprint.rs",
+      "crates/frankenlibc-membrane/src/tls_cache.rs",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "scripts/ld_preload_smoke.sh"
+    ],
+    "test_paths": [
+      "tests/integration/fixture_malloc.c",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-membrane/src/fingerprint.rs": "19c0844fdc6ae46e5f1028aa5ff1d50a96a7fa27f7030bccc30e852d8e16ebce",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs": "c3b2ab0eb7aee1e90eb72a8878c2c482be71ac4dbff989297ee82a6674333962",
+        "crates/frankenlibc-membrane/src/tls_cache.rs": "67004f36949c339ee4a059ac400569cae0fd1cfecec5c738d23280768e081942",
+        "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "a7c121f132c0059881bd59eb8e85463572d90fb52a75dcd3bed2bd284681604e",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/ld_preload_smoke.sh": "e3f16a82e6ceeca6408753a49ccecf3bd4ff14f109e909ca759a728458682632",
+        "tests/integration/fixture_malloc.c": "a71187f9f08dc7ec145aa78abd94ac4b4a6af336f6dcbefafea1f96efc653a9e"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-11T16:12:00+00:00",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-membrane",
+        "--test",
+        "tsm_pipeline_e2e_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "dual_key_csprng_canary_domain_separation_e2e",
+        "warm_tls_cache_detects_tail_and_header_corruption_e2e",
+        "smoke_script_wires_all_canary_cases_and_audit_emission"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-membrane",
+      "--test",
+      "tsm_pipeline_e2e_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:59.771147+00:00",
+    "finished_at": "2026-11-12T04:56:00.248500+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "a62061759aedbff53dc407d373bec99f243d6e94475d7dfac762ff1478fe3655",
+    "stderr_sha256": "aa30c86b2f9af4191d62f6ea42cac6a4d021eb8cde9bd5ab6def6c32457bcb4c",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:56:00.265912+00:00",
+    "finished_at": "2026-11-12T04:56:00.609149+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "de537f6d1cc86296004c4c58f495b525c41111e46e126cce74c83ac1a0e1c817",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 24
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791": "50e66d37b9748153cd122a65a0b9a0494472376a3f26ae0b200961279e4e71b3"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-membrane/src/fingerprint.rs": "19c0844fdc6ae46e5f1028aa5ff1d50a96a7fa27f7030bccc30e852d8e16ebce",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs": "c3b2ab0eb7aee1e90eb72a8878c2c482be71ac4dbff989297ee82a6674333962",
+    "crates/frankenlibc-membrane/src/tls_cache.rs": "67004f36949c339ee4a059ac400569cae0fd1cfecec5c738d23280768e081942",
+    "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "a7c121f132c0059881bd59eb8e85463572d90fb52a75dcd3bed2bd284681604e",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/ld_preload_smoke.sh": "e3f16a82e6ceeca6408753a49ccecf3bd4ff14f109e909ca759a728458682632",
+    "tests/integration/fixture_malloc.c": "a71187f9f08dc7ec145aa78abd94ac4b4a6af336f6dcbefafea1f96efc653a9e"
+  },
+  "executable_sha256": "50e66d37b9748153cd122a65a0b9a0494472376a3f26ae0b200961279e4e71b3"
+}

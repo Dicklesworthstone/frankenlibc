@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-uu1wvp",
+  "contract": {
+    "behavior": "Support wordexp command substitution when WRDE_NOCMD is unset in parity with live glibc",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "crates/frankenlibc-core/src/stdlib/wordexp.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_diff_wordexp.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/unistd_abi.rs": "32c04db19e309c60c2fbc779c4ba98e25a744a6970fe5ce73648974f4ad7d8d2",
+        "crates/frankenlibc-abi/tests/conformance_diff_wordexp.rs": "9e440388c6c6142b87bebac45a52cd5702dd3651fb950ebac81d0f2bb3d0786e",
+        "crates/frankenlibc-core/src/stdlib/wordexp.rs": "5c756b2ac4c32fc0b0083c4a9f71991b9e16bb2afc43724910485c554da036f4",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-08-15T21:51:29.315460866Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/c508379e4240999c/out/conformance_diff_wordexp-c508379e4240999c",
+        "wordexp_command_substitution_matches_live_glibc",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_diff_wordexp",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/c508379e4240999c/out/conformance_diff_wordexp-c508379e4240999c"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "wordexp_command_substitution_matches_live_glibc"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_diff_wordexp",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:18.790525+00:00",
+    "finished_at": "2026-11-12T04:59:19.057851+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "2e9f08561cfa8f66699c60a7ef33fcbc60860cab22f4b8beb5c8fc359a23ae76",
+    "stderr_sha256": "472d3b2517cc2d45d0fb45d2c4890fd8699e5377261a381ab4bce382d84db702",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/c508379e4240999c/out/conformance_diff_wordexp-c508379e4240999c",
+      "wordexp_command_substitution_matches_live_glibc",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:19.065155+00:00",
+    "finished_at": "2026-11-12T04:59:19.082133+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "037082b39641070c380c8d67a100c4cd674b4faf67a9e039af1431e896516cb9",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 1
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/c508379e4240999c/out/conformance_diff_wordexp-c508379e4240999c": "b51a898ececb22117448b3b3dcadde37d0fa7a5d175c2cb52e564dde0d9de31c"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/c508379e4240999c/out/conformance_diff_wordexp-c508379e4240999c": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/unistd_abi.rs": "32c04db19e309c60c2fbc779c4ba98e25a744a6970fe5ce73648974f4ad7d8d2",
+    "crates/frankenlibc-abi/tests/conformance_diff_wordexp.rs": "9e440388c6c6142b87bebac45a52cd5702dd3651fb950ebac81d0f2bb3d0786e",
+    "crates/frankenlibc-core/src/stdlib/wordexp.rs": "5c756b2ac4c32fc0b0083c4a9f71991b9e16bb2afc43724910485c554da036f4",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "b51a898ececb22117448b3b3dcadde37d0fa7a5d175c2cb52e564dde0d9de31c"
+}

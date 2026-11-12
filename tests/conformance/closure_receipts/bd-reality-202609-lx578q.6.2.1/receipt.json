@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.6.2.1",
+  "contract": {
+    "behavior": "Qualify process-global stdio FILE streams in isolated child execution",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/stdio_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/stdio_abi_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+        "crates/frankenlibc-abi/tests/stdio_abi_test.rs": "15b8bb9a9fa923cf3235f011d00feca0e3cf6a05e20d9b7dc3a5e3b03b227326",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-23T01:52:59.693008Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/25c1d94f29d5826e/out/stdio_abi_test-25c1d94f29d5826e",
+        "process_global_stdio_arms_run_in_an_isolated_child",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "stdio_abi_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/25c1d94f29d5826e/out/stdio_abi_test-25c1d94f29d5826e"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "process_global_stdio_arms_run_in_an_isolated_child"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "stdio_abi_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:37.352527+00:00",
+    "finished_at": "2026-11-12T05:03:37.620684+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "c331cb275db46fa889aa3d3d99a2d6d0420f68e7c63253d30a56717e52211585",
+    "stderr_sha256": "cb90005141d5b96203a53c77858fd07c60f3f2abd12724240477f4a8ff143e55",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/25c1d94f29d5826e/out/stdio_abi_test-25c1d94f29d5826e",
+      "process_global_stdio_arms_run_in_an_isolated_child",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:37.634513+00:00",
+    "finished_at": "2026-11-12T05:03:37.651700+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "0c475869e315f1187149e9d833a4c17f2c3092806ebb5d547b49be2f0c91f45a",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 1
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/25c1d94f29d5826e/out/stdio_abi_test-25c1d94f29d5826e": "30a0f3fc09b86778b6232317bd6731ff0533db3a83e1575b4b95f3fc0df19c54"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/25c1d94f29d5826e/out/stdio_abi_test-25c1d94f29d5826e": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/stdio_abi.rs": "44978c5b7cf65ab8066a896e7f89e01c8f50d4aaf4db66d051a55764f3cb5022",
+    "crates/frankenlibc-abi/tests/stdio_abi_test.rs": "15b8bb9a9fa923cf3235f011d00feca0e3cf6a05e20d9b7dc3a5e3b03b227326",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "30a0f3fc09b86778b6232317bd6731ff0533db3a83e1575b4b95f3fc0df19c54"
+}

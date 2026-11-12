@@ -1,0 +1,1472 @@
+#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
+
+use std::ffi::{CStr, CString, OsStr, c_char, c_int, c_void};
+use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use frankenlibc_abi::{
+    dlfcn_abi as dl, errno_abi as errno, glibc_internal_abi as internal, locale_abi as locale,
+    malloc_abi as allocation, mmap_abi as mapping, stdlib_abi as stdlib, string_abi as strings,
+    unistd_abi as unistd, wchar_abi as wide,
+};
+use frankenlibc_core::elf::ElfLoader;
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+type Open = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+type Sym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+type Run = unsafe extern "C" fn() -> c_int;
+type Function = unsafe extern "C" fn(u32) -> *mut c_void;
+type Dynamic = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+
+const SOURCE: &str = r#"#define _GNU_SOURCE
+#include <stdlib.h>
+#include <string.h>
+#include <malloc.h>
+#include <dlfcn.h>
+#include <stdint.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <wchar.h>
+#include <locale.h>
+#include <langinfo.h>
+
+extern locale_t __newlocale(int, const char *, locale_t);
+extern locale_t __duplocale(locale_t);
+extern void __freelocale(locale_t);
+extern locale_t __uselocale(locale_t);
+extern char *__nl_langinfo_l(nl_item, locale_t);
+extern double __strtod_l(const char *, char **, locale_t);
+extern float __strtof_l(const char *, char **, locale_t);
+extern long double __strtold_l(const char *, char **, locale_t);
+extern double __wcstod_l(const wchar_t *, wchar_t **, locale_t);
+extern float __wcstof_l(const wchar_t *, wchar_t **, locale_t);
+extern long double __wcstold_l(const wchar_t *, wchar_t **, locale_t);
+
+#ifdef LOCAL_COMPARE
+int memcmp(const void *left, const void *right, size_t n) {
+    (void)left; (void)right; (void)n; return -23;
+}
+#endif
+int memory_compare(void) { return memcmp("a", "b", 1); }
+extern int memory_unknown_weak(void) __attribute__((weak));
+int memory_weak_missing(void) { return memory_unknown_weak == 0; }
+#ifdef STRONG_MISSING
+extern int frankenlibc_memory_unknown_strong(void);
+int memory_strong_missing(void) { return frankenlibc_memory_unknown_strong(); }
+#endif
+
+int memory_allocations(void) {
+    unsigned char *p = calloc(64, 1);
+    if (!p) return 1;
+    for (int i = 0; i < 64; ++i) if (p[i] != 0) { free(p); return 2; }
+    p[17] = 169;
+    unsigned char *q = realloc(p, 512);
+    if (!q) { free(p); return 3; }
+    if (q[17] != 169 || malloc_usable_size(q) < 512) { free(q); return 4; }
+    free(q);
+    volatile size_t huge = SIZE_MAX;
+    p = calloc(huge, 2);
+    if (p) { free(p); return 5; }
+    char *a = strdup("native-memory");
+    char *b = strndup("native-memory", 6);
+    int result = !a || !b || strcmp(a, "native-memory") || strcmp(b, "native");
+    free(a); free(b);
+    if (result) return 6;
+    p = realloc(NULL, 37);
+    if (!p) return 7;
+    free(p);
+    return 0;
+}
+
+int memory_strings(void) {
+    const char s[] = "ab:abc:xyz";
+    if (memchr(s, ':', 9) != s + 2 || memrchr(s, ':', 9) != s + 6) return 1;
+    if (strchr(s, ':') != s + 2 || strrchr(s, ':') != s + 6) return 2;
+    if (memcmp("abc", "abd", 3) >= 0 || strncmp("abc", "abd", 2) != 0) return 3;
+    if (strnlen(s, 4) != 4 || strstr(s, "abc") != s + 3) return 4;
+    if (strspn("aaab12", "ab") != 4 || strcspn("aab:cd", ":") != 3) return 5;
+    const char accept[] = "ab:cd";
+    if (strpbrk(accept, "x:") != accept + 2) return 6;
+    char output[32]; memset(output, 165, sizeof output);
+    if (strcpy(output, "abc") != output || strcmp(output, "abc")) return 7;
+    if (strncpy(output, "x", 4) != output) return 8;
+    if (output[0] != 'x' || output[1] || output[2] || output[3]) return 9;
+    if (strcat(output, "yz") != output || strncat(output, "abcd", 2) != output) return 10;
+    if (strcmp(output, "xyzab")) return 11;
+    return 0;
+}
+
+#define SCALAR_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+#define FLOAT_CASE(function, character, text, expected, consumed, error) do { \
+    const character *input = (text); \
+    character *end = NULL; \
+    errno = 1234; \
+    SCALAR_CHECK(function(input, &end) == (expected)); \
+    SCALAR_CHECK(end == input + (consumed) && errno == (error)); \
+} while (0)
+
+int memory_floating_conversions(void) {
+    SCALAR_CHECK(atof(" \t-3.25tail") == -3.25);
+    FLOAT_CASE(strtod, char, " \t-12.5tail", -12.5, 7, 1234);
+    FLOAT_CASE(strtod, char, "0x1.8p+2!", 6.0, 8, 1234);
+    FLOAT_CASE(strtod, char, "1e+", 1.0, 1, 1234);
+    FLOAT_CASE(strtod, char, " no-number", 0.0, 0, 1234);
+    FLOAT_CASE(strtod, char, "1e9999!", __builtin_inf(), 6, ERANGE);
+    FLOAT_CASE(strtod, char, "1e-9999!", 0.0, 7, ERANGE);
+    FLOAT_CASE(strtof, char, "0x1.8p-1!", 0.75f, 8, 1234);
+    FLOAT_CASE(strtof, char, "1e+", 1.0f, 1, 1234);
+    FLOAT_CASE(strtof, char, " no-number", 0.0f, 0, 1234);
+    FLOAT_CASE(strtof, char, "1e9999!", __builtin_inff(), 6, ERANGE);
+    FLOAT_CASE(strtof, char, "1e-9999!", 0.0f, 7, ERANGE);
+    /* 2^-60 is visible in x87 extended precision but lost by an f64 shim. */
+    FLOAT_CASE(strtold, char, "0x1.000000000000001p0!",
+               0x1.000000000000001p0L, 21, 1234);
+    FLOAT_CASE(strtold, char, " no-number", 0.0L, 0, 1234);
+    FLOAT_CASE(strtold, char, "1e9999!", __builtin_infl(), 6, ERANGE);
+    FLOAT_CASE(wcstod, wchar_t, L" \t-12.5tail", -12.5, 7, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"0x1.8p+2!", 6.0, 8, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"1e+", 1.0, 1, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L" no-number", 0.0, 0, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"1e9999!", __builtin_inf(), 6, ERANGE);
+    FLOAT_CASE(wcstof, wchar_t, L"0x1.8p-1!", 0.75f, 8, 1234);
+    FLOAT_CASE(wcstof, wchar_t, L"1e-9999!", 0.0f, 7, ERANGE);
+    FLOAT_CASE(wcstold, wchar_t, L"0x1.000000000000001p0!",
+               0x1.000000000000001p0L, 21, 1234);
+    FLOAT_CASE(wcstold, wchar_t, L"1e9999!", __builtin_infl(), 6, ERANGE);
+    union { double value; uint64_t bits; } negative_double = {strtod("-0", NULL)};
+    union { float value; uint32_t bits; } negative_float = {wcstof(L"-0", NULL)};
+    SCALAR_CHECK(negative_double.bits == UINT64_C(0x8000000000000000));
+    SCALAR_CHECK(negative_float.bits == UINT32_C(0x80000000));
+    char *end = NULL;
+    const char nan[] = "NAN(payload)!";
+    double value = strtod(nan, &end);
+    SCALAR_CHECK(value != value && end == nan + 12);
+    return 0;
+}
+
+#define LOCALE_FLOAT_CASE(function, character, text, expected, consumed, loc) do { \
+    const character *input = (text); \
+    character *end = NULL; \
+    errno = 1234; \
+    SCALAR_CHECK(function(input, &end, loc) == (expected)); \
+    SCALAR_CHECK(end == input + (consumed) && errno == 1234); \
+} while (0)
+
+int memory_locales(const char *name) {
+    SCALAR_CHECK(setlocale(LC_ALL, "C") != NULL);
+    locale_t c = __newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    locale_t numeric = newlocale(LC_NUMERIC_MASK, name, (locale_t)0);
+    SCALAR_CHECK(c && numeric);
+    SCALAR_CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, numeric), ","));
+    SCALAR_CHECK(!strcmp(__nl_langinfo_l(RADIXCHAR, c), "."));
+    locale_t duplicate = __duplocale(numeric);
+    SCALAR_CHECK(duplicate != (locale_t)0);
+    freelocale(numeric);
+    SCALAR_CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, duplicate), ","));
+    locale_t thread = duplocale(duplicate);
+    SCALAR_CHECK(thread != (locale_t)0);
+    locale_t previous = uselocale(thread);
+    SCALAR_CHECK(previous != (locale_t)0);
+    SCALAR_CHECK(__uselocale((locale_t)0) == thread);
+    SCALAR_CHECK(!strcmp(nl_langinfo(RADIXCHAR), ","));
+    SCALAR_CHECK(!strcmp(localeconv()->decimal_point, ","));
+    /* A thread-local selection must not mutate the global C locale. */
+    SCALAR_CHECK(!strcmp(setlocale(LC_NUMERIC, NULL), "C"));
+    FLOAT_CASE(strtod, char, "12,5!", 12.5, 4, 1234);
+    FLOAT_CASE(wcstod, wchar_t, L"12,5!", 12.5, 4, 1234);
+    LOCALE_FLOAT_CASE(strtod_l, char, "12.5!", 12.5, 4, c);
+    LOCALE_FLOAT_CASE(strtod_l, char, "12,5!", 12.0, 2, c);
+    LOCALE_FLOAT_CASE(strtof_l, char, "-0x1,8p+2!", -6.0f, 9, duplicate);
+    LOCALE_FLOAT_CASE(strtold_l, char, "0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    LOCALE_FLOAT_CASE(wcstod_l, wchar_t, L"12.5!", 12.5, 4, c);
+    LOCALE_FLOAT_CASE(wcstof_l, wchar_t, L"-0x1,8p+2!", -6.0f, 9, duplicate);
+    LOCALE_FLOAT_CASE(wcstold_l, wchar_t, L"0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    LOCALE_FLOAT_CASE(__strtod_l, char, "1,25e+!", 1.25, 4, duplicate);
+    LOCALE_FLOAT_CASE(__strtof_l, char, "1,25!", 1.25f, 4, duplicate);
+    LOCALE_FLOAT_CASE(__strtold_l, char, "0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    LOCALE_FLOAT_CASE(__wcstod_l, wchar_t, L"1,25e+!", 1.25, 4, duplicate);
+    LOCALE_FLOAT_CASE(__wcstof_l, wchar_t, L"1,25!", 1.25f, 4, duplicate);
+    LOCALE_FLOAT_CASE(__wcstold_l, wchar_t, L"0x1,000000000000001p0!",
+                      0x1.000000000000001p0L, 21, duplicate);
+    SCALAR_CHECK(uselocale((locale_t)0) == thread);
+    SCALAR_CHECK(__uselocale(previous) == thread);
+    SCALAR_CHECK(!strcmp(nl_langinfo(RADIXCHAR), "."));
+    __freelocale(thread);
+    __freelocale(duplicate);
+    __freelocale(c);
+    return 0;
+}
+
+locale_t memory_locale_create(const char *name) {
+    return newlocale(LC_NUMERIC_MASK, name, (locale_t)0);
+}
+
+int memory_locale_accept(locale_t loc) {
+    SCALAR_CHECK(!strcmp(nl_langinfo_l(RADIXCHAR, loc), ","));
+    LOCALE_FLOAT_CASE(strtod_l, char, "3,75!", 3.75, 4, loc);
+    return 0;
+}
+
+int memory_environment(void) {
+    const char *name = "FRANKENLIBC_NATIVE_ADMISSION";
+    SCALAR_CHECK(unsetenv(name) == 0 && getenv(name) == NULL);
+    char copied[] = "alpha";
+    SCALAR_CHECK(setenv(name, copied, 1) == 0);
+    copied[0] = 'z';
+    SCALAR_CHECK(getenv(name) && !strcmp(getenv(name), "alpha"));
+    SCALAR_CHECK(secure_getenv(name) == getenv(name));
+    SCALAR_CHECK(setenv(name, "ignored", 0) == 0);
+    SCALAR_CHECK(!strcmp(getenv(name), "alpha"));
+    SCALAR_CHECK(setenv(name, "beta", 1) == 0);
+    SCALAR_CHECK(!strcmp(getenv(name), "beta"));
+    char shared[] = "FRANKENLIBC_NATIVE_ADMISSION=delta";
+    char *value = strchr(shared, '=') + 1;
+    SCALAR_CHECK(putenv(shared) == 0 && getenv(name) == value);
+    value[0] = 'D';
+    SCALAR_CHECK(!strcmp(getenv(name), "Delta"));
+    char remove[] = "FRANKENLIBC_NATIVE_ADMISSION";
+    SCALAR_CHECK(putenv(remove) == 0 && getenv(name) == NULL);
+    SCALAR_CHECK(setenv(name, "", 1) == 0 && getenv(name) && !*getenv(name));
+    SCALAR_CHECK(unsetenv(name) == 0 && getenv(name) == NULL);
+    errno = 0;
+    SCALAR_CHECK(setenv("", "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    SCALAR_CHECK(setenv("invalid=name", "value", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    SCALAR_CHECK(unsetenv("") == -1 && errno == EINVAL);
+    errno = 0;
+    SCALAR_CHECK(unsetenv("invalid=name") == -1 && errno == EINVAL);
+    /* Leave a value for an independent process-environment observer. */
+    SCALAR_CHECK(setenv("FRANKENLIBC_NATIVE_SHARED", "from-plugin", 1) == 0);
+    return 0;
+}
+
+const char *memory_environment_value(void) {
+    return getenv("FRANKENLIBC_NATIVE_SHARED");
+}
+
+int memory_environment_clear(void) {
+    SCALAR_CHECK(setenv("FRANKENLIBC_NATIVE_SHARED", "before-clear", 1) == 0);
+    SCALAR_CHECK(clearenv() == 0);
+    SCALAR_CHECK(getenv("FRANKENLIBC_NATIVE_SHARED") == NULL);
+    SCALAR_CHECK(setenv("FRANKENLIBC_NATIVE_SHARED", "after-clear", 1) == 0);
+    SCALAR_CHECK(!strcmp(getenv("FRANKENLIBC_NATIVE_SHARED"), "after-clear"));
+    SCALAR_CHECK(unsetenv("FRANKENLIBC_NATIVE_SHARED") == 0);
+    return 0;
+}
+
+static unsigned compare_calls;
+static int scalar_compare(const void *a, const void *b) {
+    ++compare_calls;
+    int left = *(const int *)a, right = *(const int *)b;
+    return (left > right) - (left < right);
+}
+static int scalar_compare_r(const void *a, const void *b, void *direction) {
+    return *(int *)direction * scalar_compare(a, b);
+}
+int memory_algorithms(void) {
+    int values[] = {7, -3, 7, 0, 19, -3, 5};
+    const int expected[] = {-3, -3, 0, 5, 7, 7, 19};
+    compare_calls = 0;
+    qsort(values, 7, sizeof(int), scalar_compare);
+    SCALAR_CHECK(compare_calls > 0 && !memcmp(values, expected, sizeof values));
+    int key = 7;
+    int *found = bsearch(&key, values, 7, sizeof(int), scalar_compare);
+    SCALAR_CHECK(found && found >= values && found < values + 7 && *found == key);
+    key = 8;
+    SCALAR_CHECK(bsearch(&key, values, 7, sizeof(int), scalar_compare) == NULL);
+    unsigned before = compare_calls;
+    SCALAR_CHECK(bsearch(&key, values, 0, sizeof(int), scalar_compare) == NULL);
+    qsort(values, 0, sizeof(int), scalar_compare);
+    SCALAR_CHECK(compare_calls == before);
+    int descending = -1;
+    qsort_r(values, 7, sizeof(int), scalar_compare_r, &descending);
+    for (unsigned i = 0; i < 7; ++i) SCALAR_CHECK(values[i] == expected[6 - i]);
+    return 0;
+}
+
+typedef int (*scalar_comparator)(const void *, const void *);
+static int scalar_callback_r(const void *left, const void *right, void *context) {
+    return (*(scalar_comparator *)context)(left, right);
+}
+int memory_algorithm_callback(unsigned which, scalar_comparator compare) {
+    int values[] = {1, 2, 3}, key = 2;
+    if (which == 0) qsort(values, 3, sizeof(int), compare);
+    else if (which == 1) (void)bsearch(&key, values, 3, sizeof(int), compare);
+    else if (which == 2) qsort_r(values, 3, sizeof(int), scalar_callback_r, &compare);
+    else return -1;
+    return 0;
+}
+
+
+#define VM_PAGE 4096
+#define VM_CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
+
+#ifdef LOCAL_ADVICE
+int madvise(void *address, size_t length, int advice) {
+    (void)address; (void)length; (void)advice; return 23;
+}
+#endif
+int memory_advice_probe(void) { return madvise(NULL, 0, MADV_NORMAL); }
+
+int memory_virtual_mappings(void) {
+    errno = 1234;
+    VM_CHECK(getpagesize() == VM_PAGE && errno == 1234);
+    VM_CHECK(sysconf(_SC_PAGESIZE) == VM_PAGE && errno == 1234);
+    unsigned char *p = mmap(NULL, 2 * VM_PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(p != MAP_FAILED && errno == 1234);
+    for (int i = 0; i < 2 * VM_PAGE; ++i) VM_CHECK(p[i] == 0);
+    p[0] = 41; p[VM_PAGE - 1] = 42; p[VM_PAGE] = 43; p[2 * VM_PAGE - 1] = 44;
+    unsigned char resident[3] = {0, 0, 0xA5};
+    VM_CHECK(mincore(p, 2 * VM_PAGE, resident) == 0 && resident[2] == 0xA5);
+    VM_CHECK((resident[0] & 1) && (resident[1] & 1));
+    VM_CHECK(mprotect(p, VM_PAGE, PROT_READ) == 0);
+    VM_CHECK(p[0] == 41 && p[VM_PAGE - 1] == 42);
+    VM_CHECK(mprotect(p, VM_PAGE, PROT_READ | PROT_WRITE) == 0);
+    p[0] = 45;
+    VM_CHECK(madvise(p, 2 * VM_PAGE, MADV_NORMAL) == 0);
+    errno = 1234;
+    VM_CHECK(posix_madvise(p, 2 * VM_PAGE, POSIX_MADV_NORMAL) == 0 && errno == 1234);
+    /* POSIX_MADV_DONTNEED is nondestructive, unlike Linux MADV_DONTNEED. */
+    VM_CHECK(posix_madvise(p, 2 * VM_PAGE, POSIX_MADV_DONTNEED) == 0);
+    VM_CHECK(p[0] == 45 && p[VM_PAGE] == 43);
+    /* Exercise the ordinary four-argument call as well as MREMAP_FIXED below. */
+    unsigned char *q = mremap(p, 2 * VM_PAGE, 3 * VM_PAGE, MREMAP_MAYMOVE);
+    VM_CHECK(q != MAP_FAILED && q[0] == 45 && q[VM_PAGE] == 43);
+    VM_CHECK(q[VM_PAGE - 1] == 42 && q[2 * VM_PAGE - 1] == 44);
+    for (int i = 2 * VM_PAGE; i < 3 * VM_PAGE; ++i) VM_CHECK(q[i] == 0);
+    q[2 * VM_PAGE] = 46;
+    VM_CHECK(madvise(q + 2 * VM_PAGE, VM_PAGE, MADV_DONTNEED) == 0);
+    VM_CHECK(q[2 * VM_PAGE] == 0 && q[0] == 45);
+    VM_CHECK(munlock(q, 3 * VM_PAGE) == 0);
+    VM_CHECK(munmap(q, 3 * VM_PAGE) == 0);
+    return 0;
+}
+
+int memory_fixed_remap(void) {
+    unsigned char *p = mmap(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(p != MAP_FAILED); p[0] = 83; p[VM_PAGE - 1] = 84;
+    unsigned char *target = mmap(NULL, 2 * VM_PAGE, PROT_NONE,
+                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(target != MAP_FAILED);
+    unsigned char *q = mremap(p, VM_PAGE, 2 * VM_PAGE,
+                              MREMAP_MAYMOVE | MREMAP_FIXED, target);
+    VM_CHECK(q == target && q[0] == 83 && q[VM_PAGE - 1] == 84 && q[VM_PAGE] == 0);
+    unsigned char resident = 0xA5;
+    errno = 0;
+    VM_CHECK(mincore(p, VM_PAGE, &resident) == -1 && errno == ENOMEM);
+    VM_CHECK(resident == 0xA5);
+    VM_CHECK(munmap(q, 2 * VM_PAGE) == 0);
+    return 0;
+}
+
+int memory_file_mappings(int fd) {
+    VM_CHECK(ftruncate(fd, 2 * VM_PAGE) == 0);
+    VM_CHECK(pwrite(fd, "A", 1, 0) == 1 && pwrite(fd, "B", 1, VM_PAGE) == 1);
+    VM_CHECK(lseek(fd, 17, SEEK_SET) == 17);
+    unsigned char *shared = mmap(NULL, 2 * VM_PAGE, PROT_READ | PROT_WRITE,
+                                 MAP_SHARED, fd, 0);
+    VM_CHECK(shared != MAP_FAILED && shared[0] == 'A' && shared[VM_PAGE] == 'B');
+    unsigned char *private = mmap64(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                                    MAP_PRIVATE, fd, VM_PAGE);
+    VM_CHECK(private != MAP_FAILED && private[0] == 'B');
+    private[0] = 0x83;
+    char byte = 0;
+    VM_CHECK(pread(fd, &byte, 1, VM_PAGE) == 1 && byte == 'B');
+    VM_CHECK(shared[VM_PAGE] == 'B');
+    shared[0] = 'Q'; shared[VM_PAGE] = 'R';
+    VM_CHECK(msync(shared, 2 * VM_PAGE, MS_SYNC) == 0);
+    VM_CHECK(pread(fd, &byte, 1, 0) == 1 && byte == 'Q');
+    VM_CHECK(pread(fd, &byte, 1, VM_PAGE) == 1 && byte == 'R');
+    VM_CHECK(private[0] == 0x83 && lseek(fd, 0, SEEK_CUR) == 17);
+    VM_CHECK(munmap(private, VM_PAGE) == 0 && munmap(shared, 2 * VM_PAGE) == 0);
+    return 0;
+}
+
+int memory_mapping_errors(void) {
+    unsigned char *p = mmap(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK(p != MAP_FAILED); p[0] = 71;
+    errno = 0;
+    VM_CHECK(mmap(NULL, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+             == MAP_FAILED && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(mmap64(NULL, VM_PAGE, PROT_READ, MAP_PRIVATE, -1, 0)
+             == MAP_FAILED && errno == EBADF);
+    errno = 0;
+    VM_CHECK(mmap64(NULL, VM_PAGE, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 1)
+             == MAP_FAILED && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(munmap(p + 1, VM_PAGE) == -1 && errno == EINVAL && p[0] == 71);
+    errno = 0;
+    VM_CHECK(mprotect(p + 1, VM_PAGE - 1, PROT_READ) == -1 && errno == EINVAL);
+    p[0] = 72; /* A failed protection change must leave the mapping writable. */
+    errno = 0;
+    VM_CHECK(msync(p + 1, VM_PAGE - 1, MS_SYNC) == -1 && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(madvise(p + 1, VM_PAGE - 1, MADV_NORMAL) == -1 && errno == EINVAL);
+    errno = 1234;
+    VM_CHECK(posix_madvise(p + 1, VM_PAGE - 1, POSIX_MADV_NORMAL) == EINVAL);
+    VM_CHECK(errno == 1234 && p[0] == 72);
+    unsigned char resident[2] = {0xA5, 0xA5};
+    errno = 0;
+    VM_CHECK(mincore(p + 1, VM_PAGE - 1, resident) == -1 && errno == EINVAL);
+    VM_CHECK(resident[0] == 0xA5 && resident[1] == 0xA5);
+    errno = 0;
+    VM_CHECK(mremap(p, VM_PAGE, 0, MREMAP_MAYMOVE) == MAP_FAILED && errno == EINVAL);
+    VM_CHECK(p[0] == 72);
+    errno = 0;
+    VM_CHECK(mlockall(0) == -1 && errno == EINVAL);
+    errno = 0;
+    VM_CHECK(mlock2(p, VM_PAGE, -1) == -1 && errno == EINVAL);
+    VM_CHECK(munmap(p, VM_PAGE) == 0);
+    return 0;
+}
+
+/* The parent expects SIGSEGV, so a no-op mprotect cannot pass this protocol. */
+int memory_write_readonly(void) {
+    volatile unsigned char *p = mmap(NULL, VM_PAGE, PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    VM_CHECK((void *)p != MAP_FAILED);
+    VM_CHECK(mprotect((void *)p, VM_PAGE, PROT_READ) == 0);
+    p[0] = 1;
+    return 0;
+}
+
+void *memory_function(unsigned index) {
+    switch (index) {
+        case 0: return (void *)calloc;
+        case 1: return (void *)realloc;
+        case 2: return (void *)malloc_usable_size;
+        case 3: return (void *)memchr;
+        case 4: return (void *)memrchr;
+        case 5: return (void *)memcmp;
+        case 6: return (void *)strchr;
+        case 7: return (void *)strrchr;
+        case 8: return (void *)strncmp;
+        case 9: return (void *)strnlen;
+        case 10: return (void *)strstr;
+        case 11: return (void *)strdup;
+        case 12: return (void *)strndup;
+        case 13: return (void *)strcpy;
+        case 14: return (void *)strncpy;
+        case 15: return (void *)strcat;
+        case 16: return (void *)strncat;
+        case 17: return (void *)strspn;
+        case 18: return (void *)strcspn;
+        case 19: return (void *)strpbrk;
+        case 20: return (void *)malloc;
+        case 21: return (void *)free;
+        case 22: return (void *)mmap;
+        case 23: return (void *)mmap64;
+        case 24: return (void *)munmap;
+        case 25: return (void *)mprotect;
+        case 26: return (void *)msync;
+        case 27: return (void *)madvise;
+        case 28: return (void *)posix_madvise;
+        case 29: return (void *)mincore;
+        case 30: return (void *)mremap;
+        case 31: return (void *)mlock;
+        case 32: return (void *)munlock;
+        case 33: return (void *)mlockall;
+        case 34: return (void *)munlockall;
+        case 35: return (void *)mlock2;
+        case 36: return (void *)__errno_location;
+        case 37: return (void *)getpagesize;
+        case 38: return (void *)sysconf;
+        case 39: return (void *)atof;
+        case 40: return (void *)strtod;
+        case 41: return (void *)strtof;
+        case 42: return (void *)strtold;
+        case 43: return (void *)wcstod;
+        case 44: return (void *)wcstof;
+        case 45: return (void *)wcstold;
+        case 46: return (void *)getenv;
+        case 47: return (void *)setenv;
+        case 48: return (void *)unsetenv;
+        case 49: return (void *)putenv;
+        case 50: return (void *)clearenv;
+        case 51: return (void *)secure_getenv;
+        case 52: return (void *)qsort;
+        case 53: return (void *)bsearch;
+        case 54: return (void *)qsort_r;
+        case 55: return (void *)newlocale;
+        case 56: return (void *)duplocale;
+        case 57: return (void *)freelocale;
+        case 58: return (void *)uselocale;
+        case 59: return (void *)nl_langinfo_l;
+        case 60: return (void *)setlocale;
+        case 61: return (void *)localeconv;
+        case 62: return (void *)nl_langinfo;
+        case 63: return (void *)strtod_l;
+        case 64: return (void *)strtof_l;
+        case 65: return (void *)strtold_l;
+        case 66: return (void *)wcstod_l;
+        case 67: return (void *)wcstof_l;
+        case 68: return (void *)wcstold_l;
+        case 69: return (void *)__newlocale;
+        case 70: return (void *)__duplocale;
+        case 71: return (void *)__freelocale;
+        case 72: return (void *)__uselocale;
+        case 73: return (void *)__nl_langinfo_l;
+        case 74: return (void *)__strtod_l;
+        case 75: return (void *)__strtof_l;
+        case 76: return (void *)__strtold_l;
+        case 77: return (void *)__wcstod_l;
+        case 78: return (void *)__wcstof_l;
+        case 79: return (void *)__wcstold_l;
+        default: return 0;
+    }
+}
+void *memory_dynamic(const char *name, const char *version) {
+    return version ? dlvsym(RTLD_DEFAULT, name, version) : dlsym(RTLD_DEFAULT, name);
+}
+#ifdef LIFECYCLE
+int memory_init_result = -1;
+static void (*memory_report)(int);
+__attribute__((constructor)) static void init(void) { memory_init_result = memory_allocations(); }
+void memory_set_report(void (*report)(int)) { memory_report = report; }
+__attribute__((destructor)) static void fini(void) {
+    int result = memory_allocations(); if (memory_report) memory_report(result);
+}
+#endif
+"#;
+
+fn symbols() -> [(&'static str, *const ()); 80] {
+    [
+        ("calloc", allocation::calloc as *const ()),
+        ("realloc", allocation::realloc as *const ()),
+        (
+            "malloc_usable_size",
+            allocation::malloc_usable_size as *const (),
+        ),
+        ("memchr", strings::memchr as *const ()),
+        ("memrchr", strings::memrchr as *const ()),
+        ("memcmp", strings::memcmp as *const ()),
+        ("strchr", strings::strchr as *const ()),
+        ("strrchr", strings::strrchr as *const ()),
+        ("strncmp", strings::strncmp as *const ()),
+        ("strnlen", strings::strnlen as *const ()),
+        ("strstr", strings::strstr as *const ()),
+        ("strdup", strings::strdup as *const ()),
+        ("strndup", strings::strndup as *const ()),
+        ("strcpy", strings::strcpy as *const ()),
+        ("strncpy", strings::strncpy as *const ()),
+        ("strcat", strings::strcat as *const ()),
+        ("strncat", strings::strncat as *const ()),
+        ("strspn", strings::strspn as *const ()),
+        ("strcspn", strings::strcspn as *const ()),
+        ("strpbrk", strings::strpbrk as *const ()),
+        ("malloc", allocation::malloc as *const ()),
+        ("free", allocation::free as *const ()),
+        ("mmap", mapping::mmap as *const ()),
+        ("mmap64", unistd::mmap64 as *const ()),
+        ("munmap", mapping::munmap as *const ()),
+        ("mprotect", mapping::mprotect as *const ()),
+        ("msync", mapping::msync as *const ()),
+        ("madvise", mapping::madvise as *const ()),
+        ("posix_madvise", unistd::posix_madvise as *const ()),
+        ("mincore", unistd::mincore as *const ()),
+        ("mremap", mapping::mremap as *const ()),
+        ("mlock", mapping::mlock as *const ()),
+        ("munlock", mapping::munlock as *const ()),
+        ("mlockall", mapping::mlockall as *const ()),
+        ("munlockall", mapping::munlockall as *const ()),
+        ("mlock2", mapping::mlock2 as *const ()),
+        ("__errno_location", errno::__errno_location as *const ()),
+        ("getpagesize", unistd::getpagesize as *const ()),
+        ("sysconf", unistd::sysconf as *const ()),
+        ("atof", stdlib::atof as *const ()),
+        ("strtod", stdlib::strtod as *const ()),
+        ("strtof", stdlib::strtof as *const ()),
+        ("strtold", stdlib::strtold as *const ()),
+        ("wcstod", wide::wcstod as *const ()),
+        ("wcstof", wide::wcstof as *const ()),
+        ("wcstold", wide::wcstold as *const ()),
+        ("getenv", stdlib::getenv as *const ()),
+        ("setenv", stdlib::setenv as *const ()),
+        ("unsetenv", stdlib::unsetenv as *const ()),
+        ("putenv", stdlib::putenv as *const ()),
+        ("clearenv", stdlib::clearenv as *const ()),
+        ("secure_getenv", stdlib::secure_getenv as *const ()),
+        ("qsort", stdlib::qsort as *const ()),
+        ("bsearch", stdlib::bsearch as *const ()),
+        ("qsort_r", stdlib::qsort_r as *const ()),
+        ("newlocale", locale::newlocale as *const ()),
+        ("duplocale", locale::duplocale as *const ()),
+        ("freelocale", locale::freelocale as *const ()),
+        ("uselocale", locale::uselocale as *const ()),
+        ("nl_langinfo_l", locale::nl_langinfo_l as *const ()),
+        ("setlocale", locale::setlocale as *const ()),
+        ("localeconv", locale::localeconv as *const ()),
+        ("nl_langinfo", locale::nl_langinfo as *const ()),
+        ("strtod_l", stdlib::strtod_l as *const ()),
+        ("strtof_l", stdlib::strtof_l as *const ()),
+        ("strtold_l", stdlib::strtold_l as *const ()),
+        ("wcstod_l", wide::wcstod_l as *const ()),
+        ("wcstof_l", wide::wcstof_l as *const ()),
+        ("wcstold_l", wide::wcstold_l as *const ()),
+        ("__newlocale", internal::__newlocale as *const ()),
+        ("__duplocale", internal::__duplocale as *const ()),
+        ("__freelocale", internal::__freelocale as *const ()),
+        ("__uselocale", internal::__uselocale as *const ()),
+        ("__nl_langinfo_l", internal::__nl_langinfo_l as *const ()),
+        ("__strtod_l", strings::__strtod_l as *const ()),
+        ("__strtof_l", strings::__strtof_l as *const ()),
+        ("__strtold_l", strings::__strtold_l as *const ()),
+        ("__wcstod_l", wide::__wcstod_l as *const ()),
+        ("__wcstof_l", wide::__wcstof_l as *const ()),
+        ("__wcstold_l", wide::__wcstold_l as *const ()),
+    ]
+}
+
+#[derive(Clone, Copy)]
+struct Api {
+    open: Open,
+    close: Close,
+    sym: Sym,
+    native: bool,
+}
+impl Api {
+    fn new(native: bool) -> Self {
+        if native {
+            Self {
+                open: dl::dlopen,
+                close: dl::dlclose,
+                sym: dl::dlsym,
+                native,
+            }
+        } else {
+            unsafe {
+                Self {
+                    open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
+                    close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
+                    sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
+                    native,
+                }
+            }
+        }
+    }
+    fn open(self, path: &Path, flags: c_int) -> *mut c_void {
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let handle = unsafe { (self.open)(name.as_ptr(), flags | libc::RTLD_NOW) };
+        assert!(!handle.is_null(), "open {path:?}");
+        if self.native {
+            assert!(dl::native_dso_handle_for_tests(handle), "host fallback");
+        }
+        handle
+    }
+    fn close(self, handle: *mut c_void) {
+        assert_eq!(unsafe { (self.close)(handle) }, 0);
+    }
+    fn symbol(self, handle: *mut c_void, name: &CStr) -> *mut c_void {
+        let value = unsafe { (self.sym)(handle, name.as_ptr()) };
+        assert!(!value.is_null(), "symbol {name:?}");
+        value
+    }
+    fn run(self, handle: *mut c_void, name: &CStr) -> c_int {
+        let run: Run = unsafe { std::mem::transmute(self.symbol(handle, name)) };
+        unsafe { run() }
+    }
+}
+
+struct Fixture {
+    dir: PathBuf,
+    path: PathBuf,
+}
+impl Fixture {
+    fn new(flags: &[&str]) -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "frankenlibc-memory-runtime-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let source = dir.join("fixture.c");
+        let path = dir.join("fixture.so");
+        std::fs::write(&source, SOURCE).unwrap();
+        compile(&source, &path, flags);
+        let object = ElfLoader::new(0)
+            .parse(&std::fs::read(&path).unwrap())
+            .unwrap();
+        assert!(
+            object.needed_libraries.is_empty(),
+            "fixture must not import a host runtime"
+        );
+        for (name, _) in symbols() {
+            assert!(
+                object
+                    .dynsym
+                    .iter()
+                    .any(|s| object.symbol_name(s) == Some(name)),
+                "missing {name}"
+            );
+        }
+        Self { dir, path }
+    }
+}
+
+fn compile(source: &Path, output: &Path, flags: &[&str]) {
+    let result = Command::new("gcc")
+        .args([
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-O2",
+            "-fno-builtin",
+            "-Wl,--hash-style=both",
+        ])
+        .args(flags)
+        .arg(source)
+        .arg("-o")
+        .arg(output)
+        .output()
+        .expect("gcc is required");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
+    isolated_with_environment(name, native_only, scenario, &[]);
+}
+
+fn isolated_with_environment(
+    name: &str,
+    native_only: bool,
+    scenario: fn(Api),
+    environment: &[(&str, &OsStr)],
+) {
+    if let Ok(mode) = std::env::var("FRANKENLIBC_MEMORY_CHILD") {
+        assert!(matches!(mode.as_str(), "host" | "native"));
+        scenario(Api::new(mode == "native"));
+        return;
+    }
+    let modes: &[&str] = if native_only {
+        &["native"]
+    } else {
+        &["host", "native"]
+    };
+    for mode in modes {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env("FRANKENLIBC_MEMORY_CHILD", mode)
+            .envs(environment.iter().copied())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "{name}: {mode}: {}\nstdout:\n{}\nstderr:\n{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                break;
+            }
+            if start.elapsed() > Duration::from_secs(40) {
+                child.kill().unwrap();
+                let _ = child.wait_with_output();
+                panic!("{name}: {mode}: timeout");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+fn assert_memory_providers(api: Api, handle: *mut c_void) {
+    let function: Function = unsafe { std::mem::transmute(api.symbol(handle, c"memory_function")) };
+    for (index, (name, expected)) in symbols().into_iter().enumerate() {
+        let actual = unsafe { function(index as u32) };
+        assert!(!actual.is_null(), "missing runtime {name}");
+        if api.native {
+            assert_eq!(actual as usize, expected as usize, "wrong provider: {name}");
+        } else {
+            let name = CString::new(name).unwrap();
+            let host = unsafe { dlsym_oracle::host_addr(&name, expected) };
+            assert_eq!(actual, host);
+        }
+    }
+}
+
+fn exercise(api: Api, flags: &[&str]) {
+    let fixture = Fixture::new(flags);
+    let handle = api.open(&fixture.path, 0);
+    assert_memory_providers(api, handle);
+    assert_eq!(api.run(handle, c"memory_allocations"), 0);
+    assert_eq!(api.run(handle, c"memory_strings"), 0);
+    assert_eq!(api.run(handle, c"memory_virtual_mappings"), 0);
+    assert_eq!(api.run(handle, c"memory_fixed_remap"), 0);
+    assert_eq!(api.run(handle, c"memory_mapping_errors"), 0);
+    assert_eq!(api.run(handle, c"memory_weak_missing"), 1);
+    api.close(handle);
+}
+
+#[test]
+fn memory_runtime_plt_calls_reach_owned_implementations() {
+    isolated(
+        "memory_runtime_plt_calls_reach_owned_implementations",
+        false,
+        |api| exercise(api, &[]),
+    );
+}
+
+#[test]
+fn memory_runtime_got_calls_reach_owned_implementations() {
+    isolated(
+        "memory_runtime_got_calls_reach_owned_implementations",
+        false,
+        |api| exercise(api, &["-fno-plt"]),
+    );
+}
+
+#[test]
+fn memory_runtime_floating_conversions_preserve_c_values_and_errno() {
+    isolated(
+        "memory_runtime_floating_conversions_preserve_c_values_and_errno",
+        false,
+        |api| {
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                assert_eq!(api.run(handle, c"memory_floating_conversions"), 0);
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_locales_share_handles_and_preserve_explicit_categories() {
+    let locale_dir = if std::env::var_os("FRANKENLIBC_MEMORY_CHILD").is_none() {
+        let path = std::env::temp_dir().join(format!(
+            "frankenlibc-memory-locales-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let output = Command::new("localedef")
+            .args(["--no-archive", "-i", "de_DE", "-f", "UTF-8"])
+            .arg(path.join("de_DE.UTF-8"))
+            .output()
+            .expect("localedef and de_DE locale source are required");
+        assert!(
+            output.status.success(),
+            "localedef: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        path
+    } else {
+        // The isolated child already inherited its parent's LOCPATH.
+        PathBuf::new()
+    };
+    isolated_with_environment(
+        "memory_runtime_locales_share_handles_and_preserve_explicit_categories",
+        false,
+        |api| {
+            type Locales = unsafe extern "C" fn(*const c_char) -> c_int;
+            type Create = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+            type Accept = unsafe extern "C" fn(*mut c_void) -> c_int;
+            type New = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_void;
+            type Free = unsafe extern "C" fn(*mut c_void);
+            type Parse = unsafe extern "C" fn(*const c_char, *mut *mut c_char, *mut c_void) -> f64;
+            let (new, free, parse): (New, Free, Parse) = if api.native {
+                (locale::newlocale, locale::freelocale, stdlib::strtod_l)
+            } else {
+                unsafe {
+                    (
+                        dlsym_oracle::host_fn(c"newlocale", locale::newlocale as *const ()),
+                        dlsym_oracle::host_fn(c"freelocale", locale::freelocale as *const ()),
+                        dlsym_oracle::host_fn(c"strtod_l", stdlib::strtod_l as *const ()),
+                    )
+                }
+            };
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                let run: Locales =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_locales")) };
+                assert_eq!(unsafe { run(c"de_DE.UTF-8".as_ptr()) }, 0);
+                let create: Create =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_locale_create")) };
+                let accept: Accept =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_locale_accept")) };
+                let caller_locale = unsafe {
+                    new(
+                        libc::LC_NUMERIC_MASK,
+                        c"de_DE.UTF-8".as_ptr(),
+                        std::ptr::null_mut(),
+                    )
+                };
+                assert!(!caller_locale.is_null());
+                assert_eq!(unsafe { accept(caller_locale) }, 0);
+                unsafe { free(caller_locale) };
+                let plugin_locale = unsafe { create(c"de_DE.UTF-8".as_ptr()) };
+                assert!(!plugin_locale.is_null());
+                api.close(handle);
+                // A locale belongs to the runtime, not to the DSO that made
+                // it: ordinary ABI callers can consume and retire it after
+                // the plugin itself has been unmapped.
+                let input = c"6,25!";
+                let mut end = std::ptr::null_mut();
+                assert_eq!(
+                    unsafe { parse(input.as_ptr(), &mut end, plugin_locale) },
+                    6.25
+                );
+                assert_eq!(end.cast_const(), unsafe { input.as_ptr().add(4) });
+                unsafe { free(plugin_locale) };
+            }
+        },
+        &[("LOCPATH", locale_dir.as_os_str())],
+    );
+}
+
+#[test]
+fn memory_runtime_environment_mutations_share_process_state() {
+    isolated(
+        "memory_runtime_environment_mutations_share_process_state",
+        false,
+        |api| {
+            type Value = unsafe extern "C" fn() -> *const c_char;
+            type Setenv = unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_int;
+            // The observer uses the independent host environment API. A private
+            // plugin-only map would fail both directions of this exchange.
+            let host_setenv: Setenv =
+                unsafe { dlsym_oracle::host_fn(c"setenv", stdlib::setenv as *const ()) };
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                assert_eq!(api.run(handle, c"memory_environment"), 0);
+                assert_eq!(
+                    std::env::var("FRANKENLIBC_NATIVE_SHARED").as_deref(),
+                    Ok("from-plugin")
+                );
+                assert_eq!(
+                    unsafe {
+                        host_setenv(
+                            c"FRANKENLIBC_NATIVE_SHARED".as_ptr(),
+                            c"from-host".as_ptr(),
+                            1,
+                        )
+                    },
+                    0
+                );
+                let value: Value =
+                    unsafe { std::mem::transmute(api.symbol(handle, c"memory_environment_value")) };
+                let actual = unsafe { value() };
+                assert!(!actual.is_null());
+                assert_eq!(unsafe { CStr::from_ptr(actual) }, c"from-host");
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_clearenv_clears_and_rebuilds_the_process_environment() {
+    isolated(
+        "memory_runtime_clearenv_clears_and_rebuilds_the_process_environment",
+        false,
+        |api| {
+            let fixture = Fixture::new(&[]);
+            let handle = api.open(&fixture.path, 0);
+            assert_memory_providers(api, handle);
+            assert_eq!(api.run(handle, c"memory_environment_clear"), 0);
+            assert_eq!(std::env::vars_os().count(), 0);
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_sort_and_search_invoke_c_comparators() {
+    isolated(
+        "memory_runtime_sort_and_search_invoke_c_comparators",
+        false,
+        |api| {
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                let fixture = Fixture::new(flags);
+                let handle = api.open(&fixture.path, 0);
+                assert_memory_providers(api, handle);
+                assert_eq!(api.run(handle, c"memory_algorithms"), 0);
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_comparator_unwind_returns_through_native_imports() {
+    isolated(
+        "memory_runtime_comparator_unwind_returns_through_native_imports",
+        false,
+        |api| {
+            type Compare = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
+            type Callback = unsafe extern "C-unwind" fn(u32, Compare) -> c_int;
+            unsafe extern "C-unwind" fn stop(_: *const c_void, _: *const c_void) -> c_int {
+                std::panic::panic_any(0x51ca1a_u32);
+            }
+            #[repr(C)]
+            #[derive(Default)]
+            struct Bases {
+                text: usize,
+                data: usize,
+                function: usize,
+            }
+            unsafe extern "C" {
+                fn _Unwind_Find_FDE(pc: *const c_void, bases: *mut Bases) -> *const c_void;
+            }
+            for flags in [&[][..], &["-fno-plt"][..]] {
+                for stripped in [false, true] {
+                    let fixture = Fixture::new(flags);
+                    if stripped {
+                        // Dynamic linking and unwind discovery must use the
+                        // program headers even when no section table remains.
+                        let mut bytes = std::fs::read(&fixture.path).unwrap();
+                        bytes[40..48].fill(0); // e_shoff
+                        bytes[58..64].fill(0); // e_shentsize, e_shnum, e_shstrndx
+                        std::fs::write(&fixture.path, bytes).unwrap();
+                    }
+                    for _ in 0..2 {
+                        let handle = api.open(&fixture.path, 0);
+                        assert_memory_providers(api, handle);
+                        let address = api.symbol(handle, c"memory_algorithm_callback");
+                        let callback: Callback = unsafe { std::mem::transmute(address) };
+                        let mut bases = Bases::default();
+                        assert!(
+                            !unsafe { _Unwind_Find_FDE(address, &mut bases) }.is_null(),
+                            "the active unwinder must discover the actual plugin frame"
+                        );
+                        assert_eq!(bases.function, address as usize);
+                        for which in 0..3 {
+                            let result =
+                                std::panic::catch_unwind(|| unsafe { callback(which, stop) });
+                            let payload = result.expect_err("comparator must actually unwind");
+                            assert_eq!(payload.downcast_ref::<u32>(), Some(&0x51ca1a_u32));
+                            assert_eq!(api.run(handle, c"memory_algorithms"), 0);
+                        }
+                        api.close(handle);
+                        assert!(
+                            unsafe { _Unwind_Find_FDE(address, &mut bases) }.is_null(),
+                            "unload must remove the frame before its mapping disappears"
+                        );
+                    }
+                }
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_rejects_malformed_unwind_metadata_before_publication() {
+    isolated(
+        "memory_runtime_rejects_malformed_unwind_metadata_before_publication",
+        true,
+        |api| {
+            use frankenlibc_core::elf::ProgramType;
+
+            for case in 0..10 {
+                let fixture = Fixture::new(&[]);
+                // This gate tests failed native admission. A no-DT_NEEDED
+                // plugin importing host symbols deliberately qualifies for
+                // interpose fallback, so use a self-contained ELF instead.
+                let source = fixture.dir.join("unwind-only.c");
+                std::fs::write(&source, "int unwind_probe(void) { return 19; }\n").unwrap();
+                compile(&source, &fixture.path, &[]);
+                let original = std::fs::read(&fixture.path).unwrap();
+                let object = ElfLoader::new(0).parse(&original).unwrap();
+                assert!(object.needed_libraries.is_empty());
+                assert!(object.dynsym.iter().all(|symbol| {
+                    !symbol.is_undefined() || object.symbol_name(symbol).is_none_or(str::is_empty)
+                }));
+                let (index, header) = object
+                    .program_headers
+                    .iter()
+                    .enumerate()
+                    .find(|(_, header)| header.p_type == ProgramType::GnuEhFrame)
+                    .unwrap();
+                let at = header.p_offset as usize;
+                assert_eq!(original[at + 1], 0x1b, "fixture uses pcrel32");
+                let relative = i32::from_le_bytes(original[at + 4..at + 8].try_into().unwrap());
+                let frame_vaddr = (header.p_vaddr as usize + 4)
+                    .checked_add_signed(relative as isize)
+                    .unwrap();
+                let load = object
+                    .program_headers
+                    .iter()
+                    .find(|load| {
+                        load.is_load()
+                            && load.p_vaddr <= frame_vaddr as u64
+                            && (frame_vaddr as u64) < load.p_vaddr + load.p_filesz
+                    })
+                    .unwrap();
+                let frame = (load.p_offset + frame_vaddr as u64 - load.p_vaddr) as usize;
+                let mut bytes = original.clone();
+                match case {
+                    0 => {
+                        // The four-byte encoded pointer is truncated to one
+                        // byte, while the ELF/program table itself is valid.
+                        let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+                        let size = u16::from_le_bytes(bytes[54..56].try_into().unwrap()) as usize;
+                        let ph = phoff + index * size;
+                        bytes[ph + 32..ph + 40].copy_from_slice(&5_u64.to_le_bytes());
+                        bytes[ph + 40..ph + 48].copy_from_slice(&5_u64.to_le_bytes());
+                    }
+                    1 => bytes[at + 4..at + 8].copy_from_slice(&i32::MAX.to_le_bytes()),
+                    2 => bytes[frame..frame + 4].copy_from_slice(&(u32::MAX - 1).to_le_bytes()),
+                    3 | 5 => {
+                        // An FDE must name a preceding CIE record in this
+                        // stream, not wrap outside the native mapping.
+                        let length = u32::from_le_bytes(bytes[frame..frame + 4].try_into().unwrap())
+                            as usize;
+                        let next = frame + 4 + length;
+                        assert_ne!(&bytes[next + 4..next + 8], &[0; 4]);
+                        if case == 3 {
+                            bytes[next + 4..next + 8].copy_from_slice(&u32::MAX.to_le_bytes());
+                        } else {
+                            // FDE containing only the CIE delta, with neither
+                            // PC nor range, is not a valid unwind record.
+                            bytes[next..next + 4].copy_from_slice(&4_u32.to_le_bytes());
+                        }
+                    }
+                    // CIE containing only its ID, without a version or
+                    // augmentation string, must never reach the unwinder.
+                    4 => bytes[frame..frame + 4].copy_from_slice(&4_u32.to_le_bytes()),
+                    6 => {
+                        assert_eq!(
+                            &bytes[frame + 8..frame + 17],
+                            &[1, b'z', b'R', 0, 1, 0x78, 16, 1, 0x1b]
+                        );
+                        bytes[frame + 15] = 0x7f; // augmentation extends beyond its CIE
+                    }
+                    7 => {
+                        // Two R markers with different widths must not make
+                        // validation and the active unwinder disagree.
+                        bytes[frame + 8..frame + 24].copy_from_slice(&[
+                            1, b'z', b'R', b'R', 0, 1, 0x78, 16, 2, 0, 0x1b, 0, 0, 0, 0, 0,
+                        ]);
+                    }
+                    8 => {
+                        // Some registration runtimes stop scanning at S;
+                        // accepting a later R would change their PC width.
+                        bytes[frame + 8..frame + 24].copy_from_slice(&[
+                            1, b'z', b'S', b'R', 0, 1, 0x78, 16, 1, 0x1b, 0, 0, 0, 0, 0, 0,
+                        ]);
+                    }
+                    9 => {
+                        // Over-counted PT_GNU_EH_FRAME fde_count must fail
+                        // closed instead of publishing truncated unwind frames.
+                        assert_eq!(original[at + 2], 0x03, "fixture uses udata4 fde_count");
+                        let fde_count =
+                            u32::from_le_bytes(original[at + 8..at + 12].try_into().unwrap());
+                        bytes[at + 8..at + 12].copy_from_slice(&(fde_count + 1).to_le_bytes());
+                    }
+                    _ => unreachable!(),
+                }
+                std::fs::write(&fixture.path, bytes).unwrap();
+                let name = CString::new(fixture.path.as_os_str().as_bytes()).unwrap();
+                let rejected = unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) };
+                assert!(
+                    rejected.is_null(),
+                    "malformed unwind case {case} must fail native admission; native handle: {}",
+                    dl::native_dso_handle_for_tests(rejected)
+                );
+                assert!(
+                    unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }
+                        .is_null()
+                );
+                // A failed transaction cannot reserve this inode or poison
+                // the registry; restoring the fixture makes the same path usable.
+                std::fs::write(&fixture.path, original).unwrap();
+                let handle = api.open(&fixture.path, 0);
+                assert_eq!(api.run(handle, c"unwind_probe"), 19);
+                api.close(handle);
+            }
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_dynamic_addresses_match_direct_imports() {
+    isolated(
+        "memory_runtime_dynamic_addresses_match_direct_imports",
+        false,
+        |api| {
+            let f = Fixture::new(&[]);
+            let h = api.open(&f.path, 0);
+            assert_memory_providers(api, h);
+            let imported: Function =
+                unsafe { std::mem::transmute(api.symbol(h, c"memory_function")) };
+            let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
+            for (index, (name, expected)) in symbols().into_iter().enumerate() {
+                let valid_version = match name {
+                    "mlock2" => c"GLIBC_2.27",
+                    "secure_getenv" => c"GLIBC_2.17",
+                    "qsort_r" => c"GLIBC_2.8",
+                    "newlocale" | "duplocale" | "freelocale" | "uselocale" | "__uselocale"
+                    | "nl_langinfo_l" | "strtod_l" | "strtof_l" | "strtold_l" | "wcstod_l"
+                    | "wcstof_l" | "wcstold_l" => c"GLIBC_2.3",
+                    _ => c"GLIBC_2.2.5",
+                };
+                let wrong_version = if valid_version != c"GLIBC_2.2.5" {
+                    c"GLIBC_2.2.5"
+                } else {
+                    c"GLIBC_2.27"
+                };
+                let name = CString::new(name).unwrap();
+                let direct = unsafe { imported(index as u32) };
+                if api.native {
+                    assert_eq!(direct as usize, expected as usize);
+                }
+                for version in [std::ptr::null(), valid_version.as_ptr()] {
+                    assert_eq!(unsafe { dynamic(name.as_ptr(), version) }, direct);
+                }
+                for version in [wrong_version, c"GLIBC_2.34", c"FRANKENLIBC_NO_SUCH_VERSION"] {
+                    assert!(unsafe { dynamic(name.as_ptr(), version.as_ptr()) }.is_null());
+                }
+            }
+            api.close(h);
+        },
+    );
+}
+
+static FINAL_RESULT: AtomicI32 = AtomicI32::new(-100);
+unsafe extern "C" fn final_report(result: c_int) {
+    FINAL_RESULT.store(result, Ordering::Relaxed);
+}
+
+#[test]
+fn memory_runtime_is_available_during_construction_and_finalization() {
+    isolated(
+        "memory_runtime_is_available_during_construction_and_finalization",
+        false,
+        |api| {
+            let f = Fixture::new(&["-DLIFECYCLE"]);
+            let h = api.open(&f.path, 0);
+            assert_eq!(
+                unsafe { *api.symbol(h, c"memory_init_result").cast::<i32>() },
+                0
+            );
+            type Set = unsafe extern "C" fn(unsafe extern "C" fn(c_int));
+            let set: Set = unsafe { std::mem::transmute(api.symbol(h, c"memory_set_report")) };
+            unsafe { set(final_report) };
+            api.close(h);
+            assert_eq!(FINAL_RESULT.load(Ordering::Relaxed), 0);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_missing_strong_import_does_not_publish_a_handle() {
+    isolated(
+        "memory_runtime_missing_strong_import_does_not_publish_a_handle",
+        false,
+        |api| {
+            let f = Fixture::new(&["-DSTRONG_MISSING"]);
+            let name = CString::new(f.path.as_os_str().as_bytes()).unwrap();
+            assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
+            assert!(
+                unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }.is_null()
+            );
+            let valid = Fixture::new(&[]);
+            let h = api.open(&valid.path, 0);
+            assert_eq!(api.run(h, c"memory_allocations"), 0);
+            api.close(h);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_fallback_preserves_native_scope_preemption() {
+    // This tests the native namespace's existing GLOBAL/local binding policy,
+    // not glibc's executable/libc prefix ordering for a standard libc name.
+    isolated(
+        "memory_runtime_fallback_preserves_native_scope_preemption",
+        true,
+        |api| {
+            let ordinary = Fixture::new(&["-DLOCAL_COMPARE"]);
+            let provider_c = ordinary.dir.join("provider.c");
+            let provider_so = ordinary.dir.join("provider.so");
+            std::fs::write(&provider_c, "#include <stddef.h>\nint memcmp(const void*a,const void*b,size_t n){(void)a;(void)b;(void)n;return 37;}\n").unwrap();
+            compile(&provider_c, &provider_so, &[]);
+            let g = api.open(&provider_so, libc::RTLD_GLOBAL);
+            let h = api.open(&ordinary.path, 0);
+            assert_eq!(api.run(h, c"memory_compare"), 37);
+            let selected = api.symbol(g, c"memcmp");
+            let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { dynamic(c"memcmp".as_ptr(), std::ptr::null()) },
+                selected
+            );
+            let deep = Fixture::new(&["-DLOCAL_COMPARE"]);
+            let d = api.open(&deep.path, libc::RTLD_DEEPBIND);
+            assert_eq!(api.run(d, c"memory_compare"), -23);
+            let own = api.symbol(d, c"memcmp");
+            let deep_dynamic: Dynamic =
+                unsafe { std::mem::transmute(api.symbol(d, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { deep_dynamic(c"memcmp".as_ptr(), std::ptr::null()) },
+                own
+            );
+            api.close(g);
+            assert_eq!(api.run(h, c"memory_compare"), 37);
+            api.close(h);
+            api.close(d);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_shared_and_private_file_mappings_preserve_io_state() {
+    isolated(
+        "memory_runtime_shared_and_private_file_mappings_preserve_io_state",
+        false,
+        |api| {
+            let fixture = Fixture::new(&[]);
+            let handle = api.open(&fixture.path, 0);
+            assert_memory_providers(api, handle);
+            let pathname = fixture.dir.join("mapped-file");
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&pathname)
+                .unwrap();
+            type FileMappings = unsafe extern "C" fn(c_int) -> c_int;
+            let run: FileMappings =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_file_mappings")) };
+            assert_eq!(unsafe { run(file.as_raw_fd()) }, 0);
+            // Read through the independent host file API after both mappings
+            // were unmapped: copying bytes only inside the plugin cannot pass.
+            let bytes = std::fs::read(&pathname).unwrap();
+            assert_eq!(bytes.len(), 8192);
+            assert_eq!(bytes[0], b'Q');
+            assert_eq!(bytes[4096], b'R');
+            assert!(bytes[1..4096].iter().all(|byte| *byte == 0));
+            assert!(bytes[4097..].iter().all(|byte| *byte == 0));
+            api.close(handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_vm_fallback_preserves_native_scope_preemption() {
+    // As with the allocation/string test above, this exercises the native
+    // namespace, whose GLOBAL prefix is separate from the host libc prefix.
+    isolated(
+        "memory_runtime_vm_fallback_preserves_native_scope_preemption",
+        true,
+        |api| {
+            let ordinary = Fixture::new(&["-DLOCAL_ADVICE"]);
+            let provider_c = ordinary.dir.join("vm-provider.c");
+            let provider_so = ordinary.dir.join("vm-provider.so");
+            std::fs::write(
+                &provider_c,
+                "#include <stddef.h>\nint madvise(void *a,size_t n,int v){(void)a;(void)n;(void)v;return 37;}\n",
+            )
+            .unwrap();
+            compile(&provider_c, &provider_so, &[]);
+            let global = api.open(&provider_so, libc::RTLD_GLOBAL);
+            let handle = api.open(&ordinary.path, 0);
+            let selected = api.symbol(global, c"madvise");
+            let imported: Function =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_function")) };
+            assert_eq!(unsafe { imported(27) }, selected);
+            assert_eq!(api.run(handle, c"memory_advice_probe"), 37);
+            let dynamic: Dynamic =
+                unsafe { std::mem::transmute(api.symbol(handle, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { dynamic(c"madvise".as_ptr(), std::ptr::null()) },
+                selected
+            );
+            let deep = Fixture::new(&["-DLOCAL_ADVICE"]);
+            let deep_handle = api.open(&deep.path, libc::RTLD_DEEPBIND);
+            let local = api.symbol(deep_handle, c"madvise");
+            assert_ne!(local, selected);
+            assert_eq!(api.run(deep_handle, c"memory_advice_probe"), 23);
+            let deep_dynamic: Dynamic =
+                unsafe { std::mem::transmute(api.symbol(deep_handle, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { deep_dynamic(c"madvise".as_ptr(), std::ptr::null()) },
+                local
+            );
+            api.close(global);
+            assert_eq!(api.run(handle, c"memory_advice_probe"), 37);
+            api.close(handle);
+            api.close(deep_handle);
+        },
+    );
+}
+
+#[test]
+fn memory_runtime_protection_changes_fault_on_write() {
+    const NAME: &str = "memory_runtime_protection_changes_fault_on_write";
+    if let Ok(mode) = std::env::var("FRANKENLIBC_MEMORY_FAULT_CHILD") {
+        assert!(matches!(mode.as_str(), "host" | "native"));
+        let api = Api::new(mode == "native");
+        let fixture = Fixture::new(&[]);
+        let handle = api.open(&fixture.path, 0);
+        assert_memory_providers(api, handle);
+        let limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: this isolated child intentionally faults below. Disabling
+        // its core dump affects no other process or test.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limit) }, 0);
+        let result = api.run(handle, c"memory_write_readonly");
+        panic!("write to read-only mapping unexpectedly returned {result}");
+    }
+    for mode in ["host", "native"] {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env("FRANKENLIBC_MEMORY_FAULT_CHILD", mode)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert_eq!(status.signal(), Some(libc::SIGSEGV), "{mode}: {status}");
+                break;
+            }
+            if start.elapsed() > Duration::from_secs(40) {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{NAME}: {mode}: timeout");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}

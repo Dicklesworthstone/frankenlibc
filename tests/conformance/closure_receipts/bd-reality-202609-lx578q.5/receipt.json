@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.5",
+  "contract": {
+    "behavior": "Resolve standalone/native dlopen search paths and transitive RUNPATH/$ORIGIN DSO dependencies",
+    "acceptance_sha256": "b80e6c0527ebea47e291d5a5a8b24174aeefcccce027c7213ea81a8771a1514a",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+      "crates/frankenlibc-abi/src/dlfcn_unwind.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/dlfcn_native_search_test.rs"
+    ],
+    "source": {
+      "commit": "f5dcc0877052e070d14e4f6d11c6cec7cd7836fd",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs": "6ff5d4b84cc868d002835d0d05f9b371b47de6471ae7f91d08e7fa8187d6140f",
+        "crates/frankenlibc-abi/src/dlfcn_unwind.rs": "3a4cd3a78813c6cbbd495ce1c00c9ba3737c1ca834f850c06a88344579c679be",
+        "crates/frankenlibc-abi/tests/dlfcn_native_search_test.rs": "6f0f9c760df78e3f0c184a5e93a426c288a7a2453dddf08800409d4e393622bf",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-09-08T04:41:50.594509483Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/34825dc81c126356/out/dlfcn_native_search_test-34825dc81c126356",
+        "native_runpath_origin_resolves_each_direct_dependency",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "dlfcn_native_search_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/34825dc81c126356/out/dlfcn_native_search_test-34825dc81c126356"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "native_runpath_origin_resolves_each_direct_dependency"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "dlfcn_native_search_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:16:10.452553+00:00",
+    "finished_at": "2026-11-12T06:16:10.673068+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "3994b8572882187d5a87865f9104cbe032b8388dd0e4fc7cdcbd50b07cfece4b",
+    "stderr_sha256": "8ce4c715145f8c162c0ffd04edd2c0f7ec745b76ed85d67c412c3b5ae8de8935",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/34825dc81c126356/out/dlfcn_native_search_test-34825dc81c126356",
+      "native_runpath_origin_resolves_each_direct_dependency",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:16:10.728186+00:00",
+    "finished_at": "2026-11-12T06:16:11.007464+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "934d20ff2edc4df491821ff694d79d03b97966050866189727558eddf31bebc2",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 1
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/34825dc81c126356/out/dlfcn_native_search_test-34825dc81c126356": "5637c3f53655ec4c2679c45c17ce7b9d7713fcb4f150b86b99210998b1780d12"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/34825dc81c126356/out/dlfcn_native_search_test-34825dc81c126356": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/dlfcn_abi.rs": "6ff5d4b84cc868d002835d0d05f9b371b47de6471ae7f91d08e7fa8187d6140f",
+    "crates/frankenlibc-abi/src/dlfcn_unwind.rs": "3a4cd3a78813c6cbbd495ce1c00c9ba3737c1ca834f850c06a88344579c679be",
+    "crates/frankenlibc-abi/tests/dlfcn_native_search_test.rs": "6f0f9c760df78e3f0c184a5e93a426c288a7a2453dddf08800409d4e393622bf",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "5637c3f53655ec4c2679c45c17ce7b9d7713fcb4f150b86b99210998b1780d12"
+}

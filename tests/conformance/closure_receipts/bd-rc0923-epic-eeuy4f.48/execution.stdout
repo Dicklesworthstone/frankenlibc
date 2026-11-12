@@ -1,0 +1,9 @@
+=== pipeline exit-status gate (bd-5n7ks2) ===
+files scanned: 760
+findings     : 0
+
+PASS: no pipeline exit-status traps found.
+
+BASH_DEFAULTS_VERIFIED workflows=8 pipeline_cases=24
+BASH_SYNTAX_BLOCKS 53
+WORKFLOW_INPUTS_AND_CHECKER 9

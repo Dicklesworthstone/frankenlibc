@@ -1,0 +1,21 @@
+
+running 16 tests
+test default_run_id_is_process_unique ... ok
+test gate_script_is_executable ... ok
+test legacy_adversarial_gate_requires_numeric_skip_counts ... ok
+test legacy_adversarial_gate_requires_total_cases_to_include_skips ... ok
+test manifest_pins_run_and_validate_only_contracts ... ok
+test run_mode_forwards_gate_run_id_to_smoke_runner ... ok
+test run_mode_forwards_target_dir_without_clobbering_rch_allowlist ... ok
+test validate_only_accepts_report_matching_committed_summary ... ok
+test validate_only_rejects_elf_bss_ceiling_breach ... ok
+test validate_only_rejects_hand_edited_canonical_mode_failure_counters ... ok
+test validate_only_rejects_hand_edited_committed_summary_without_matching_report ... ok
+test validate_only_rejects_orphaned_canonical_source_commit ... ok
+test validate_only_rejects_regenerated_smoke_summary_drift ... ok
+test validate_only_rejects_stale_mode_failure_counters ... ok
+test validate_only_rejects_trace_missing_workload_case ... ok
+test validate_only_rejects_trace_multiplicity_shortfall_for_duplicate_cases ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.88s
+

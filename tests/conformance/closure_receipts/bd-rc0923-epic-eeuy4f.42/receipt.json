@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.42",
+  "contract": {
+    "behavior": "Reject AArch64 smoke qualification runs when the target ELF artifact is missing or invalid",
+    "acceptance_sha256": "30cb22e3048a7c7b0ed2f1a72e95e77f2b4be153034620352c34d999bd747870",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "scripts/run_aarch64_smoke.sh"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/aarch64_smoke_runner_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/aarch64_smoke_runner_test.rs": "95eef3319e938e6685168668997f9afd51fa683901de116213a07da24d73125f",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/run_aarch64_smoke.sh": "c14c6d722541bff588e1d42c631c642afbc793332f1f02577a80b31a510771d7"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-20T22:14:23.564524Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd26da8ce524fbed/out/aarch64_smoke_runner_test-fd26da8ce524fbed",
+        "smoke_runner_",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "aarch64_smoke_runner_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd26da8ce524fbed/out/aarch64_smoke_runner_test-fd26da8ce524fbed"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "smoke_runner_missing_artifact_cannot_pass_or_skip",
+        "smoke_runner_rejects_existing_non_elf_artifact"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "aarch64_smoke_runner_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:09.636104+00:00",
+    "finished_at": "2026-11-12T04:36:10.005004+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "f172bc06d186291d3d334e45a510e6717c45188588d34509616abaa20b2382d3",
+    "stderr_sha256": "5e44bb372cb4fa08c914dcfbc74c12b05ce900032c825fb4bed49e342d05916f",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd26da8ce524fbed/out/aarch64_smoke_runner_test-fd26da8ce524fbed",
+      "smoke_runner_",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:36:10.007542+00:00",
+    "finished_at": "2026-11-12T04:36:10.379953+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "2aadac0654c45fd9a77e06aadee9281eb988ceb259953e83f80dff2f425e5861",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 5
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd26da8ce524fbed/out/aarch64_smoke_runner_test-fd26da8ce524fbed": "8f734434c1d62844e5a83c1c2a4391b37b49e9a1a22950e71ce92b52d36ecf97"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd26da8ce524fbed/out/aarch64_smoke_runner_test-fd26da8ce524fbed": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/aarch64_smoke_runner_test.rs": "95eef3319e938e6685168668997f9afd51fa683901de116213a07da24d73125f",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/run_aarch64_smoke.sh": "c14c6d722541bff588e1d42c631c642afbc793332f1f02577a80b31a510771d7"
+  },
+  "executable_sha256": "8f734434c1d62844e5a83c1c2a4391b37b49e9a1a22950e71ce92b52d36ecf97"
+}

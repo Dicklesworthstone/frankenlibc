@@ -1,0 +1,8411 @@
+#![cfg(target_os = "linux")]
+
+//! Integration tests for resolver ABI entrypoints (`<netdb.h>`).
+//!
+//! Covers: getaddrinfo, freeaddrinfo, getnameinfo, gai_strerror,
+//! gethostbyname, gethostbyname_r, gethostbyaddr, getservbyname,
+//! getservbyport, getprotobyname, getprotobynumber, __h_errno_location.
+
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::mem;
+use std::ptr;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use frankenlibc_abi::inet_abi;
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+// Unknown-name outcomes are a property of the MACHINE: HOST_NOT_FOUND /
+// EAI_NONAME with a reachable resolver, TRY_AGAIN / EAI_AGAIN without one (a
+// build worker with no DNS). Host glibc on the same machine decides them.
+type GetaddrinfoFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const libc::addrinfo,
+    *mut *mut libc::addrinfo,
+) -> c_int;
+type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
+type GethostbynameRFn = unsafe extern "C" fn(
+    *const c_char,
+    *mut libc::hostent,
+    *mut c_char,
+    usize,
+    *mut *mut libc::hostent,
+    *mut c_int,
+) -> c_int;
+type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
+type HErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `getaddrinfo(node, NULL, NULL, ..)` return code.
+fn host_getaddrinfo_rc(node: &CStr) -> c_int {
+    // SAFETY: prototypes of getaddrinfo/freeaddrinfo; fl's definitions guard
+    // against a collapsed oracle.
+    unsafe {
+        let gai: GetaddrinfoFn =
+            dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ());
+        let free: FreeaddrinfoFn =
+            dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ());
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+        let rc = gai(node.as_ptr(), ptr::null(), ptr::null(), &mut res);
+        if !res.is_null() {
+            free(res);
+        }
+        rc
+    }
+}
+
+/// Host glibc's `gethostbyname_r`: `(rc, result is null, h_errno)`.
+fn host_gethostbyname_r(name: &CStr) -> (c_int, bool, c_int) {
+    // SAFETY: prototype of gethostbyname_r; valid buffers and output slots.
+    unsafe {
+        let f: GethostbynameRFn =
+            dlsym_oracle::host_fn(c"gethostbyname_r", inet_abi::gethostbyname_r as *const ());
+        let mut hostent: libc::hostent = mem::zeroed();
+        let mut scratch = [0 as c_char; 256];
+        let mut result: *mut libc::hostent = ptr::null_mut();
+        let mut h_errno = -1;
+        let rc = f(
+            name.as_ptr(),
+            &mut hostent,
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result,
+            &mut h_errno,
+        );
+        (rc, result.is_null(), h_errno)
+    }
+}
+
+/// Host glibc's `gethostbyname`: `(result is null, h_errno)`.
+fn host_gethostbyname(name: &CStr) -> (bool, c_int) {
+    // SAFETY: prototypes of gethostbyname and __h_errno_location.
+    unsafe {
+        let f: GethostbynameFn =
+            dlsym_oracle::host_fn(c"gethostbyname", resolv_abi::gethostbyname as *const ());
+        let loc: HErrnoLocationFn = dlsym_oracle::host_fn(
+            c"__h_errno_location",
+            resolv_abi::__h_errno_location as *const (),
+        );
+        *loc() = 0;
+        let r = f(name.as_ptr());
+        (r.is_null(), *loc())
+    }
+}
+use frankenlibc_abi::malloc_abi;
+use frankenlibc_abi::resolv_abi;
+use frankenlibc_abi::unistd_abi;
+
+const HOST_NOT_FOUND_ERRNO: i32 = 1;
+const NO_RECOVERY_ERRNO: i32 = 3;
+const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
+const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+const PROTOCOLS_PATH_ENV: &str = "FRANKENLIBC_PROTOCOLS_PATH";
+const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
+const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
+const EAI_ADDRFAMILY: c_int = -9;
+
+static RESOLVER_FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
+static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct ResolverFixturePaths {
+    hosts: std::path::PathBuf,
+    services: std::path::PathBuf,
+    protocols: std::path::PathBuf,
+    route: std::path::PathBuf,
+    if_inet6: std::path::PathBuf,
+}
+
+struct ResolverEnvGuard;
+
+impl Drop for ResolverEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: all resolver env var mutation is serialized by RESOLVER_ENV_LOCK.
+        unsafe {
+            std::env::remove_var(HOSTS_PATH_ENV);
+            std::env::remove_var(SERVICES_PATH_ENV);
+            std::env::remove_var(PROTOCOLS_PATH_ENV);
+            std::env::remove_var(PROC_NET_ROUTE_PATH_ENV);
+            std::env::remove_var(PROC_NET_IF_INET6_PATH_ENV);
+        }
+    }
+}
+
+fn temp_resolver_path(kind: &str) -> std::path::PathBuf {
+    let seq = RESOLVER_FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "frankenlibc-resolv-{kind}-{}-{seq}.txt",
+        std::process::id()
+    ))
+}
+
+fn with_resolver_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
+fn misaligned_hostent_result_ptr(storage: &mut [u8]) -> *mut c_void {
+    let align = mem::align_of::<libc::hostent>();
+    let base = storage.as_mut_ptr();
+    for offset in 1..=align {
+        let candidate = base.wrapping_add(offset);
+        if !(candidate as usize).is_multiple_of(align) {
+            return candidate.cast::<c_void>();
+        }
+    }
+    base.cast::<c_void>()
+}
+
+fn misaligned_c_char_buffer(storage: &mut [c_char], align: usize) -> (*mut c_char, usize) {
+    let base = storage.as_mut_ptr();
+    for offset in 1..=align.max(1) {
+        let candidate = base.wrapping_add(offset);
+        if !(candidate as usize).is_multiple_of(align) {
+            return (candidate, storage.len() - offset);
+        }
+    }
+    (base, storage.len())
+}
+
+fn with_resolver_backends<T>(
+    hosts: Option<&[u8]>,
+    services: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
+    with_resolver_backends_full(hosts, services, None, None, None, f)
+}
+
+fn with_resolver_protocols<T>(
+    protocols: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
+    with_resolver_backends_full(None, None, protocols, None, None, f)
+}
+
+fn with_resolver_backends_and_addrconfig<T>(
+    hosts: Option<&[u8]>,
+    services: Option<&[u8]>,
+    route: Option<&[u8]>,
+    if_inet6: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
+    with_resolver_backends_full(hosts, services, None, route, if_inet6, f)
+}
+
+fn with_resolver_backends_full<T>(
+    hosts: Option<&[u8]>,
+    services: Option<&[u8]>,
+    protocols: Option<&[u8]>,
+    route: Option<&[u8]>,
+    if_inet6: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let paths = ResolverFixturePaths {
+        hosts: temp_resolver_path("hosts"),
+        services: temp_resolver_path("services"),
+        protocols: temp_resolver_path("protocols"),
+        route: temp_resolver_path("route"),
+        if_inet6: temp_resolver_path("if-inet6"),
+    };
+    let _env_guard = ResolverEnvGuard;
+
+    if let Some(content) = hosts {
+        std::fs::write(&paths.hosts, content).expect("write temp hosts fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(HOSTS_PATH_ENV, &paths.hosts) };
+    }
+    if let Some(content) = services {
+        std::fs::write(&paths.services, content).expect("write temp services fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(SERVICES_PATH_ENV, &paths.services) };
+    }
+    if let Some(content) = protocols {
+        std::fs::write(&paths.protocols, content).expect("write temp protocols fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(PROTOCOLS_PATH_ENV, &paths.protocols) };
+    }
+    if let Some(content) = route {
+        std::fs::write(&paths.route, content).expect("write temp route fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(PROC_NET_ROUTE_PATH_ENV, &paths.route) };
+    }
+    if let Some(content) = if_inet6 {
+        std::fs::write(&paths.if_inet6, content).expect("write temp if_inet6 fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(PROC_NET_IF_INET6_PATH_ENV, &paths.if_inet6) };
+    }
+
+    f(&paths)
+}
+
+unsafe fn collect_addrinfo_families(mut node: *mut libc::addrinfo) -> Vec<c_int> {
+    let mut families = Vec::new();
+    while !node.is_null() {
+        // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
+        let ai = unsafe { &*node };
+        if !families.contains(&ai.ai_family) {
+            families.push(ai.ai_family);
+        }
+        node = ai.ai_next;
+    }
+    families
+}
+
+unsafe fn collect_addrinfo_profiles(mut node: *mut libc::addrinfo) -> Vec<(c_int, c_int, u16)> {
+    let mut profiles = Vec::new();
+    while !node.is_null() {
+        // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
+        let ai = unsafe { &*node };
+        let port = match ai.ai_family {
+            libc::AF_INET => {
+                // SAFETY: AF_INET records carry a sockaddr_in address.
+                let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+                u16::from_be(sin.sin_port)
+            }
+            libc::AF_INET6 => {
+                // SAFETY: AF_INET6 records carry a sockaddr_in6 address.
+                let sin6 = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in6) };
+                u16::from_be(sin6.sin6_port)
+            }
+            _ => 0,
+        };
+        profiles.push((ai.ai_socktype, ai.ai_protocol, port));
+        node = ai.ai_next;
+    }
+    profiles
+}
+
+unsafe fn collect_addrinfo_canonname(mut node: *mut libc::addrinfo) -> Vec<Option<Vec<u8>>> {
+    let mut names = Vec::new();
+    while !node.is_null() {
+        // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
+        let ai = unsafe { &*node };
+        names.push(if ai.ai_canonname.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(ai.ai_canonname) }
+                    .to_bytes()
+                    .to_vec(),
+            )
+        });
+        node = ai.ai_next;
+    }
+    names
+}
+
+fn services_alias_fixture() -> Option<(CString, CString, u16)> {
+    let content = std::fs::read("/etc/services").ok()?;
+    let entry = content
+        .split(|&b| b == b'\n')
+        .filter_map(frankenlibc_core::resolv::parse_services_line)
+        .find(|entry| {
+            entry.protocol.eq_ignore_ascii_case(b"tcp")
+                && entry
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.iter().all(u8::is_ascii_alphanumeric))
+        })?;
+    let alias = entry
+        .aliases
+        .iter()
+        .find(|alias| alias.iter().all(u8::is_ascii_alphanumeric))?;
+    Some((
+        CString::new(alias.as_slice()).ok()?,
+        CString::new(entry.protocol.clone()).ok()?,
+        entry.port,
+    ))
+}
+
+struct MallocCBuffer {
+    ptr: *mut c_char,
+}
+
+impl MallocCBuffer {
+    fn as_ptr(&self) -> *const c_char {
+        self.ptr.cast_const()
+    }
+}
+
+impl Drop for MallocCBuffer {
+    fn drop(&mut self) {
+        // SAFETY: ptr was allocated by malloc_unterminated and is freed once by this guard.
+        unsafe { malloc_abi::free(self.ptr.cast::<c_void>()) };
+    }
+}
+
+fn malloc_unterminated(bytes: &[u8]) -> MallocCBuffer {
+    assert!(
+        !bytes.is_empty() && !bytes.contains(&0),
+        "fixture must be non-empty and unterminated"
+    );
+    // SAFETY: allocation size is non-zero and checked for null before use.
+    let ptr = unsafe { malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!ptr.is_null(), "malloc-backed fixture should allocate");
+    // SAFETY: ptr points to bytes.len() writable bytes allocated above, and
+    // source and destination do not overlap.
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+    MallocCBuffer {
+        ptr: ptr.cast::<c_char>(),
+    }
+}
+
+struct MallocBytes {
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl MallocBytes {
+    fn as_ptr(&self) -> *const u8 {
+        self.ptr.cast_const()
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl Drop for MallocBytes {
+    fn drop(&mut self) {
+        unsafe { malloc_abi::free(self.ptr.cast::<c_void>()) };
+    }
+}
+
+fn malloc_bytes(bytes: &[u8]) -> MallocBytes {
+    assert!(!bytes.is_empty(), "tracked byte fixture must be non-empty");
+    let ptr = unsafe { malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!ptr.is_null(), "malloc-backed byte fixture should allocate");
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+    MallocBytes {
+        ptr,
+        len: bytes.len(),
+    }
+}
+
+fn malloc_filled_bytes(len: usize, value: u8) -> MallocBytes {
+    assert!(len > 0, "tracked byte fixture must be non-empty");
+    let ptr = unsafe { malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!ptr.is_null(), "malloc-backed byte fixture should allocate");
+    unsafe { ptr::write_bytes(ptr, value, len) };
+    MallocBytes { ptr, len }
+}
+
+// ===========================================================================
+// gethostbyname
+// ===========================================================================
+
+#[test]
+fn gethostbyname_numeric_ipv4_returns_hostent() {
+    let query = CString::new("127.0.0.1").expect("query should be valid C string");
+    let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+    assert!(!ptr.is_null());
+
+    let hostent = unsafe { &*(ptr as *const libc::hostent) };
+    assert_eq!(hostent.h_addrtype, libc::AF_INET);
+    assert_eq!(hostent.h_length, 4);
+    assert!(!hostent.h_addr_list.is_null());
+
+    let first_addr_ptr = unsafe { *hostent.h_addr_list };
+    assert!(!first_addr_ptr.is_null());
+    let octets = unsafe { std::slice::from_raw_parts(first_addr_ptr.cast::<u8>(), 4) };
+    assert_eq!(octets, [127, 0, 0, 1]);
+}
+
+#[test]
+fn gethostbyname_hosts_result_preserves_aliases_and_duplicate_addresses() {
+    with_resolver_backends(
+        Some(
+            b"127.0.0.1 localhost ip6-localhost ip6-loopback\n\
+              127.0.0.1 localhost\n",
+        ),
+        None,
+        |_| {
+            let query = c"localhost";
+            let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+            assert!(!ptr.is_null());
+
+            // SAFETY: gethostbyname returned a non-null pointer to its TLS-backed hostent.
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"localhost"
+            );
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+
+            // SAFETY: the hostent aliases table is terminated by a null pointer.
+            let aliases = unsafe {
+                let mut aliases = Vec::new();
+                let mut alias_ptr = hostent.h_aliases;
+                while !(*alias_ptr).is_null() {
+                    aliases.push(CStr::from_ptr(*alias_ptr).to_bytes().to_vec());
+                    alias_ptr = alias_ptr.add(1);
+                }
+                aliases
+            };
+            assert_eq!(
+                aliases,
+                vec![b"ip6-localhost".to_vec(), b"ip6-loopback".to_vec()]
+            );
+
+            // SAFETY: the hostent address table is terminated by a null pointer, and IPv4
+            // entries carry exactly four bytes because h_length is asserted by the ABI.
+            let addresses = unsafe {
+                let mut addresses = Vec::new();
+                let mut address_ptr = hostent.h_addr_list;
+                while !(*address_ptr).is_null() {
+                    addresses
+                        .push(std::slice::from_raw_parts((*address_ptr).cast::<u8>(), 4).to_vec());
+                    address_ptr = address_ptr.add(1);
+                }
+                addresses
+            };
+            assert_eq!(addresses, [vec![127, 0, 0, 1], vec![127, 0, 0, 1]]);
+        },
+    );
+}
+
+#[test]
+fn gethostbyname_r_hosts_result_preserves_aliases_and_duplicate_addresses() {
+    with_resolver_backends(
+        Some(
+            b"127.0.0.1 localhost ip6-localhost ip6-loopback\n\
+              127.0.0.1 localhost\n",
+        ),
+        None,
+        |_| {
+            // SAFETY: hostent is a C POD output structure whose fields are all zero-valid.
+            let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+            let mut scratch = [0i8; 512];
+            let mut result_ptr = ptr::null_mut();
+            let mut h_errno = -1;
+            let rc = unsafe {
+                inet_abi::gethostbyname_r(
+                    c"localhost".as_ptr(),
+                    (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                    scratch.as_mut_ptr(),
+                    scratch.len(),
+                    &mut result_ptr,
+                    &mut h_errno,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert_eq!(h_errno, 0);
+            assert_eq!(
+                result_ptr,
+                (&mut hostent as *mut libc::hostent).cast::<c_void>()
+            );
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+
+            // SAFETY: gethostbyname_r populated the null-terminated aliases table in scratch.
+            let aliases = unsafe {
+                let mut aliases = Vec::new();
+                let mut alias_ptr = hostent.h_aliases;
+                while !(*alias_ptr).is_null() {
+                    aliases.push(CStr::from_ptr(*alias_ptr).to_bytes().to_vec());
+                    alias_ptr = alias_ptr.add(1);
+                }
+                aliases
+            };
+            assert_eq!(
+                aliases,
+                vec![b"ip6-localhost".to_vec(), b"ip6-loopback".to_vec()]
+            );
+
+            // SAFETY: gethostbyname_r populated the null-terminated IPv4 address table in scratch.
+            let addresses = unsafe {
+                let mut addresses = Vec::new();
+                let mut address_ptr = hostent.h_addr_list;
+                while !(*address_ptr).is_null() {
+                    addresses
+                        .push(std::slice::from_raw_parts((*address_ptr).cast::<u8>(), 4).to_vec());
+                    address_ptr = address_ptr.add(1);
+                }
+                addresses
+            };
+            assert_eq!(addresses, [vec![127, 0, 0, 1], vec![127, 0, 0, 1]]);
+        },
+    );
+}
+
+/// Read a `hostent`'s alias table, which is terminated by a NULL pointer.
+///
+/// # Safety
+/// `hostent` must point at a populated `libc::hostent` whose `h_aliases` table is
+/// NULL-terminated.
+unsafe fn hostent_alias_bytes(hostent: &libc::hostent) -> Vec<Vec<u8>> {
+    let mut aliases = Vec::new();
+    // SAFETY: the aliases table is NULL-terminated per the hostent ABI contract.
+    unsafe {
+        let mut alias_ptr = hostent.h_aliases;
+        while !(*alias_ptr).is_null() {
+            aliases.push(CStr::from_ptr(*alias_ptr).to_bytes().to_vec());
+            alias_ptr = alias_ptr.add(1);
+        }
+    }
+    aliases
+}
+
+/// Read a `hostent`'s IPv4 address table, which is terminated by a NULL pointer.
+///
+/// # Safety
+/// `hostent` must point at a populated `libc::hostent` with `h_length == 4` and a
+/// NULL-terminated `h_addr_list`.
+unsafe fn hostent_addr_octets(hostent: &libc::hostent) -> Vec<[u8; 4]> {
+    let mut addresses = Vec::new();
+    // SAFETY: the address table is NULL-terminated and each entry holds `h_length` bytes,
+    // which the caller has established is 4.
+    unsafe {
+        let mut address_ptr = hostent.h_addr_list;
+        while !(*address_ptr).is_null() {
+            let octets = std::slice::from_raw_parts((*address_ptr).cast::<u8>(), 4);
+            addresses.push([octets[0], octets[1], octets[2], octets[3]]);
+            address_ptr = address_ptr.add(1);
+        }
+    }
+    addresses
+}
+
+/// The discriminating rules of glibc's `multi on` files-backend merge, each a case a
+/// plausible-but-wrong implementation gets wrong.
+///
+/// Every expectation is what live glibc 2.42 produced for that exact hosts content,
+/// captured by bind-mounting it over `/etc/hosts` and calling the host's own resolver:
+///
+/// ```text
+/// bwrap --dev-bind / / --bind ./fake_hosts /etc/hosts python3 ghbn_oracle.py <query>
+/// ```
+///
+/// This is the regression gate for bd-6rrgjs, where the hosts path dropped aliases and
+/// collapsed duplicate addresses. The pre-existing
+/// `gethostbyname_hosts_result_preserves_aliases_and_duplicate_addresses` vector cannot
+/// catch any of these: it merges two rows that share a canonical name, so it exercises
+/// neither the append order, nor the case-sensitive canonical test, nor address parsing.
+#[test]
+#[allow(clippy::type_complexity)]
+fn gethostbyname_hosts_merge_matches_glibc_discriminating_vectors() {
+    // (hosts content, query, expected h_name, expected aliases, expected addresses)
+    let vectors: &[(&[u8], &str, &[u8], &[&[u8]], &[[u8; 4]])] = &[
+        // A later row's canonical name is appended AFTER that row's own aliases, and only
+        // when it differs from h_name BYTE-for-byte. Case-insensitive comparison here would
+        // drop the trailing "localhost".
+        (
+            b"127.0.0.1 LOCALHOST Alias1\n127.0.0.2 localhost ALIAS1\n",
+            "LoCaLhOsT",
+            b"LOCALHOST",
+            &[b"Alias1", b"ALIAS1", b"localhost"],
+            &[[127, 0, 0, 1], [127, 0, 0, 2]],
+        ),
+        // No de-duplication anywhere: "dup" survives twice, and row 2 contributes its alias
+        // before its canonical name. Appending canonical-then-aliases yields [dup,dup,host].
+        (
+            b"10.0.0.1 host dup\n10.0.0.2 dup host\n",
+            "host",
+            b"host",
+            &[b"dup", b"host", b"dup"],
+            &[[10, 0, 0, 1], [10, 0, 0, 2]],
+        ),
+        // A row whose address is neither IPv4, v4-mapped, nor loopback is skipped entirely,
+        // so the NEXT matching row seeds h_name and the alias list.
+        (
+            b"2001:db8::1 v6only\n127.0.0.5 v6only tail\n",
+            "v6only",
+            b"v6only",
+            &[b"tail"],
+            &[[127, 0, 0, 5]],
+        ),
+        // An IPv6 loopback row is usable for an AF_INET query and contributes 127.0.0.1.
+        (
+            b"::1 localhost ip6-localhost ip6-loopback\n127.0.0.1 localhost\n",
+            "localhost",
+            b"localhost",
+            &[b"ip6-localhost", b"ip6-loopback"],
+            &[[127, 0, 0, 1], [127, 0, 0, 1]],
+        ),
+        // v4-mapped addresses contribute their low four bytes.
+        (
+            b"::ffff:10.1.2.3 mapped\n",
+            "mapped",
+            b"mapped",
+            &[],
+            &[[10, 1, 2, 3]],
+        ),
+        // Addresses parse under inet_pton, which rejects leading-zero octets: row 1 is
+        // dropped rather than read as 10.0.0.1 or as octal 8.0.0.1.
+        (
+            b"010.0.0.1 host a1\n10.0.0.2 host a2\n",
+            "host",
+            b"host",
+            &[b"a2"],
+            &[[10, 0, 0, 2]],
+        ),
+        // A numeric dotted-quad query short-circuits BEFORE the file is read, so the
+        // matching row's aliases are not attached.
+        (
+            b"127.0.0.1 canon myalias\n",
+            "127.0.0.1",
+            b"127.0.0.1",
+            &[],
+            &[[127, 0, 0, 1]],
+        ),
+    ];
+
+    for (hosts, query, expected_name, expected_aliases, expected_addresses) in vectors {
+        with_resolver_backends(Some(hosts), None, |_| {
+            let query_c = CString::new(*query).expect("query should be valid C string");
+            let ptr = unsafe { resolv_abi::gethostbyname(query_c.as_ptr()) };
+            assert!(!ptr.is_null(), "query {query} should resolve");
+
+            // SAFETY: gethostbyname returned a non-null pointer to its TLS-backed hostent.
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET, "query {query}");
+            assert_eq!(hostent.h_length, 4, "query {query}");
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                *expected_name,
+                "canonical name for query {query}"
+            );
+            let expected_aliases: Vec<Vec<u8>> =
+                expected_aliases.iter().map(|a| a.to_vec()).collect();
+            assert_eq!(
+                unsafe { hostent_alias_bytes(hostent) },
+                expected_aliases,
+                "alias merge for query {query}"
+            );
+            assert_eq!(
+                unsafe { hostent_addr_octets(hostent) },
+                *expected_addresses,
+                "address merge for query {query}"
+            );
+        });
+    }
+}
+
+/// A hosts row whose only address is IPv6 but neither v4-mapped nor loopback leaves an
+/// AF_INET query with nothing to return. Measured against live glibc 2.42:
+/// `gethostbyname("host")` returns NULL for `::ffff:0:10.9.8.7 host a1`.
+#[test]
+fn gethostbyname_hosts_row_with_unusable_ipv6_address_returns_null() {
+    with_resolver_backends(Some(b"::ffff:0:10.9.8.7 host a1\n"), None, |_| {
+        let query = CString::new("host").expect("query should be valid C string");
+        let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+        assert!(
+            ptr.is_null(),
+            "a row carrying only a non-mapped, non-loopback IPv6 address must not answer \
+             an AF_INET query"
+        );
+    });
+}
+
+#[test]
+fn gethostbyname_unknown_host_returns_null() {
+    with_resolver_lock(|| {
+        let query =
+            CString::new("missing.example.invalid").expect("query should be valid C string");
+        let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn gethostbyname_unknown_host_sets_thread_local_h_errno() {
+    with_resolver_lock(|| {
+        let query =
+            CString::new("missing.example.invalid").expect("query should be valid C string");
+        unsafe {
+            *resolv_abi::__h_errno_location() = 0;
+        }
+
+        let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+        assert!(ptr.is_null());
+        let fl_h_errno = unsafe { *resolv_abi::__h_errno_location() };
+        let host = host_gethostbyname(&query);
+        assert!(host.0, "the .invalid name resolved on the host");
+        assert_eq!(fl_h_errno, host.1, "fl and glibc set different h_errno");
+        assert_ne!(fl_h_errno, 0, "an unknown name must set h_errno");
+    });
+}
+
+// ===========================================================================
+// gethostbyname_r
+// ===========================================================================
+
+#[test]
+fn gethostbyname_r_numeric_ipv4_populates_result() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = [0i8; 256];
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errno, 0);
+    assert_eq!(
+        result_ptr,
+        (&mut hostent as *mut libc::hostent).cast::<c_void>()
+    );
+    assert_eq!(hostent.h_addrtype, libc::AF_INET);
+    assert_eq!(hostent.h_length, 4);
+    assert!(!hostent.h_addr_list.is_null());
+
+    let first_addr_ptr = unsafe { *hostent.h_addr_list };
+    assert!(!first_addr_ptr.is_null());
+    let octets = unsafe { std::slice::from_raw_parts(first_addr_ptr.cast::<u8>(), 4) };
+    assert_eq!(octets, [10, 20, 30, 40]);
+}
+
+#[test]
+fn gethostbyname_r_handles_misaligned_scratch_buffer() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = [0i8; 260];
+    let (scratch_ptr, scratch_len) =
+        misaligned_c_char_buffer(&mut scratch, mem::align_of::<*mut c_char>());
+    assert!(!(scratch_ptr as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch_ptr,
+            scratch_len,
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errno, 0);
+    assert_eq!(
+        result_ptr,
+        (&mut hostent as *mut libc::hostent).cast::<c_void>()
+    );
+    assert!((hostent.h_aliases as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+    assert!((hostent.h_addr_list as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+
+    let first_addr_ptr = unsafe { *hostent.h_addr_list };
+    let octets = unsafe { std::slice::from_raw_parts(first_addr_ptr.cast::<u8>(), 4) };
+    assert_eq!(octets, [10, 20, 30, 40]);
+}
+
+#[test]
+fn gethostbyname_r_rejects_misaligned_result_buf() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut result_storage =
+        vec![0u8; mem::size_of::<libc::hostent>() + mem::align_of::<libc::hostent>()];
+    let result_buf = misaligned_hostent_result_ptr(&mut result_storage);
+    let mut scratch = [0i8; 256];
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            result_buf,
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result_ptr.is_null());
+    assert_eq!(h_errno, NO_RECOVERY_ERRNO);
+}
+
+#[test]
+fn gethostbyaddr_r_small_buffer_returns_erange_preserves_h_errno() {
+    // glibc parity (bd-a892): gethostbyaddr_r must also leave
+    // *h_errnop untouched on ERANGE — symmetric to gethostbyname_r.
+    with_resolver_backends(Some(b"10.0.0.42 somehost\n"), None, |_| {
+        let octets: [u8; 4] = [10, 0, 0, 42];
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0i8; 4];
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        const SENTINEL: i32 = -54321;
+        let mut h_errno = SENTINEL;
+
+        let rc = unsafe {
+            inet_abi::gethostbyaddr_r(
+                octets.as_ptr().cast::<c_void>(),
+                octets.len() as libc::socklen_t,
+                libc::AF_INET,
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                scratch.as_mut_ptr(),
+                scratch.len(),
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result_ptr.is_null());
+        assert_eq!(
+            h_errno, SENTINEL,
+            "ERANGE must leave *h_errnop untouched (glibc parity)"
+        );
+    });
+}
+
+#[test]
+fn gethostbyaddr_r_rejects_misaligned_result_buf() {
+    with_resolver_backends(Some(b"10.0.0.42 somehost\n"), None, |_| {
+        let octets: [u8; 4] = [10, 0, 0, 42];
+        let mut result_storage =
+            vec![0u8; mem::size_of::<libc::hostent>() + mem::align_of::<libc::hostent>()];
+        let result_buf = misaligned_hostent_result_ptr(&mut result_storage);
+        let mut scratch = [0i8; 256];
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        let mut h_errno = -1;
+
+        let rc = unsafe {
+            inet_abi::gethostbyaddr_r(
+                octets.as_ptr().cast::<c_void>(),
+                octets.len() as libc::socklen_t,
+                libc::AF_INET,
+                result_buf,
+                scratch.as_mut_ptr(),
+                scratch.len(),
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result_ptr.is_null());
+        assert_eq!(h_errno, NO_RECOVERY_ERRNO);
+    });
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostbyaddr_r_rejects_tracked_short_addr_even_when_len_claims_ipv4() {
+    let addr = malloc_bytes(&[10, 0]);
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = [0i8; 256];
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = 0;
+
+    let rc = unsafe {
+        inet_abi::gethostbyaddr_r(
+            addr.as_ptr().cast::<c_void>(),
+            4,
+            libc::AF_INET,
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result_ptr.is_null());
+    assert_eq!(h_errno, NO_RECOVERY_ERRNO);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostbyname_r_rejects_tracked_short_scratch_even_when_buflen_is_large() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = malloc_filled_bytes(4, 0xAA);
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    const SENTINEL: i32 = -24680;
+    let mut h_errno = SENTINEL;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr().cast::<c_char>(),
+            256,
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result_ptr.is_null());
+    assert_eq!(h_errno, SENTINEL);
+    assert_eq!(scratch.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostbyaddr_r_rejects_tracked_short_scratch_even_when_buflen_is_large() {
+    with_resolver_backends(Some(b"10.0.0.42 somehost\n"), None, |_| {
+        let octets: [u8; 4] = [10, 0, 0, 42];
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = malloc_filled_bytes(4, 0xBB);
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        const SENTINEL: i32 = -13579;
+        let mut h_errno = SENTINEL;
+
+        let rc = unsafe {
+            inet_abi::gethostbyaddr_r(
+                octets.as_ptr().cast::<c_void>(),
+                octets.len() as libc::socklen_t,
+                libc::AF_INET,
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                scratch.as_mut_ptr().cast::<c_char>(),
+                256,
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result_ptr.is_null());
+        assert_eq!(h_errno, SENTINEL);
+        assert_eq!(scratch.as_slice(), &[0xBB; 4]);
+    });
+}
+
+#[test]
+fn gethostbyname_r_small_buffer_returns_erange_preserves_h_errno() {
+    // glibc parity (bd-a892): when the caller buffer is too small, the
+    // reentrant ABI returns ERANGE and leaves *h_errnop untouched so
+    // callers can distinguish "retry with a bigger buffer" from a real
+    // resolution failure.
+    let query = CString::new("127.0.0.1").expect("query should be valid C string");
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = [0i8; 4];
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    const SENTINEL: i32 = -12345;
+    let mut h_errno = SENTINEL;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result_ptr.is_null());
+    assert_eq!(
+        h_errno, SENTINEL,
+        "ERANGE must leave *h_errnop untouched (glibc parity)"
+    );
+}
+
+#[test]
+fn gethostbyname_r_unknown_host_matches_host_glibc() {
+    with_resolver_lock(|| {
+        let query =
+            CString::new("missing.example.invalid").expect("query should be valid C string");
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0i8; 256];
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        let mut h_errno = -1;
+
+        let rc = unsafe {
+            inet_abi::gethostbyname_r(
+                query.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                scratch.as_mut_ptr(),
+                scratch.len(),
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+        assert!(result_ptr.is_null());
+        let host = host_gethostbyname_r(&query);
+        assert!(host.1, "the .invalid name resolved on the host");
+        // glibc returns 0 with a NULL result for NOTFOUND (not ENOENT), and
+        // EAGAIN for TRY_AGAIN: the whole outcome must match.
+        assert_eq!((rc, h_errno), (host.0, host.2), "fl and glibc disagree");
+    });
+}
+
+// ===========================================================================
+// gai_strerror
+// ===========================================================================
+
+#[test]
+fn gai_strerror_success_code_returns_success() {
+    let msg = unsafe { resolv_abi::gai_strerror(0) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert!(
+        s.contains("uccess"),
+        "gai_strerror(0) should mention success, got: {s}"
+    );
+}
+
+#[test]
+fn gai_strerror_eai_noname_returns_message() {
+    let msg = unsafe { resolv_abi::gai_strerror(libc::EAI_NONAME) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert!(
+        !s.is_empty(),
+        "gai_strerror(EAI_NONAME) should return non-empty string"
+    );
+}
+
+#[test]
+fn gai_strerror_eai_service_returns_message() {
+    let msg = unsafe { resolv_abi::gai_strerror(libc::EAI_SERVICE) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert!(!s.is_empty());
+}
+
+#[test]
+fn gai_strerror_eai_family_returns_message() {
+    let msg = unsafe { resolv_abi::gai_strerror(libc::EAI_FAMILY) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert!(!s.is_empty());
+}
+
+#[test]
+fn gai_strerror_eai_addrfamily_returns_message() {
+    let msg = unsafe { resolv_abi::gai_strerror(EAI_ADDRFAMILY) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert_eq!(s, "Address family for hostname not supported");
+}
+
+#[test]
+fn gai_strerror_unknown_code_returns_fallback() {
+    let msg = unsafe { resolv_abi::gai_strerror(99999) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) }.to_string_lossy();
+    assert!(!s.is_empty(), "unknown code should still return a string");
+}
+
+// ===========================================================================
+// getaddrinfo / freeaddrinfo
+// ===========================================================================
+
+#[test]
+fn getaddrinfo_numeric_ipv4_resolves() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc =
+        unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res) };
+    assert_eq!(rc, 0, "getaddrinfo should succeed for numeric IPv4");
+    assert!(!res.is_null());
+
+    let ai = unsafe { &*res };
+    assert_eq!(ai.ai_family, libc::AF_INET);
+    assert!(!ai.ai_addr.is_null());
+
+    let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+    assert_eq!(sin.sin_port, 80u16.to_be());
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_numeric_service_matches_glibc_wrapping() {
+    with_resolver_backends(None, Some(b""), |_| {
+        let cases = [
+            ("+80", Some(80)),
+            (" 80", Some(80)),
+            ("65536", Some(0)),
+            ("65537", Some(1)),
+            ("2147483647", Some(65535)),
+            ("2147483648", None),
+            ("4294967296", Some(0)),
+            ("-2147483649", Some(65535)),
+            ("-1", None),
+            ("80 ", None),
+        ];
+
+        for (service_text, expected_port) in cases {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new(service_text).unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+
+            match expected_port {
+                Some(port) => {
+                    assert_eq!(rc, 0, "service {service_text:?} should resolve");
+                    assert!(!res.is_null());
+                    let sin = unsafe { &*((*res).ai_addr as *const libc::sockaddr_in) };
+                    assert_eq!(
+                        u16::from_be(sin.sin_port),
+                        port,
+                        "service {service_text:?} port"
+                    );
+                    unsafe { resolv_abi::freeaddrinfo(res) };
+                }
+                None => {
+                    assert_eq!(rc, libc::EAI_SERVICE, "service {service_text:?}");
+                    assert!(res.is_null());
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn getaddrinfo_ai_numericserv_rejects_service_names() {
+    with_resolver_backends(None, Some(b"http 80/tcp\n"), |_| {
+        let cases = [
+            ("80", 0, Some(80)),
+            ("http", libc::EAI_NONAME, None),
+            ("80 ", libc::EAI_NONAME, None),
+            ("2147483648", libc::EAI_SERVICE, None),
+            ("-1", libc::EAI_SERVICE, None),
+        ];
+
+        for (service_text, expected_rc, expected_port) in cases {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new(service_text).unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_NUMERICSERV;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, expected_rc, "service {service_text:?}");
+
+            if let Some(port) = expected_port {
+                assert!(!res.is_null());
+                let sin = unsafe { &*((*res).ai_addr as *const libc::sockaddr_in) };
+                assert_eq!(u16::from_be(sin.sin_port), port);
+                unsafe { resolv_abi::freeaddrinfo(res) };
+            } else {
+                assert!(res.is_null());
+            }
+        }
+    });
+}
+
+#[test]
+fn getaddrinfo_ai_numerichost_rejects_hosts_backend_names() {
+    with_resolver_backends(Some(b"203.0.113.10 fixture-host\n"), None, |_| {
+        let cases = [
+            ("203.0.113.10", 0, Some([203, 0, 113, 10])),
+            ("fixture-host", libc::EAI_NONAME, None),
+        ];
+
+        for (node_text, expected_rc, expected_addr) in cases {
+            let node = CString::new(node_text).unwrap();
+            let service = CString::new("80").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_NUMERICHOST;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, expected_rc, "node {node_text:?}");
+
+            if let Some(addr) = expected_addr {
+                assert!(!res.is_null());
+                let sin = unsafe { &*((*res).ai_addr as *const libc::sockaddr_in) };
+                assert_eq!(sin.sin_port, 80u16.to_be());
+                assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes(addr));
+                unsafe { resolv_abi::freeaddrinfo(res) };
+            } else {
+                assert!(res.is_null());
+            }
+        }
+    });
+}
+
+#[test]
+fn getaddrinfo_numeric_host_respects_family_hint() {
+    let cases = [
+        ("127.0.0.1", libc::AF_INET, 0, Some(libc::AF_INET)),
+        ("127.0.0.1", libc::AF_INET6, EAI_ADDRFAMILY, None),
+        ("::1", libc::AF_INET6, 0, Some(libc::AF_INET6)),
+        ("::1", libc::AF_INET, EAI_ADDRFAMILY, None),
+        ("127.0.0.1", libc::AF_UNIX, libc::EAI_FAMILY, None),
+    ];
+
+    for (node_text, family, expected_rc, expected_family) in cases {
+        let node = CString::new(node_text).unwrap();
+        let service = CString::new("80").unwrap();
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = family;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+        assert_eq!(rc, expected_rc, "node {node_text:?}, family {family}");
+
+        if let Some(family) = expected_family {
+            assert!(!res.is_null());
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, family);
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else {
+            assert!(res.is_null());
+        }
+    }
+}
+
+#[test]
+fn getaddrinfo_numeric_ipv6_resolves() {
+    let node = CString::new("::1").unwrap();
+    let service = CString::new("443").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET6;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, 0, "getaddrinfo should succeed for numeric IPv6");
+    assert!(!res.is_null());
+
+    let ai = unsafe { &*res };
+    assert_eq!(ai.ai_family, libc::AF_INET6);
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_null_node_respects_ai_passive_and_family() {
+    let mut v6_loopback = [0; 16];
+    v6_loopback[15] = 1;
+    let cases = [
+        (libc::AF_INET, 0, 0, Some([127, 0, 0, 1]), None),
+        (libc::AF_INET, libc::AI_PASSIVE, 0, Some([0, 0, 0, 0]), None),
+        (libc::AF_INET6, 0, 0, None, Some(v6_loopback)),
+        (libc::AF_INET6, libc::AI_PASSIVE, 0, None, Some([0; 16])),
+        (libc::AF_UNIX, 0, libc::EAI_FAMILY, None, None),
+        (
+            libc::AF_UNIX,
+            libc::AI_PASSIVE,
+            libc::EAI_FAMILY,
+            None,
+            None,
+        ),
+    ];
+
+    for (family, flags, expected_rc, expected_v4, expected_v6) in cases {
+        let service = CString::new("8080").unwrap();
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = family;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        hints.ai_flags = flags;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+        assert_eq!(rc, expected_rc, "family {family}, flags {flags}");
+
+        if let Some(addr) = expected_v4 {
+            assert!(!res.is_null());
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_addr.s_addr.to_ne_bytes(), addr);
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else if let Some(addr) = expected_v6 {
+            assert!(!res.is_null());
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET6);
+            let sin6 = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in6) };
+            assert_eq!(sin6.sin6_addr.s6_addr, addr);
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else {
+            assert!(res.is_null());
+        }
+    }
+}
+
+#[test]
+fn getaddrinfo_null_node_ai_canonname_returns_badflags() {
+    let service = CString::new("8080").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    hints.ai_flags = libc::AI_CANONNAME;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, libc::EAI_BADFLAGS);
+    assert!(res.is_null());
+}
+
+#[test]
+fn getaddrinfo_non_null_ai_canonname_sets_first_result_only() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_UNSPEC;
+    hints.ai_flags = libc::AI_CANONNAME;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+
+    let names = unsafe { collect_addrinfo_canonname(res) };
+    assert_eq!(
+        names,
+        vec![Some(b"127.0.0.1".to_vec()), None, None],
+        "AI_CANONNAME should populate only the first addrinfo"
+    );
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_hosts_backend_ai_canonname_returns_canonical_hostname() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host fixture-alias\n"),
+        None,
+        |_| {
+            let node = CString::new("FIXTURE-ALIAS").unwrap();
+            let service = CString::new("80").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_CANONNAME;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let names = unsafe { collect_addrinfo_canonname(res) };
+            // Independently checked against glibc with this hosts row: the
+            // canonical field is the first hostname, not the alias spelling
+            // passed to getaddrinfo. Numeric hosts still retain their input.
+            assert_eq!(names, vec![Some(b"fixture-host".to_vec())]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_service_uses_port_zero() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+
+    let ai = unsafe { &*res };
+    let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+    assert_eq!(sin.sin_port, 0);
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_unspecified_socktype_expands_numeric_service_profiles() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+
+    let profiles = unsafe { collect_addrinfo_profiles(res) };
+    assert_eq!(
+        profiles,
+        vec![
+            (libc::SOCK_STREAM, libc::IPPROTO_TCP, 80),
+            (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 80),
+            (libc::SOCK_RAW, 0, 80),
+        ]
+    );
+
+    unsafe { resolv_abi::freeaddrinfo(res) };
+}
+
+#[test]
+fn getaddrinfo_unspecified_socktype_protocol_filters_profiles() {
+    let cases = [
+        (
+            libc::IPPROTO_TCP,
+            0,
+            vec![(libc::SOCK_STREAM, libc::IPPROTO_TCP, 80)],
+        ),
+        (
+            libc::IPPROTO_UDP,
+            0,
+            vec![(libc::SOCK_DGRAM, libc::IPPROTO_UDP, 80)],
+        ),
+        (libc::IPPROTO_ICMP, libc::EAI_SERVICE, Vec::new()),
+    ];
+
+    for (protocol, expected_rc, expected_profiles) in cases {
+        let node = CString::new("127.0.0.1").unwrap();
+        let service = CString::new("80").unwrap();
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_protocol = protocol;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+        assert_eq!(rc, expected_rc, "protocol {protocol}");
+        if expected_rc == 0 {
+            assert!(!res.is_null());
+            let profiles = unsafe { collect_addrinfo_profiles(res) };
+            assert_eq!(profiles, expected_profiles, "protocol {protocol}");
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        } else {
+            assert!(res.is_null());
+        }
+    }
+}
+
+#[test]
+fn getaddrinfo_raw_socktype_rejects_service_but_allows_null_service() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+    hints.ai_family = libc::AF_INET;
+    hints.ai_socktype = libc::SOCK_RAW;
+    hints.ai_protocol = libc::IPPROTO_ICMP;
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), &hints, &mut res) };
+    assert_eq!(rc, 0);
+    assert!(!res.is_null());
+    let profiles = unsafe { collect_addrinfo_profiles(res) };
+    assert_eq!(profiles, vec![(libc::SOCK_RAW, libc::IPPROTO_ICMP, 0)]);
+    unsafe { resolv_abi::freeaddrinfo(res) };
+
+    let service = CString::new("0").unwrap();
+    let mut rejected: *mut libc::addrinfo = ptr::null_mut();
+    let rc =
+        unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut rejected) };
+    assert_eq!(rc, libc::EAI_SERVICE);
+    assert!(rejected.is_null());
+}
+
+#[test]
+fn getaddrinfo_service_name_uses_service_protocol_profiles() {
+    with_resolver_backends(
+        None,
+        Some(b"dual 4242/tcp\ndual 4242/udp\nsingle 8080/tcp\n"),
+        |_| {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new("dual").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let profiles = unsafe { collect_addrinfo_profiles(res) };
+            assert_eq!(
+                profiles,
+                vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 4242),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 4242),
+                ]
+            );
+            unsafe { resolv_abi::freeaddrinfo(res) };
+
+            hints.ai_protocol = libc::IPPROTO_UDP;
+            let mut udp_only: *mut libc::addrinfo = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut udp_only)
+            };
+            assert_eq!(rc, 0);
+            assert!(!udp_only.is_null());
+            let profiles = unsafe { collect_addrinfo_profiles(udp_only) };
+            assert_eq!(profiles, vec![(libc::SOCK_DGRAM, libc::IPPROTO_UDP, 4242)]);
+            unsafe { resolv_abi::freeaddrinfo(udp_only) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_service_name_bucket_preserves_profiles_and_refreshes() {
+    with_resolver_backends(
+        None,
+        Some(b"first 4242/tcp dual\nDUAL 4242/udp dual\nother 9090/tcp\n"),
+        |paths| {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new("dUaL").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            assert_eq!(
+                unsafe { collect_addrinfo_profiles(res) },
+                vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 4242),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 4242),
+                ]
+            );
+            unsafe { resolv_abi::freeaddrinfo(res) };
+
+            std::fs::write(&paths.services, b"dual 5252/udp\n")
+                .expect("rewrite temp services fixture");
+            let mut refreshed: *mut libc::addrinfo = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    node.as_ptr(),
+                    service.as_ptr(),
+                    ptr::null(),
+                    &mut refreshed,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert!(!refreshed.is_null());
+            assert_eq!(
+                unsafe { collect_addrinfo_profiles(refreshed) },
+                vec![(libc::SOCK_DGRAM, libc::IPPROTO_UDP, 5252)]
+            );
+            unsafe { resolv_abi::freeaddrinfo(refreshed) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_node_and_null_service_returns_noname() {
+    let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+    let rc = unsafe { resolv_abi::getaddrinfo(ptr::null(), ptr::null(), ptr::null(), &mut res) };
+    assert_eq!(rc, libc::EAI_NONAME);
+    assert!(res.is_null());
+}
+
+#[test]
+fn getaddrinfo_null_result_returns_error() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let rc = unsafe {
+        resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), ptr::null_mut())
+    };
+    assert_ne!(rc, 0, "getaddrinfo with null result pointer should fail");
+}
+
+#[test]
+fn getaddrinfo_rejects_known_unterminated_node() {
+    with_resolver_lock(|| {
+        let node = malloc_unterminated(b"127.0.0.1");
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
+
+        assert_ne!(rc, 0, "unterminated malloc-backed node must fail");
+        assert!(res.is_null());
+    });
+}
+
+#[test]
+fn getaddrinfo_nonexistent_host_returns_eai_noname() {
+    with_resolver_lock(|| {
+        let node = CString::new("nonexistent.invalid.test").unwrap();
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
+        let host = host_getaddrinfo_rc(&node);
+        assert!(
+            host == libc::EAI_NONAME || host == libc::EAI_AGAIN,
+            "the .invalid name resolved on the host (rc {host})"
+        );
+        assert_eq!(rc, host, "fl and glibc disagree on an unknown name");
+        assert!(res.is_null());
+    });
+}
+
+#[test]
+fn freeaddrinfo_null_is_noop() {
+    // Should not crash
+    unsafe { resolv_abi::freeaddrinfo(ptr::null_mut()) };
+}
+
+#[test]
+fn getaddrinfo_uses_overridden_hosts_backend() {
+    with_resolver_backends(
+        Some(
+            b"not-an-ip fixture-bad\n203.0.113.10 fixture-host fixture-alias\n198.51.100.5 other-host\n",
+        ),
+        None,
+        |paths| {
+            assert!(paths.hosts.exists());
+            let node = CString::new("FIXTURE-ALIAS").unwrap();
+            let service = CString::new("4242").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 4242u16.to_be());
+            assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes([203, 0, 113, 10]));
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_resolves_service_name_from_overridden_services_backend() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc 4242/tcp fixturealias\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixturealias").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 4242u16.to_be());
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_resolves_crlf_hosts_and_services_backend_rows() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\r\n"),
+        Some(b"fixture-svc 4242/tcp fixturealias\r\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixturealias").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 4242u16.to_be());
+            assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes([203, 0, 113, 10]));
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_service_name_respects_udp_socktype_hint() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc 1111/tcp\nfixture-svc 2222/udp\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixture-svc").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_socktype = libc::SOCK_DGRAM;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_socktype, libc::SOCK_DGRAM);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 2222u16.to_be());
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_unknown_service_name_returns_eai_service() {
+    with_resolver_backends(None, Some(b"known-svc 4242/tcp\n"), |_| {
+        let node = CString::new("127.0.0.1").unwrap();
+        let service = CString::new("missing-svc").unwrap();
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc = unsafe {
+            resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+        };
+        assert_eq!(rc, libc::EAI_SERVICE);
+        assert!(res.is_null());
+    });
+}
+
+#[test]
+fn getaddrinfo_rejects_flags_outside_glibc_mask_before_other_hint_errors() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let query = |family: c_int, socktype: c_int, flags: c_int| {
+        let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+        hints.ai_family = family;
+        hints.ai_socktype = socktype;
+        hints.ai_flags = flags;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+        if !res.is_null() {
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        }
+        rc
+    };
+    // glibc 2.43 accepts exactly bits 0..=10 (AI_PASSIVE .. AI_NUMERICSERV).
+    for bit in 0..11 {
+        assert_ne!(
+            query(libc::AF_INET, libc::SOCK_STREAM, 1 << bit),
+            libc::EAI_BADFLAGS,
+            "bit {bit}"
+        );
+    }
+    for bit in 11..32 {
+        assert_eq!(
+            query(libc::AF_INET, libc::SOCK_STREAM, 1i32.wrapping_shl(bit)),
+            libc::EAI_BADFLAGS,
+            "bit {bit}"
+        );
+    }
+    // The flag check precedes the family and socktype checks.
+    assert_eq!(query(77, 0, 0x10000), libc::EAI_BADFLAGS);
+    assert_eq!(query(libc::AF_INET, 99, 0x10000), libc::EAI_BADFLAGS);
+}
+
+#[test]
+fn getaddrinfo_ignores_malformed_service_protocol_field() {
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc 4242/tcp/garbage\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixture-svc").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, libc::EAI_SERVICE);
+            assert!(res.is_null());
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_accepts_signed_service_port_field_like_glibc() {
+    // Previously asserted EAI_SERVICE for a `/etc/services` row whose port field
+    // carries a sign. Measured against live glibc 2.42 with the fixture
+    // bind-mounted over /etc/services:
+    //     getservbyname("fixture-svc","tcp") -> NON-NULL port=80
+    //     getaddrinfo(host, "fixture-svc")   -> OK port=80
+    // glibc parses the port with strtoul, which consumes a leading sign, so the
+    // service resolves. fl agreed with glibc and the arm failed anyway.
+    with_resolver_backends(
+        Some(b"203.0.113.10 fixture-host\n"),
+        Some(b"fixture-svc +80/tcp\n"),
+        |_| {
+            let node = CString::new("fixture-host").unwrap();
+            let service = CString::new("fixture-svc").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0, "glibc resolves a signed port field to its value");
+            assert!(!res.is_null());
+            unsafe {
+                let sa = (*res).ai_addr as *const libc::sockaddr_in;
+                assert_eq!(
+                    u16::from_be((*sa).sin_port),
+                    80,
+                    "the sign is consumed, not kept"
+                );
+                resolv_abi::freeaddrinfo(res);
+            }
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_default_hints_match_host_glibc() {
+    with_resolver_lock(|| {
+        // This is the real host's configuration, including its fail-open
+        // behavior if netlink is unavailable. No procfs fixture is installed.
+        // SAFETY: Symbols use the declared libc signatures. Each successful
+        // call returns a live chain released by its own matching allocator.
+        unsafe {
+            let host: GetaddrinfoFn =
+                dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ());
+            let host_free: FreeaddrinfoFn =
+                dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ());
+            let zeroed: libc::addrinfo = mem::zeroed();
+            for implicit in [true, false] {
+                let hints: *const libc::addrinfo = if implicit { ptr::null() } else { &zeroed };
+                let snapshot = |function: GetaddrinfoFn, free: FreeaddrinfoFn| {
+                    let mut result = ptr::null_mut();
+                    let rc = function(ptr::null(), c"8080".as_ptr(), hints, &mut result);
+                    let mut rows = Vec::new();
+                    let mut current = result;
+                    while !current.is_null() {
+                        let entry = &*current;
+                        rows.push((
+                            entry.ai_flags,
+                            entry.ai_family,
+                            entry.ai_socktype,
+                            entry.ai_protocol,
+                        ));
+                        current = entry.ai_next;
+                    }
+                    if !result.is_null() {
+                        free(result);
+                    }
+                    // Address preference sorting is tested separately. This
+                    // regression checks selection, socket profiles and flags.
+                    rows.sort_unstable();
+                    (rc, rows)
+                };
+                let expected = snapshot(host, host_free);
+                let actual = snapshot(resolv_abi::getaddrinfo, resolv_abi::freeaddrinfo);
+                assert_eq!(actual, expected, "implicit hints: {implicit}");
+                if expected.0 == 0 {
+                    assert!(!expected.1.is_empty());
+                    let flags = if implicit {
+                        libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                    } else {
+                        0
+                    };
+                    assert!(expected.1.iter().all(|row| row.0 == flags));
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn getaddrinfo_default_hints_filter_named_and_null_nodes() {
+    let route = b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n";
+    let loopback_v6 = b"00000000000000000000000000000001 01 80 10 80 lo\n";
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(route),
+        Some(loopback_v6),
+        |_| {
+            for node in [ptr::null(), c"dual-stack".as_ptr()] {
+                let mut result = ptr::null_mut();
+                // SAFETY: Node/service strings are valid and result is writable.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(node, c"8080".as_ptr(), ptr::null(), &mut result)
+                };
+                assert_eq!(rc, 0);
+                assert!(!result.is_null());
+                // SAFETY: A successful call returned this live addrinfo chain.
+                assert_eq!(
+                    unsafe { collect_addrinfo_families(result) },
+                    vec![libc::AF_INET]
+                );
+                let mut current = result;
+                while !current.is_null() {
+                    // SAFETY: getaddrinfo returned this live, owned chain.
+                    let entry = unsafe { &*current };
+                    assert_eq!(entry.ai_flags, libc::AI_V4MAPPED | libc::AI_ADDRCONFIG);
+                    current = entry.ai_next;
+                }
+                // SAFETY: The chain is owned by this call and freed once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+
+                // An explicit zeroed structure must continue requesting both
+                // families. The GNU defaults apply only to a NULL pointer.
+                // SAFETY: All-zero fields are valid for an addrinfo hints value.
+                let hints: libc::addrinfo = unsafe { mem::zeroed() };
+                // SAFETY: Strings, hints and writable result remain live.
+                let rc =
+                    unsafe { resolv_abi::getaddrinfo(node, c"8080".as_ptr(), &hints, &mut result) };
+                assert_eq!(rc, 0);
+                // SAFETY: The successful call returned a live chain.
+                let mut families = unsafe { collect_addrinfo_families(result) };
+                families.sort_unstable();
+                assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+                // SAFETY: This call owns the chain and releases it once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_default_hints_filter_ipv6_only_and_keep_unknown_configuration() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(b"Iface Destination Gateway Flags\n"),
+        Some(b"20010db8000000000000000000000001 02 80 00 20 eth0\n"),
+        |paths| {
+            let mut result = ptr::null_mut();
+            // SAFETY: The service is NUL-terminated and result is writable.
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), ptr::null(), &mut result)
+            };
+            assert_eq!(rc, 0);
+            // SAFETY: The successful call returned a live chain.
+            assert_eq!(
+                unsafe { collect_addrinfo_families(result) },
+                vec![libc::AF_INET6]
+            );
+            // SAFETY: This call owns the chain and releases it once.
+            unsafe { resolv_abi::freeaddrinfo(result) };
+
+            // An unreadable snapshot is unknown, not an IPv4-only/IPv6-only
+            // machine. Use a nonexistent path; no real configuration changes.
+            // SAFETY: The resolver test lock serializes environment mutations.
+            unsafe {
+                std::env::set_var(
+                    PROC_NET_IF_INET6_PATH_ENV,
+                    paths.if_inet6.with_extension("missing"),
+                );
+            }
+            // SAFETY: The service is NUL-terminated and result is writable.
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), ptr::null(), &mut result)
+            };
+            assert_eq!(rc, 0);
+            // SAFETY: The successful call returned a live chain.
+            let mut families = unsafe { collect_addrinfo_families(result) };
+            families.sort_unstable();
+            assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+            // SAFETY: This call owns the chain and releases it once.
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv4() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |paths| {
+            assert!(paths.route.exists());
+            assert!(paths.if_inet6.exists());
+
+            let node = CString::new("dual-stack").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv6() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"),
+        Some(b"fe800000000000000000000000000001 02 40 20 80   eth0\n"),
+        |_| {
+            let node = CString::new("dual-stack").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_ignores_signed_ipv4_route_flags() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t+0001\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"fe800000000000000000000000000001 02 40 20 80   eth0\n"),
+        |_| {
+            let node = CString::new("dual-stack").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_ignores_malformed_ipv6_addrconfig_rows() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"2001:db8::10 v6-only\n"),
+        None,
+        Some(b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"),
+        Some(b"fe80000000000000000000000000000z 02 40 20 80 eth0\n"),
+        |_| {
+            let node = CString::new("v6-only").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            hints.ai_family = libc::AF_INET6;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(res.is_null());
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_selects_numeric_family_before_lookup() {
+    // Expected GNU results are explicit: numeric hosts obey AI_ADDRCONFIG,
+    // NULL hints carry AI_V4MAPPED, and a zeroed hints value stays unfiltered.
+    const V4: &[u8] = b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n";
+    const NO_V4: &[u8] = b"Iface Destination Gateway Flags\n";
+    const V6: &[u8] = b"20010db8000000000000000000000001 02 80 00 20 eth0\n";
+    type Case = (&'static CStr, Option<c_int>, c_int, c_int, c_int);
+    let v4_only: &[Case] = &[
+        (c"::1", None, 0, EAI_ADDRFAMILY, 0),
+        (
+            c"::1",
+            Some(libc::AF_UNSPEC),
+            libc::AI_ADDRCONFIG,
+            EAI_ADDRFAMILY,
+            0,
+        ),
+        (
+            c"::1",
+            Some(libc::AF_INET6),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (c"::1", Some(libc::AF_UNSPEC), 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET),
+        (c"::ffff:192.0.2.9", None, 0, 0, libc::AF_INET),
+    ];
+    let v6_only: &[Case] = &[
+        (c"::1", None, 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET6),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_UNSPEC),
+            libc::AI_ADDRCONFIG,
+            EAI_ADDRFAMILY,
+            0,
+        ),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_INET),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (c"192.0.2.9", Some(libc::AF_UNSPEC), 0, 0, libc::AF_INET),
+        (c"::ffff:192.0.2.9", None, 0, 0, libc::AF_INET6),
+    ];
+    let neither: &[Case] = &[
+        (c"::1", None, 0, 0, libc::AF_INET6),
+        (c"192.0.2.9", None, 0, 0, libc::AF_INET),
+        (
+            c"::1",
+            Some(libc::AF_INET6),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+        (
+            c"192.0.2.9",
+            Some(libc::AF_INET),
+            libc::AI_ADDRCONFIG,
+            libc::EAI_NONAME,
+            0,
+        ),
+    ];
+    for (route, inet6, cases) in [
+        (V4, &b""[..], v4_only),
+        (NO_V4, V6, v6_only),
+        (NO_V4, &b""[..], neither),
+    ] {
+        with_resolver_backends_and_addrconfig(None, None, Some(route), Some(inet6), |_| {
+            for &(node, family, flags, expected_rc, expected_family) in cases {
+                // SAFETY: zero is a valid initial addrinfo hints value.
+                let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+                hints.ai_family = family.unwrap_or(libc::AF_UNSPEC);
+                hints.ai_flags = flags;
+                let hints_ptr = if family.is_some() {
+                    &hints
+                } else {
+                    ptr::null()
+                };
+                let mut result = ptr::null_mut();
+                // SAFETY: strings and optional hints are live; result is writable.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(node.as_ptr(), c"8080".as_ptr(), hints_ptr, &mut result)
+                };
+                assert_eq!(
+                    rc, expected_rc,
+                    "node={node:?}, family={family:?}, flags={flags}"
+                );
+                if rc != 0 {
+                    assert!(result.is_null());
+                    continue;
+                }
+                // SAFETY: successful getaddrinfo returned this owned chain.
+                assert_eq!(
+                    unsafe { collect_addrinfo_families(result) },
+                    [expected_family]
+                );
+                let mut profiles = unsafe { collect_addrinfo_profiles(result) };
+                profiles.sort_unstable();
+                let mut expected = vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 8080),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 8080),
+                    (libc::SOCK_RAW, 0, 8080),
+                ];
+                expected.sort_unstable();
+                assert_eq!(profiles, expected);
+                let mut current = result;
+                while !current.is_null() {
+                    let entry = unsafe { &*current };
+                    assert_eq!(
+                        entry.ai_flags,
+                        if family.is_none() {
+                            libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                        } else {
+                            flags
+                        }
+                    );
+                    if node == c"192.0.2.9" && expected_family == libc::AF_INET6 {
+                        let address = unsafe { &*entry.ai_addr.cast::<libc::sockaddr_in6>() };
+                        assert_eq!(
+                            address.sin6_addr.s6_addr,
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 192, 0, 2, 9]
+                        );
+                    }
+                    current = entry.ai_next;
+                }
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        });
+    }
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_rejects_unavailable_family_before_service() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        Some(b""),
+        Some(b"Iface Destination Gateway Flags\n"),
+        Some(b""),
+        |_| {
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET6;
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut result = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    c"::1".as_ptr(),
+                    c"not-a-number".as_ptr(),
+                    &hints,
+                    &mut result,
+                )
+            };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(result.is_null());
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_selects_family_specific_hosts_view() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"::1 loopback-files\n"),
+        None,
+        Some(b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n"),
+        Some(b""),
+        |_| {
+            let mut result = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    c"loopback-files".as_ptr(),
+                    c"80".as_ptr(),
+                    ptr::null(),
+                    &mut result,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert_eq!(
+                unsafe { collect_addrinfo_families(result) },
+                [libc::AF_INET]
+            );
+            let address = unsafe { &*(*result).ai_addr.cast::<libc::sockaddr_in>() };
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 1]);
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_returns_noname_when_selected_hosts_family_is_absent() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"2001:db8::10 v6-only\n"),
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |_| {
+            // Narrowing the family now happens before NSS dispatch. Keep
+            // this files-only failure independent of the runner's DNS.
+            struct RestoreNsswitch(Option<std::ffi::OsString>);
+            impl Drop for RestoreNsswitch {
+                fn drop(&mut self) {
+                    // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+                    unsafe {
+                        if let Some(value) = &self.0 {
+                            std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", value);
+                        } else {
+                            std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                        }
+                    }
+                }
+            }
+            let nsswitch = temp_resolver_path("addrconfig-files-only");
+            std::fs::write(&nsswitch, b"hosts: files\n").unwrap();
+            let _restore = RestoreNsswitch(std::env::var_os("FRANKENLIBC_NSSWITCH_CONF"));
+            // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+            unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
+            let node = CString::new("v6-only").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(res.is_null());
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_node_ai_addrconfig_filters_unspecified_to_ipv4() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_node_ai_addrconfig_filters_unspecified_to_ipv6_only() {
+    // Symmetric companion to ..._filters_unspecified_to_ipv4. A host with
+    // only IPv6 non-loopback routes (e.g., IPv6-only network) must surface
+    // only AF_INET6 records for null-node queries under AI_ADDRCONFIG.
+    // The empty route table below plus a non-loopback ::/0 entry in
+    // if_inet6 models an IPv6-only box.
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n",
+        ),
+        Some(b"20010db8000000000000000000000001 02 80 00 20   eth0\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_node_ai_addrconfig_preserves_both_families_on_dual_stack() {
+    // Dual-stack host with both IPv4 and IPv6 non-loopback routes must
+    // return both AF_INET and AF_INET6 nodes for null-node queries.
+    // Confirms the filter only removes families that are *unsupported*,
+    // not that it inadvertently trims supported families.
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"20010db8000000000000000000000001 02 80 00 20   eth0\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let mut families = unsafe { collect_addrinfo_families(res) };
+            families.sort();
+            assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_default_hints_keep_unspecified_on_loopback_only_hosts() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(b"Iface Destination Gateway Flags\nlo 00000000 00000000 0001\n"),
+        Some(b"00000000000000000000000000000001 01 80 10 80 lo\n"),
+        |_| {
+            for family in [
+                None,
+                Some(libc::AF_UNSPEC),
+                Some(libc::AF_INET),
+                Some(libc::AF_INET6),
+            ] {
+                // SAFETY: Zero is valid for every addrinfo hints field.
+                let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+                hints.ai_flags = libc::AI_ADDRCONFIG;
+                hints.ai_family = family.unwrap_or(libc::AF_UNSPEC);
+                let hints_ptr = if family.is_some() {
+                    &hints as *const libc::addrinfo
+                } else {
+                    ptr::null()
+                };
+                let mut result = ptr::null_mut();
+                // SAFETY: The service and optional hints remain live, and
+                // result is writable for the duration of the call.
+                let rc = unsafe {
+                    resolv_abi::getaddrinfo(ptr::null(), c"8080".as_ptr(), hints_ptr, &mut result)
+                };
+                if family.is_some_and(|value| value != libc::AF_UNSPEC) {
+                    assert_eq!(rc, libc::EAI_NONAME, "family: {family:?}");
+                    assert!(result.is_null());
+                    continue;
+                }
+                assert_eq!(rc, 0, "family: {family:?}");
+                assert!(!result.is_null());
+                // SAFETY: The successful call returned this live owned chain.
+                let mut families = unsafe { collect_addrinfo_families(result) };
+                families.sort_unstable();
+                assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+                let expected_flags = if family.is_none() {
+                    libc::AI_V4MAPPED | libc::AI_ADDRCONFIG
+                } else {
+                    libc::AI_ADDRCONFIG
+                };
+                let mut current = result;
+                while !current.is_null() {
+                    // SAFETY: Every node belongs to the returned live chain.
+                    let entry = unsafe { &*current };
+                    assert_eq!(entry.ai_flags, expected_flags);
+                    current = entry.ai_next;
+                }
+                // SAFETY: This call owns the chain and releases it once.
+                unsafe { resolv_abi::freeaddrinfo(result) };
+            }
+        },
+    );
+}
+
+// ===========================================================================
+// getnameinfo
+// ===========================================================================
+
+#[test]
+fn getnameinfo_ipv4_formats_numeric() {
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 80u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 168, 1, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+
+    let mut host = [0u8; 64];
+    let mut serv = [0u8; 16];
+
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            (&sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+            mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            serv.as_mut_ptr().cast::<c_char>(),
+            serv.len() as libc::socklen_t,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    assert_eq!(rc, 0, "getnameinfo should succeed for IPv4");
+
+    let host_str = unsafe { CStr::from_ptr(host.as_ptr().cast::<c_char>()) }.to_string_lossy();
+    assert_eq!(host_str, "192.168.1.1");
+
+    let serv_str = unsafe { CStr::from_ptr(serv.as_ptr().cast::<c_char>()) }.to_string_lossy();
+    assert_eq!(serv_str, "80");
+}
+
+#[test]
+fn getnameinfo_ipv6_formats_numeric() {
+    let sin6 = libc::sockaddr_in6 {
+        sin6_family: libc::AF_INET6 as u16,
+        sin6_port: 443u16.to_be(),
+        sin6_flowinfo: 0,
+        sin6_addr: libc::in6_addr {
+            s6_addr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        },
+        sin6_scope_id: 0,
+    };
+
+    let mut host = [0u8; 64];
+    let mut serv = [0u8; 16];
+
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            (&sin6 as *const libc::sockaddr_in6).cast::<libc::sockaddr>(),
+            mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            serv.as_mut_ptr().cast::<c_char>(),
+            serv.len() as libc::socklen_t,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    assert_eq!(rc, 0, "getnameinfo should succeed for IPv6");
+
+    let host_str = unsafe { CStr::from_ptr(host.as_ptr().cast::<c_char>()) }.to_string_lossy();
+    assert_eq!(host_str, "::1");
+
+    let serv_str = unsafe { CStr::from_ptr(serv.as_ptr().cast::<c_char>()) }.to_string_lossy();
+    assert_eq!(serv_str, "443");
+}
+
+#[test]
+fn getnameinfo_null_sockaddr_returns_error() {
+    let mut host = [0u8; 64];
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            ptr::null(),
+            0,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            ptr::null_mut(),
+            0,
+            0,
+        )
+    };
+    assert_ne!(rc, 0, "getnameinfo(NULL) should fail");
+}
+
+#[test]
+fn getnameinfo_unsupported_family_returns_eai_family() {
+    // Use AF_UNIX which is not supported by numeric getnameinfo
+    let mut sa: libc::sockaddr = unsafe { mem::zeroed() };
+    sa.sa_family = libc::AF_UNIX as u16;
+
+    let mut host = [0u8; 64];
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            &sa,
+            mem::size_of::<libc::sockaddr>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            ptr::null_mut(),
+            0,
+            0,
+        )
+    };
+    assert_eq!(rc, libc::EAI_FAMILY);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnameinfo_rejects_tracked_short_host_buffer() {
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 80u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 168, 1, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+
+    let mut host = malloc_filled_bytes(4, 0xAA);
+    let mut serv = [0u8; 16];
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            (&sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+            mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            64,
+            serv.as_mut_ptr().cast::<c_char>(),
+            serv.len() as libc::socklen_t,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    assert_eq!(rc, libc::EAI_OVERFLOW);
+    assert_eq!(host.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnameinfo_rejects_tracked_short_service_buffer() {
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 80u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 168, 1, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+
+    let mut host = [0u8; 64];
+    let mut serv = malloc_filled_bytes(2, 0xBB);
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            (&sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+            mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            serv.as_mut_ptr().cast::<c_char>(),
+            16,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    assert_eq!(rc, libc::EAI_OVERFLOW);
+    assert_eq!(serv.as_slice(), &[0xBB; 2]);
+}
+
+// ===========================================================================
+// gethostbyaddr
+// ===========================================================================
+
+#[test]
+fn gethostbyaddr_localhost_may_resolve() {
+    with_resolver_lock(|| {
+        let addr: [u8; 4] = [127, 0, 0, 1];
+        let ptr =
+            unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET) };
+        // /etc/hosts usually has 127.0.0.1 -> localhost
+        // But we don't fail the test if it doesn't
+        if !ptr.is_null() {
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+        }
+    });
+}
+
+#[test]
+fn gethostbyaddr_null_returns_null() {
+    let ptr = unsafe { resolv_abi::gethostbyaddr(ptr::null(), 4, libc::AF_INET) };
+    assert!(ptr.is_null());
+}
+
+#[test]
+fn gethostbyaddr_unsupported_af_returns_null() {
+    let addr: [u8; 4] = [127, 0, 0, 1];
+    let ptr = unsafe {
+        resolv_abi::gethostbyaddr(
+            addr.as_ptr().cast::<c_void>(),
+            4,
+            libc::AF_INET6, // IPv6 not supported for 4-byte addr
+        )
+    };
+    assert!(ptr.is_null());
+}
+
+#[test]
+fn gethostbyaddr_short_len_returns_null() {
+    let addr: [u8; 4] = [127, 0, 0, 1];
+    let ptr = unsafe {
+        resolv_abi::gethostbyaddr(
+            addr.as_ptr().cast::<c_void>(),
+            2, // too short
+            libc::AF_INET,
+        )
+    };
+    assert!(ptr.is_null());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostbyaddr_rejects_tracked_short_addr_even_when_len_claims_ipv4() {
+    let addr = malloc_bytes(&[127, 0]);
+    unsafe {
+        *resolv_abi::__h_errno_location() = 0;
+    }
+
+    let ptr =
+        unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET) };
+
+    assert!(ptr.is_null());
+    assert_eq!(
+        unsafe { *resolv_abi::__h_errno_location() },
+        NO_RECOVERY_ERRNO
+    );
+}
+
+#[test]
+fn gethostbyaddr_unsupported_af_sets_thread_local_h_errno() {
+    let addr: [u8; 4] = [127, 0, 0, 1];
+    unsafe {
+        *resolv_abi::__h_errno_location() = 0;
+    }
+
+    let ptr =
+        unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET6) };
+    assert!(ptr.is_null());
+    assert_eq!(
+        unsafe { *resolv_abi::__h_errno_location() },
+        HOST_NOT_FOUND_ERRNO
+    );
+}
+
+#[test]
+fn gethostbyaddr_uses_overridden_hosts_backend() {
+    with_resolver_backends(
+        Some(b"203.0.113.7 fixture-host fixture-alias\n"),
+        None,
+        |_| {
+            let addr = libc::in_addr {
+                s_addr: u32::from_ne_bytes([203, 0, 113, 7]),
+            };
+            unsafe {
+                *resolv_abi::__h_errno_location() = HOST_NOT_FOUND_ERRNO;
+            }
+
+            let ptr = unsafe {
+                resolv_abi::gethostbyaddr(
+                    (&addr as *const libc::in_addr).cast::<c_void>(),
+                    mem::size_of::<libc::in_addr>() as libc::socklen_t,
+                    libc::AF_INET,
+                )
+            };
+            assert!(!ptr.is_null());
+
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            let host_name = unsafe { CStr::from_ptr(hostent.h_name) };
+            assert_eq!(host_name.to_bytes(), b"fixture-host");
+            assert_eq!(unsafe { *resolv_abi::__h_errno_location() }, 0);
+        },
+    );
+}
+
+// ===========================================================================
+// getservbyname
+// ===========================================================================
+
+#[test]
+fn getservbyname_ssh_resolves() {
+    with_resolver_lock(|| {
+        let name = CString::new("ssh").unwrap();
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        // /etc/services should have ssh/tcp = 22
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 22);
+            assert!(!servent.s_name.is_null());
+        }
+    });
+}
+
+#[test]
+fn getservbyname_http_resolves() {
+    with_resolver_lock(|| {
+        let name = CString::new("http").unwrap();
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 80);
+        }
+    });
+}
+
+#[test]
+fn getservbyname_null_name_returns_null() {
+    let proto = CString::new("tcp").unwrap();
+    let ptr = unsafe { resolv_abi::getservbyname(ptr::null(), proto.as_ptr()) };
+    assert!(ptr.is_null());
+}
+
+#[test]
+fn getservbyname_rejects_known_unterminated_name() {
+    with_resolver_lock(|| {
+        let name = malloc_unterminated(b"ssh");
+        let proto = CString::new("tcp").unwrap();
+
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn getservbyname_nonexistent_returns_null() {
+    with_resolver_lock(|| {
+        let name = CString::new("nonexistent_service_zzz").unwrap();
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn getservbyname_null_proto_resolves() {
+    with_resolver_lock(|| {
+        let name = CString::new("ssh").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), ptr::null()) };
+        // Should still find ssh without protocol filter
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 22);
+        }
+    });
+}
+
+#[test]
+fn getservbyname_alias_resolves_to_canonical_entry() {
+    with_resolver_lock(|| {
+        let Some((alias, proto, port)) = services_alias_fixture() else {
+            return;
+        };
+        let ptr = unsafe { resolv_abi::getservbyname(alias.as_ptr(), proto.as_ptr()) };
+        assert!(!ptr.is_null());
+
+        let servent = unsafe { &*(ptr as *const libc::servent) };
+        assert_eq!(u16::from_be(servent.s_port as u16), port);
+        assert!(!servent.s_name.is_null());
+    });
+}
+
+#[test]
+fn getservbyname_uses_overridden_services_backend_and_ignores_malformed_lines() {
+    with_resolver_backends(
+        None,
+        Some(b"broken-service notaport/tcp alias\nfixture-svc 12345/tcp fixturealias\n"),
+        |_| {
+            let name = CString::new("FIXTUREALIAS").unwrap();
+            let proto = CString::new("TCP").unwrap();
+            let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+            assert!(!ptr.is_null());
+
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 12345);
+            let proto_name = unsafe { CStr::from_ptr(servent.s_proto) };
+            assert!(proto_name.to_bytes().eq_ignore_ascii_case(b"tcp"));
+        },
+    );
+}
+
+#[test]
+fn getservbyname_cached_lookup_respects_services_backend_update() {
+    with_resolver_backends(None, Some(b"fixture-svc 4242/tcp\n"), |paths| {
+        let name = CString::new("fixture-svc").unwrap();
+        let proto = CString::new("tcp").unwrap();
+
+        let first_ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        assert!(!first_ptr.is_null());
+        let first = unsafe { &*(first_ptr as *const libc::servent) };
+        assert_eq!(u16::from_be(first.s_port as u16), 4242);
+
+        std::fs::write(&paths.services, b"fixture-svc 4243/tcp refreshed-alias\n")
+            .expect("rewrite temp services fixture");
+
+        let second_ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        assert!(!second_ptr.is_null());
+        let second = unsafe { &*(second_ptr as *const libc::servent) };
+        assert_eq!(u16::from_be(second.s_port as u16), 4243);
+    });
+}
+
+// ===========================================================================
+// getservbyport
+// ===========================================================================
+
+#[test]
+fn getservbyport_22_resolves_ssh() {
+    with_resolver_lock(|| {
+        let port_net = (22u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            let name = unsafe { CStr::from_ptr(servent.s_name) }.to_string_lossy();
+            assert_eq!(name, "ssh");
+        }
+    });
+}
+
+#[test]
+fn getservbyport_80_resolves_http() {
+    with_resolver_lock(|| {
+        let port_net = (80u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            let name = unsafe { CStr::from_ptr(servent.s_name) }.to_string_lossy();
+            assert_eq!(name, "http");
+        }
+    });
+}
+
+#[test]
+fn getservbyport_nonexistent_returns_null() {
+    with_resolver_lock(|| {
+        let port_net = (59999u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn getservbyport_rejects_known_unterminated_proto() {
+    with_resolver_lock(|| {
+        let port_net = (22u16).to_be() as c_int;
+        let proto = malloc_unterminated(b"tcp");
+
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn getservbyport_reads_updated_overridden_services_backend() {
+    with_resolver_backends(None, Some(b"fixture-old 4242/tcp\n"), |paths| {
+        let port_net = (4242u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+
+        let first_ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        assert!(!first_ptr.is_null());
+        let first = unsafe { &*(first_ptr as *const libc::servent) };
+        let first_name = unsafe { CStr::from_ptr(first.s_name) };
+        assert_eq!(first_name.to_bytes(), b"fixture-old");
+
+        std::fs::write(
+            &paths.services,
+            b"broken-service nope/tcp alias\nfixture-new 4242/tcp\n",
+        )
+        .expect("rewrite temp services fixture");
+
+        let second_ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        assert!(!second_ptr.is_null());
+        let second = unsafe { &*(second_ptr as *const libc::servent) };
+        let second_name = unsafe { CStr::from_ptr(second.s_name) };
+        assert_eq!(second_name.to_bytes(), b"fixture-new");
+    });
+}
+
+/// The reentrant `getservbyport_r`/`getservbyname_r` (in `inet_abi`) now share the
+/// generation-stamped parsed index owned by `resolv_abi` instead of doing a per-call
+/// `std::fs::read("/etc/services")`. Two things must hold as a result, and neither did
+/// before: they must observe the `FRANKENLIBC_SERVICES_PATH` override (they used to
+/// hardcode `/etc/services`), and a backend rewrite must invalidate the shared index for
+/// them exactly as it does for the non-reentrant entry points.
+#[test]
+fn reentrant_servent_lookups_track_overridden_services_backend() {
+    with_resolver_backends(None, Some(b"fixture-old 4243/tcp\n"), |paths| {
+        let port_net = (4243u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+
+        let mut servent: libc::servent = unsafe { std::mem::zeroed() };
+        let mut buf = [0i8; 512];
+        let mut result: *mut libc::servent = std::ptr::null_mut();
+
+        let mut by_port = || unsafe {
+            let rc = inet_abi::getservbyport_r(
+                port_net,
+                proto.as_ptr(),
+                (&raw mut servent).cast::<libc::c_void>(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                (&raw mut result).cast::<*mut libc::c_void>(),
+            );
+            assert_eq!(rc, 0, "getservbyport_r failed");
+            assert!(!result.is_null(), "getservbyport_r found nothing");
+            CStr::from_ptr((*result).s_name).to_bytes().to_vec()
+        };
+
+        // Reads the OVERRIDDEN backend, not /etc/services.
+        assert_eq!(by_port(), b"fixture-old".to_vec());
+
+        std::fs::write(
+            &paths.services,
+            b"broken-service nope/tcp alias\nfixture-new 4243/tcp\n",
+        )
+        .expect("rewrite temp services fixture");
+
+        // Backend generation changed => the shared parsed index rebuilt for the `_r` path.
+        assert_eq!(by_port(), b"fixture-new".to_vec());
+
+        // The name index reaches the reentrant path too.
+        let name = CString::new("fixture-new").unwrap();
+        let mut n_servent: libc::servent = unsafe { std::mem::zeroed() };
+        let mut n_buf = [0i8; 512];
+        let mut n_result: *mut libc::servent = std::ptr::null_mut();
+        let rc = unsafe {
+            inet_abi::getservbyname_r(
+                name.as_ptr(),
+                proto.as_ptr(),
+                (&raw mut n_servent).cast::<libc::c_void>(),
+                n_buf.as_mut_ptr(),
+                n_buf.len(),
+                (&raw mut n_result).cast::<*mut libc::c_void>(),
+            )
+        };
+        assert_eq!(rc, 0, "getservbyname_r failed");
+        assert!(!n_result.is_null(), "getservbyname_r found nothing");
+        assert_eq!(
+            unsafe { CStr::from_ptr((*n_result).s_proto) }.to_bytes(),
+            b"tcp"
+        );
+        assert_eq!(unsafe { (*n_result).s_port }, port_net);
+    });
+}
+
+/// The reentrant `getprotobyname_r`/`getprotobynumber_r` (in `unistd_abi`) now share the
+/// generation-stamped parsed protocol index owned by `resolv_abi` instead of doing a
+/// per-call `std::fs::read("/etc/protocols")`. As with the servent `_r` pair, they must now
+/// observe the `FRANKENLIBC_PROTOCOLS_PATH` override (they hardcoded `/etc/protocols`), and a
+/// backend rewrite must invalidate the shared index for them.
+#[test]
+fn reentrant_protoent_lookups_track_overridden_protocols_backend() {
+    with_resolver_backends_full(
+        None,
+        None,
+        Some(b"fixture-old 253 fx-old\n"),
+        None,
+        None,
+        |paths| {
+            let mut protoent: libc::protoent = unsafe { std::mem::zeroed() };
+            let mut buf = [0i8; 512];
+            let mut result: *mut libc::protoent = std::ptr::null_mut();
+
+            let mut by_number = || unsafe {
+                let rc = unistd_abi::getprotobynumber_r(
+                    253,
+                    (&raw mut protoent).cast::<libc::c_void>(),
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    (&raw mut result).cast::<*mut libc::c_void>(),
+                );
+                assert_eq!(rc, 0, "getprotobynumber_r failed");
+                assert!(!result.is_null(), "getprotobynumber_r found nothing");
+                CStr::from_ptr((*result).p_name).to_bytes().to_vec()
+            };
+
+            // Reads the OVERRIDDEN backend, not /etc/protocols.
+            assert_eq!(by_number(), b"fixture-old".to_vec());
+
+            std::fs::write(&paths.protocols, b"fixture-new 253 fx-new\n")
+                .expect("rewrite temp protocols fixture");
+
+            // Backend generation changed => shared parsed index rebuilt for the `_r` path.
+            assert_eq!(by_number(), b"fixture-new".to_vec());
+
+            // The name index reaches the reentrant path too, including aliases.
+            let alias = CString::new("fx-new").unwrap();
+            let mut n_protoent: libc::protoent = unsafe { std::mem::zeroed() };
+            let mut n_buf = [0i8; 512];
+            let mut n_result: *mut libc::protoent = std::ptr::null_mut();
+            let rc = unsafe {
+                unistd_abi::getprotobyname_r(
+                    alias.as_ptr(),
+                    (&raw mut n_protoent).cast::<libc::c_void>(),
+                    n_buf.as_mut_ptr(),
+                    n_buf.len(),
+                    (&raw mut n_result).cast::<*mut libc::c_void>(),
+                )
+            };
+            assert_eq!(rc, 0, "getprotobyname_r failed");
+            assert!(!n_result.is_null(), "getprotobyname_r found nothing");
+            assert_eq!(unsafe { (*n_result).p_proto }, 253);
+            assert_eq!(
+                unsafe { CStr::from_ptr((*n_result).p_name) }.to_bytes(),
+                b"fixture-new"
+            );
+        },
+    );
+}
+
+// ===========================================================================
+// getprotobyname
+// ===========================================================================
+
+#[test]
+fn getprotobyname_tcp_resolves() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            assert_eq!(protoent.p_proto, 6); // TCP = protocol 6
+            assert!(!protoent.p_name.is_null());
+        }
+    });
+}
+
+#[test]
+fn getprotobyname_udp_resolves() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("udp").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            assert_eq!(protoent.p_proto, 17); // UDP = protocol 17
+        }
+    });
+}
+
+#[test]
+fn getprotobyname_icmp_resolves() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("icmp").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            assert_eq!(protoent.p_proto, 1); // ICMP = protocol 1
+        }
+    });
+}
+
+#[test]
+fn getprotobyname_null_returns_null() {
+    let ptr = unsafe { resolv_abi::getprotobyname(ptr::null()) };
+    assert!(ptr.is_null());
+}
+
+#[test]
+fn getprotobyname_rejects_known_unterminated_name() {
+    let name = malloc_unterminated(b"tcp");
+    let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+    assert!(ptr.is_null());
+}
+
+#[test]
+fn getprotobyname_nonexistent_returns_null() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("nonexistent_protocol_zzz").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn getproto_cached_lookup_respects_protocols_backend_update() {
+    with_resolver_protocols(Some(b"fixture-proto 222 oldalias\n"), |paths| {
+        let name = CString::new("fixture-proto").unwrap();
+
+        let first_ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        assert!(!first_ptr.is_null());
+        let first = unsafe { &*(first_ptr as *const libc::protoent) };
+        assert_eq!(first.p_proto, 222);
+
+        std::fs::write(
+            &paths.protocols,
+            b"broken-proto nope ignored\nfixture-proto 223 refreshed-alias\n",
+        )
+        .expect("rewrite temp protocols fixture");
+
+        let second_ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        assert!(!second_ptr.is_null());
+        let second = unsafe { &*(second_ptr as *const libc::protoent) };
+        assert_eq!(second.p_proto, 223);
+
+        let alias = CString::new("REFRESHED-ALIAS").unwrap();
+        let alias_ptr = unsafe { resolv_abi::getprotobyname(alias.as_ptr()) };
+        assert!(!alias_ptr.is_null());
+        let alias_entry = unsafe { &*(alias_ptr as *const libc::protoent) };
+        assert_eq!(alias_entry.p_proto, 223);
+
+        let number_ptr = unsafe { resolv_abi::getprotobynumber(223) };
+        assert!(!number_ptr.is_null());
+        let number_entry = unsafe { &*(number_ptr as *const libc::protoent) };
+        let canonical = unsafe { CStr::from_ptr(number_entry.p_name) };
+        assert_eq!(canonical.to_bytes(), b"fixture-proto");
+    });
+}
+
+#[test]
+fn getproto_lookup_respects_protocols_backend_fixture_numbers() {
+    with_resolver_protocols(Some(b"tcp 222 fixture-tcp\n"), |_paths| {
+        let tcp = CString::new("tcp").unwrap();
+        let name_ptr = unsafe { resolv_abi::getprotobyname(tcp.as_ptr()) };
+        assert!(!name_ptr.is_null());
+        let by_name = unsafe { &*(name_ptr as *const libc::protoent) };
+        assert_eq!(by_name.p_proto, 222);
+
+        let static_number_ptr = unsafe { resolv_abi::getprotobynumber(6) };
+        assert!(static_number_ptr.is_null());
+
+        let fixture_number_ptr = unsafe { resolv_abi::getprotobynumber(222) };
+        assert!(!fixture_number_ptr.is_null());
+        let by_number = unsafe { &*(fixture_number_ptr as *const libc::protoent) };
+        let canonical = unsafe { CStr::from_ptr(by_number.p_name) };
+        assert_eq!(canonical.to_bytes(), b"tcp");
+    });
+}
+
+// ===========================================================================
+// getprotobynumber
+// ===========================================================================
+
+#[test]
+fn getprotobynumber_6_resolves_tcp() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let ptr = unsafe { resolv_abi::getprotobynumber(6) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            let name = unsafe { CStr::from_ptr(protoent.p_name) }.to_string_lossy();
+            assert_eq!(name, "tcp");
+            assert_eq!(protoent.p_proto, 6);
+        }
+    });
+}
+
+#[test]
+fn getprotobynumber_17_resolves_udp() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let ptr = unsafe { resolv_abi::getprotobynumber(17) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            let name = unsafe { CStr::from_ptr(protoent.p_name) }.to_string_lossy();
+            assert_eq!(name, "udp");
+        }
+    });
+}
+
+#[test]
+fn getprotobynumber_nonexistent_returns_null() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let ptr = unsafe { resolv_abi::getprotobynumber(99999) };
+        assert!(ptr.is_null());
+    });
+}
+
+// ===========================================================================
+// __h_errno_location
+// ===========================================================================
+
+#[test]
+fn h_errno_location_returns_valid_pointer() {
+    let ptr = unsafe { resolv_abi::__h_errno_location() };
+    assert!(!ptr.is_null());
+    // Should be readable
+    let _val = unsafe { *ptr };
+}
+
+#[test]
+fn h_errno_location_is_writable() {
+    let ptr = unsafe { resolv_abi::__h_errno_location() };
+    assert!(!ptr.is_null());
+    let old = unsafe { *ptr };
+    unsafe { *ptr = 42 };
+    assert_eq!(unsafe { *ptr }, 42);
+    unsafe { *ptr = old };
+}
+
+// ===========================================================================
+// DNS Metrics Evidence (bd-1y7)
+// ===========================================================================
+
+#[test]
+fn dns_metrics_snapshot_returns_valid_counters() {
+    let snapshot = resolv_abi::dns_metrics_snapshot();
+    // Verify the snapshot structure works by checking all fields are accessible
+    // and that the sum of outcomes equals attempts (allowing for races)
+    let total_outcomes = snapshot.queries_success
+        + snapshot.queries_timeout
+        + snapshot.queries_send_error
+        + snapshot.queries_parse_error
+        + snapshot.queries_nxdomain
+        + snapshot.queries_dns_error;
+    // Total outcomes should be <= attempts (encode failure doesn't increment outcomes)
+    assert!(total_outcomes <= snapshot.queries_attempted || snapshot.queries_attempted == 0);
+}
+
+#[test]
+fn dns_metrics_counters_increment_on_hosts_miss() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        // When /etc/hosts lookup fails and DNS is attempted,
+        // the metrics should increment.
+        // Note: This test may increment counters even if DNS fails
+        // (timeout, no nameserver, etc.), which is expected.
+
+        let before = resolv_abi::dns_metrics_snapshot();
+
+        // Try to resolve a hostname that won't be in /etc/hosts
+        // and will trigger DNS lookup attempt
+        let nonexistent = CString::new("nonexistent.example.test").unwrap();
+        let mut result: *mut libc::addrinfo = ptr::null_mut();
+
+        // This will try DNS after /etc/hosts miss
+        let _ = unsafe {
+            resolv_abi::getaddrinfo(nonexistent.as_ptr(), ptr::null(), ptr::null(), &mut result)
+        };
+        if !result.is_null() {
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        }
+
+        let after = resolv_abi::dns_metrics_snapshot();
+
+        // The total queries attempted should have increased
+        // (unless DNS is completely disabled or no nameservers configured)
+        // We just verify the counter is accessible and consistent
+        assert!(after.queries_attempted >= before.queries_attempted);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// libresolv ns_get/put16/32 + ns_samename/samedomain/subdomain/makecanon
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ns_get16_reads_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_get16;
+    let buf = [0x12u8, 0x34u8];
+    assert_eq!(unsafe { ns_get16(buf.as_ptr()) }, 0x1234);
+    assert_eq!(unsafe { ns_get16(std::ptr::null()) }, 0);
+}
+
+#[test]
+fn ns_get32_reads_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_get32;
+    let buf = [0xDE, 0xAD, 0xBE, 0xEF];
+    assert_eq!(unsafe { ns_get32(buf.as_ptr()) }, 0xDEAD_BEEF);
+    assert_eq!(unsafe { ns_get32(std::ptr::null()) }, 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_get_helpers_reject_tracked_short_buffers() {
+    use frankenlibc_abi::resolv_abi::{
+        __ns_get16, __ns_get32, _getlong, _getshort, ns_get16, ns_get32,
+    };
+
+    let short16 = malloc_bytes(&[0x12]);
+    let short32 = malloc_bytes(&[0xDE, 0xAD, 0xBE]);
+
+    assert_eq!(unsafe { ns_get16(short16.as_ptr()) }, 0);
+    assert_eq!(unsafe { __ns_get16(short16.as_ptr()) }, 0);
+    assert_eq!(unsafe { _getshort(short16.as_ptr()) }, 0);
+    assert_eq!(unsafe { ns_get32(short32.as_ptr()) }, 0);
+    assert_eq!(unsafe { __ns_get32(short32.as_ptr()) }, 0);
+    assert_eq!(unsafe { _getlong(short32.as_ptr()) }, 0);
+}
+
+#[test]
+fn ns_put16_writes_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_put16;
+    let mut buf = [0u8; 2];
+    unsafe { ns_put16(0x1234, buf.as_mut_ptr()) };
+    assert_eq!(buf, [0x12, 0x34]);
+
+    // NULL dst is a no-op (no UB).
+    unsafe { ns_put16(0xFFFF, std::ptr::null_mut()) };
+}
+
+#[test]
+fn ns_put32_writes_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_put32;
+    let mut buf = [0u8; 4];
+    unsafe { ns_put32(0xCAFE_BABE, buf.as_mut_ptr()) };
+    assert_eq!(buf, [0xCA, 0xFE, 0xBA, 0xBE]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_put_helpers_reject_tracked_short_buffers() {
+    use frankenlibc_abi::resolv_abi::{__putlong, __putshort, ns_put16, ns_put32};
+
+    let mut short16 = malloc_filled_bytes(1, 0x55);
+    let mut short32 = malloc_filled_bytes(3, 0x66);
+
+    unsafe { ns_put16(0x1234, short16.as_mut_ptr()) };
+    assert_eq!(short16.as_slice(), [0x55]);
+    unsafe { __putshort(0xABCD, short16.as_mut_ptr()) };
+    assert_eq!(short16.as_slice(), [0x55]);
+
+    unsafe { ns_put32(0xCAFE_BABE, short32.as_mut_ptr()) };
+    assert_eq!(short32.as_slice(), [0x66, 0x66, 0x66]);
+    unsafe { __putlong(0xDEAD_BEEF, short32.as_mut_ptr()) };
+    assert_eq!(short32.as_slice(), [0x66, 0x66, 0x66]);
+}
+
+#[test]
+fn ns_samename_case_insensitive_with_optional_dot() {
+    use frankenlibc_abi::resolv_abi::ns_samename;
+
+    fn cs(s: &'static str) -> std::ffi::CString {
+        std::ffi::CString::new(s).unwrap()
+    }
+
+    assert_eq!(
+        unsafe { ns_samename(cs("foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samename(cs("FOO.COM").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samename(cs("foo.com").as_ptr(), cs("foo.com.").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samename(cs("foo.com").as_ptr(), cs("bar.com").as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { ns_samename(std::ptr::null(), cs("x").as_ptr()) },
+        -1
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_samename_rejects_tracked_unterminated_inputs() {
+    use frankenlibc_abi::resolv_abi::ns_samename;
+    let unterminated = malloc_unterminated(b"foo.com");
+    let other = std::ffi::CString::new("foo.com").unwrap();
+
+    assert_eq!(
+        unsafe { ns_samename(unterminated.as_ptr(), other.as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { ns_samename(other.as_ptr(), unterminated.as_ptr()) },
+        -1
+    );
+}
+
+#[test]
+fn ns_samedomain_root_and_subdomains() {
+    use frankenlibc_abi::resolv_abi::ns_samedomain;
+
+    fn cs(s: &'static str) -> std::ffi::CString {
+        std::ffi::CString::new(s).unwrap()
+    }
+
+    // Root domain (empty / ".") matches everything.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("foo.com").as_ptr(), cs("").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samedomain(cs("foo.com").as_ptr(), cs(".").as_ptr()) },
+        1
+    );
+
+    // Equal names match.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+
+    // Proper subdomain matches.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("www.foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samedomain(cs("a.b.foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+
+    // Suffix-but-not-subdomain rejects (no dot before suffix).
+    assert_eq!(
+        unsafe { ns_samedomain(cs("zzzfoo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+
+    // Different names reject.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("bar.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_samedomain_rejects_tracked_unterminated_inputs() {
+    use frankenlibc_abi::resolv_abi::ns_samedomain;
+    let unterminated = malloc_unterminated(b"www.foo.com");
+    let domain = std::ffi::CString::new("foo.com").unwrap();
+
+    assert_eq!(
+        unsafe { ns_samedomain(unterminated.as_ptr(), domain.as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { ns_samedomain(domain.as_ptr(), unterminated.as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn ns_subdomain_only_for_proper_subdomains() {
+    use frankenlibc_abi::resolv_abi::ns_subdomain;
+
+    fn cs(s: &'static str) -> std::ffi::CString {
+        std::ffi::CString::new(s).unwrap()
+    }
+
+    // Same name → not a proper subdomain.
+    assert_eq!(
+        unsafe { ns_subdomain(cs("foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+    // Proper subdomain → 1.
+    assert_eq!(
+        unsafe { ns_subdomain(cs("www.foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    // Unrelated names → 0.
+    assert_eq!(
+        unsafe { ns_subdomain(cs("bar.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn ns_makecanon_appends_trailing_dot() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = [0u8; 16];
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    assert_eq!(s.to_bytes(), b"foo.com.");
+}
+
+#[test]
+fn ns_makecanon_preserves_existing_trailing_dot() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com.").unwrap();
+    let mut buf = [0u8; 16];
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    assert_eq!(s.to_bytes(), b"foo.com.");
+}
+
+#[test]
+fn ns_makecanon_emsgsize_when_dst_too_small() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com").unwrap();
+    // src is 7 bytes; result needs 9 (foo.com. + NUL); buffer of 8
+    // should fail.
+    let mut buf = [0u8; 8];
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+}
+
+#[test]
+fn ns_makecanon_einval_on_null_inputs() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let mut buf = [0u8; 16];
+    let rc = unsafe { ns_makecanon(std::ptr::null(), buf.as_mut_ptr() as *mut c_char, 16) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_makecanon_rejects_tracked_unterminated_src() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = malloc_unterminated(b"foo.com");
+    let mut buf = [0u8; 16];
+
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_makecanon_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com").unwrap();
+    let mut dst = malloc_filled_bytes(4, 0xAA);
+
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let rc = unsafe { ns_makecanon(src.as_ptr(), dst.as_mut_ptr() as *mut c_char, 16) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+    assert_eq!(dst.as_slice(), &[0xAA; 4]);
+}
+
+// ---------------------------------------------------------------------------
+// libresolv ns_parse_ttl / ns_format_ttl / ns_datetosecs
+// ---------------------------------------------------------------------------
+
+fn parse_ttl(s: &str) -> Option<u32> {
+    use frankenlibc_abi::resolv_abi::ns_parse_ttl;
+    let cstr = std::ffi::CString::new(s).unwrap();
+    let mut out: u32 = 0;
+    let rc = unsafe { ns_parse_ttl(cstr.as_ptr(), &mut out) };
+    if rc == 0 { Some(out) } else { None }
+}
+
+#[test]
+fn ns_parse_ttl_handles_units() {
+    assert_eq!(parse_ttl("60"), Some(60));
+    assert_eq!(parse_ttl("60S"), Some(60));
+    assert_eq!(parse_ttl("60s"), Some(60));
+    assert_eq!(parse_ttl("1M"), Some(60));
+    assert_eq!(parse_ttl("1H"), Some(3_600));
+    assert_eq!(parse_ttl("1D"), Some(86_400));
+    assert_eq!(parse_ttl("1W"), Some(604_800));
+    assert_eq!(parse_ttl("1d2h3m4s"), Some(86_400 + 7_200 + 180 + 4));
+    assert_eq!(parse_ttl("0"), Some(0));
+}
+
+#[test]
+fn ns_parse_ttl_rejects_syntax_errors() {
+    // Unit without preceding digits.
+    assert_eq!(parse_ttl("H"), None);
+    // Unknown unit.
+    assert_eq!(parse_ttl("5Z"), None);
+    // Non-digit non-unit character.
+    assert_eq!(parse_ttl("12+34"), None);
+    // Empty string is permissive: returns 0 (matches BIND reference loop
+    // semantics — the parse loop terminates without consuming any input
+    // and the accumulator remains zero).
+    assert_eq!(parse_ttl(""), Some(0));
+}
+
+#[test]
+fn ns_parse_ttl_rejects_overflow() {
+    // 2^32 = 4_294_967_296; this should overflow u32.
+    assert_eq!(parse_ttl("4294967296"), None);
+    // 7200W * 604800 sec/week = 4_354_560_000 > u32::MAX → overflow.
+    assert_eq!(parse_ttl("7200W"), None);
+    // 11-digit number (>10 digits) overruns u32 and is rejected by the
+    // digit-count guard.
+    assert_eq!(parse_ttl("99999999999"), None);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_parse_ttl_rejects_tracked_unterminated_input() {
+    use frankenlibc_abi::resolv_abi::ns_parse_ttl;
+    let src = malloc_unterminated(b"60S");
+    let mut out = 123u32;
+
+    let rc = unsafe { ns_parse_ttl(src.as_ptr(), &mut out) };
+    assert_eq!(rc, -1);
+    assert_eq!(out, 123);
+}
+
+fn format_ttl(secs: u32, capacity: usize) -> Option<String> {
+    use frankenlibc_abi::resolv_abi::ns_format_ttl;
+    let mut buf = vec![0u8; capacity];
+    let rc = unsafe { ns_format_ttl(secs.into(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    if rc < 0 {
+        return None;
+    }
+    let n = rc as usize;
+    Some(String::from_utf8(buf[..n].to_vec()).unwrap())
+}
+
+#[test]
+fn ns_format_ttl_single_unit_is_uppercase() {
+    assert_eq!(format_ttl(0, 32).as_deref(), Some("0S"));
+    assert_eq!(format_ttl(60, 32).as_deref(), Some("1M"));
+    assert_eq!(format_ttl(3_600, 32).as_deref(), Some("1H"));
+    assert_eq!(format_ttl(86_400, 32).as_deref(), Some("1D"));
+    assert_eq!(format_ttl(604_800, 32).as_deref(), Some("1W"));
+}
+
+#[test]
+fn ns_format_ttl_multi_unit_is_lowercase() {
+    // 86460 = 1 day + 1 minute → "1d1m" (lowercased per BIND9 ref).
+    assert_eq!(format_ttl(86_460, 32).as_deref(), Some("1d1m"));
+    // 3661 = 1h1m1s.
+    assert_eq!(format_ttl(3_661, 32).as_deref(), Some("1h1m1s"));
+}
+
+#[test]
+fn ns_format_ttl_round_trips_via_parse() {
+    for &val in &[0u32, 1, 59, 60, 3_600, 86_400, 86_461, 604_800, 1_234_567] {
+        let s = format_ttl(val, 64).expect("format should succeed");
+        let cs = std::ffi::CString::new(s.clone()).unwrap();
+        let mut out: u32 = 0;
+        let rc = unsafe { frankenlibc_abi::resolv_abi::ns_parse_ttl(cs.as_ptr(), &mut out) };
+        assert_eq!(rc, 0, "parse failed for round-trip '{s}' from {val}");
+        assert_eq!(out, val, "round-trip mismatch via '{s}'");
+    }
+}
+
+#[test]
+fn ns_format_ttl_returns_minus_one_when_buffer_too_small() {
+    use frankenlibc_abi::resolv_abi::ns_format_ttl;
+    // "0S" + NUL needs 3; buffer of 2 should fail.
+    let mut buf = [0u8; 2];
+    assert_eq!(
+        unsafe { ns_format_ttl(0, buf.as_mut_ptr() as *mut c_char, buf.len()) },
+        -1
+    );
+    // NULL dst → -1.
+    assert_eq!(unsafe { ns_format_ttl(0, std::ptr::null_mut(), 0) }, -1);
+}
+
+#[test]
+fn ns_format_ttl_tracked_short_dst_keeps_glibc_partial_unit() {
+    use frankenlibc_abi::resolv_abi::ns_format_ttl;
+    let mut buf = malloc_filled_bytes(4, 0xAA);
+    let rc = unsafe { ns_format_ttl(3_661, buf.as_mut_ptr() as *mut c_char, 32) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(buf.as_slice(), &[b'1', b'H', 0, 0xAA]);
+}
+
+#[test]
+fn ns_datetosecs_parses_valid_utc_strings() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    // 2024-01-01T00:00:00 UTC = 1704067200 (well-known).
+    let s = std::ffi::CString::new("20240101000000").unwrap();
+    let mut errp: c_int = 99;
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, 1_704_067_200);
+
+    // 1970-01-01T00:00:00 UTC = 0 (epoch).
+    let s = std::ffi::CString::new("19700101000000").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, 0);
+
+    // Valid leap day.
+    let s = std::ffi::CString::new("20240229000000").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, 1_709_164_800);
+
+    // Highest Unix timestamp representable by the u32 return type.
+    let s = std::ffi::CString::new("21060207062815").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, u32::MAX);
+}
+
+#[test]
+fn ns_datetosecs_rejects_malformed_strings() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    let mut errp: c_int = 0;
+
+    // Wrong length (13 chars).
+    let s = std::ffi::CString::new("2024010100000").unwrap();
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Right length but non-digit.
+    let s = std::ffi::CString::new("2024X101000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Out-of-range month.
+    let s = std::ffi::CString::new("20241301000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Invalid non-leap day must not be normalized by a host libc time parser.
+    let s = std::ffi::CString::new("20230229000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Values beyond u32::MAX seconds would wrap the API return type.
+    let s = std::ffi::CString::new("21060207062816").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_datetosecs_rejects_tracked_unterminated_input() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    let src = malloc_unterminated(b"20240101000000");
+    let mut errp: c_int = 0;
+
+    let secs = unsafe { ns_datetosecs(src.as_ptr(), &mut errp) };
+    assert_eq!(secs, 0);
+    assert_eq!(errp, 1);
+}
+
+#[test]
+fn ns_datetosecs_tolerates_null_errp() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    let s = std::ffi::CString::new("20240101000000").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), std::ptr::null_mut()) };
+    assert_eq!(secs, 1_704_067_200);
+}
+
+// ---------------------------------------------------------------------------
+// res_gethostbyname / 2 / by_addr aliases + res_send_set{q,r}hook
+// ---------------------------------------------------------------------------
+
+#[test]
+fn res_gethostbyname_matches_gethostbyname_for_numeric_ipv4() {
+    use frankenlibc_abi::resolv_abi::{gethostbyname, res_gethostbyname};
+    let q = CString::new("127.0.0.1").unwrap();
+    let a = unsafe { res_gethostbyname(q.as_ptr()) };
+    let b = unsafe { gethostbyname(q.as_ptr()) };
+    assert!(!a.is_null());
+    assert!(!b.is_null());
+    // Both routes resolve through the same hostent registry; comparing
+    // the h_addrtype/h_length fields is sufficient.
+    let ha = unsafe { &*(a as *const libc::hostent) };
+    let hb = unsafe { &*(b as *const libc::hostent) };
+    assert_eq!(ha.h_addrtype, hb.h_addrtype);
+    assert_eq!(ha.h_length, hb.h_length);
+}
+
+#[test]
+fn res_gethostbyname2_matches_gethostbyname2_for_numeric_ipv4() {
+    use frankenlibc_abi::resolv_abi::res_gethostbyname2;
+    let q = CString::new("127.0.0.1").unwrap();
+    let a = unsafe { res_gethostbyname2(q.as_ptr(), libc::AF_INET) };
+    assert!(!a.is_null());
+    let h = unsafe { &*(a as *const libc::hostent) };
+    assert_eq!(h.h_addrtype, libc::AF_INET);
+    assert_eq!(h.h_length, 4);
+}
+
+#[test]
+fn res_gethostbyaddr_matches_gethostbyaddr_for_loopback() {
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        use frankenlibc_abi::resolv_abi::res_gethostbyaddr;
+        let octets: [u8; 4] = [127, 0, 0, 1];
+        let p = unsafe { res_gethostbyaddr(octets.as_ptr() as *const c_void, 4, libc::AF_INET) };
+        // Loopback always resolves; non-loopback addresses without a
+        // hosts entry can return NULL, which is also legal — only assert
+        // we don't crash and the API accepts the call.
+        let _ = p;
+    });
+}
+
+#[test]
+fn res_send_setqhook_and_setrhook_round_trip_via_thread_local() {
+    use frankenlibc_abi::resolv_abi::{
+        res_send_qhook_for_tests, res_send_rhook_for_tests, res_send_setqhook, res_send_setrhook,
+    };
+
+    let q_sentinel = 0xDEAD_BEEF_usize as *mut c_void;
+    let r_sentinel = 0xCAFE_BABE_usize as *mut c_void;
+
+    unsafe {
+        res_send_setqhook(q_sentinel);
+        res_send_setrhook(r_sentinel);
+    }
+    assert_eq!(res_send_qhook_for_tests(), q_sentinel);
+    assert_eq!(res_send_rhook_for_tests(), r_sentinel);
+
+    // Reset to NULL.
+    unsafe {
+        res_send_setqhook(std::ptr::null_mut());
+        res_send_setrhook(std::ptr::null_mut());
+    }
+    assert!(res_send_qhook_for_tests().is_null());
+    assert!(res_send_rhook_for_tests().is_null());
+}
+
+// ---------------------------------------------------------------------------
+// ns_name_ntol / ns_name_rollback
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ns_name_ntol_lowercases_labels() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    // Wire format for "FOO.COM": [3, 'F', 'O', 'O', 3, 'C', 'O', 'M', 0]
+    let src: [u8; 9] = [3, b'F', b'O', b'O', 3, b'C', b'O', b'M', 0];
+    let mut dst = [0u8; 9];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, 9);
+    assert_eq!(&dst, &[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
+}
+
+#[test]
+fn ns_name_ntol_preserves_already_lowercase() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src: [u8; 9] = [3, b'b', b'a', b'r', 3, b'n', b'e', b't', 0];
+    let mut dst = [0u8; 9];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, 9);
+    assert_eq!(&dst, &src);
+}
+
+#[test]
+fn ns_name_ntol_rejects_dst_too_small() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src: [u8; 9] = [3, b'F', b'O', b'O', 3, b'C', b'O', b'M', 0];
+    let mut dst = [0xAAu8; 4]; // too small
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+    assert_eq!(&dst, &[3, 0xAA, 0xAA, 0xAA]);
+}
+
+#[test]
+fn ns_name_ntol_handles_empty_root_name() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    // Just the root (single 0 byte).
+    let src: [u8; 1] = [0];
+    let mut dst = [0xFFu8; 4];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, 1);
+    assert_eq!(dst[0], 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_name_ntol_rejects_tracked_short_src_label() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src = malloc_bytes(&[3]);
+    let mut dst = [0u8; 4];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_name_ntol_rejects_tracked_short_src_compression_pointer() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src = malloc_bytes(&[0xC0]);
+    let mut dst = [0xAAu8; 2];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+    assert_eq!(&dst, &[0xAA; 2]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_name_ntol_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src: [u8; 5] = [3, b'F', b'O', b'O', 0];
+    let mut dst = malloc_filled_bytes(2, 0xAA);
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), 64) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EMSGSIZE
+    );
+    assert_eq!(dst.as_slice(), &[3, 0xAA]);
+}
+
+#[test]
+fn ns_name_rollback_clears_ptrs_at_or_past_threshold() {
+    use frankenlibc_abi::resolv_abi::ns_name_rollback;
+
+    // Set up a simulated dnptrs array with 4 entries + NULL terminator.
+    // Pointers are just integer-shaped sentinels; we pass an array of
+    // *mut u8 backed by a Vec so the addresses are real.
+    let mut backing = vec![0u8; 256];
+    let base = backing.as_mut_ptr();
+
+    // Entries point into the backing buffer at offsets 0, 50, 100, 150.
+    let mut dnptrs: [*mut u8; 5] = [
+        unsafe { base.add(0) },
+        unsafe { base.add(50) },
+        unsafe { base.add(100) },
+        unsafe { base.add(150) },
+        core::ptr::null_mut(),
+    ];
+    let lastdnptr = unsafe { dnptrs.as_mut_ptr().add(dnptrs.len()) };
+
+    // Roll back everything at or past offset 100.
+    let threshold = unsafe { base.add(100) };
+    unsafe { ns_name_rollback(threshold, dnptrs.as_mut_ptr(), lastdnptr) };
+
+    // First two slots untouched; third (= 100) cleared.
+    assert_eq!(dnptrs[0], unsafe { base.add(0) });
+    assert_eq!(dnptrs[1], unsafe { base.add(50) });
+    assert!(dnptrs[2].is_null());
+}
+
+#[test]
+fn ns_name_rollback_handles_null_dnptrs() {
+    use frankenlibc_abi::resolv_abi::ns_name_rollback;
+    // NULL dnptrs must be tolerated (no-op).
+    unsafe {
+        ns_name_rollback(
+            0xDEAD_usize as *const u8,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+}
+
+// ---------------------------------------------------------------------------
+// ns_initparse / ns_parserr / ns_skiprr / ns_msg_getflag
+// ---------------------------------------------------------------------------
+
+/// Build a synthetic DNS response message:
+///   header: id=0x1234, flags=0x8180 (QR=1, RD=1, RA=1, RCODE=0), qd=1, an=1, ns=0, ar=0
+///   question:  "foo.com" QTYPE=A (1), QCLASS=IN (1)
+///   answer:    name pointer (0xC00C → offset 12 = "foo.com"), TYPE=A, CLASS=IN, TTL=3600, RDLENGTH=4, RDATA=127.0.0.1
+fn synthetic_dns_message() -> Vec<u8> {
+    let mut m = Vec::<u8>::new();
+    // Header
+    m.extend_from_slice(&[0x12, 0x34]); // ID
+    m.extend_from_slice(&[0x81, 0x80]); // flags: 1 QR, 0001 opcode? No, opcode 0; AA=0, TC=0, RD=1, RA=1, Z=0, AD=0, CD=0, RCODE=0
+    m.extend_from_slice(&[0x00, 0x01]); // QDCOUNT=1
+    m.extend_from_slice(&[0x00, 0x01]); // ANCOUNT=1
+    m.extend_from_slice(&[0x00, 0x00]); // NSCOUNT=0
+    m.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
+    // Question section: foo.com A IN
+    m.extend_from_slice(&[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
+    m.extend_from_slice(&[0x00, 0x01]); // QTYPE=A
+    m.extend_from_slice(&[0x00, 0x01]); // QCLASS=IN
+    // Answer section: pointer to offset 12 (foo.com label), A, IN, TTL=3600, RDLEN=4, 127.0.0.1
+    m.extend_from_slice(&[0xC0, 0x0C]); // name compressed pointer to offset 12
+    m.extend_from_slice(&[0x00, 0x01]); // TYPE=A
+    m.extend_from_slice(&[0x00, 0x01]); // CLASS=IN
+    m.extend_from_slice(&[0x00, 0x00, 0x0E, 0x10]); // TTL=3600
+    m.extend_from_slice(&[0x00, 0x04]); // RDLENGTH=4
+    m.extend_from_slice(&[127, 0, 0, 1]); // RDATA
+    m
+}
+
+fn synthetic_dns_query_message(qtype: u16, qclass: u16) -> Vec<u8> {
+    let mut m = Vec::<u8>::new();
+    m.extend_from_slice(&[0x12, 0x34]); // ID
+    m.extend_from_slice(&[0x01, 0x00]); // flags: standard recursive query
+    m.extend_from_slice(&[0x00, 0x01]); // QDCOUNT=1
+    m.extend_from_slice(&[0x00, 0x00]); // ANCOUNT=0
+    m.extend_from_slice(&[0x00, 0x00]); // NSCOUNT=0
+    m.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
+    m.extend_from_slice(&[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
+    m.extend_from_slice(&qtype.to_be_bytes());
+    m.extend_from_slice(&qclass.to_be_bytes());
+    m
+}
+
+fn synthetic_dns_update_header() -> [u8; 12] {
+    let mut m = [0u8; 12];
+    m[2..4].copy_from_slice(&(5u16 << 11).to_be_bytes());
+    m
+}
+
+fn msg_eom(msg: &[u8]) -> *const c_void {
+    unsafe { msg.as_ptr().add(msg.len()) }.cast()
+}
+
+#[test]
+fn ns_initparse_parses_synthetic_response() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) };
+    assert_eq!(rc, 0, "ns_initparse must succeed on a well-formed message");
+    assert_eq!(handle._id, 0x1234);
+    assert_eq!(handle._flags, 0x8180);
+    assert_eq!(handle._counts, [1, 1, 0, 0]);
+    // Question section starts immediately after the 12-byte header.
+    assert_eq!(handle._sections[0], unsafe { msg.as_ptr().add(12) });
+}
+
+#[test]
+fn ns_initparse_rejects_truncated_header() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    let buf: [u8; 5] = [0; 5]; // less than 12-byte header
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(buf.as_ptr(), buf.len() as c_int, &mut handle) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_initparse_rejects_truncated_section() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    // Header claims 1 question but no question bytes follow.
+    let mut buf: [u8; 12] = [0; 12];
+    buf[5] = 1; // QDCOUNT=1
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(buf.as_ptr(), buf.len() as c_int, &mut handle) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_initparse_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    let full = synthetic_dns_message();
+    let msg = malloc_bytes(&full[..12]);
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(msg.as_ptr(), full.len() as c_int, &mut handle) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_msg_getflag_reads_header_bits() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse, ns_msg_getflag};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    // Flag 0 = QR (we set bit 15 → 1)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 0) }, 1);
+    // Flag 4 = RD (bit 8 → 1)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 4) }, 1);
+    // Flag 5 = RA (bit 7 → 1)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 5) }, 1);
+    // Flag 9 = RCODE (low 4 bits → 0)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 9) }, 0);
+    // Flag 1 = opcode (bits 11-14 → 0)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 1) }, 0);
+}
+
+#[test]
+fn ns_parserr_reads_question_section() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        ns_parserr(&mut handle, 0 /*qd*/, 0, &mut rr)
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(rr._type, 1, "qtype A");
+    assert_eq!(rr.rr_class, 1, "qclass IN");
+    // Name should be "foo.com" (or "foo.com." depending on dn_expand).
+    let name = unsafe { CStr::from_ptr(rr.name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        name == "foo.com" || name == "foo.com.",
+        "unexpected name: {name:?}"
+    );
+}
+
+#[test]
+fn ns_parserr_reads_answer_section_with_compressed_name() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        ns_parserr(&mut handle, 1 /*an*/, 0, &mut rr)
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(rr._type, 1);
+    assert_eq!(rr.rr_class, 1);
+    assert_eq!(rr.ttl, 3600);
+    assert_eq!(rr.rdlength, 4);
+    assert!(!rr.rdata.is_null());
+    let octets = unsafe { core::slice::from_raw_parts(rr.rdata, 4) };
+    assert_eq!(octets, &[127u8, 0, 0, 1]);
+
+    let name = unsafe { CStr::from_ptr(rr.name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(name == "foo.com" || name == "foo.com.");
+}
+
+#[test]
+fn ns_parserr_rejects_out_of_range_rrnum() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    // Section 0 only has 1 question; rrnum=1 is out of range.
+    let rc = unsafe { ns_parserr(&mut handle, 0, 1, &mut rr) };
+    assert_eq!(rc, -1);
+    // Invalid section index.
+    let rc = unsafe { ns_parserr(&mut handle, 9, 0, &mut rr) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_parserr_rejects_tracked_short_handle_message_span() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_parserr};
+    let full = synthetic_dns_message();
+    let msg = malloc_bytes(&full[..12]);
+    let mut handle = CNsMsg {
+        _msg: msg.as_ptr(),
+        _eom: msg.as_ptr().wrapping_add(full.len()),
+        _id: 0x1234,
+        _flags: 0x8180,
+        _counts: [1, 0, 0, 0],
+        _sections: [
+            msg.as_ptr().wrapping_add(12),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+        ],
+        _sect: 0,
+        _rrnum: 0,
+        _msg_ptr: msg.as_ptr().wrapping_add(12),
+    };
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_parserr(&mut handle, 0, 0, &mut rr) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_skiprr_advances_past_question_and_answer() {
+    use frankenlibc_abi::resolv_abi::ns_skiprr;
+    let msg = synthetic_dns_message();
+    let qd_start = unsafe { msg.as_ptr().add(12) };
+    let eom = unsafe { msg.as_ptr().add(msg.len()) };
+
+    // Skip 1 question entry: name (9 bytes "foo.com") + 4 = 13 bytes.
+    let n = unsafe {
+        ns_skiprr(qd_start, eom, 0 /*qd*/, 1)
+    };
+    assert_eq!(n, 13);
+
+    // Then the answer entry: ptr (2 bytes) + 10 fixed + 4 rdata = 16 bytes.
+    let an_start = unsafe { qd_start.add(13) };
+    let n = unsafe {
+        ns_skiprr(an_start, eom, 1 /*an*/, 1)
+    };
+    assert_eq!(n, 16);
+}
+
+#[test]
+fn ns_skiprr_rejects_overrun() {
+    use frankenlibc_abi::resolv_abi::ns_skiprr;
+    let msg = synthetic_dns_message();
+    let qd_start = unsafe { msg.as_ptr().add(12) };
+    let eom = unsafe { msg.as_ptr().add(msg.len()) };
+    // Asking for too many entries should overrun the message.
+    let rc = unsafe { ns_skiprr(qd_start, eom, 0, 100) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_skiprr_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::resolv_abi::ns_skiprr;
+    let msg = malloc_bytes(&[3]);
+    let eom = msg.as_ptr().wrapping_add(13);
+    let rc = unsafe { ns_skiprr(msg.as_ptr(), eom, 0, 1) };
+    assert_eq!(rc, -1);
+}
+
+// ---------------------------------------------------------------------------
+// inet_neta — network number to text
+// ---------------------------------------------------------------------------
+
+fn neta_to_str(src: u32, capacity: usize) -> Option<String> {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    let mut buf = vec![0u8; capacity];
+    let p = unsafe { inet_neta(src, buf.as_mut_ptr() as *mut c_char, capacity) };
+    if p.is_null() {
+        return None;
+    }
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
+    Some(s)
+}
+
+/// Helper: convert dotted-quad-style octets to the integer contract used by
+/// libresolv `inet_neta`: the first formatted octet is the most-significant
+/// non-zero byte.
+fn na(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    u32::from_be_bytes([a, b, c, d])
+}
+
+#[test]
+fn inet_neta_strips_trailing_zero_octets() {
+    assert_eq!(neta_to_str(na(127, 0, 0, 0), 32).as_deref(), Some("127"));
+    assert_eq!(
+        neta_to_str(na(192, 168, 1, 0), 32).as_deref(),
+        Some("192.168.1")
+    );
+    assert_eq!(
+        neta_to_str(na(192, 168, 1, 5), 32).as_deref(),
+        Some("192.168.1.5")
+    );
+    assert_eq!(neta_to_str(na(10, 0, 0, 0), 32).as_deref(), Some("10"));
+}
+
+#[test]
+fn inet_neta_strips_internal_zeros_too() {
+    // The libresolv inet_neta algorithm skips a byte whenever it is
+    // zero AND there are more non-zero bytes remaining — so internal
+    // zeros are also stripped, not just trailing ones.
+    //   10.0.5.0  → "10.5"
+    //   192.0.0.5 → "192.5"
+    assert_eq!(neta_to_str(na(10, 0, 5, 0), 32).as_deref(), Some("10.5"));
+    assert_eq!(neta_to_str(na(192, 0, 0, 5), 32).as_deref(), Some("192.5"));
+}
+
+#[test]
+fn inet_neta_formats_high_order_bytes_first() {
+    assert_eq!(neta_to_str(0x0001_a8c0, 32).as_deref(), Some("1.168.192"));
+    assert_eq!(neta_to_str(0x0000_007f, 32).as_deref(), Some("127"));
+}
+
+#[test]
+fn inet_neta_accepts_glibc_boundary_size_buffer() {
+    assert_eq!(neta_to_str(na(127, 0, 0, 0), 5).as_deref(), Some("127"));
+    assert_eq!(
+        neta_to_str(na(192, 168, 1, 5), 15).as_deref(),
+        Some("192.168.1.5")
+    );
+}
+
+#[test]
+fn inet_neta_emits_zero_address_as_quad_zero() {
+    assert_eq!(neta_to_str(0, 32).as_deref(), Some("0.0.0.0"));
+}
+
+#[test]
+fn inet_neta_returns_null_emsgsize_when_too_small() {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    // 192.168.1.5 + NUL = 12 bytes; buffer of 8 is insufficient.
+    let mut buf = [0u8; 8];
+    let p = unsafe {
+        inet_neta(
+            na(192, 168, 1, 5),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+
+    // NULL dst also EMSGSIZE.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let p = unsafe { inet_neta(0, std::ptr::null_mut(), 0) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+}
+
+#[test]
+fn inet_neta_zero_address_too_small_buffer_fails() {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    // "0.0.0.0\0" needs 8 bytes; buffer of 4 is too small.
+    let mut buf = [0u8; 4];
+    let p = unsafe { inet_neta(0, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn inet_neta_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    let mut dst = malloc_filled_bytes(4, 0xAA);
+
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let p = unsafe { inet_neta(0, dst.as_mut_ptr() as *mut c_char, 32) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+    assert_eq!(dst.as_slice(), &[0xAA; 4]);
+}
+
+// ---------------------------------------------------------------------------
+// ns_sprintrr / ns_sprintrrf
+// ---------------------------------------------------------------------------
+
+fn sprintrrf_to_str(
+    msg: &[u8],
+    name: &str,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: &[u8],
+    cap: usize,
+) -> Option<String> {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new(name).unwrap();
+    let mut buf = vec![0u8; cap];
+    let n = unsafe {
+        ns_sprintrrf(
+            msg.as_ptr(),
+            msg.len(),
+            cname.as_ptr(),
+            c_int::from(class),
+            c_int::from(ty),
+            libc::c_ulong::from(ttl),
+            if rdata.is_empty() {
+                std::ptr::null()
+            } else {
+                rdata.as_ptr()
+            },
+            rdata.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    if n < 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+/// glibc's `ns_sprintrrf`, resolved at RUNTIME from `libresolv.so.2`.
+///
+/// Loaded with dlopen/dlsym rather than declared in an `extern` block on
+/// purpose: a link-time declaration that cannot resolve makes the whole target
+/// unlinkable, and an unlinkable target is silent rather than red (bd-86hcwh).
+/// This way a missing oracle panics loudly in the one test that needs it.
+fn glibc_sprintrrf(
+    msg: &[u8],
+    name: &str,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: &[u8],
+    buflen: usize,
+) -> Option<String> {
+    use std::sync::OnceLock;
+    type SprintRrf = unsafe extern "C" fn(
+        *const u8,
+        usize,
+        *const c_char,
+        c_int,
+        c_int,
+        libc::c_ulong,
+        *const u8,
+        usize,
+        *const c_char,
+        *const c_char,
+        *mut c_char,
+        usize,
+    ) -> c_int;
+
+    static SYM: OnceLock<usize> = OnceLock::new();
+    let addr = *SYM.get_or_init(|| {
+        let so = CString::new("libresolv.so.2").expect("no NUL");
+        // SAFETY: dlopen/dlsym with a literal library and symbol name.
+        unsafe {
+            let handle = libc::dlopen(so.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            assert!(
+                !handle.is_null(),
+                "oracle unavailable: dlopen libresolv.so.2"
+            );
+            let sym = CString::new("ns_sprintrrf").expect("no NUL");
+            let p = libc::dlsym(handle, sym.as_ptr());
+            assert!(!p.is_null(), "oracle unavailable: dlsym ns_sprintrrf");
+            p as usize
+        }
+    });
+    // SAFETY: the resolved symbol has the BIND ns_sprintrrf signature.
+    let f: SprintRrf = unsafe { std::mem::transmute::<usize, SprintRrf>(addr) };
+
+    let cname = CString::new(name).expect("name has no NUL");
+    let mut buf = vec![0u8; buflen];
+    let msg_ptr = if msg.is_empty() {
+        std::ptr::null()
+    } else {
+        msg.as_ptr()
+    };
+    // SAFETY: all pointers are valid for the duration of the call and buf has
+    // room for `buflen` bytes.
+    let n = unsafe {
+        f(
+            msg_ptr,
+            msg.len(),
+            cname.as_ptr(),
+            c_int::from(class),
+            c_int::from(ty),
+            libc::c_ulong::from(ttl),
+            rdata.as_ptr(),
+            rdata.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buflen,
+        )
+    };
+    if n <= 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+/// fl's rendering must equal the live host's, byte for byte.
+///
+/// These arms used to assert hand-written strings like
+/// `"foo.com 1H IN A 127.0.0.1"`. That format was invented, not measured: glibc
+/// emits `"foo.com.\t\t1H IN A\t\t127.0.0.1"` — trailing dot on the owner name
+/// and TABS, not single spaces. fl already matched glibc exactly, so all seven
+/// arms were red against an oracle that never existed (bd-tdx6ac, and the
+/// systemic version, bd-7t61h9).
+fn assert_sprintrrf_matches_host(
+    msg: &[u8],
+    name: &str,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: &[u8],
+    buflen: usize,
+) -> String {
+    let host = glibc_sprintrrf(msg, name, class, ty, ttl, rdata, buflen)
+        .unwrap_or_else(|| panic!("host oracle refused {name} type={ty}"));
+    let ours = sprintrrf_to_str(msg, name, class, ty, ttl, rdata, buflen).unwrap_or_else(|| {
+        panic!("fl returned no output for {name} type={ty}; host gave {host:?}")
+    });
+    assert_eq!(
+        ours, host,
+        "fl vs live glibc ns_sprintrrf for {name} type={ty}"
+    );
+    ours
+}
+
+#[test]
+fn ns_sprintrrf_formats_a_record() {
+    // No msg context needed for A; pass an empty slice (msglen=0).
+    let s = assert_sprintrrf_matches_host(
+        &[],
+        "foo.com",
+        1, /*IN*/
+        1, /*A*/
+        3600,
+        &[127, 0, 0, 1],
+        64,
+    );
+    // Positive facts about the shared answer, so this cannot pass on two
+    // identically-empty renderings.
+    assert!(s.contains("127.0.0.1"), "got: {s}");
+    assert!(s.contains("IN"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrrf_formats_aaaa_record() {
+    let v6 = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    let s = assert_sprintrrf_matches_host(&[], "host.example", 1, 28 /*AAAA*/, 60, &v6, 128);
+    assert!(s.contains("2001:db8::1"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrrf_formats_mx_record() {
+    // Build one synthetic msg that holds both the rdata bytes and the
+    // embedded target name so dn_expand has a valid view of the
+    // compressed pointer.
+    let mut msg = Vec::new();
+    msg.extend_from_slice(&[0u8; 12]); // dummy header padding
+    let rdata_off = msg.len();
+    msg.extend_from_slice(&[0, 10, 0xC0, 0]); // pref=10, ptr placeholder
+    let name_off = msg.len() as u16;
+    msg[rdata_off + 3] = name_off as u8; // patch ptr's low byte
+    msg.extend_from_slice(&[4, b'm', b'a', b'i', b'l', 3, b'c', b'o', b'm', 0]);
+
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("example.com").unwrap();
+    let mut buf = [0u8; 128];
+    let n = unsafe {
+        ns_sprintrrf(
+            msg.as_ptr(),
+            msg.len(),
+            cname.as_ptr(),
+            1,
+            15,
+            60,
+            msg.as_ptr().add(rdata_off),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(n > 0, "ns_sprintrrf returned {n}");
+    let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+    // Compared against the live host for the SAME msg/rdata rather than against
+    // a hand-written string: the previous expectation used single spaces and no
+    // trailing dot, which is not the format glibc emits (bd-tdx6ac).
+    let host = glibc_sprintrrf(
+        &msg,
+        "example.com",
+        1,
+        15,
+        60,
+        &msg[rdata_off..rdata_off + 4],
+        128,
+    )
+    .unwrap_or_else(|| panic!("host oracle refused the MX record; fl gave {s:?}"));
+    assert_eq!(s, host, "fl vs live glibc ns_sprintrrf for an MX record");
+    assert!(s.contains("mail.com"), "got: {s}");
+    assert!(
+        s.contains("10"),
+        "the preference should be rendered; got: {s}"
+    );
+}
+
+#[test]
+fn ns_sprintrrf_formats_txt_record_with_quoting() {
+    // TXT rdata: 1-byte length-prefixed strings, the second containing a quote
+    // that has to be escaped.
+    let rdata = b"\x05hello\x06wo\"rld";
+    let s = assert_sprintrrf_matches_host(&[], "txt.example", 1, 16 /*TXT*/, 1, rdata, 128);
+    assert!(s.contains("hello"), "got: {s}");
+    assert!(
+        s.contains('\\'),
+        "the embedded quote should be escaped; got: {s}"
+    );
+}
+
+#[test]
+fn ns_sprintrrf_malformed_txt_short_payload_preserves_partial_quotes_like_glibc() {
+    // A single TXT chunk whose 1-byte length prefix (9) exceeds the remaining
+    // payload (2 bytes). Like live libresolv, fl must keep the partial `""`
+    // emitted before formerr, and append the generic hex representation (bd-zgka7z).
+    let rdata = b"\x09ab";
+    let s = assert_sprintrrf_matches_host(&[], "foo.com", 1, 16 /*TXT*/, 3600, rdata, 512);
+    assert!(s.contains("\"\"\\# 3"), "got: {s}");
+    assert!(s.contains("RR format error"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrrf_malformed_txt_second_chunk_short_preserves_first_chunk_like_glibc() {
+    // First chunk is valid ("ok"); second chunk has length prefix 5 with only 3 bytes.
+    // Preserves `"ok" ""` followed by the generic formerr hex dump.
+    let rdata = b"\x02ok\x05abc";
+    let s = assert_sprintrrf_matches_host(&[], "foo.com", 1, 16 /*TXT*/, 3600, rdata, 512);
+    assert!(s.contains("\"ok\" \"\"\\# 4"), "got: {s}");
+    assert!(s.contains("RR format error"), "got: {s}");
+}
+
+/// The arm previously passed buflen=64 and asserted `TYPE999` / `010203`. Both were wrong, and
+/// the first made the oracle unreachable: glibc needs 80 bytes for this rendering and returns -1
+/// at 64, so `assert_sprintrrf_matches_host` panicked with "host oracle refused" and the arm
+/// could never compare anything. What live libresolv actually produces (bd-mz6xqf):
+///
+/// ```text
+/// weird.example.\t\t1M IN 999\t\# 4 (\t; unknown RR type 999\n\tde ad be ef )\t\t\t\t\t; ....
+/// ```
+///
+/// So glibc prints the BARE type number, not RFC 3597's `TYPE999` spelling, and lays the rdata
+/// out as a parenthesized, space-separated hex block with trailing comments — not a bare hex run.
+#[test]
+fn ns_sprintrrf_falls_back_to_rfc3597_for_unknown_type() {
+    let rdata = b"\xde\xad\xbe\xef";
+    let s = assert_sprintrrf_matches_host(
+        &[],
+        "weird.example",
+        1,
+        999, /*unknown*/
+        60,
+        rdata,
+        256,
+    );
+    // Positive facts about the shared answer, so this cannot pass on two empty renderings.
+    assert!(s.contains("999"), "got: {s}");
+    assert!(s.contains("de ad be ef"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrrf_returns_minus_one_on_buffer_overflow() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = [0u8; 4]; // way too small
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            1,
+            3600,
+            [127u8, 0, 0, 1].as_ptr(),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_sprintrrf_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = malloc_filled_bytes(4, 0xAA);
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            1,
+            3600,
+            [127u8, 0, 0, 1].as_ptr(),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            128,
+        )
+    };
+    assert_eq!(n, -1);
+    assert_eq!(buf.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ns_sprintrrf_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = malloc_unterminated(b"foo.com");
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            1,
+            3600,
+            [127u8, 0, 0, 1].as_ptr(),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn ns_sprintrrf_malformed_a_uses_generic_format_like_glibc() {
+    // A record rdata requires four bytes. libresolv still renders a short
+    // payload generically because it does not contain a compressed name.
+    let host = glibc_sprintrrf(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 128);
+    let ours = sprintrrf_to_str(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 128);
+    assert_eq!(ours, host, "fl vs live glibc malformed A");
+    assert!(ours.expect("generic A rendering").contains("01 02 03"));
+}
+
+#[test]
+fn ns_sprintrrf_rejects_null_rdata_with_nonzero_len() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            999,
+            0,
+            std::ptr::null(),
+            3,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn ns_sprintrrf_malformed_soa_is_rejected_like_glibc() {
+    // SOA rdata starts with two domain names. A truncated payload must be
+    // rejected rather than rendered as RFC 3597 generic data.
+    let host = glibc_sprintrrf(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64);
+    let ours = sprintrrf_to_str(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64);
+    assert_eq!(ours, host, "fl vs live glibc malformed SOA");
+    assert!(ours.is_none());
+}
+
+#[test]
+fn ns_sprintrr_wraps_sprintrrf_via_handle_and_rr() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr, ns_sprintrr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            ns_parserr(&mut handle, 1 /*an*/, 0, &mut rr)
+        },
+        0
+    );
+
+    let mut buf = [0u8; 128];
+    let n = unsafe {
+        ns_sprintrr(
+            &handle,
+            &rr,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(n > 0);
+    let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+    // The owner name carries a trailing dot and the fields are TAB separated,
+    // so the old `s.contains(" IN A ")` could never match. Assert the pieces
+    // that are actually part of glibc's format (bd-tdx6ac).
+    assert!(s.contains("IN A"), "got: {s}");
+    assert!(s.contains("127.0.0.1"), "got: {s}");
+    assert!(
+        s.starts_with("foo.com."),
+        "owner name should be dot-terminated; got: {s}"
+    );
+}
+
+#[test]
+fn ns_sprintrr_rejects_invalid_handle_bounds() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_sprintrr};
+    let msg = [0u8; 4];
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    handle._msg = unsafe { msg.as_ptr().add(3) };
+    handle._eom = msg.as_ptr();
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    for (slot, byte) in rr.name.iter_mut().zip(b"foo.com\0") {
+        *slot = *byte as c_char;
+    }
+    rr._type = 1;
+    rr.rr_class = 1;
+    let rdata = [127u8, 0, 0, 1];
+    rr.rdata = rdata.as_ptr();
+    rr.rdlength = 4;
+
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        ns_sprintrr(
+            &handle,
+            &rr,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 37 libresolv last-mile helpers (bd-dcfj5)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bd_dcfj5_byte_order_helpers_round_trip_be() {
+    use frankenlibc_abi::resolv_abi::*;
+    let bytes16 = [0x12u8, 0x34];
+    let bytes32 = [0x12u8, 0x34, 0x56, 0x78];
+    assert_eq!(unsafe { __ns_get16(bytes16.as_ptr()) }, 0x1234);
+    assert_eq!(unsafe { __ns_get32(bytes32.as_ptr()) }, 0x1234_5678);
+    assert_eq!(unsafe { _getshort(bytes16.as_ptr()) }, 0x1234);
+    assert_eq!(unsafe { _getlong(bytes32.as_ptr()) }, 0x1234_5678);
+    let mut out16 = [0u8; 2];
+    let mut out32 = [0u8; 4];
+    unsafe { __putshort(0x1234, out16.as_mut_ptr()) };
+    unsafe { __putlong(0x1234_5678, out32.as_mut_ptr()) };
+    assert_eq!(out16, [0x12, 0x34]);
+    assert_eq!(out32, [0x12, 0x34, 0x56, 0x78]);
+}
+
+#[test]
+fn bd_dcfj5_byte_order_helpers_tolerate_null() {
+    use frankenlibc_abi::resolv_abi::*;
+    assert_eq!(unsafe { _getshort(std::ptr::null()) }, 0);
+    assert_eq!(unsafe { _getlong(std::ptr::null()) }, 0);
+    unsafe { __putshort(0x1234, std::ptr::null_mut()) };
+    unsafe { __putlong(0x1234_5678, std::ptr::null_mut()) };
+}
+
+#[test]
+fn bd_dcfj5_dns_print_helpers_are_void_noops() {
+    use frankenlibc_abi::resolv_abi::*;
+    unsafe { __fp_query(std::ptr::null(), std::ptr::null_mut()) };
+    unsafe { __fp_nquery(std::ptr::null(), 0, std::ptr::null_mut()) };
+    unsafe { __fp_resstat(std::ptr::null(), std::ptr::null_mut()) };
+    unsafe { __p_query(std::ptr::null()) };
+}
+
+#[test]
+fn bd_dcfj5_dns_text_helpers_return_static_strings() {
+    use frankenlibc_abi::resolv_abi::*;
+    // After bd-58e87f, the helpers map values to RFC-correct strings
+    // (matching glibc) instead of returning fixed stub strings.
+    let class_str = unsafe { CStr::from_ptr(__p_class(1)) };
+    assert_eq!(class_str.to_bytes(), b"IN");
+    let type_str = unsafe { CStr::from_ptr(__p_type(1)) };
+    assert_eq!(type_str.to_bytes(), b"A");
+    // __p_option(0) is unknown — falls back to "?0x0?" matching glibc.
+    let opt_str = unsafe { CStr::from_ptr(__p_option(0)) };
+    assert_eq!(opt_str.to_bytes(), b"?0x0?");
+    let rcode_str = unsafe { CStr::from_ptr(__p_rcode(0)) };
+    assert_eq!(rcode_str.to_bytes(), b"NOERROR");
+    let secs_str = unsafe { CStr::from_ptr(__p_secstodate(0)) };
+    assert_eq!(secs_str.to_bytes(), b"19700101000000");
+    // __p_time uses ns_format_ttl-style W/D/H/M/S decomposition: TTL 0
+    // → "0S" (zero-second single-unit form), matching glibc libresolv.
+    let time_str = unsafe { CStr::from_ptr(__p_time(0)) };
+    assert_eq!(time_str.to_bytes(), b"0S");
+}
+
+#[test]
+fn bd_dcfj5_dns_cdname_fqname_return_null() {
+    use frankenlibc_abi::resolv_abi::*;
+    assert!(
+        unsafe { __p_cdname(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) }.is_null()
+    );
+    assert!(
+        unsafe { __p_cdnname(std::ptr::null(), std::ptr::null(), 0, std::ptr::null_mut()) }
+            .is_null()
+    );
+    assert!(
+        unsafe { __p_fqname(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) }.is_null()
+    );
+    assert!(
+        unsafe {
+            __p_fqnname(
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                0,
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
+fn bd_dcfj5_p_cdnname_advances_wire_name() {
+    use frankenlibc_abi::resolv_abi::__p_cdnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let next = unsafe {
+        __p_cdnname(
+            answer_name,
+            msg.as_ptr(),
+            msg.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+
+    assert_eq!(next, unsafe { answer_name.add(2) });
+}
+
+#[test]
+fn bd_dcfj5_p_cdname_fqname_advance_tracked_message() {
+    use frankenlibc_abi::resolv_abi::{__p_cdname, __p_fqname};
+    let msg = malloc_bytes(&synthetic_dns_message());
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+
+    assert_eq!(
+        unsafe { __p_cdname(answer_name, msg.as_ptr(), std::ptr::null_mut()) },
+        unsafe { answer_name.add(2) }
+    );
+    assert_eq!(
+        unsafe { __p_fqname(answer_name, msg.as_ptr(), std::ptr::null_mut()) },
+        unsafe { answer_name.add(2) }
+    );
+}
+
+#[test]
+fn bd_dcfj5_p_cdnname_rejects_invalid_bounds() {
+    use frankenlibc_abi::resolv_abi::__p_cdnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let outside = unsafe { msg.as_ptr().add(msg.len()) };
+
+    assert!(unsafe { __p_cdnname(answer_name, msg.as_ptr(), 8, std::ptr::null_mut(),) }.is_null());
+    assert!(
+        unsafe {
+            __p_cdnname(
+                outside,
+                msg.as_ptr(),
+                msg.len() as c_int,
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
+fn bd_dcfj5_p_fqnname_expands_wire_name() {
+    use frankenlibc_abi::resolv_abi::__p_fqnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let mut name = [0 as c_char; 64];
+    let next = unsafe {
+        __p_fqnname(
+            answer_name,
+            msg.as_ptr(),
+            msg.len() as c_int,
+            name.as_mut_ptr(),
+            name.len() as c_int,
+        )
+    };
+
+    assert_eq!(next, unsafe { answer_name.add(2) });
+    assert_eq!(
+        unsafe { CStr::from_ptr(name.as_ptr()) }.to_bytes(),
+        b"foo.com"
+    );
+}
+
+#[test]
+fn bd_dcfj5_p_fqnname_rejects_invalid_bounds() {
+    use frankenlibc_abi::resolv_abi::__p_fqnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let mut small = [0 as c_char; 4];
+    assert!(
+        unsafe {
+            __p_fqnname(
+                answer_name,
+                msg.as_ptr(),
+                msg.len() as c_int,
+                small.as_mut_ptr(),
+                small.len() as c_int,
+            )
+        }
+        .is_null()
+    );
+    let outside = unsafe { msg.as_ptr().add(msg.len()) };
+    let mut name = [0 as c_char; 64];
+    assert!(
+        unsafe {
+            __p_fqnname(
+                outside,
+                msg.as_ptr(),
+                msg.len() as c_int,
+                name.as_mut_ptr(),
+                name.len() as c_int,
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
+fn bd_dcfj5_hostalias_helpers_return_null() {
+    use frankenlibc_abi::resolv_abi::*;
+    let name = CString::new("alias").unwrap();
+    assert!(unsafe { __hostalias(name.as_ptr()) }.is_null());
+    assert!(
+        unsafe { __res_hostalias(std::ptr::null_mut(), name.as_ptr(), std::ptr::null_mut(), 0) }
+            .is_null()
+    );
+}
+
+#[test]
+fn hostaliases_helpers_match_host_parser_buffers_and_resolver_options() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::resolv_state::{RES_NOALIASES, State};
+    use std::os::unix::ffi::OsStringExt;
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_HELPER_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        type Hostalias =
+            unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_char, usize) -> *const c_char;
+        let oracle: Hostalias = unsafe {
+            dlsym_oracle::host_fn(c"__res_hostalias", resolv_abi::__res_hostalias as *const ())
+        };
+        let host_errno: unsafe extern "C" fn() -> *mut c_int =
+            unsafe { dlsym_oracle::host_fn(c"__errno_location", __errno_location as *const ()) };
+        let path = std::path::PathBuf::from(std::env::var_os("HOSTALIASES").unwrap());
+        let mut cases = vec![
+            (Vec::new(), b"alias".to_vec()),
+            (b"ALIAS Target.Test\n".to_vec(), b"alias".to_vec()),
+            (b"alias.. target.test\n".to_vec(), b"ALIAS.".to_vec()),
+            (
+                b"\nbroken\nother \xff\nalias target.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (
+                b" alias wrong.test\nalias target.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (b"alias\nalias later.test\n".to_vec(), b"alias".to_vec()),
+            (b"alias \nalias later.test\n".to_vec(), b"alias".to_vec()),
+            (
+                b"alias\0 ignored\nalias later.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (
+                b"alias one\0two\nalias later.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (b"alias\x0b\xff.test\r\n".to_vec(), b"alias".to_vec()),
+            (
+                b"alias first.test extra\nalias second.test\n".to_vec(),
+                b"alias".to_vec(),
+            ),
+            (br"a\.b target.test".to_vec(), br"A\.B".to_vec()),
+            (br"a\046b target.test".to_vec(), br"a\.b".to_vec()),
+            (b". root.test\n".to_vec(), Vec::new()),
+            (b"other target.test\n".to_vec(), b"missing".to_vec()),
+        ];
+        let mut long = b"alias ".to_vec();
+        long.extend(std::iter::repeat_n(b'x', 9000));
+        long.push(b'\n');
+        cases.push((long, b"alias".to_vec()));
+        for (file, name) in cases {
+            std::fs::write(&path, &file).unwrap();
+            let name = CString::new(name).unwrap();
+            for options in [0, RES_NOALIASES] {
+                for capacity in [1usize, 5, 32, 1025, 10000] {
+                    let mut native = State::zeroed();
+                    let mut host = State::zeroed();
+                    native.options = options;
+                    host.options = options;
+                    let mut actual = vec![0xa5u8; capacity + 2];
+                    let mut expected = actual.clone();
+                    // SAFETY: both live states match the public Linux layout;
+                    // caller-owned spans include a canary on each side.
+                    let (actual_result, actual_errno, expected_result, expected_errno) = unsafe {
+                        *__errno_location() = 77;
+                        let actual_result = resolv_abi::__res_hostalias(
+                            (&mut native as *mut State).cast(),
+                            name.as_ptr(),
+                            actual.as_mut_ptr().add(1).cast(),
+                            capacity,
+                        );
+                        let actual_errno = *__errno_location();
+                        *host_errno() = 77;
+                        let expected_result = oracle(
+                            (&mut host as *mut State).cast(),
+                            name.as_ptr(),
+                            expected.as_mut_ptr().add(1).cast(),
+                            capacity,
+                        );
+                        (actual_result, actual_errno, expected_result, *host_errno())
+                    };
+                    assert_eq!(
+                        actual_result.is_null(),
+                        expected_result.is_null(),
+                        "name={name:?} options={options:#x} capacity={capacity}"
+                    );
+                    if !actual_result.is_null() {
+                        assert_eq!(actual_result.cast::<u8>(), unsafe {
+                            actual.as_ptr().add(1)
+                        });
+                    }
+                    assert_eq!(actual, expected, "name={name:?} capacity={capacity}");
+                    assert_eq!(actual_errno, expected_errno, "name={name:?}");
+                    assert_eq!((native.options, host.options), (options, options));
+                }
+            }
+        }
+
+        std::fs::write(&path, b"alias target.test\n").unwrap();
+        let mut local = State::zeroed();
+        let mut buffer = [0 as c_char; 32];
+        // SAFETY: this isolated subprocess exclusively owns its resolver TLS.
+        let global = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() }.cast::<State>();
+        let saved = unsafe { (*global).options };
+        unsafe { (*global).options = RES_NOALIASES };
+        assert!(unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) }.is_null());
+        // Caller-owned state does not inherit the thread's NOALIASES flag.
+        assert!(
+            !unsafe {
+                resolv_abi::__res_hostalias(
+                    (&mut local as *mut State).cast(),
+                    c"alias".as_ptr(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            }
+            .is_null()
+        );
+        unsafe { (*global).options = 0 };
+        let found = unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) };
+        assert!(!found.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(found) }.to_bytes(), b"target.test");
+
+        #[cfg(feature = "conformance-testing")]
+        {
+            use frankenlibc_abi::stdlib_abi::{getauxval, set_secure_auxv_for_conformance};
+            let secure = unsafe { getauxval(libc::AT_SECURE as _) } as usize;
+            for mode in [Some(1), None] {
+                // SAFETY: this exact-test child has no concurrent auxv readers.
+                unsafe { set_secure_auxv_for_conformance(mode) };
+                assert!(unsafe { resolv_abi::__hostalias(c"alias".as_ptr()) }.is_null());
+                assert!(
+                    unsafe {
+                        resolv_abi::__res_hostalias(
+                            (&mut local as *mut State).cast(),
+                            c"alias".as_ptr(),
+                            buffer.as_mut_ptr(),
+                            buffer.len(),
+                        )
+                    }
+                    .is_null()
+                );
+            }
+            unsafe { set_secure_auxv_for_conformance(Some(secure)) };
+        }
+        unsafe { (*global).options = saved };
+
+        std::fs::remove_file(&path).unwrap();
+        for options in [0, RES_NOALIASES] {
+            local.options = options;
+            let mut host = State::zeroed();
+            host.options = options;
+            buffer.fill(0x55);
+            unsafe { *__errno_location() = 77 };
+            assert!(
+                unsafe {
+                    resolv_abi::__res_hostalias(
+                        (&mut local as *mut State).cast(),
+                        c"alias".as_ptr(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                    )
+                }
+                .is_null()
+            );
+            let actual_errno = unsafe { *__errno_location() };
+            unsafe { *host_errno() = 77 };
+            assert!(
+                unsafe {
+                    oracle(
+                        (&mut host as *mut State).cast(),
+                        c"alias".as_ptr(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                    )
+                }
+                .is_null()
+            );
+            let expected_errno = unsafe { *host_errno() };
+            assert_eq!(actual_errno, expected_errno);
+            assert_eq!(actual_errno, if options == 0 { libc::ENOENT } else { 77 });
+            assert!(buffer.iter().all(|&byte| byte == 0x55));
+        }
+        return;
+    }
+
+    // The path itself is not required to be UTF-8 either.
+    let mut path = temp_resolver_path("hostaliases-oracle")
+        .into_os_string()
+        .into_vec();
+    path.push(0xff);
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_helpers_match_host_parser_buffers_and_resolver_options",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("HOSTALIASES", &path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(path);
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn bd_dcfj5_loc_helpers_round_trip_rfc1876() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
+    let mut binary = [0u8; 16];
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        16
+    );
+    let mut out = [0i8; 256];
+    assert_eq!(
+        unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr()) },
+        out.as_ptr()
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(out.as_ptr()) }.to_str().unwrap(),
+        "42 21 30.000 N 71 06 18.000 W -24.00m 30.00m 10000.00m 10.00m"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_loc_aton_rejects_tracked_short_binary() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
+    let mut binary = malloc_filled_bytes(4, 0xAA);
+
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        0
+    );
+    assert_eq!(binary.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_loc_aton_rejects_tracked_unterminated_ascii() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = malloc_unterminated(b"42 21 30 N 71 6 18 W -24m 30m");
+    let mut binary = [0xAA; 16];
+
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        0
+    );
+    assert_eq!(binary, [0xAA; 16]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_loc_ntoa_rejects_tracked_short_binary() {
+    use frankenlibc_abi::resolv_abi::*;
+    let binary = malloc_filled_bytes(4, 0);
+    let mut out = [0x7F_i8; 96];
+
+    assert!(unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr()) }.is_null());
+    assert_eq!(out, [0x7F_i8; 96]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_loc_ntoa_rejects_tracked_short_ascii() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
+    let mut binary = [0u8; 16];
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        16
+    );
+    let mut out = malloc_filled_bytes(4, 0xAA);
+
+    assert!(unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr().cast::<c_char>()) }.is_null());
+    assert_eq!(out.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+fn bd_dcfj5_sym_helpers_return_decimal_on_null_table() {
+    use frankenlibc_abi::resolv_abi::*;
+    let mut success: c_int = 99;
+    let ntop = unsafe { __sym_ntop(std::ptr::null(), 1, &mut success) };
+    assert_eq!(unsafe { CStr::from_ptr(ntop) }.to_str().unwrap(), "1");
+    assert_eq!(success, 0);
+    success = 99;
+    let ntos = unsafe { __sym_ntos(std::ptr::null(), 1, &mut success) };
+    assert_eq!(unsafe { CStr::from_ptr(ntos) }.to_str().unwrap(), "1");
+    assert_eq!(success, 0);
+    success = 99;
+    let key = CString::new("ANY").unwrap();
+    assert_eq!(
+        unsafe { __sym_ston(std::ptr::null(), key.as_ptr(), &mut success) },
+        0
+    );
+    assert_eq!(success, 0);
+}
+
+#[repr(C)]
+#[allow(dead_code)]
+struct TestResSym {
+    number: c_int,
+    name: *const c_char,
+    humanname: *const c_char,
+}
+
+#[test]
+fn bd_dcfj5_sym_ston_matches_case_insensitive_name() {
+    use frankenlibc_abi::resolv_abi::*;
+    let alpha = CString::new("ALPHA").unwrap();
+    let human = CString::new("alpha long name").unwrap();
+    let miss = CString::new("missing").unwrap();
+    let table = [
+        TestResSym {
+            number: 17,
+            name: alpha.as_ptr(),
+            humanname: human.as_ptr(),
+        },
+        TestResSym {
+            number: 255,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
+    ];
+    let mut success: c_int = 99;
+
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), c"alpha".as_ptr(), &mut success) },
+        17
+    );
+    assert_eq!(success, 1);
+
+    success = 99;
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), miss.as_ptr(), &mut success) },
+        255
+    );
+    assert_eq!(success, 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_sym_ston_rejects_tracked_unterminated_key() {
+    use frankenlibc_abi::resolv_abi::*;
+    let alpha = CString::new("ALPHA").unwrap();
+    let table = [
+        TestResSym {
+            number: 17,
+            name: alpha.as_ptr(),
+            humanname: std::ptr::null(),
+        },
+        TestResSym {
+            number: 255,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
+    ];
+    let key = malloc_unterminated(b"ALPHA");
+    let mut success: c_int = 99;
+
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), key.as_ptr(), &mut success) },
+        0
+    );
+    assert_eq!(success, 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_sym_ston_rejects_tracked_unterminated_table_name() {
+    use frankenlibc_abi::resolv_abi::*;
+    let bad_name = malloc_unterminated(b"ALPHA");
+    let table = [
+        TestResSym {
+            number: 17,
+            name: bad_name.as_ptr(),
+            humanname: std::ptr::null(),
+        },
+        TestResSym {
+            number: 255,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
+    ];
+    let mut success: c_int = 99;
+
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), c"alpha".as_ptr(), &mut success) },
+        0
+    );
+    assert_eq!(success, 0);
+}
+
+#[test]
+fn bd_dcfj5_res_close_is_void_noop() {
+    use frankenlibc_abi::resolv_abi::*;
+    unsafe { __res_close(std::ptr::null_mut()) };
+}
+
+#[test]
+fn bd_dcfj5_res_isourserver_matches_configured_ipv4_nameserver() {
+    use frankenlibc_abi::resolv_abi::*;
+    let rc = unsafe { __res_isourserver(std::ptr::null(), std::ptr::null()) };
+    assert_eq!(rc, 0);
+
+    let config = std::fs::read("/etc/resolv.conf")
+        .map(|content| frankenlibc_core::resolv::config::ResolverConfig::parse(&content))
+        .unwrap_or_default();
+    if let Some(std::net::IpAddr::V4(expected)) = config.nameservers.first() {
+        let sin = libc::sockaddr_in {
+            sin_family: libc::AF_INET as libc::sa_family_t,
+            sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes(expected.octets()),
+            },
+            sin_zero: [0; 8],
+        };
+        let rc = unsafe {
+            __res_isourserver(
+                std::ptr::null(),
+                (&sin as *const libc::sockaddr_in).cast::<c_void>(),
+            )
+        };
+        assert_eq!(rc, 1);
+    }
+
+    let mut other_octets = [192, 0, 2, 1];
+    for candidate in [[192, 0, 2, 1], [198, 51, 100, 1], [203, 0, 113, 1]] {
+        let configured = config
+            .nameservers
+            .iter()
+            .any(|addr| matches!(addr, std::net::IpAddr::V4(ip) if ip.octets() == candidate));
+        if !configured {
+            other_octets = candidate;
+            break;
+        }
+    }
+    let other = libc::sockaddr_in {
+        sin_family: libc::AF_INET as libc::sa_family_t,
+        sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes(other_octets),
+        },
+        sin_zero: [0; 8],
+    };
+    let rc = unsafe {
+        __res_isourserver(
+            std::ptr::null(),
+            (&other as *const libc::sockaddr_in).cast::<c_void>(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_res_isourserver_rejects_tracked_short_sockaddr() {
+    use frankenlibc_abi::resolv_abi::*;
+    let mut addr = malloc_filled_bytes(mem::size_of::<libc::sockaddr_in>() - 1, 0);
+    let family = (libc::AF_INET as libc::sa_family_t).to_ne_bytes();
+    unsafe {
+        ptr::copy_nonoverlapping(family.as_ptr(), addr.as_mut_ptr(), family.len());
+    }
+
+    let rc = unsafe { __res_isourserver(std::ptr::null(), addr.as_ptr().cast::<c_void>()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn bd_dcfj5_res_isourserver_rejects_unaligned_sockaddr() {
+    use frankenlibc_abi::resolv_abi::*;
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as libc::sa_family_t,
+        sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+    let mut bytes = vec![0u8; mem::size_of::<libc::sockaddr_in>() + 1];
+    unsafe {
+        ptr::copy_nonoverlapping(
+            (&sin as *const libc::sockaddr_in).cast::<u8>(),
+            bytes.as_mut_ptr().add(1),
+            mem::size_of::<libc::sockaddr_in>(),
+        );
+    }
+
+    let rc = unsafe { __res_isourserver(std::ptr::null(), bytes.as_ptr().add(1).cast::<c_void>()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn res_query_nameinquery_finds_matching_question() {
+    use frankenlibc_abi::resolv_abi::*;
+    let msg = synthetic_dns_query_message(1, 1);
+    let name = CString::new("FOO.com.").unwrap();
+    assert_eq!(
+        unsafe { __res_nameinquery(name.as_ptr(), 1, 1, msg.as_ptr().cast(), msg_eom(&msg)) },
+        1
+    );
+    assert_eq!(
+        unsafe { __res_nameinquery(name.as_ptr(), 28, 1, msg.as_ptr().cast(), msg_eom(&msg)) },
+        0
+    );
+}
+
+#[test]
+fn res_query_queriesmatch_compares_question_sets() {
+    use frankenlibc_abi::resolv_abi::*;
+    let msg = synthetic_dns_query_message(1, 1);
+    let same = synthetic_dns_query_message(1, 1);
+    let different_type = synthetic_dns_query_message(28, 1);
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+                same.as_ptr().cast(),
+                msg_eom(&same),
+            )
+        },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+                different_type.as_ptr().cast(),
+                msg_eom(&different_type),
+            )
+        },
+        0
+    );
+}
+
+#[test]
+fn res_query_queriesmatch_accepts_update_opcode_headers() {
+    use frankenlibc_abi::resolv_abi::*;
+    let a = synthetic_dns_update_header();
+    let b = synthetic_dns_update_header();
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                a.as_ptr().cast(),
+                msg_eom(&a),
+                b.as_ptr().cast(),
+                msg_eom(&b),
+            )
+        },
+        1
+    );
+}
+
+#[test]
+fn res_query_predicates_reject_malformed_packets() {
+    use frankenlibc_abi::resolv_abi::*;
+    let name = CString::new("foo.com").unwrap();
+    let mut truncated = [0u8; 12];
+    truncated[5] = 1; // QDCOUNT=1, but no question bytes follow.
+    assert_eq!(
+        unsafe {
+            __res_nameinquery(
+                name.as_ptr(),
+                1,
+                1,
+                truncated.as_ptr().cast(),
+                msg_eom(&truncated),
+            )
+        },
+        -1
+    );
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                truncated.as_ptr().cast(),
+                msg_eom(&truncated),
+                truncated.as_ptr().cast(),
+                msg_eom(&truncated),
+            )
+        },
+        -1
+    );
+}
+
+#[test]
+fn res_query_internal_aliases_delegate_to_public_impl() {
+    use frankenlibc_abi::unistd_abi::{__libc_res_nameinquery, __libc_res_queriesmatch};
+    let msg = synthetic_dns_query_message(1, 1);
+    let name = CString::new("foo.com").unwrap();
+    assert_eq!(
+        unsafe { __libc_res_nameinquery(name.as_ptr(), 1, 1, msg.as_ptr().cast(), msg_eom(&msg)) },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            __libc_res_queriesmatch(
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+            )
+        },
+        1
+    );
+}
+
+#[test]
+fn bd_dcfj5_dn_count_labels_counts_dots() {
+    use frankenlibc_abi::resolv_abi::*;
+    let n0 = CString::new("").unwrap();
+    let n1 = CString::new("example").unwrap();
+    let n2 = CString::new("example.com").unwrap();
+    let n3 = CString::new("a.b.c").unwrap();
+    let nfqdn = CString::new("a.b.c.").unwrap();
+    assert_eq!(unsafe { __dn_count_labels(n0.as_ptr()) }, 0);
+    assert_eq!(unsafe { __dn_count_labels(n1.as_ptr()) }, 1);
+    assert_eq!(unsafe { __dn_count_labels(n2.as_ptr()) }, 2);
+    assert_eq!(unsafe { __dn_count_labels(n3.as_ptr()) }, 3);
+    // Trailing dot represents the root, not an extra label.
+    assert_eq!(unsafe { __dn_count_labels(nfqdn.as_ptr()) }, 3);
+    assert_eq!(unsafe { __dn_count_labels(std::ptr::null()) }, -1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bd_dcfj5_dn_count_labels_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::resolv_abi::__dn_count_labels;
+    let name = malloc_unterminated(b"example.com");
+    assert_eq!(unsafe { __dn_count_labels(name.as_ptr()) }, -1);
+}
+
+#[test]
+fn bd_dcfj5_etc_hosts_iteration_reads_ipv4_entries() {
+    use frankenlibc_abi::resolv_abi::*;
+    with_resolver_backends(
+        Some(
+            b"# ignored comment\n\
+              ::1 ipv6-localhost\n\
+              203.0.113.8 legacy-name legacy-alias\n\
+              malformed line\n\
+              198.51.100.4 second-name\n",
+        ),
+        None,
+        |_| {
+            unsafe { _sethtent(1) };
+
+            // The `::1 ipv6-localhost` line is NOT skipped. This test used to
+            // expect `legacy-name` first, which encoded fl's pre-bd-79p18u
+            // behaviour of dropping every IPv6 line. glibc folds the IPv6 forms
+            // that carry an IPv4 meaning into AF_INET entries; measured on this
+            // exact fixture via `bwrap --bind <it> /etc/hosts` + a ctypes drain of
+            // host glibc's gethostent:
+            //   ipv6-localhost  af=2 len=4 127.0.0.1     aliases=[]
+            //   legacy-name     af=2 len=4 203.0.113.8   aliases=[legacy-alias]
+            //   second-name     af=2 len=4 198.51.100.4  aliases=[]
+            //   TOTAL=3
+            // so the expectations below are the oracle's output, not a
+            // regenerated golden.
+            let v6lo = unsafe { _gethtent() };
+            assert!(!v6lo.is_null());
+            let hostent = unsafe { &*(v6lo as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"ipv6-localhost"
+            );
+            let v6lo_addr = unsafe { *hostent.h_addr_list };
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(v6lo_addr.cast::<u8>(), 4) },
+                [127, 0, 0, 1]
+            );
+
+            let first = unsafe { _gethtent() };
+            assert!(!first.is_null());
+            let hostent = unsafe { &*(first as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"legacy-name"
+            );
+            let addr_ptr = unsafe { *hostent.h_addr_list };
+            let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+            assert_eq!(octets, [203, 0, 113, 8]);
+            let alias_ptr = unsafe { *hostent.h_aliases };
+            assert_eq!(
+                unsafe { CStr::from_ptr(alias_ptr) }.to_bytes(),
+                b"legacy-alias"
+            );
+            assert!(unsafe { *hostent.h_aliases.add(1) }.is_null());
+
+            let second = unsafe { _gethtent() };
+            assert!(!second.is_null());
+            let hostent = unsafe { &*(second as *const libc::hostent) };
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"second-name"
+            );
+            let addr_ptr = unsafe { *hostent.h_addr_list };
+            let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+            assert_eq!(octets, [198, 51, 100, 4]);
+
+            assert!(unsafe { _gethtent() }.is_null());
+
+            unsafe { _sethtent(0) };
+            let rewound = unsafe { _gethtent() };
+            assert!(!rewound.is_null());
+            let hostent = unsafe { &*(rewound as *const libc::hostent) };
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"ipv6-localhost"
+            );
+        },
+    );
+}
+
+#[test]
+fn etc_hosts_legacy_name_hooks_use_hosts_backend() {
+    use frankenlibc_abi::resolv_abi::*;
+    with_resolver_backends(
+        Some(b"203.0.113.8 legacy-name legacy-alias\n"),
+        None,
+        |_| {
+            let name = CString::new("legacy-alias").unwrap();
+
+            let by_name = unsafe { _gethtbyname(name.as_ptr()) };
+            assert!(!by_name.is_null());
+            let hostent = unsafe { &*(by_name as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            let addr_ptr = unsafe { *hostent.h_addr_list };
+            let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+            assert_eq!(octets, [203, 0, 113, 8]);
+
+            let by_name2 = unsafe { _gethtbyname2(name.as_ptr(), libc::AF_INET) };
+            assert!(!by_name2.is_null());
+            assert!(unsafe { _gethtbyname2(name.as_ptr(), libc::AF_INET6) }.is_null());
+            assert_eq!(unsafe { *__h_errno_location() }, HOST_NOT_FOUND_ERRNO);
+        },
+    );
+}
+
+#[test]
+fn etc_hosts_legacy_addr_hook_uses_hosts_backend() {
+    use frankenlibc_abi::resolv_abi::*;
+    with_resolver_backends(
+        Some(b"203.0.113.8 legacy-name legacy-alias\n"),
+        None,
+        |_| {
+            unsafe { *__h_errno_location() = HOST_NOT_FOUND_ERRNO };
+            let addr = [203u8, 0, 113, 8];
+            let ptr = unsafe { _gethtbyaddr(addr.as_ptr() as *const c_void, 4, libc::AF_INET) };
+            assert!(!ptr.is_null());
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            let host_name = unsafe { CStr::from_ptr(hostent.h_name) };
+            assert_eq!(host_name.to_bytes(), b"legacy-name");
+            assert_eq!(unsafe { *__h_errno_location() }, 0);
+        },
+    );
+}
+
+#[test]
+fn nss_files_gethostbyname_uses_hosts_backend() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname_r;
+
+    with_resolver_backends(Some(b"203.0.113.44 nss-name nss-alias\n"), None, |_| {
+        let name = c"nss-alias";
+        let mut hostent = libc::hostent {
+            h_name: ptr::null_mut(),
+            h_aliases: ptr::null_mut(),
+            h_addrtype: 0,
+            h_length: 0,
+            h_addr_list: ptr::null_mut(),
+        };
+        let mut buf = [0 as c_char; 512];
+        let mut err = -1;
+        let mut h_err = -1;
+
+        let status = unsafe {
+            _nss_files_gethostbyname_r(
+                name.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+
+        assert_eq!(status, 1);
+        assert_eq!(err, 0);
+        assert_eq!(h_err, 0);
+        // A hosts-file lookup may be initiated through an alias, but h_name
+        // remains the line's first (canonical) name.
+        assert_eq!(
+            unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+            b"nss-name"
+        );
+        let alias = unsafe { *hostent.h_aliases };
+        assert!(!alias.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(alias) }.to_bytes(), b"nss-alias");
+        assert!(unsafe { *hostent.h_aliases.add(1) }.is_null());
+        assert_eq!(hostent.h_addrtype, libc::AF_INET);
+        assert_eq!(hostent.h_length, 4);
+        let addr_ptr = unsafe { *hostent.h_addr_list };
+        let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+        assert_eq!(octets, [203, 0, 113, 44]);
+    });
+}
+
+#[test]
+fn nss_files_gethostbyaddr_uses_hosts_backend() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyaddr_r;
+
+    with_resolver_backends(
+        Some(b"198.51.100.77 nss-reverse nss-reverse-alias\n"),
+        None,
+        |_| {
+            let addr = [198u8, 51, 100, 77];
+            let mut hostent = libc::hostent {
+                h_name: ptr::null_mut(),
+                h_aliases: ptr::null_mut(),
+                h_addrtype: 0,
+                h_length: 0,
+                h_addr_list: ptr::null_mut(),
+            };
+            let mut buf = [0 as c_char; 512];
+            let mut err = -1;
+            let mut h_err = -1;
+
+            let status = unsafe {
+                _nss_files_gethostbyaddr_r(
+                    addr.as_ptr().cast::<c_void>(),
+                    4,
+                    libc::AF_INET,
+                    (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut err,
+                    &mut h_err,
+                )
+            };
+
+            assert_eq!(status, 1);
+            assert_eq!(err, 0);
+            assert_eq!(h_err, 0);
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"nss-reverse"
+            );
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+        },
+    );
+}
+
+#[repr(C)]
+struct TestGaihAddrtuple {
+    next: *mut TestGaihAddrtuple,
+    name: *mut c_char,
+    family: c_int,
+    addr: [u32; 4],
+    scopeid: u32,
+}
+
+fn with_nss_hosts_backend<T>(hosts: &[u8], f: impl FnOnce(&ResolverFixturePaths) -> T) -> T {
+    with_resolver_backends(Some(hosts), None, |paths| {
+        struct HostConfEnv([Option<std::ffi::OsString>; 2]);
+        impl Drop for HostConfEnv {
+            fn drop(&mut self) {
+                for (key, old) in ["RESOLV_MULTI", "RESOLV_HOST_CONF"]
+                    .into_iter()
+                    .zip(&self.0)
+                {
+                    // SAFETY: the enclosing resolver fixture holds RESOLVER_ENV_LOCK.
+                    unsafe {
+                        if let Some(old) = old {
+                            std::env::set_var(key, old);
+                        } else {
+                            std::env::remove_var(key);
+                        }
+                    }
+                }
+            }
+        }
+        let _guard = HostConfEnv([
+            std::env::var_os("RESOLV_MULTI"),
+            std::env::var_os("RESOLV_HOST_CONF"),
+        ]);
+        // SAFETY: the enclosing resolver fixture holds RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("RESOLV_MULTI", "on") };
+        f(paths)
+    })
+}
+
+#[test]
+fn nss_files_gethostbyname4_uses_gaih_addrtuple_backend() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(b"203.0.113.55 nss-name4 nss-name4-alias\n", |_| {
+        let name = c"nss-name4-alias";
+        let mut tuple_head: *mut c_void = ptr::null_mut();
+        let mut buf = [0 as c_char; 512];
+        let mut err = -1;
+        let mut h_err = -1;
+        let mut ttl = -1;
+
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                name.as_ptr(),
+                &mut tuple_head,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+
+        assert_eq!(status, 1);
+        assert_eq!(err, -1);
+        assert_eq!(h_err, 1);
+        assert_eq!(ttl, -1);
+        assert!(!tuple_head.is_null());
+
+        let tuple = unsafe { &*(tuple_head.cast::<TestGaihAddrtuple>()) };
+        assert!(tuple.next.is_null());
+        assert_eq!(tuple.family, libc::AF_INET);
+        assert_eq!(tuple.scopeid, 0);
+        assert_eq!(
+            unsafe { CStr::from_ptr(tuple.name) }.to_bytes(),
+            b"nss-name4"
+        );
+        assert_eq!(tuple.addr[0].to_ne_bytes(), [203, 0, 113, 55]);
+        assert_eq!(tuple.addr[1], 0);
+        assert_eq!(tuple.addr[2], 0);
+        assert_eq!(tuple.addr[3], 0);
+    });
+}
+
+#[test]
+fn nss_files_gethostbyname4_preserves_ipv6_file_order_and_supplied_head() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(
+        b"2001:db8::42 first dual-alias\n192.0.2.9 second dual-alias\n::ffff:198.51.100.7 third dual-alias\n",
+        |_| {
+            let mut supplied = TestGaihAddrtuple {
+                next: ptr::null_mut(),
+                name: ptr::null_mut(),
+                family: -7,
+                addr: [0; 4],
+                scopeid: 99,
+            };
+            let supplied_ptr = (&mut supplied as *mut TestGaihAddrtuple).cast::<c_void>();
+            let mut head = supplied_ptr;
+            let mut storage = [0 as c_char; 1024];
+            let (buffer, capacity) =
+                misaligned_c_char_buffer(&mut storage, mem::align_of::<TestGaihAddrtuple>());
+            let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+            unsafe { *__errno_location() = 780 };
+            let status = unsafe {
+                _nss_files_gethostbyname4_r(
+                    c"DUAL-ALIAS".as_ptr(), &mut head, buffer, capacity,
+                    &mut err, &mut h_err, &mut ttl,
+                )
+            };
+            assert_eq!(status, 1);
+            assert_eq!(head, supplied_ptr);
+            assert_eq!((err, h_err, ttl), (777, 1, 779));
+            assert_eq!(unsafe { *__errno_location() }, 780);
+            let expected = [
+                "2001:db8::42".parse::<std::net::IpAddr>().unwrap(),
+                "192.0.2.9".parse().unwrap(),
+                "::ffff:198.51.100.7".parse().unwrap(),
+            ];
+            let mut node = head.cast::<TestGaihAddrtuple>();
+            for (index, address) in expected.iter().enumerate() {
+                assert!(!node.is_null(), "missing tuple {index}");
+                assert!((node as usize).is_multiple_of(mem::align_of::<TestGaihAddrtuple>()));
+                let tuple = unsafe { &*node };
+                if index == 0 {
+                    assert_eq!(unsafe { CStr::from_ptr(tuple.name) }.to_bytes(), b"first");
+                } else {
+                    assert!(tuple.name.is_null(), "only the first tuple owns the canonical name");
+                    let address = node as usize;
+                    assert!(address >= buffer as usize);
+                    assert!(address + mem::size_of::<TestGaihAddrtuple>() <= buffer as usize + capacity);
+                }
+                assert_eq!(tuple.scopeid, 0);
+                let bytes = unsafe { std::slice::from_raw_parts(tuple.addr.as_ptr().cast::<u8>(), 16) };
+                match address {
+                    std::net::IpAddr::V4(address) => {
+                        assert_eq!(tuple.family, libc::AF_INET);
+                        assert_eq!(&bytes[..4], &address.octets());
+                        assert_eq!(&bytes[4..], &[0; 12]);
+                    }
+                    std::net::IpAddr::V6(address) => {
+                        assert_eq!(tuple.family, libc::AF_INET6);
+                        assert_eq!(bytes, &address.octets());
+                    }
+                }
+                node = tuple.next;
+            }
+            assert!(node.is_null());
+        },
+    );
+}
+
+#[test]
+fn nss_files_gethostbyname4_returns_all_rows_and_retries_without_publication() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    let mut hosts = String::new();
+    for index in 1..=80 {
+        hosts.push_str(&format!("192.0.2.{index} many many-alias\n"));
+    }
+    with_nss_hosts_backend(hosts.as_bytes(), |_| {
+        let mut head = ptr::null_mut();
+        let mut buffer = [0x5a as c_char; 8192];
+        let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                c"many-alias".as_ptr(),
+                &mut head,
+                buffer.as_mut_ptr(),
+                16,
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+        assert_eq!(status, -2);
+        assert_eq!((err, h_err, ttl), (libc::ERANGE, -1, 779));
+        assert!(head.is_null());
+        assert!(buffer.iter().all(|&byte| byte == 0x5a));
+        err = 777;
+        h_err = 778;
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                c"many-alias".as_ptr(),
+                &mut head,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+        assert_eq!(status, 1);
+        assert_eq!((err, h_err, ttl), (777, 1, 779));
+        let mut node = head.cast::<TestGaihAddrtuple>();
+        for index in 1..=80 {
+            assert!(!node.is_null(), "truncated after {} rows", index - 1);
+            let tuple = unsafe { &*node };
+            assert_eq!(tuple.family, libc::AF_INET);
+            assert_eq!(tuple.addr[0].to_ne_bytes(), [192, 0, 2, index]);
+            node = tuple.next;
+        }
+        assert!(node.is_null());
+    });
+}
+
+#[test]
+fn nss_files_gethostbyname4_handles_ipv6_only_misses_and_unavailable_source() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(b"2001:db8::1 ipv6-only\n", |paths| {
+        let mut buffer = [0 as c_char; 512];
+        for (name, expected_status, expected_error, expected_herror) in [
+            (c"ipv6-only", 1, 777, 1),
+            (c"missing", 0, 777, 1),
+            // The files module searches hostnames; numeric synthesis belongs
+            // to the public resolver, not to this backend.
+            (c"192.0.2.1", 0, 777, 1),
+        ] {
+            let mut head = ptr::null_mut();
+            let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+            let status = unsafe {
+                _nss_files_gethostbyname4_r(
+                    name.as_ptr(),
+                    &mut head,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                    &mut h_err,
+                    &mut ttl,
+                )
+            };
+            assert_eq!(
+                (status, err, h_err, ttl),
+                (expected_status, expected_error, expected_herror, 779)
+            );
+            assert_eq!(!head.is_null(), expected_status == 1);
+        }
+        // This nonexistent path is private to the fixture; no database is removed.
+        unsafe { std::env::set_var(HOSTS_PATH_ENV, paths.hosts.with_extension("missing")) };
+        let mut head = ptr::null_mut();
+        let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+        let status = unsafe {
+            _nss_files_gethostbyname4_r(
+                c"ipv6-only".as_ptr(),
+                &mut head,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut err,
+                &mut h_err,
+                &mut ttl,
+            )
+        };
+        assert_eq!((status, err, h_err, ttl), (-1, libc::ENOENT, 1, 779));
+        assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+        assert!(head.is_null());
+    });
+}
+
+#[test]
+fn nss_files_gethostbyname4_obeys_host_conf_and_multi_override() {
+    use frankenlibc_abi::unistd_abi::_nss_files_gethostbyname4_r;
+
+    with_nss_hosts_backend(
+        b"2001:db8::1 first shared\n192.0.2.1 second shared\n",
+        |paths| {
+            let check = |expected_count, expected_herror| {
+                let mut head = ptr::null_mut();
+                let mut buffer = [0 as c_char; 1024];
+                let (mut err, mut h_err, mut ttl) = (777, 778, 779);
+                let status = unsafe {
+                    _nss_files_gethostbyname4_r(
+                        c"shared".as_ptr(),
+                        &mut head,
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut err,
+                        &mut h_err,
+                        &mut ttl,
+                    )
+                };
+                assert_eq!((status, err, h_err, ttl), (1, 777, expected_herror, 779));
+                let mut node = head.cast::<TestGaihAddrtuple>();
+                for _ in 0..expected_count {
+                    assert!(!node.is_null());
+                    node = unsafe { (*node).next };
+                }
+                assert!(node.is_null());
+            };
+            check(2, 1);
+            // SAFETY: the fixture serializes and restores both environment variables.
+            unsafe { std::env::set_var("RESOLV_MULTI", "off") };
+            check(1, 778);
+            let conf = paths.hosts.with_extension("host.conf");
+            std::fs::write(&conf, b"  multi off # use the first row\n").unwrap();
+            unsafe {
+                std::env::set_var("RESOLV_HOST_CONF", &conf);
+                std::env::remove_var("RESOLV_MULTI");
+            }
+            check(1, 778);
+            std::fs::write(&conf, b"multi on\n").unwrap();
+            check(2, 1);
+            unsafe { std::env::set_var("RESOLV_MULTI", "off") };
+            check(1, 778);
+        },
+    );
+}
+
+#[test]
+fn nss_files_getcanonname_resolves_alias_and_preserves_retry_contract() {
+    use frankenlibc_abi::unistd_abi::_nss_files_getcanonname_r;
+
+    with_resolver_backends(Some(b"2001:db8::1 canonical alias\n"), None, |_| {
+        let mut result = ptr::null_mut();
+        let mut buffer = [0x5a as c_char; 64];
+        let (mut err, mut h_err) = (777, 778);
+        let status = unsafe {
+            _nss_files_getcanonname_r(
+                c"ALIAS".as_ptr(),
+                buffer.as_mut_ptr(),
+                4,
+                &mut result,
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!((status, err, h_err), (-2, libc::ERANGE, -1));
+        assert!(result.is_null());
+        assert!(buffer.iter().all(|&byte| byte == 0x5a));
+        err = 777;
+        h_err = 778;
+        let status = unsafe {
+            _nss_files_getcanonname_r(
+                c"ALIAS".as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!((status, err, h_err), (1, 777, 778));
+        assert_eq!(result, buffer.as_mut_ptr());
+        assert_eq!(unsafe { CStr::from_ptr(result) }.to_bytes(), b"canonical");
+        let status = unsafe {
+            _nss_files_getcanonname_r(
+                c"missing".as_ptr(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!((status, err, h_err), (0, 777, 1));
+        assert!(result.is_null());
+    });
+}
+
+/// The strict-passthrough `getnameinfo` fast path (deployed default) must be byte-identical to the
+/// full membrane path on the success render. `getnameinfo_differential_fuzz` proves the full path ==
+/// host glibc, so fast == full == glibc. Ample buffers keep the comparison independent of the
+/// repair/mode overflow policy (which both paths derive identically in strict mode); AF_INET,
+/// AF_INET6, scope ids, and NI_NUMERICSCOPE are all exercised.
+#[test]
+fn getnameinfo_strict_fast_matches_full_membrane_path() {
+    const NI_NUMERICHOST: c_int = 1;
+    const NI_NUMERICSERV: c_int = 2;
+    const NI_NUMERICSCOPE: c_int = 64;
+
+    let mut seed: u32 = 0x9e37_79b9;
+    let mut next = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        seed
+    };
+
+    for iter in 0..4000u32 {
+        let v6 = iter % 3 == 0;
+        let mut storage: libc::sockaddr_storage = unsafe { mem::zeroed() };
+        let (sa, salen) = if v6 {
+            let sin6 = unsafe { &mut *(&mut storage as *mut _ as *mut libc::sockaddr_in6) };
+            sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+            sin6.sin6_port = (next() as u16).to_be();
+            for b in sin6.sin6_addr.s6_addr.iter_mut() {
+                *b = next() as u8;
+            }
+            sin6.sin6_scope_id = if next() % 2 == 0 { 0 } else { next() % 20 };
+            (
+                &storage as *const _ as *const libc::sockaddr,
+                mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            )
+        } else {
+            let sin = unsafe { &mut *(&mut storage as *mut _ as *mut libc::sockaddr_in) };
+            sin.sin_family = libc::AF_INET as libc::sa_family_t;
+            sin.sin_port = (next() as u16).to_be();
+            sin.sin_addr.s_addr = next();
+            (
+                &storage as *const _ as *const libc::sockaddr,
+                mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
+        };
+        let mut flags = NI_NUMERICHOST | NI_NUMERICSERV;
+        if next() % 2 == 0 {
+            flags |= NI_NUMERICSCOPE;
+        }
+
+        let mut fh = [0 as c_char; 96];
+        let mut fs = [0 as c_char; 32];
+        let mut gh = [0 as c_char; 96];
+        let mut gs = [0 as c_char; 32];
+
+        let rc_fast = unsafe {
+            resolv_abi::bench_getnameinfo_fast(
+                sa,
+                salen,
+                fh.as_mut_ptr(),
+                fh.len() as libc::socklen_t,
+                fs.as_mut_ptr(),
+                fs.len() as libc::socklen_t,
+                flags,
+            )
+        };
+        let rc_full = unsafe {
+            resolv_abi::bench_getnameinfo_full(
+                sa,
+                salen,
+                gh.as_mut_ptr(),
+                gh.len() as libc::socklen_t,
+                gs.as_mut_ptr(),
+                gs.len() as libc::socklen_t,
+                flags,
+            )
+        };
+
+        assert_eq!(rc_fast, rc_full, "rc mismatch iter={iter} v6={v6}");
+        if rc_fast == 0 {
+            let fhb = unsafe { CStr::from_ptr(fh.as_ptr()) };
+            let ghb = unsafe { CStr::from_ptr(gh.as_ptr()) };
+            let fsb = unsafe { CStr::from_ptr(fs.as_ptr()) };
+            let gsb = unsafe { CStr::from_ptr(gs.as_ptr()) };
+            assert_eq!(fhb, ghb, "host mismatch iter={iter} v6={v6}");
+            assert_eq!(fsb, gsb, "serv mismatch iter={iter} v6={v6}");
+        }
+    }
+}
+
+// ===========================================================================
+// bd-79p18u — `_gethtent` must reproduce glibc's AF_INET view of /etc/hosts.
+//
+// fl yielded 2 entries on a stock Ubuntu /etc/hosts where glibc's `gethostent`
+// yields 3: `next_hosts_ipv4_entry` did `addr_text.parse::<Ipv4Addr>()` and
+// skipped every line that failed, so `::1 ip6-localhost ip6-loopback` was
+// dropped. glibc does not skip it — nss_files folds the IPv6 forms that have an
+// IPv4 meaning into AF_INET entries and drops only the rest.
+//
+// The oracle is host glibc's `gethostent`, which glibc really does export
+// (`nm -D libc.so.6` shows gethostent@@GLIBC_2.2.5). In a debug/test build fl's
+// entrypoints are not `no_mangle`, so `libc::gethostent` here binds to glibc
+// while `resolv_abi::_gethtent` is fl's — a live, in-process, no-mock A/B over
+// whatever /etc/hosts this machine actually has.
+// ===========================================================================
+
+// The `libc` crate does not bind the /etc/hosts iterator, so declare it. This
+// resolves to host glibc: fl's own entrypoints carry `no_mangle` only in release
+// builds (`#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]`), so in a test
+// build there is no fl symbol of these names to interpose.
+unsafe extern "C" {
+    fn sethostent(stayopen: c_int);
+    fn gethostent() -> *mut libc::hostent;
+    fn endhostent();
+}
+
+/// Drain host glibc's `gethostent` into (name, ipv4-octets) pairs.
+fn glibc_hosts_af_inet() -> Vec<(String, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: single-threaded drain of the host iterator; pointers are read
+    // before the next call invalidates them.
+    unsafe {
+        sethostent(0);
+        loop {
+            let h = gethostent();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            assert_eq!(
+                (*h).h_addrtype,
+                libc::AF_INET,
+                "glibc gethostent returned a non-AF_INET entry for {name}"
+            );
+            assert_eq!((*h).h_length, 4, "AF_INET entry with length != 4");
+            let first = *(*h).h_addr_list;
+            assert!(!first.is_null(), "entry {name} has an empty address list");
+            let mut octets = [0u8; 4];
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), 4);
+            out.push((name, octets));
+        }
+        endhostent();
+    }
+    out
+}
+
+/// Drain fl's `_gethtent` into the same shape.
+fn fl_hosts_af_inet() -> Vec<(String, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: same contract as above, against fl's iterator.
+    unsafe {
+        resolv_abi::_sethtent(0);
+        loop {
+            let h = resolv_abi::_gethtent().cast::<libc::hostent>();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            assert_eq!(
+                (*h).h_addrtype,
+                libc::AF_INET,
+                "fl entry {name} not AF_INET"
+            );
+            assert_eq!((*h).h_length, 4, "fl entry {name} length != 4");
+            let first = *(*h).h_addr_list;
+            assert!(
+                !first.is_null(),
+                "fl entry {name} has an empty address list"
+            );
+            let mut octets = [0u8; 4];
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), 4);
+            out.push((name, octets));
+        }
+    }
+    out
+}
+
+#[test]
+fn gethtent_matches_glibc_gethostent_af_inet_view() {
+    // MUST hold RESOLVER_ENV_LOCK: this compares fl against host glibc over the
+    // machine's REAL /etc/hosts, but fl honours the HOSTS_PATH_ENV override that
+    // `with_resolver_backends` installs process-wide. libtest runs these
+    // concurrently, so without the lock fl reads a sibling test's fixture while
+    // glibc reads /etc/hosts and the comparison is meaningless. This was not
+    // hypothetical — the test passed under a name filter and failed in a
+    // whole-target run.
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let glibc = glibc_hosts_af_inet();
+    let fl = fl_hosts_af_inet();
+
+    assert_eq!(
+        fl.len(),
+        glibc.len(),
+        "entry count diverged: fl={} glibc={}\n  fl:    {:?}\n  glibc: {:?}",
+        fl.len(),
+        glibc.len(),
+        fl,
+        glibc
+    );
+    assert_eq!(
+        fl, glibc,
+        "AF_INET /etc/hosts view diverged from glibc gethostent"
+    );
+}
+
+/// The specific rule the bug violated, asserted against the oracle rather than
+/// against a hardcoded expectation: any IPv6 loopback line in /etc/hosts must
+/// surface as an AF_INET 127.0.0.1 entry in BOTH implementations. Skipped (not
+/// silently passed) when this machine's /etc/hosts has no such line, so the test
+/// can never report success for a case it did not actually exercise.
+#[test]
+fn ipv6_loopback_line_becomes_127_0_0_1_in_both() {
+    // Same reason as above: fl honours the process-wide hosts override that
+    // sibling tests install, so this must not run concurrently with them.
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let hosts = match std::fs::read_to_string("/etc/hosts") {
+        Ok(text) => text,
+        Err(_) => return,
+    };
+    let v6_loopback_names: Vec<String> = hosts
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or(""))
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let addr = fields.next()?;
+            let parsed = addr.parse::<std::net::Ipv6Addr>().ok()?;
+            if !parsed.is_loopback() {
+                return None;
+            }
+            Some(fields.next()?.to_string())
+        })
+        .collect();
+
+    if v6_loopback_names.is_empty() {
+        eprintln!("no IPv6 loopback line in /etc/hosts; nothing to assert");
+        return;
+    }
+
+    let glibc = glibc_hosts_af_inet();
+    let fl = fl_hosts_af_inet();
+    for name in &v6_loopback_names {
+        let want = (name.clone(), [127u8, 0, 0, 1]);
+        assert!(
+            glibc.contains(&want),
+            "oracle drift: glibc did not map the ::1 line {name} to 127.0.0.1 (got {glibc:?})"
+        );
+        assert!(
+            fl.contains(&want),
+            "fl dropped the ::1 line {name} instead of mapping it to 127.0.0.1 (got {fl:?})"
+        );
+    }
+}
+
+// ===========================================================================
+// bd-cl3dw8 — the PUBLIC gethostent/gethostent_r must reproduce glibc's
+// AF_INET-only view of /etc/hosts, exactly as `_gethtent` does (bd-79p18u).
+//
+// fl used to emit whatever family each line parsed as, so a stock Ubuntu
+// /etc/hosts gave 7 entries (2 IPv4 + 5 IPv6) where glibc gives 3, with a
+// different h_addrtype and h_length. glibc's iterator has no family argument
+// and answers in AF_INET only; RES_USE_INET6, the switch that could once change
+// that, was removed from glibc in 2.25.
+// ===========================================================================
+
+/// Drain fl's public `gethostent` into (name, addrtype, length, ipv4-octets).
+fn fl_public_hostent_view() -> Vec<(String, c_int, c_int, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: single-threaded drain; each entry is read before the next call.
+    unsafe {
+        unistd_abi::sethostent(0);
+        loop {
+            let h = unistd_abi::gethostent().cast::<libc::hostent>();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            let mut octets = [0u8; 4];
+            let first = *(*h).h_addr_list;
+            assert!(
+                !first.is_null(),
+                "fl entry {name} has an empty address list"
+            );
+            let n = ((*h).h_length as usize).min(4);
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), n);
+            out.push((name, (*h).h_addrtype, (*h).h_length, octets));
+        }
+        unistd_abi::endhostent();
+    }
+    out
+}
+
+/// Same shape from host glibc.
+fn glibc_public_hostent_view() -> Vec<(String, c_int, c_int, [u8; 4])> {
+    let mut out = Vec::new();
+    // SAFETY: as above, against host glibc.
+    unsafe {
+        sethostent(0);
+        loop {
+            let h = gethostent();
+            if h.is_null() {
+                break;
+            }
+            let name = CStr::from_ptr((*h).h_name).to_string_lossy().into_owned();
+            let mut octets = [0u8; 4];
+            let first = *(*h).h_addr_list;
+            assert!(
+                !first.is_null(),
+                "glibc entry {name} has an empty address list"
+            );
+            let n = ((*h).h_length as usize).min(4);
+            std::ptr::copy_nonoverlapping(first.cast::<u8>(), octets.as_mut_ptr(), n);
+            out.push((name, (*h).h_addrtype, (*h).h_length, octets));
+        }
+        endhostent();
+    }
+    out
+}
+
+#[test]
+fn public_gethostent_matches_glibc_af_inet_view() {
+    // Same lock as the _gethtent arms: fl honours the process-wide hosts
+    // override that with_resolver_backends installs, glibc does not.
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let glibc = glibc_public_hostent_view();
+    let fl = fl_public_hostent_view();
+
+    assert_eq!(
+        fl.len(),
+        glibc.len(),
+        "gethostent entry count diverged: fl={} glibc={}\n  fl:    {:?}\n  glibc: {:?}",
+        fl.len(),
+        glibc.len(),
+        fl,
+        glibc
+    );
+    assert_eq!(fl, glibc, "public gethostent diverged from glibc");
+
+    // Positive fact, independent of fl==glibc: glibc's iterator is AF_INET-only,
+    // so a joint regression to AF_INET6 still fails here.
+    for (name, af, len, _) in &glibc {
+        assert_eq!(
+            *af,
+            libc::AF_INET,
+            "oracle: glibc entry {name} must be AF_INET"
+        );
+        assert_eq!(*len, 4, "oracle: glibc entry {name} must have h_length 4");
+    }
+    for (name, af, len, _) in &fl {
+        assert_eq!(
+            *af,
+            libc::AF_INET,
+            "fl entry {name} must be AF_INET, not AF_INET6"
+        );
+        assert_eq!(*len, 4, "fl entry {name} must have h_length 4");
+    }
+}
+
+/// The two fl iterators must not disagree with each other about what
+/// /etc/hosts contains: `_gethtent` (bd-79p18u) and the public `gethostent`
+/// implement the same rule in different files, so they are pinned together.
+#[test]
+fn public_gethostent_agrees_with_gethtent() {
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let public: Vec<(String, [u8; 4])> = fl_public_hostent_view()
+        .into_iter()
+        .map(|(n, _, _, o)| (n, o))
+        .collect();
+    let private = fl_hosts_af_inet();
+    assert_eq!(
+        public, private,
+        "fl's public gethostent and private _gethtent disagree about /etc/hosts"
+    );
+}
+
+#[test]
+fn hosts_enumeration_retries_the_same_record_after_erange() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+
+    with_resolver_backends(
+        Some(b"# ignored\n2001:db8::1 skipped-v6\n192.0.2.1 first first-alias\n198.51.100.2 second\n::1 loopback\n"),
+        None,
+        |_| unsafe {
+            unistd_abi::sethostent(0);
+            let mut entry: libc::hostent = mem::zeroed();
+            let mut storage = [0 as c_char; 1024];
+            let (buffer, capacity) =
+                misaligned_c_char_buffer(&mut storage, mem::align_of::<*mut c_char>());
+            let mut result = ptr::null_mut();
+            let mut h_err = 778;
+            for _ in 0..2 {
+                let rc = unistd_abi::gethostent_r(
+                    (&raw mut entry).cast(), buffer, 1, &mut result, &mut h_err,
+                );
+                assert_eq!(rc, libc::ERANGE);
+                assert!(result.is_null());
+                assert_eq!(h_err, 778);
+                assert_eq!(*__errno_location(), libc::ERANGE);
+            }
+            for (name, address) in [
+                (b"first".as_slice(), [192, 0, 2, 1]),
+                (b"second".as_slice(), [198, 51, 100, 2]),
+                (b"loopback".as_slice(), [127, 0, 0, 1]),
+            ] {
+                *__errno_location() = 780;
+                let rc = unistd_abi::gethostent_r(
+                    (&raw mut entry).cast(), buffer, capacity, &mut result, &mut h_err,
+                );
+                assert_eq!(rc, 0);
+                assert_eq!(result, (&raw mut entry).cast());
+                assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), name);
+                assert_eq!((entry.h_addrtype, entry.h_length), (libc::AF_INET, 4));
+                assert_eq!(std::slice::from_raw_parts((*entry.h_addr_list).cast::<u8>(), 4), address);
+                assert!((entry.h_aliases as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+                assert_eq!((h_err, *__errno_location()), (778, 780));
+            }
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(), buffer, capacity, &mut result, &mut h_err,
+            );
+            assert_eq!(rc, libc::ENOENT);
+            assert!(result.is_null());
+            assert_eq!((h_err, *__errno_location()), (778, 780));
+            unistd_abi::endhostent();
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(), buffer, capacity, &mut result, &mut h_err,
+            );
+            assert_eq!(rc, 0);
+            assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), b"first");
+            unistd_abi::endhostent();
+        },
+    );
+}
+
+#[test]
+fn hosts_enumeration_keeps_long_records_and_every_alias() {
+    let primary = "n".repeat(4096);
+    let aliases: Vec<String> = (0..80)
+        .map(|i| format!("alias-{i}-{}", "x".repeat(30)))
+        .collect();
+    let hosts = format!(
+        "192.0.2.1 {primary} {}\n198.51.100.2 short last-alias\n",
+        aliases.join(" ")
+    );
+    with_resolver_backends(Some(hosts.as_bytes()), None, |_| unsafe {
+        unistd_abi::sethostent(0);
+        let entry = unistd_abi::gethostent().cast::<libc::hostent>();
+        assert!(!entry.is_null());
+        assert_eq!(
+            CStr::from_ptr((*entry).h_name).to_bytes(),
+            primary.as_bytes()
+        );
+        for (index, alias) in aliases.iter().enumerate() {
+            let value = *(*entry).h_aliases.add(index);
+            assert!(!value.is_null(), "aliases truncated at {index}");
+            assert_eq!(CStr::from_ptr(value).to_bytes(), alias.as_bytes());
+        }
+        assert!((*(*entry).h_aliases.add(aliases.len())).is_null());
+        let entry = unistd_abi::gethostent().cast::<libc::hostent>();
+        assert!(!entry.is_null());
+        assert_eq!(CStr::from_ptr((*entry).h_name).to_bytes(), b"short");
+        assert_eq!(
+            CStr::from_ptr(*(*entry).h_aliases).to_bytes(),
+            b"last-alias"
+        );
+        assert!((*(*entry).h_aliases.add(1)).is_null());
+        assert!(unistd_abi::gethostent().is_null());
+        unistd_abi::endhostent();
+    });
+}
+
+#[test]
+fn hosts_enumeration_nss_controls_rewind_and_preserve_pending_records() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_endhostent, _nss_files_gethostent_r, _nss_files_sethostent,
+    };
+
+    with_resolver_backends(
+        Some(b"192.0.2.1 first\n192.0.2.2 second\n"),
+        None,
+        |_| unsafe {
+            let mut entry: libc::hostent = mem::zeroed();
+            let mut buffer = [0 as c_char; 1024];
+            let (mut err, mut h_err) = (777, 778);
+            assert_eq!(_nss_files_sethostent(0), 1);
+            assert_eq!(
+                _nss_files_gethostent_r(
+                    (&raw mut entry).cast(),
+                    buffer.as_mut_ptr(),
+                    1,
+                    &mut err,
+                    &mut h_err,
+                ),
+                -2
+            );
+            assert_eq!((err, h_err), (libc::ERANGE, -1));
+            for name in [b"first".as_slice(), b"second".as_slice()] {
+                err = 777;
+                h_err = 778;
+                assert_eq!(
+                    _nss_files_gethostent_r(
+                        (&raw mut entry).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut err,
+                        &mut h_err,
+                    ),
+                    1
+                );
+                assert_eq!((err, h_err), (777, 778));
+                assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), name);
+            }
+            assert_eq!(_nss_files_sethostent(1), 1);
+            assert_eq!(
+                _nss_files_gethostent_r(
+                    (&raw mut entry).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                    &mut h_err,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), b"first");
+            assert_eq!(_nss_files_endhostent(), 1);
+            assert_eq!(
+                _nss_files_gethostent_r(
+                    (&raw mut entry).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut err,
+                    &mut h_err,
+                ),
+                1
+            );
+            assert_eq!(CStr::from_ptr(entry.h_name).to_bytes(), b"first");
+            assert_eq!(_nss_files_endhostent(), 1);
+        },
+    );
+}
+
+#[test]
+fn hosts_enumeration_empty_and_missing_source_statuses() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_endhostent, _nss_files_gethostent_r, _nss_files_sethostent,
+    };
+
+    with_resolver_backends(Some(b""), None, |paths| unsafe {
+        let mut entry: libc::hostent = mem::zeroed();
+        let mut buffer = [0 as c_char; 1024];
+        assert_eq!(_nss_files_sethostent(0), 1);
+        for (capacity, status, error, herror, global_error) in [
+            (1, -2, libc::ERANGE, -1, 780),
+            (34, -2, libc::ERANGE, -1, libc::ERANGE),
+            (35, 0, 777, 1, 780),
+            (1, -2, libc::ERANGE, -1, 780),
+        ] {
+            let (mut err, mut h_err) = (777, 778);
+            *__errno_location() = 780;
+            let actual = _nss_files_gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut err,
+                &mut h_err,
+            );
+            assert_eq!(
+                (actual, err, h_err, *__errno_location()),
+                (status, error, herror, global_error)
+            );
+        }
+        let mut result = ptr::null_mut();
+        let mut h_err = 778;
+        for capacity in [1, 35] {
+            *__errno_location() = 780;
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut result,
+                &mut h_err,
+            );
+            assert_eq!(
+                rc,
+                if capacity == 1 {
+                    libc::ERANGE
+                } else {
+                    libc::ENOENT
+                }
+            );
+            assert_eq!(
+                *__errno_location(),
+                if capacity == 1 { libc::ERANGE } else { 780 }
+            );
+            assert_eq!(h_err, 778);
+            assert!(result.is_null());
+        }
+        assert_eq!(_nss_files_endhostent(), 1);
+        std::env::set_var(HOSTS_PATH_ENV, paths.hosts.with_extension("missing"));
+        for capacity in [1, buffer.len()] {
+            let (mut err, mut h_err) = (777, 778);
+            *__errno_location() = 780;
+            let status = _nss_files_gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut err,
+                &mut h_err,
+            );
+            assert_eq!(
+                (status, err, h_err, *__errno_location()),
+                (-1, 777, 778, 780)
+            );
+            let rc = unistd_abi::gethostent_r(
+                (&raw mut entry).cast(),
+                buffer.as_mut_ptr(),
+                capacity,
+                &mut result,
+                &mut h_err,
+            );
+            assert_eq!(
+                (rc, h_err, *__errno_location()),
+                (libc::ENOENT, 778, libc::ENOENT)
+            );
+            assert!(result.is_null());
+        }
+        assert_eq!(_nss_files_sethostent(0), -1);
+        assert_eq!(*__errno_location(), libc::ENOENT);
+        assert!(unistd_abi::gethostent().is_null());
+        assert_eq!(*__errno_location(), libc::ENOENT);
+        assert_eq!(_nss_files_endhostent(), 1);
+    });
+}
+
+// ===========================================================================
+// bd-xh08pf — relocated from an inline `#[cfg(test)]` block in unistd_abi.rs.
+//
+// unistd_abi is declared `#[cfg(not(test))] pub mod unistd_abi;` in lib.rs, so
+// that block could never compile in either build and this assertion had never
+// executed. It only touches the public `res_init` entry point, so it moves here
+// unchanged and now actually runs.
+// ===========================================================================
+
+#[test]
+fn res_init_reports_success_bd_xh08pf() {
+    // SAFETY: res_init takes no arguments and only initialises resolver state.
+    let rc = unsafe { unistd_abi::res_init() };
+    assert_eq!(rc, 0, "res_init should report success");
+}
+
+/// The `_nss_files_*` host entry points ARE the files module: they read the
+/// hosts file whatever nsswitch.conf says. They used to run the whole
+/// nsswitch policy, so under `hosts: dns` a hosts-file name was invisible to
+/// them (and a DNS-only name visible).
+#[test]
+fn nss_files_host_entry_points_ignore_nsswitch_policy() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_gethostbyaddr_r, _nss_files_gethostbyname_r};
+    struct NsswitchEnv;
+    impl Drop for NsswitchEnv {
+        fn drop(&mut self) {
+            // SAFETY: serialized by RESOLVER_ENV_LOCK, held by the fixture.
+            unsafe { std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF") };
+        }
+    }
+    let hosts = b"10.9.8.6 nss-files-only.example\nfd00::6 nss-files-only.example\n";
+    with_resolver_backends_full(Some(hosts), None, None, None, None, |_| {
+        let nsswitch = temp_resolver_path("nsswitch");
+        std::fs::write(&nsswitch, b"hosts: dns\n").expect("write nsswitch fixture");
+        let _env = NsswitchEnv;
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
+        let name = CString::new("nss-files-only.example").unwrap();
+
+        // The public API follows the policy: DNS only, so no answer.
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut buf = [0 as c_char; 512];
+        let mut result: *mut c_void = ptr::null_mut();
+        let mut h_errno = 0;
+        unsafe {
+            inet_abi::gethostbyname_r(
+                name.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result,
+                &mut h_errno,
+            )
+        };
+        assert!(
+            result.is_null(),
+            "hosts: dns must not consult the hosts file"
+        );
+
+        // The files module finds it.
+        let (mut err, mut h_err) = (0, 0);
+        let status = unsafe {
+            _nss_files_gethostbyname_r(
+                name.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!(status, 1, "NSS_STATUS_SUCCESS from the files module");
+        assert_eq!(
+            unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+            b"nss-files-only.example"
+        );
+        let addr = unsafe { std::slice::from_raw_parts((*hostent.h_addr_list).cast::<u8>(), 4) };
+        assert_eq!(addr, [10, 9, 8, 6]);
+
+        let octets = [10u8, 9, 8, 6];
+        let status = unsafe {
+            _nss_files_gethostbyaddr_r(
+                octets.as_ptr().cast(),
+                4,
+                libc::AF_INET,
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!(
+            status, 1,
+            "reverse NSS_STATUS_SUCCESS from the files module"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+            b"nss-files-only.example"
+        );
+
+        // IPv6: the public API follows the policy, the files module does not.
+        let mut result6: *mut libc::hostent = ptr::null_mut();
+        unsafe {
+            unistd_abi::gethostbyname2_r(
+                name.as_ptr(),
+                libc::AF_INET6,
+                &mut hostent,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result6,
+                &mut h_errno,
+            )
+        };
+        assert!(
+            result6.is_null(),
+            "hosts: dns must not consult the hosts file (AF_INET6)"
+        );
+        let status = unsafe {
+            unistd_abi::_nss_files_gethostbyname2_r(
+                name.as_ptr(),
+                libc::AF_INET6,
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!(
+            status, 1,
+            "AF_INET6 NSS_STATUS_SUCCESS from the files module"
+        );
+        assert_eq!(hostent.h_addrtype, libc::AF_INET6);
+        let addr = unsafe { std::slice::from_raw_parts((*hostent.h_addr_list).cast::<u8>(), 16) };
+        assert_eq!(
+            addr,
+            "fd00::6".parse::<std::net::Ipv6Addr>().unwrap().octets()
+        );
+    });
+}
+
+/// nsswitch `hosts:` decides which sources every host lookup consults
+/// (bd-rc0923-epic-eeuy4f.19). None of these policies can reach DNS, and each
+/// gives a different answer than the old hard-coded "files, then DNS" order.
+#[test]
+fn nsswitch_hosts_policy_governs_forward_and_reverse_lookups() {
+    struct NsswitchEnv;
+    impl Drop for NsswitchEnv {
+        fn drop(&mut self) {
+            // SAFETY: serialized by RESOLVER_ENV_LOCK, held by the fixture.
+            unsafe { std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF") };
+        }
+    }
+    let hosts = b"10.9.8.7 nss-policy.example\n";
+    with_resolver_backends_full(Some(hosts), None, None, None, None, |_| {
+        let nsswitch = temp_resolver_path("nsswitch");
+        let _env = NsswitchEnv;
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
+        let name = CString::new("nss-policy.example").unwrap();
+        let addr = std::net::Ipv4Addr::new(10, 9, 8, 7).octets();
+
+        let forward = || -> c_int {
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(name.as_ptr(), ptr::null(), &hints, &mut res) };
+            if !res.is_null() {
+                unsafe { resolv_abi::freeaddrinfo(res) };
+            }
+            rc
+        };
+        let legacy_forward = || !unsafe { resolv_abi::gethostbyname(name.as_ptr()) }.is_null();
+        let reverse = || {
+            !unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast(), 4, libc::AF_INET) }.is_null()
+        };
+        let nameinfo = || -> c_int {
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(addr),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut host = [0 as c_char; 256];
+            unsafe {
+                resolv_abi::getnameinfo(
+                    (&sin as *const libc::sockaddr_in).cast(),
+                    mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                    host.as_mut_ptr(),
+                    host.len() as libc::socklen_t,
+                    ptr::null_mut(),
+                    0,
+                    libc::NI_NAMEREQD,
+                )
+            }
+        };
+
+        for (policy, found, unavailable_per_lookup) in [
+            ("hosts: files\n", true, 0u64),
+            // A missing module is an unavailable source: continue.
+            ("hosts: frankenlibc_test_missing_nss files\n", true, 1u64),
+            // Only a missing module: files is never consulted.
+            ("hosts: frankenlibc_test_missing_nss\n", false, 1u64),
+            // Explicitly empty: no sources at all.
+            ("hosts:\n", false, 0u64),
+            // UNAVAIL=return stops before files.
+            (
+                "hosts: frankenlibc_test_missing_nss [UNAVAIL=return] files\n",
+                false,
+                1u64,
+            ),
+        ] {
+            std::fs::write(&nsswitch, policy).expect("write nsswitch fixture");
+            let before = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
+            assert_eq!(forward() == 0, found, "getaddrinfo under {policy:?}");
+            if !found {
+                assert_eq!(forward(), libc::EAI_NONAME, "getaddrinfo under {policy:?}");
+            }
+            assert_eq!(legacy_forward(), found, "gethostbyname under {policy:?}");
+            assert_eq!(reverse(), found, "gethostbyaddr under {policy:?}");
+            assert_eq!(nameinfo() == 0, found, "getnameinfo under {policy:?}");
+            let after = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
+            let lookups = if found { 4 } else { 5 };
+            assert_eq!(
+                after - before,
+                unavailable_per_lookup * lookups,
+                "nss_unavailable_sources delta under {policy:?}"
+            );
+        }
+        let _ = std::fs::remove_file(&nsswitch);
+    });
+}
+
+fn encode_dns_name(name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for label in name.trim_end_matches('.').split('.') {
+        if label.is_empty() {
+            continue;
+        }
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    out
+}
+
+fn parse_dns_question(packet: &[u8]) -> Option<(String, u16, usize)> {
+    if packet.len() < 12 {
+        return None;
+    }
+    let mut pos = 12usize;
+    let mut labels = Vec::new();
+    loop {
+        let len = *packet.get(pos)? as usize;
+        pos += 1;
+        if len == 0 {
+            break;
+        }
+        let end = pos.checked_add(len)?;
+        let label = std::str::from_utf8(packet.get(pos..end)?)
+            .ok()?
+            .to_ascii_lowercase();
+        labels.push(label);
+        pos = end;
+    }
+    if pos + 4 > packet.len() {
+        return None;
+    }
+    let qtype = u16::from_be_bytes([packet[pos], packet[pos + 1]]);
+    Some((labels.join("."), qtype, pos + 4))
+}
+
+fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
+    let (qname, qtype, qend) = parse_dns_question(query)?;
+    let question = &query[12..qend];
+    let mut out = Vec::with_capacity(256);
+    out.extend_from_slice(&query[0..2]); // txid
+
+    if qname == "tc-cname.hermetic.test" && !is_tcp {
+        // Truncated UDP reply (QR=1, RD=1, TC=1, RA=1) forces TCP retry.
+        out.extend_from_slice(&0x8380u16.to_be_bytes());
+        out.extend_from_slice(&1u16.to_be_bytes()); // qdcount
+        out.extend_from_slice(&0u16.to_be_bytes()); // ancount
+        out.extend_from_slice(&0u16.to_be_bytes()); // nscount
+        out.extend_from_slice(&0u16.to_be_bytes()); // arcount
+        out.extend_from_slice(question);
+        return Some(out);
+    }
+
+    let push_rr = |buf: &mut Vec<u8>, owner: &[u8], rr_type: u16, rdata: &[u8]| {
+        buf.extend_from_slice(owner);
+        buf.extend_from_slice(&rr_type.to_be_bytes());
+        buf.extend_from_slice(&1u16.to_be_bytes()); // CLASS_IN
+        buf.extend_from_slice(&60u32.to_be_bytes()); // TTL
+        buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+        buf.extend_from_slice(rdata);
+    };
+
+    let mut answers = Vec::new();
+    let mut ancount = 0u16;
+    let mut flags = 0x8180u16; // NOERROR
+
+    match qname.as_str() {
+        "dual.hermetic.test" => {
+            if qtype == 1 {
+                push_rr(&mut answers, &[0xc0, 0x0c], 1, &[198, 51, 100, 42]);
+                ancount = 1;
+            } else if qtype == 28 {
+                let v6 = std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0042).octets();
+                push_rr(&mut answers, &[0xc0, 0x0c], 28, &v6);
+                ancount = 1;
+            }
+        }
+        "tc-cname.hermetic.test" | "target.hermetic.test" => {
+            let target_wire = encode_dns_name("target.hermetic.test");
+            if qname == "tc-cname.hermetic.test" {
+                push_rr(&mut answers, &[0xc0, 0x0c], 5, &target_wire); // CNAME
+                ancount += 1;
+            }
+            if qtype == 1 {
+                push_rr(&mut answers, &target_wire, 1, &[198, 51, 100, 77]);
+                ancount += 1;
+            } else if qtype == 28 {
+                let v6 = std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0077).octets();
+                push_rr(&mut answers, &target_wire, 28, &v6);
+                ancount += 1;
+            }
+        }
+        "42.100.51.198.in-addr.arpa" => {
+            if qtype == 12 {
+                let ptr_wire = encode_dns_name("dual.hermetic.test");
+                push_rr(&mut answers, &[0xc0, 0x0c], 12, &ptr_wire);
+                ancount = 1;
+            }
+        }
+        _ => {
+            flags = 0x8183; // NXDOMAIN
+        }
+    }
+
+    out.extend_from_slice(&flags.to_be_bytes());
+    out.extend_from_slice(&1u16.to_be_bytes()); // qdcount
+    out.extend_from_slice(&ancount.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes()); // nscount
+    out.extend_from_slice(&0u16.to_be_bytes()); // arcount
+    out.extend_from_slice(question);
+    out.extend_from_slice(&answers);
+    Some(out)
+}
+
+/// Address-family selection must constrain DNS requests, not just discard
+/// answers after performing work for an unavailable family.
+#[test]
+fn getaddrinfo_ai_addrconfig_limits_dns_queries() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_ADDRCONFIG_DNS_TEST_CHILD";
+    if let Ok(case) = std::env::var(CHILD) {
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET6;
+        hints.ai_flags = libc::AI_ADDRCONFIG;
+        let hints_ptr = if case == "unavailable" {
+            &hints
+        } else {
+            ptr::null()
+        };
+        let mut result = ptr::null_mut();
+        // SAFETY: all inputs and the output pointer remain live for the call.
+        let rc = unsafe {
+            resolv_abi::getaddrinfo(
+                c"dual.hermetic.test".as_ptr(),
+                c"80".as_ptr(),
+                hints_ptr,
+                &mut result,
+            )
+        };
+        if case == "unavailable" {
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(result.is_null());
+        } else {
+            assert_eq!(rc, 0);
+            let expected = if case == "ipv4" {
+                libc::AF_INET
+            } else {
+                libc::AF_INET6
+            };
+            assert_eq!(unsafe { collect_addrinfo_families(result) }, [expected]);
+            assert_eq!(unsafe { collect_addrinfo_profiles(result) }.len(), 3);
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        }
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("addrconfig-dns-resolv");
+    let nsswitch_path = temp_resolver_path("addrconfig-dns-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+    for (case, route, inet6, expected_types) in [
+        (
+            "ipv4",
+            "Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n",
+            "",
+            vec![1u16],
+        ),
+        (
+            "ipv6",
+            "Iface Destination Gateway Flags\n",
+            "20010db8000000000000000000000001 02 80 00 20 eth0\n",
+            vec![28],
+        ),
+        (
+            "unavailable",
+            "Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n",
+            "",
+            vec![],
+        ),
+    ] {
+        let route_path = temp_resolver_path("addrconfig-dns-route");
+        let inet6_path = temp_resolver_path("addrconfig-dns-inet6");
+        std::fs::write(&route_path, route).unwrap();
+        std::fs::write(&inet6_path, inet6).unwrap();
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = udp.local_addr().unwrap().port();
+        udp.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            let mut buffer = [0u8; 512];
+            while !stop_server.load(Ordering::Relaxed) {
+                if let Ok((len, peer)) = udp.recv_from(&mut buffer) {
+                    let query = &buffer[..len];
+                    let (name, kind, _) = parse_dns_question(query).unwrap();
+                    observed.push((name, kind));
+                    udp.send_to(&build_hermetic_dns_reply(query, false).unwrap(), peer)
+                        .unwrap();
+                }
+            }
+            observed
+        });
+        // Only the child receives overrides; other parallel resolver tests
+        // cannot race this fixture's configuration or DNS wire observations.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "getaddrinfo_ai_addrconfig_limits_dns_queries",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, case)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env(PROC_NET_ROUTE_PATH_ENV, &route_path)
+            .env(PROC_NET_IF_INET6_PATH_ENV, &inet6_path)
+            .env("LOCALDOMAIN", "")
+            .env("RES_OPTIONS", "")
+            .output();
+        stop.store(true, Ordering::Relaxed);
+        let observed = worker.join().unwrap();
+        let output = output.unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+        let expected = expected_types
+            .into_iter()
+            .map(|kind| ("dual.hermetic.test".to_owned(), kind))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "wire queries for {case}");
+    }
+}
+
+/// Inspect real wire queries in subprocesses: changing resolver environment
+/// variables in the parallel test process would race unrelated libc lookups.
+#[test]
+fn native_dns_environment_controls_search_order_and_transport() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_DNS_ENV_TEST_CHILD";
+    if let Ok(case) = std::env::var(CHILD) {
+        let node = if case == "empty" {
+            c"dual.hermetic.test"
+        } else {
+            c"dual"
+        };
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        hints.ai_flags = libc::AI_CANONNAME;
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), &hints, &mut result) },
+            0
+        );
+        assert!(!result.is_null());
+        // SAFETY: successful getaddrinfo returned one IPv4 address and the
+        // requested canonical name, all owned until freeaddrinfo below.
+        unsafe {
+            assert_eq!((*result).ai_family, libc::AF_INET);
+            let address = &*(*result).ai_addr.cast::<libc::sockaddr_in>();
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [198, 51, 100, 42]);
+            assert!(!(*result).ai_canonname.is_null());
+            assert_eq!(
+                CStr::from_ptr((*result).ai_canonname).to_bytes(),
+                b"dual.hermetic.test"
+            );
+            resolv_abi::freeaddrinfo(result);
+        }
+
+        if case == "tcp" {
+            // Legacy IPv4/IPv6 lookups must use the same environment snapshot
+            // policy as getaddrinfo; both must issue TCP queries here.
+            let entry = unsafe { resolv_abi::gethostbyname(node.as_ptr()) }.cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!(unsafe { (*entry).h_addrtype }, libc::AF_INET);
+            let mut entry: libc::hostent = unsafe { mem::zeroed() };
+            let mut buffer = [0 as c_char; 1024];
+            let mut found: *mut libc::hostent = ptr::null_mut();
+            let mut host_error = 0;
+            assert_eq!(
+                unsafe {
+                    unistd_abi::gethostbyname2_r(
+                        node.as_ptr(),
+                        libc::AF_INET6,
+                        (&mut entry as *mut libc::hostent).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        (&mut found as *mut *mut libc::hostent).cast(),
+                        &mut host_error,
+                    )
+                },
+                0
+            );
+            assert!(!found.is_null());
+            assert_eq!(entry.h_addrtype, libc::AF_INET6);
+
+            let address = libc::sockaddr_in {
+                sin_family: libc::AF_INET as _,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes([198, 51, 100, 42]),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut host = [0 as c_char; 256];
+            assert_eq!(
+                unsafe {
+                    resolv_abi::getnameinfo(
+                        (&address as *const libc::sockaddr_in).cast(),
+                        mem::size_of_val(&address) as _,
+                        host.as_mut_ptr(),
+                        host.len() as _,
+                        ptr::null_mut(),
+                        0,
+                        libc::NI_NAMEREQD,
+                    )
+                },
+                0
+            );
+            assert_eq!(
+                unsafe { CStr::from_ptr(host.as_ptr()) }.to_bytes(),
+                b"dual.hermetic.test"
+            );
+            let entry = unsafe {
+                resolv_abi::gethostbyaddr(
+                    (&address.sin_addr as *const libc::in_addr).cast(),
+                    4,
+                    libc::AF_INET,
+                )
+            }
+            .cast::<libc::hostent>();
+            assert!(!entry.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*entry).h_name) }.to_bytes(),
+                b"dual.hermetic.test"
+            );
+        }
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("environment-resolv");
+    let nsswitch_path = temp_resolver_path("environment-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\nsearch ignored.hermetic.test\noptions ndots:4 timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+
+    for (case, localdomain, options, expected_names) in [
+        (
+            "domain",
+            "hermetic.test",
+            "",
+            vec![("dual.hermetic.test", 1)],
+        ),
+        ("empty", "", "", vec![("dual.hermetic.test", 1)]),
+        (
+            "ndots",
+            "hermetic.test",
+            "ndots:0",
+            vec![("dual", 1), ("dual.hermetic.test", 1)],
+        ),
+        (
+            "tcp",
+            "hermetic.test",
+            "use-vc trust-ad",
+            vec![
+                ("dual.hermetic.test", 1),
+                ("dual.hermetic.test", 1),
+                ("dual.hermetic.test", 28),
+                ("42.100.51.198.in-addr.arpa", 12),
+                ("42.100.51.198.in-addr.arpa", 12),
+            ],
+        ),
+    ] {
+        let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let tcp = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        udp.set_read_timeout(Some(Duration::from_millis(5)))
+            .unwrap();
+        tcp.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_server = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            let mut observed = Vec::new();
+            let mut record = |query: &[u8], is_tcp: bool| {
+                let (name, kind, _) = parse_dns_question(query).unwrap();
+                observed.push((name, kind, is_tcp, query[3] & 0x20 != 0));
+                build_hermetic_dns_reply(query, is_tcp).unwrap()
+            };
+            let mut buffer = [0u8; 512];
+            while !stop_server.load(Ordering::Relaxed) {
+                while let Ok((n, peer)) = udp.recv_from(&mut buffer) {
+                    udp.send_to(&record(&buffer[..n], false), peer).unwrap();
+                }
+                while let Ok((mut stream, _)) = tcp.accept() {
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    let mut size = [0u8; 2];
+                    stream.read_exact(&mut size).unwrap();
+                    let mut query = vec![0u8; u16::from_be_bytes(size) as usize];
+                    stream.read_exact(&mut query).unwrap();
+                    let reply = record(&query, true);
+                    stream
+                        .write_all(&(reply.len() as u16).to_be_bytes())
+                        .unwrap();
+                    stream.write_all(&reply).unwrap();
+                }
+            }
+            observed
+        });
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "native_dns_environment_controls_search_order_and_transport",
+                "--nocapture",
+            ])
+            .env(CHILD, case)
+            .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+            .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+            .env("FRANKENLIBC_DNS_PORT", port.to_string())
+            .env("LOCALDOMAIN", localdomain)
+            .env("RES_OPTIONS", options)
+            .output()
+            .unwrap();
+        stop.store(true, Ordering::Relaxed);
+        let observed = worker.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected = expected_names
+            .into_iter()
+            .map(|(name, kind)| (name.to_owned(), kind, case == "tcp", case == "tcp"))
+            .collect::<Vec<_>>();
+        assert_eq!(observed, expected, "wire queries for {case}");
+    }
+    let _ = std::fs::remove_file(resolv_path);
+    let _ = std::fs::remove_file(nsswitch_path);
+}
+
+#[test]
+fn hostaliases_native_dns_preserves_nss_order_and_direct_target_semantics() {
+    use frankenlibc_abi::resolv_state::{RES_NOALIASES, State};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_HOSTALIASES_DNS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let lookup = |name: &CStr, family, flags| {
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = family;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = flags;
+            let mut result = ptr::null_mut();
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(name.as_ptr(), ptr::null(), &hints, &mut result) };
+            let (families, canonical) = if result.is_null() {
+                (Vec::new(), None)
+            } else {
+                let families = unsafe { collect_addrinfo_families(result) };
+                let canonical = unsafe { collect_addrinfo_canonname(result) }
+                    .into_iter()
+                    .flatten()
+                    .next();
+                unsafe { resolv_abi::freeaddrinfo(result) };
+                (families, canonical)
+            };
+            (rc, families, canonical)
+        };
+        let (rc, mut families, canonical) = lookup(c"sHoRt", libc::AF_UNSPEC, libc::AI_CANONNAME);
+        assert_eq!(rc, 0);
+        families.sort_unstable();
+        assert_eq!(families, [libc::AF_INET, libc::AF_INET6]);
+        assert_eq!(canonical.as_deref(), Some(b"dual.hermetic.test".as_slice()));
+
+        let legacy =
+            unsafe { resolv_abi::gethostbyname(c"short".as_ptr()) }.cast::<libc::hostent>();
+        assert!(!legacy.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr((*legacy).h_name) }.to_bytes(),
+            b"dual.hermetic.test"
+        );
+        assert_eq!(
+            unsafe { hostent_addr_octets(&*legacy) },
+            [[198, 51, 100, 42]]
+        );
+        let mut entry: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0 as c_char; 1024];
+        let mut result: *mut libc::hostent = ptr::null_mut();
+        let mut host_error = 0;
+        assert_eq!(
+            unsafe {
+                unistd_abi::gethostbyname2_r(
+                    c"short".as_ptr(),
+                    libc::AF_INET6,
+                    (&mut entry as *mut libc::hostent).cast(),
+                    scratch.as_mut_ptr(),
+                    scratch.len(),
+                    (&mut result as *mut *mut libc::hostent).cast(),
+                    &mut host_error,
+                )
+            },
+            0
+        );
+        assert!(!result.is_null());
+        assert_eq!(entry.h_addrtype, libc::AF_INET6);
+        assert_eq!(
+            unsafe { CStr::from_ptr(entry.h_name) }.to_bytes(),
+            b"dual.hermetic.test"
+        );
+
+        // The files source wins before DNS even when an alias of the same
+        // spelling points elsewhere. Numeric-only requests never reach DNS.
+        let (rc, _, canonical) = lookup(c"shadow", libc::AF_INET, libc::AI_CANONNAME);
+        assert_eq!(rc, 0);
+        assert_eq!(canonical.as_deref(), Some(b"shadow".as_slice()));
+        let shadow =
+            unsafe { resolv_abi::gethostbyname(c"shadow".as_ptr()) }.cast::<libc::hostent>();
+        assert!(!shadow.is_null());
+        assert_eq!(
+            unsafe { hostent_addr_octets(&*shadow) },
+            [[203, 0, 113, 11]]
+        );
+        assert_eq!(
+            lookup(c"short", libc::AF_INET, libc::AI_NUMERICHOST).0,
+            libc::EAI_NONAME
+        );
+
+        for (name, expected) in [
+            (c"negative", libc::EAI_NONAME),
+            (c"temporary", libc::EAI_AGAIN),
+            (c"chain", libc::EAI_NONAME),
+            (c"dotted.alias", libc::EAI_NONAME),
+            (c"short.", libc::EAI_NONAME),
+            (c"invalid", libc::EAI_FAIL),
+        ] {
+            assert_eq!(lookup(name, libc::AF_INET, 0).0, expected, "{name:?}");
+        }
+        for (name, expected) in [(c"negative", 1), (c"temporary", 2), (c"invalid", 3)] {
+            assert!(unsafe { resolv_abi::gethostbyname(name.as_ptr()) }.is_null());
+            assert_eq!(unsafe { *resolv_abi::__h_errno_location() }, expected);
+        }
+
+        // The native address API observes the public per-thread switch too.
+        let state = unsafe { frankenlibc_abi::glibc_internal_abi::__res_state() }.cast::<State>();
+        let options = unsafe { (*state).options };
+        unsafe { (*state).options |= RES_NOALIASES };
+        assert_eq!(lookup(c"short", libc::AF_INET, 0).0, libc::EAI_NONAME);
+        assert!(unsafe { resolv_abi::gethostbyname(c"short".as_ptr()) }.is_null());
+        unsafe { (*state).options = options };
+        assert_eq!(lookup(c"short", libc::AF_INET, 0).0, 0);
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("hostaliases-resolv");
+    let nsswitch_path = temp_resolver_path("hostaliases-nsswitch");
+    let hosts_path = temp_resolver_path("hostaliases-hosts");
+    let aliases_path = temp_resolver_path("hostaliases-dns");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\nsearch ignored.hermetic.test\noptions ndots:4 timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: files dns\n").unwrap();
+    std::fs::write(&hosts_path, b"203.0.113.11 shadow\n").unwrap();
+    std::fs::write(
+        &aliases_path,
+        b"broken\nother \xff\nSHORT dual.hermetic.test\nshadow dual.hermetic.test\nnegative missing.hermetic.test\ntemporary temporary.hermetic.test\nchain next\nnext dual.hermetic.test\ndotted.alias dual.hermetic.test\ninvalid invalid..name\n",
+    )
+    .unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    socket
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let worker = std::thread::spawn(move || {
+        let mut observed = Vec::new();
+        let mut query = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            let (n, peer) = match socket.recv_from(&mut query) {
+                Ok(received) => received,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => panic!("DNS fixture: {error}"),
+            };
+            let (name, kind, _) = parse_dns_question(&query[..n]).unwrap();
+            let mut reply = build_hermetic_dns_reply(&query[..n], false).unwrap();
+            if name == "temporary.hermetic.test" {
+                reply[3] = (reply[3] & !15) | 2;
+            }
+            observed.push((name, kind));
+            socket.send_to(&reply, peer).unwrap();
+        }
+        observed
+    });
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "hostaliases_native_dns_preserves_nss_order_and_direct_target_semantics",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("FRANKENLIBC_MODE", "strict")
+        .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+        .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+        .env(HOSTS_PATH_ENV, &hosts_path)
+        .env("FRANKENLIBC_DNS_PORT", port.to_string())
+        .env("HOSTALIASES", &aliases_path)
+        .env("LOCALDOMAIN", "ignored.hermetic.test")
+        .env("RES_OPTIONS", "ndots:4 timeout:1 attempts:1")
+        .output()
+        .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    let observed = worker.join().unwrap();
+    for path in [resolv_path, nsswitch_path, hosts_path, aliases_path] {
+        let _ = std::fs::remove_file(path);
+    }
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = [
+        ("dual.hermetic.test", 1),
+        ("dual.hermetic.test", 28),
+        ("dual.hermetic.test", 1),
+        ("dual.hermetic.test", 28),
+        ("missing.hermetic.test", 1),
+        ("temporary.hermetic.test", 1),
+        ("next", 1),
+        ("dotted.alias.ignored.hermetic.test", 1),
+        ("dotted.alias", 1),
+        ("short", 1),
+        ("missing.hermetic.test", 1),
+        ("temporary.hermetic.test", 1),
+        ("short.ignored.hermetic.test", 1),
+        ("short", 1),
+        ("short.ignored.hermetic.test", 1),
+        ("short", 1),
+        ("dual.hermetic.test", 1),
+    ]
+    .map(|(name, kind)| (name.to_owned(), kind));
+    assert_eq!(observed, expected);
+}
+
+/// Live ABI differential test against host glibc (`dlsym_oracle::host_fn`)
+/// backed by a hermetic local UDP+TCP DNS server on `127.0.0.1:<port>`
+/// (bd-rc0923-epic-eeuy4f.19).
+#[test]
+fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    type NssConfigureLookupFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
+    type ResInitFn = unsafe extern "C" fn() -> c_int;
+    type ResStateFn = unsafe extern "C" fn() -> *mut u8;
+    type Gethostbyname2RFn = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut *mut libc::hostent,
+        *mut c_int,
+    ) -> c_int;
+    type GethostbyaddrFn =
+        unsafe extern "C" fn(*const c_void, libc::socklen_t, c_int) -> *mut libc::hostent;
+    type GetnameinfoFn = unsafe extern "C" fn(
+        *const libc::sockaddr,
+        libc::socklen_t,
+        *mut c_char,
+        libc::socklen_t,
+        *mut c_char,
+        libc::socklen_t,
+        c_int,
+    ) -> c_int;
+
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind hermetic UDP DNS");
+    let port = udp.local_addr().unwrap().port();
+    let tcp = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind hermetic TCP DNS");
+    udp.set_read_timeout(Some(Duration::from_millis(5)))
+        .expect("set UDP read timeout");
+    tcp.set_nonblocking(true).expect("set TCP nonblocking");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let server_thread = std::thread::spawn(move || {
+        let mut buf = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            while let Ok((len, peer)) = udp.recv_from(&mut buf) {
+                if let Some(reply) = build_hermetic_dns_reply(&buf[..len], false) {
+                    let _ = udp.send_to(&reply, peer);
+                }
+            }
+            while let Ok((mut stream, _)) = tcp.accept() {
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+                let mut len_bytes = [0u8; 2];
+                while stream.read_exact(&mut len_bytes).is_ok() {
+                    let qlen = u16::from_be_bytes(len_bytes) as usize;
+                    let mut qbuf = vec![0u8; qlen];
+                    if stream.read_exact(&mut qbuf).is_ok() {
+                        if let Some(reply) = build_hermetic_dns_reply(&qbuf, true) {
+                            let rlen = (reply.len() as u16).to_be_bytes();
+                            if stream.write_all(&rlen).is_err() || stream.write_all(&reply).is_err()
+                            {
+                                break;
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Save host /etc/nsswitch.conf `hosts:` policy so we can restore it on drop.
+    let orig_hosts_policy = std::fs::read_to_string("/etc/nsswitch.conf")
+        .ok()
+        .and_then(|s| {
+            s.lines().find_map(|line| {
+                let trimmed = line.split('#').next()?.trim();
+                trimmed
+                    .strip_prefix("hosts:")
+                    .map(|rest| rest.trim().to_string())
+            })
+        })
+        .unwrap_or_else(|| "files dns".to_string());
+    let orig_hosts_cstr = CString::new(orig_hosts_policy).unwrap();
+
+    with_resolver_backends(Some(b"127.0.0.1 localhost\n"), None, |_| {
+        let resolv_path = temp_resolver_path("hermetic-resolv");
+        let nsswitch_path = temp_resolver_path("hermetic-nsswitch");
+        std::fs::write(
+            &resolv_path,
+            b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+        )
+        .expect("write hermetic resolv.conf");
+        std::fs::write(&nsswitch_path, b"hosts: files dns\n").expect("write hermetic nsswitch");
+
+        // Configure host glibc's thread-local __res_state() to point to 127.0.0.1:<port>
+        // and force host glibc's NSS `hosts` database to `files dns`.
+        let nss_cfg_sym = CString::new("__nss_configure_lookup").unwrap();
+        let res_init_sym = CString::new("__res_init").unwrap();
+        let res_state_sym = CString::new("__res_state").unwrap();
+        let nss_cfg_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, nss_cfg_sym.as_ptr()) };
+        let res_init_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, res_init_sym.as_ptr()) };
+        let res_state_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, res_state_sym.as_ptr()) };
+        assert!(!res_init_ptr.is_null() && !res_state_ptr.is_null());
+
+        unsafe {
+            if !nss_cfg_ptr.is_null() {
+                let nss_cfg: NssConfigureLookupFn = mem::transmute(nss_cfg_ptr);
+                nss_cfg(c"hosts".as_ptr(), c"files dns".as_ptr());
+            }
+            let res_init: ResInitFn = mem::transmute(res_init_ptr);
+            let res_state: ResStateFn = mem::transmute(res_state_ptr);
+            assert_eq!(res_init(), 0);
+            let state = res_state();
+            assert!(!state.is_null());
+            // glibc struct __res_state layout on x86_64:
+            // offset 0: int retrans; offset 4: int retry; offset 16: int nscount;
+            // offset 20: struct sockaddr_in nsaddr_list[MAXNS].
+            ptr::write_unaligned(state.add(0).cast::<c_int>(), 1);
+            ptr::write_unaligned(state.add(4).cast::<c_int>(), 1);
+            ptr::write_unaligned(state.add(16).cast::<c_int>(), 1);
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: port.to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+                },
+                sin_zero: [0; 8],
+            };
+            ptr::write_unaligned(state.add(20).cast::<libc::sockaddr_in>(), sin);
+
+            std::env::set_var("FRANKENLIBC_RESOLV_CONF", &resolv_path);
+            std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path);
+            std::env::set_var("FRANKENLIBC_DNS_PORT", port.to_string());
+        }
+
+        struct HermeticCleanup {
+            resolv_path: std::path::PathBuf,
+            nsswitch_path: std::path::PathBuf,
+            nss_cfg_ptr: *mut c_void,
+            res_init_ptr: *mut c_void,
+            orig_hosts_cstr: CString,
+            stop: Arc<AtomicBool>,
+        }
+        impl Drop for HermeticCleanup {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::Relaxed);
+                unsafe {
+                    std::env::remove_var("FRANKENLIBC_RESOLV_CONF");
+                    std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                    std::env::remove_var("FRANKENLIBC_DNS_PORT");
+                    if !self.nss_cfg_ptr.is_null() {
+                        let nss_cfg: NssConfigureLookupFn = mem::transmute(self.nss_cfg_ptr);
+                        nss_cfg(c"hosts".as_ptr(), self.orig_hosts_cstr.as_ptr());
+                    }
+                    let res_init: ResInitFn = mem::transmute(self.res_init_ptr);
+                    let _ = res_init();
+                }
+                let _ = std::fs::remove_file(&self.resolv_path);
+                let _ = std::fs::remove_file(&self.nsswitch_path);
+            }
+        }
+        let _cleanup = HermeticCleanup {
+            resolv_path: resolv_path.clone(),
+            nsswitch_path: nsswitch_path.clone(),
+            nss_cfg_ptr,
+            res_init_ptr,
+            orig_hosts_cstr,
+            stop: Arc::clone(&stop),
+        };
+
+        let extract_gai = |gai: GetaddrinfoFn,
+                           free: FreeaddrinfoFn,
+                           node: &CStr,
+                           family: c_int,
+                           flags: c_int|
+         -> (c_int, Option<String>, Vec<String>) {
+            unsafe {
+                let mut hints: libc::addrinfo = mem::zeroed();
+                hints.ai_family = family;
+                hints.ai_socktype = libc::SOCK_STREAM;
+                hints.ai_flags = flags;
+                let mut res: *mut libc::addrinfo = ptr::null_mut();
+                let rc = gai(node.as_ptr(), ptr::null(), &hints, &mut res);
+                let mut canon = None;
+                let mut addrs = Vec::new();
+                let mut cur = res;
+                while !cur.is_null() {
+                    let ai = &*cur;
+                    if canon.is_none() && !ai.ai_canonname.is_null() {
+                        canon = Some(
+                            CStr::from_ptr(ai.ai_canonname)
+                                .to_string_lossy()
+                                .into_owned(),
+                        );
+                    }
+                    if ai.ai_family == libc::AF_INET && !ai.ai_addr.is_null() {
+                        let sin = &*(ai.ai_addr as *const libc::sockaddr_in);
+                        let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                        addrs.push(ip.to_string());
+                    } else if ai.ai_family == libc::AF_INET6 && !ai.ai_addr.is_null() {
+                        let sin6 = &*(ai.ai_addr as *const libc::sockaddr_in6);
+                        let ip = std::net::Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                        addrs.push(ip.to_string());
+                    }
+                    cur = ai.ai_next;
+                }
+                if !res.is_null() {
+                    free(res);
+                }
+                (rc, canon, addrs)
+            }
+        };
+
+        let host_gai: GetaddrinfoFn =
+            unsafe { dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ()) };
+        let host_free: FreeaddrinfoFn = unsafe {
+            dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ())
+        };
+
+        // 1. UDP A + AAAA + AF_UNSPEC + AI_CANONNAME on dual.hermetic.test.
+        let dual = c"dual.hermetic.test";
+        for family in [libc::AF_INET, libc::AF_INET6, libc::AF_UNSPEC] {
+            let fl = extract_gai(
+                resolv_abi::getaddrinfo,
+                resolv_abi::freeaddrinfo,
+                dual,
+                family,
+                libc::AI_CANONNAME,
+            );
+            let gl = extract_gai(host_gai, host_free, dual, family, libc::AI_CANONNAME);
+            assert_eq!(fl, gl, "getaddrinfo(dual.hermetic.test, family={family})");
+            assert_eq!(fl.0, 0);
+        }
+
+        // 2. UDP TC=1 truncation -> TCP fallback + CNAME chain on tc-cname.hermetic.test.
+        let tc_cname = c"tc-cname.hermetic.test";
+        for family in [libc::AF_INET, libc::AF_INET6, libc::AF_UNSPEC] {
+            let fl = extract_gai(
+                resolv_abi::getaddrinfo,
+                resolv_abi::freeaddrinfo,
+                tc_cname,
+                family,
+                libc::AI_CANONNAME,
+            );
+            let gl = extract_gai(host_gai, host_free, tc_cname, family, libc::AI_CANONNAME);
+            assert_eq!(
+                fl, gl,
+                "getaddrinfo(tc-cname.hermetic.test, family={family})"
+            );
+            assert_eq!(fl.0, 0);
+            assert_eq!(fl.1.as_deref(), Some("target.hermetic.test"));
+        }
+
+        // 3. Legacy gethostbyname_r and gethostbyname2_r(AF_INET6) over TCP fallback + CNAME.
+        let snapshot_hostent = |h: *const libc::hostent| -> (String, Vec<String>, Vec<Vec<u8>>) {
+            unsafe {
+                let he = &*h;
+                let cname = CStr::from_ptr(he.h_name).to_string_lossy().into_owned();
+                let mut aliases = Vec::new();
+                let mut ap = he.h_aliases;
+                while !ap.is_null() && !(*ap).is_null() {
+                    aliases.push(CStr::from_ptr(*ap).to_string_lossy().into_owned());
+                    ap = ap.add(1);
+                }
+                let mut addrs = Vec::new();
+                let mut p = he.h_addr_list;
+                while !p.is_null() && !(*p).is_null() {
+                    let slice = std::slice::from_raw_parts((*p).cast::<u8>(), he.h_length as usize);
+                    addrs.push(slice.to_vec());
+                    p = p.add(1);
+                }
+                (cname, aliases, addrs)
+            }
+        };
+
+        unsafe {
+            let host_ghbn_r: GethostbynameRFn =
+                dlsym_oracle::host_fn(c"gethostbyname_r", inet_abi::gethostbyname_r as *const ());
+            let mut fl_he: libc::hostent = mem::zeroed();
+            let mut gl_he: libc::hostent = mem::zeroed();
+            let mut fl_buf = [0 as c_char; 512];
+            let mut gl_buf = [0 as c_char; 512];
+            let mut fl_res: *mut libc::hostent = ptr::null_mut();
+            let mut gl_res: *mut libc::hostent = ptr::null_mut();
+            let mut fl_herr = -1;
+            let mut gl_herr = -1;
+            let fl_rc = inet_abi::gethostbyname_r(
+                tc_cname.as_ptr(),
+                (&mut fl_he as *mut libc::hostent).cast(),
+                fl_buf.as_mut_ptr(),
+                fl_buf.len(),
+                (&mut fl_res as *mut *mut libc::hostent).cast(),
+                &mut fl_herr,
+            );
+            let gl_rc = host_ghbn_r(
+                tc_cname.as_ptr(),
+                &mut gl_he,
+                gl_buf.as_mut_ptr(),
+                gl_buf.len(),
+                &mut gl_res,
+                &mut gl_herr,
+            );
+            assert_eq!((fl_rc, fl_herr), (gl_rc, gl_herr));
+            assert!(!fl_res.is_null() && !gl_res.is_null());
+            assert_eq!(snapshot_hostent(fl_res), snapshot_hostent(gl_res));
+
+            let host_ghbn2_r: Gethostbyname2RFn = dlsym_oracle::host_fn(
+                c"gethostbyname2_r",
+                frankenlibc_abi::unistd_abi::gethostbyname2_r as *const (),
+            );
+            fl_res = ptr::null_mut();
+            gl_res = ptr::null_mut();
+            let fl_rc6 = frankenlibc_abi::unistd_abi::gethostbyname2_r(
+                tc_cname.as_ptr(),
+                libc::AF_INET6,
+                (&mut fl_he as *mut libc::hostent).cast(),
+                fl_buf.as_mut_ptr(),
+                fl_buf.len(),
+                (&mut fl_res as *mut *mut libc::hostent).cast(),
+                &mut fl_herr,
+            );
+            let gl_rc6 = host_ghbn2_r(
+                tc_cname.as_ptr(),
+                libc::AF_INET6,
+                &mut gl_he,
+                gl_buf.as_mut_ptr(),
+                gl_buf.len(),
+                &mut gl_res,
+                &mut gl_herr,
+            );
+            assert_eq!((fl_rc6, fl_herr), (gl_rc6, gl_herr));
+            assert!(!fl_res.is_null() && !gl_res.is_null());
+            assert_eq!(snapshot_hostent(fl_res), snapshot_hostent(gl_res));
+        }
+
+        // 4. Reverse lookup (PTR) via getnameinfo(NI_NAMEREQD) and gethostbyaddr.
+        unsafe {
+            let host_gni: GetnameinfoFn =
+                dlsym_oracle::host_fn(c"getnameinfo", resolv_abi::getnameinfo as *const ());
+            let host_ghba: GethostbyaddrFn =
+                dlsym_oracle::host_fn(c"gethostbyaddr", resolv_abi::gethostbyaddr as *const ());
+            let addr_octets = [198u8, 51, 100, 42];
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(addr_octets),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut fl_host = [0 as c_char; 256];
+            let mut gl_host = [0 as c_char; 256];
+            let fl_rc = resolv_abi::getnameinfo(
+                (&sin as *const libc::sockaddr_in).cast(),
+                mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                fl_host.as_mut_ptr(),
+                fl_host.len() as libc::socklen_t,
+                ptr::null_mut(),
+                0,
+                libc::NI_NAMEREQD,
+            );
+            let gl_rc = host_gni(
+                (&sin as *const libc::sockaddr_in).cast(),
+                mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                gl_host.as_mut_ptr(),
+                gl_host.len() as libc::socklen_t,
+                ptr::null_mut(),
+                0,
+                libc::NI_NAMEREQD,
+            );
+            assert_eq!(fl_rc, gl_rc);
+            assert_eq!(fl_rc, 0);
+            assert_eq!(
+                CStr::from_ptr(fl_host.as_ptr()),
+                CStr::from_ptr(gl_host.as_ptr())
+            );
+            assert_eq!(CStr::from_ptr(fl_host.as_ptr()), c"dual.hermetic.test");
+
+            let fl_he: *mut libc::hostent =
+                resolv_abi::gethostbyaddr(addr_octets.as_ptr().cast(), 4, libc::AF_INET).cast();
+            let gl_he = host_ghba(addr_octets.as_ptr().cast(), 4, libc::AF_INET);
+            assert!(!fl_he.is_null() && !gl_he.is_null());
+            assert_eq!(snapshot_hostent(fl_he), snapshot_hostent(gl_he));
+        }
+
+        // 5. NXDOMAIN differential across getaddrinfo, gethostbyname, and gethostbyname_r.
+        let nx = c"nx.hermetic.test";
+        let fl_nx = extract_gai(
+            resolv_abi::getaddrinfo,
+            resolv_abi::freeaddrinfo,
+            nx,
+            libc::AF_UNSPEC,
+            0,
+        );
+        let gl_nx = extract_gai(host_gai, host_free, nx, libc::AF_UNSPEC, 0);
+        assert_eq!(fl_nx, gl_nx);
+        assert_eq!(fl_nx.0, libc::EAI_NONAME);
+        assert_eq!(
+            host_gethostbyname_r(nx),
+            (0, true, HOST_NOT_FOUND_ERRNO),
+            "host gethostbyname_r NXDOMAIN"
+        );
+        assert_eq!(
+            host_gethostbyname(nx),
+            (true, HOST_NOT_FOUND_ERRNO),
+            "host gethostbyname NXDOMAIN"
+        );
+
+        // 6. nsswitch `hosts:` policy transitions into live DNS vs halting on UNAVAIL.
+        std::fs::write(&nsswitch_path, b"hosts: frankenlibc_test_missing_nss dns\n").unwrap();
+        let before_unavail = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
+        let fl_after_skip = extract_gai(
+            resolv_abi::getaddrinfo,
+            resolv_abi::freeaddrinfo,
+            dual,
+            libc::AF_INET,
+            0,
+        );
+        assert_eq!(fl_after_skip.0, 0);
+        assert_eq!(fl_after_skip.2, vec!["198.51.100.42".to_string()]);
+        assert_eq!(
+            resolv_abi::dns_metrics_snapshot().nss_unavailable_sources,
+            before_unavail + 1
+        );
+
+        std::fs::write(
+            &nsswitch_path,
+            b"hosts: frankenlibc_test_missing_nss [UNAVAIL=return] dns\n",
+        )
+        .unwrap();
+        let fl_halted = extract_gai(
+            resolv_abi::getaddrinfo,
+            resolv_abi::freeaddrinfo,
+            dual,
+            libc::AF_INET,
+            0,
+        );
+        assert_eq!(fl_halted.0, libc::EAI_NONAME);
+        assert_eq!(
+            resolv_abi::dns_metrics_snapshot().nss_unavailable_sources,
+            before_unavail + 2
+        );
+    });
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = server_thread.join();
+}

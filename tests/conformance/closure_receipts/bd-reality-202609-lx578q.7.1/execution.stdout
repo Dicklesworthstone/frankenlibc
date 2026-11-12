@@ -1,0 +1,9 @@
+
+running 4 tests
+test async_self_cancel_terminates_without_an_explicit_testcancel ... ok
+test invalid_cancelstate_and_canceltype_are_rejected_like_glibc ... ok
+test testcancel_consumes_a_pending_cancel_and_exits_with_pthread_canceled ... ok
+test testcancel_is_a_no_op_while_cancellation_is_disabled ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

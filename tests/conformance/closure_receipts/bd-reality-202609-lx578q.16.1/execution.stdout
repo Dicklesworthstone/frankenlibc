@@ -1,0 +1,10 @@
+
+running 5 tests
+test frankentui_snapshot_golden_checksum_is_deterministic_and_catches_one_row_regression ... ok
+test seeded_lab_replay_catches_schedule_dependent_ebr_bug_and_emits_shrunk_witness_jsonl ... ok
+test seeded_lab_replay_reports_tool_failure_distinctly_when_lab_adapter_unavailable ... ok
+test seeded_lab_replay_ten_runs_byte_identical_and_distinct_seeds_vary_schedule ... ok
+test tooling_dependency_boundary_passes_at_head_and_rejects_synthetic_runtime_leakage ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+

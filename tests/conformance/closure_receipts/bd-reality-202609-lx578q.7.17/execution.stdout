@@ -1,0 +1,11 @@
+
+running 6 tests
+test global_builder_observes_public_flags_class_and_notify ... ok
+test global_negative_answer_is_copied_and_error_slots_agree ... ok
+test global_query_uses_mutated_endpoint_and_non_in_class ... ok
+test global_raw_send_rejects_invalid_output_before_socket_activity ... ok
+test global_search_uses_caller_suffixes_instead_of_cached_configuration ... ok
+test global_tls_addresses_are_distinct_and_stable_across_threads ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

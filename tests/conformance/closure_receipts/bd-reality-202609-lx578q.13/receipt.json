@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.13",
+  "contract": {
+    "behavior": "Verify append-only historical evidence against committed snapshots while requiring current file integrity and preventing freshness dilution",
+    "acceptance_sha256": "a30f2803a16a50fec87996a20f16d0183bcbc122661d5f5a1fe622d2f0cdacd4",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "source": {
+      "commit": "f5dcc0877052e070d14e4f6d11c6cec7cd7836fd",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/evidence_freshness_gate_test.rs": "ce97a4fb67a8f9bfdf5ae1da177ef341fd6f21b271b33d43b4743a551d2806fc",
+        "crates/frankenlibc-harness/tests/evidence_integrity_kernel_e2e_test.rs": "e3ff17f336f969411494f2fd4cab50aaf777e8794bc1d5949ac8295bc828bf59",
+        "crates/frankenlibc-harness/tests/evidence_ledger_gate_test.rs": "0d49fe8ce1680e68e870a79b11b8ae0dcaaba001d52c811c9361b399b8d4cf4b",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/check_evidence_freshness.sh": "af1a984bb9ddfea7c0f1572a94b15180504892de8384b1ceb64d401075c7d308",
+        "scripts/check_evidence_integrity_kernel_e2e.sh": "5ed3de0b334700d58e9b4ddf7573b37090e66a47c0025c0d51370024def01f2c",
+        "scripts/check_evidence_ledger.sh": "8c41ace821da847772fae2d09e572a73a8d5b0fe03aa60aa6aa532fe6731d826",
+        "tests/conformance/evidence_ledger.jsonl": "f84755926216380c10857fb04a6c3433fc98d8e67a156f4b06f019965fe96bc9"
+      }
+    },
+    "behavior_paths": [
+      "scripts/check_evidence_ledger.sh",
+      "scripts/check_evidence_freshness.sh",
+      "scripts/check_evidence_integrity_kernel_e2e.sh",
+      "tests/conformance/evidence_ledger.jsonl"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/evidence_ledger_gate_test.rs",
+      "crates/frankenlibc-harness/tests/evidence_freshness_gate_test.rs",
+      "crates/frankenlibc-harness/tests/evidence_integrity_kernel_e2e_test.rs"
+    ],
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/bb724ecdab673d61/out/evidence_ledger_gate_test-bb724ecdab673d61",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "evidence_ledger_gate_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/bb724ecdab673d61/out/evidence_ledger_gate_test-bb724ecdab673d61"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "evidence_ledger_rows_bind_existing_artifacts",
+        "evidence_ledger_anchors_ws0_regenerated_artifacts",
+        "checker_accepts_canonical_evidence_ledger",
+        "checker_rejects_artifact_hash_drift",
+        "checker_rejects_mutated_ledger_entry_chain",
+        "checker_preserves_history_and_rejects_snapshot_corruption",
+        "freshness_counts_current_artifacts_without_history_dilution",
+        "declared_source_identity_is_checked_before_success"
+      ]
+    },
+    "not_before": "2026-11-03T14:35:10.692570+00:00"
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "evidence_ledger_gate_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:24:22.056149+00:00",
+    "finished_at": "2026-11-12T06:24:22.442011+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "324954e6060250144f29d1b05c435c1656abc3a9a3c8a094e1c02376bdbfb39e",
+    "stderr_sha256": "36bd3a78f089347079f6fb364ee7fd4e0660afb343b452c81f638b4ca7d25a7f",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/bb724ecdab673d61/out/evidence_ledger_gate_test-bb724ecdab673d61",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:24:22.454610+00:00",
+    "finished_at": "2026-11-12T06:24:25.184264+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "876a46450094031b0ff074567e9aa36ca088eb4fded20a2e803ef55f6d305e7c",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 8
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/bb724ecdab673d61/out/evidence_ledger_gate_test-bb724ecdab673d61": "685d686c54430bbd6f8c8652243dea7acf8f0e95c4cdc4519aee615ee60baeb6"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/bb724ecdab673d61/out/evidence_ledger_gate_test-bb724ecdab673d61": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/evidence_freshness_gate_test.rs": "ce97a4fb67a8f9bfdf5ae1da177ef341fd6f21b271b33d43b4743a551d2806fc",
+    "crates/frankenlibc-harness/tests/evidence_integrity_kernel_e2e_test.rs": "e3ff17f336f969411494f2fd4cab50aaf777e8794bc1d5949ac8295bc828bf59",
+    "crates/frankenlibc-harness/tests/evidence_ledger_gate_test.rs": "0d49fe8ce1680e68e870a79b11b8ae0dcaaba001d52c811c9361b399b8d4cf4b",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/check_evidence_freshness.sh": "af1a984bb9ddfea7c0f1572a94b15180504892de8384b1ceb64d401075c7d308",
+    "scripts/check_evidence_integrity_kernel_e2e.sh": "5ed3de0b334700d58e9b4ddf7573b37090e66a47c0025c0d51370024def01f2c",
+    "scripts/check_evidence_ledger.sh": "8c41ace821da847772fae2d09e572a73a8d5b0fe03aa60aa6aa532fe6731d826",
+    "tests/conformance/evidence_ledger.jsonl": "f84755926216380c10857fb04a6c3433fc98d8e67a156f4b06f019965fe96bc9"
+  },
+  "executable_sha256": "685d686c54430bbd6f8c8652243dea7acf8f0e95c4cdc4519aee615ee60baeb6"
+}

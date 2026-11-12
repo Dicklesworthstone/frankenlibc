@@ -1,0 +1,8 @@
+
+running 3 tests
+test cxa_atexit_finalize_filters_dso_and_runs_lifo_once ... ok
+test cxa_thread_atexit_impl_null_obj_returns_zero ... ok
+test cxa_thread_atexit_impl_returns_zero ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+

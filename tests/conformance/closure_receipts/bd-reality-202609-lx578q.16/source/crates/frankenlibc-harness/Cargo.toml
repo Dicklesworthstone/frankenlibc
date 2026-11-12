@@ -1,0 +1,48 @@
+[package]
+name = "frankenlibc-harness"
+version.workspace = true
+edition.workspace = true
+license-file = "../../LICENSE"
+description = "Conformance testing harness for FrankenLibC"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lib]
+doctest = false
+
+[features]
+default = ["asupersync-tooling", "frankentui-ui"]
+asupersync-tooling = ["dep:asupersync-conformance"]
+frankentui-ui = [
+  "dep:ftui-harness",
+  "dep:ftui-core",
+  "dep:ftui-layout",
+  "dep:ftui-render",
+  "dep:ftui-style",
+  "dep:ftui-widgets",
+]
+
+[dependencies]
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+asupersync-conformance = { workspace = true, optional = true }
+ftui-harness = { workspace = true, optional = true }
+ftui-core = { version = "0.3.1", optional = true }
+ftui-layout = { version = "0.3.1", optional = true }
+ftui-render = { version = "0.3.1", optional = true }
+ftui-style = { version = "0.3.1", optional = true }
+ftui-widgets = { version = "0.3.1", optional = true }
+frankenlibc-membrane = { workspace = true }
+frankenlibc-abi = { workspace = true, features = ["conformance-testing"] }
+frankenlibc-core = { workspace = true }
+frankenlibc-fixture-exec = { workspace = true }
+
+[[bin]]
+name = "harness"
+path = "src/bin/harness.rs"

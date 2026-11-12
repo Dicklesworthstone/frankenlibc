@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.8.3",
+  "contract": {
+    "behavior": "Enforce 256-bit CSPRNG dual-key canary domain separation, O(1) warm-TLS header and trailing canary integrity verification with near-tail write checks, and structured ClampSize audit emission on FreedWithCanaryCorruption in free and realloc",
+    "acceptance_sha256": "d80ea765069373e01df9bdcab5a3a270f130f8e63bd98c178b6825a66872e42e",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-membrane/src/fingerprint.rs",
+      "crates/frankenlibc-membrane/src/arena.rs",
+      "crates/frankenlibc-membrane/src/tls_cache.rs",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "crates/frankenlibc-abi/src/string_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs",
+      "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/malloc_abi.rs": "2ccd26d0e6c955c9a89a8d615ebe9690b64c4141bd9bf18c4c16f93890961100",
+        "crates/frankenlibc-abi/src/string_abi.rs": "4679cc87c045b3c0e42a98b614e416635c1240ef356cbfeb23b83c467c16bc22",
+        "crates/frankenlibc-membrane/src/arena.rs": "4991427ab87db414ed97ad1aaa19a0060b032dbccfbcfe895892d0459c670ade",
+        "crates/frankenlibc-membrane/src/fingerprint.rs": "19c0844fdc6ae46e5f1028aa5ff1d50a96a7fa27f7030bccc30e852d8e16ebce",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs": "c3b2ab0eb7aee1e90eb72a8878c2c482be71ac4dbff989297ee82a6674333962",
+        "crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs": "4b30576e0fddde5c6259723f4583e2b882a0a21208d2775784b17d53f856cbdf",
+        "crates/frankenlibc-membrane/src/tls_cache.rs": "67004f36949c339ee4a059ac400569cae0fd1cfecec5c738d23280768e081942",
+        "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "a7c121f132c0059881bd59eb8e85463572d90fb52a75dcd3bed2bd284681604e",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-11T16:12:00+00:00",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-membrane",
+        "--test",
+        "tsm_pipeline_e2e_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "dual_key_csprng_canary_domain_separation_e2e",
+        "warm_tls_cache_detects_tail_and_header_corruption_e2e",
+        "smoke_script_wires_all_canary_cases_and_audit_emission"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-membrane",
+      "--test",
+      "tsm_pipeline_e2e_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:59.133627+00:00",
+    "finished_at": "2026-11-12T04:55:59.453017+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "9301649e568e8aaec5e658e3a4892bbcd93ec0ce210e486b0ec84176f58f7854",
+    "stderr_sha256": "d8f0c9a722efe2aaac27c4e6d1b70999ee90b50b8e6910ceeca5cd405697b372",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:55:59.457521+00:00",
+    "finished_at": "2026-11-12T04:55:59.623837+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "21ca167dd98f2ac0e73ee896ec2e6a9c75841279ba19b352c0844701c6a4d77c",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 24
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791": "50e66d37b9748153cd122a65a0b9a0494472376a3f26ae0b200961279e4e71b3"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-membrane/f66f82e85d3e5791/out/tsm_pipeline_e2e_test-f66f82e85d3e5791": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/malloc_abi.rs": "2ccd26d0e6c955c9a89a8d615ebe9690b64c4141bd9bf18c4c16f93890961100",
+    "crates/frankenlibc-abi/src/string_abi.rs": "4679cc87c045b3c0e42a98b614e416635c1240ef356cbfeb23b83c467c16bc22",
+    "crates/frankenlibc-membrane/src/arena.rs": "4991427ab87db414ed97ad1aaa19a0060b032dbccfbcfe895892d0459c670ade",
+    "crates/frankenlibc-membrane/src/fingerprint.rs": "19c0844fdc6ae46e5f1028aa5ff1d50a96a7fa27f7030bccc30e852d8e16ebce",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs": "c3b2ab0eb7aee1e90eb72a8878c2c482be71ac4dbff989297ee82a6674333962",
+    "crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs": "4b30576e0fddde5c6259723f4583e2b882a0a21208d2775784b17d53f856cbdf",
+    "crates/frankenlibc-membrane/src/tls_cache.rs": "67004f36949c339ee4a059ac400569cae0fd1cfecec5c738d23280768e081942",
+    "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs": "a7c121f132c0059881bd59eb8e85463572d90fb52a75dcd3bed2bd284681604e",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "50e66d37b9748153cd122a65a0b9a0494472376a3f26ae0b200961279e4e71b3"
+}

@@ -1,0 +1,8 @@
+
+running 3 tests
+test swprintf_unknown_conversions_and_errno_message_consume_no_value ... ok
+test swprintf_unknown_conversions_keep_following_arguments_and_count ... ok
+test swprintf_unknown_conversions_truncation_reports_e2big ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 129 filtered out; finished in 0.00s
+

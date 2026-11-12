@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# check_semantic_contract_inventory.sh -- CI gate for bd-bp8fl.1.1
+#
+# Validates the semantic-contract inventory artifact and emits deterministic
+# report/log artifacts under target/conformance.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ARTIFACT="${FLC_SEMANTIC_INVENTORY_ARTIFACT:-${ROOT}/tests/conformance/semantic_contract_inventory.v1.json}"
+SEED="${FLC_SEMANTIC_INVENTORY_SEED:-${ROOT}/tests/conformance/support_semantic_overlay.v1.json}"
+REFRESH=0
+if [[ $# -eq 1 && "$1" == "--refresh-surface" ]]; then
+    REFRESH=1
+elif [[ $# -ne 0 ]]; then
+    echo "usage: $0 [--refresh-surface]" >&2
+    exit 2
+fi
+OUT_DIR="${ROOT}/target/conformance"
+REPORT="${OUT_DIR}/semantic_contract_inventory.report.json"
+LOG="${OUT_DIR}/semantic_contract_inventory.log.jsonl"
+
+mkdir -p "${OUT_DIR}"
+
+python3 - "${ROOT}" "${ARTIFACT}" "${SEED}" "${REPORT}" "${LOG}" "${REFRESH}" <<'PY'
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+from collections import Counter
+from pathlib import Path
+
+root = Path(sys.argv[1])
+artifact_path = Path(sys.argv[2])
+seed_path = Path(sys.argv[3])
+report_path = Path(sys.argv[4])
+log_path = Path(sys.argv[5])
+refresh_surface = sys.argv[6] == "1"
+
+errors = []
+checks = {}
+
+def load_json(path):
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception as exc:
+        errors.append(f"{path}: {exc}")
+        return None
+
+artifact = load_json(artifact_path)
+seed = load_json(seed_path)
+support = load_json(root / "support_matrix.json")
+
+# Reuse the cfg/attribute/generated-export parser used by the host census.
+# Presence, taxonomy and nearby tests never establish semantic parity here.
+surface = None
+try:
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location(
+        "semantic_source_census", root / "scripts/generate_host_delegation_census.py"
+    )
+    source_census = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = source_census
+    spec.loader.exec_module(source_census)
+    surface = source_census.build_semantic_export_surface(
+        root,
+        root / "crates/frankenlibc-abi/src",
+        root / "crates/frankenlibc-abi/version_scripts/libc.map",
+        support,
+        artifact,
+    )
+    if refresh_surface:
+        artifact["export_surface"] = surface
+        artifact_path.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+    if artifact.get("export_surface") != surface:
+        errors.append("exhaustive_export_surface: missing, stale, incomplete or promoted export groups; review inputs then --refresh-surface")
+        checks["exhaustive_export_surface"] = "fail"
+    else:
+        checks["exhaustive_export_surface"] = "pass"
+except Exception as exc:
+    errors.append(f"exhaustive_export_surface: {exc}")
+    checks["exhaustive_export_surface"] = "fail"
+
+if artifact is None or seed is None:
+    checks["json_parse"] = "fail"
+else:
+    checks["json_parse"] = "pass"
+
+entries = artifact.get("entries", []) if isinstance(artifact, dict) else []
+summary = artifact.get("summary", {}) if isinstance(artifact, dict) else {}
+
+if artifact and artifact.get("schema_version") == "v1" and artifact.get("bead") == "bd-bp8fl.1.1":
+    checks["top_level_shape"] = "pass"
+else:
+    checks["top_level_shape"] = "fail"
+    errors.append("artifact must declare schema_version=v1 and bead=bd-bp8fl.1.1")
+
+if entries and all(isinstance(row, dict) for row in entries):
+    checks["entries_present"] = "pass"
+else:
+    checks["entries_present"] = "fail"
+    errors.append("entries must be a non-empty array of objects")
+
+required_fields = [
+    "id",
+    "surface",
+    "symbols",
+    "module",
+    "source_path",
+    "source_line",
+    "line_marker",
+    "support_matrix_status",
+    "semantic_class",
+    "contract_kind",
+    "current_behavior",
+    "user_risk",
+    "required_followup",
+    "evidence_artifacts",
+]
+for row in entries:
+    row_id = row.get("id", "<missing id>")
+    for field in required_fields:
+        if field not in row:
+            errors.append(f"{row_id}: missing field {field}")
+    if row.get("semantic_class") not in artifact.get("semantic_contract_classes", {}):
+        errors.append(f"{row_id}: unrecognized semantic class cannot establish parity")
+    if row.get("review_status") != "source_observed_semantics_unqualified":
+        errors.append(f"{row_id}: source observation cannot be promoted to qualified semantics")
+if not any("missing field" in err for err in errors):
+    checks["entry_schema"] = "pass"
+else:
+    checks["entry_schema"] = "fail"
+
+policy = artifact.get("claim_policy", {}) if isinstance(artifact, dict) else {}
+if (
+    policy.get("support_matrix_stub_zero_is_not_full_parity") is True
+    and policy.get("full_replacement_claim_requires_exhaustive_inventory") is True
+    and policy.get("readme_feature_parity_release_notes_may_advance_without_machine_evidence") is False
+    and not any("promoted to qualified" in err or "unrecognized semantic class" in err for err in errors)
+):
+    checks["semantic_claim_boundary"] = "pass"
+else:
+    checks["semantic_claim_boundary"] = "fail"
+    errors.append("semantic_claim_boundary: unknown/source-only entries cannot establish full semantic parity")
+
+ids = [row.get("id") for row in entries]
+if len(ids) == len(set(ids)):
+    checks["unique_ids"] = "pass"
+else:
+    checks["unique_ids"] = "fail"
+    errors.append("entry ids must be unique")
+
+seed_ids = {
+    row.get("id")
+    for row in seed.get("audited_entries", [])
+    if isinstance(row, dict) and row.get("id")
+} if isinstance(seed, dict) else set()
+inventory_seed_ids = {
+    row.get("seed_overlay_id")
+    for row in entries
+    if row.get("seed_overlay_id")
+}
+missing_seed_ids = sorted(seed_ids - inventory_seed_ids)
+if not missing_seed_ids:
+    checks["seed_overlay_coverage"] = "pass"
+else:
+    checks["seed_overlay_coverage"] = "fail"
+    errors.append("missing seed overlay ids: " + ", ".join(missing_seed_ids))
+
+class_counts = Counter(row.get("semantic_class") for row in entries)
+source_counts = Counter(row.get("source_path") for row in entries)
+if summary.get("entry_count") == len(entries) and summary.get("by_semantic_class") == dict(class_counts):
+    checks["summary_counts"] = "pass"
+else:
+    checks["summary_counts"] = "fail"
+    errors.append("summary entry_count or by_semantic_class does not match entries")
+
+if summary.get("by_source_path") == dict(source_counts):
+    checks["source_summary_counts"] = "pass"
+else:
+    checks["source_summary_counts"] = "fail"
+    errors.append("summary by_source_path does not match entries")
+
+source_errors = []
+for row in entries:
+    source = root / row.get("source_path", "")
+    marker = row.get("line_marker", "")
+    if not source.exists():
+        source_errors.append(f"{row.get('id')}: missing source {source}")
+        continue
+    text = source.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    line = row.get("source_line")
+    if (
+        type(line) is not int
+        or not 1 <= line <= len(lines)
+        or not marker
+        or marker not in lines[line - 1]
+    ):
+        source_errors.append(f"{row.get('id')}: marker not found at source_line {line}: {marker}")
+    evidence = row.get("evidence_artifacts", [])
+    if (
+        row.get("source_path") not in evidence
+        or any(not isinstance(item, str) or not (root / item).is_file() for item in evidence)
+    ):
+        source_errors.append(f"{row.get('id')}: missing referenced evidence artifact")
+if source_errors:
+    checks["source_markers"] = "fail"
+    errors.extend(source_errors)
+else:
+    checks["source_markers"] = "pass"
+
+source_commit = os.environ.get("RCH_BUILD_SOURCE", "").removesuffix("-dirty")
+if source_commit:
+    if len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit):
+        errors.append("invalid declared RCH_BUILD_SOURCE")
+else:
+    try:
+        source_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip()
+    except Exception:
+        source_commit = "unknown"
+
+status = "pass" if not errors else "fail"
+report = {
+    "schema_version": "v1",
+    "bead": "bd-bp8fl.1.1",
+    "status": status,
+    "checks": checks,
+    "entry_count": len(entries),
+    "seed_overlay_entries": len(seed_ids),
+    "seed_overlay_covered": len(inventory_seed_ids & seed_ids),
+    "semantic_class_counts": dict(class_counts),
+    "source_path_counts": dict(source_counts),
+    "export_surface_summary": surface.get("summary", {}) if surface else {},
+    "semantic_review_complete": False,
+    "errors": errors,
+    "artifact_refs": [
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "tests/conformance/support_semantic_overlay.v1.json",
+    ],
+    "source_commit": source_commit,
+}
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+log_event = {
+    "trace_id": "bd-bp8fl.1.1-semantic-contract-inventory",
+    "bead_id": "bd-bp8fl.1.1",
+    "scenario_id": "semantic-contract-inventory-gate",
+    "runtime_mode": "not_applicable",
+    "replacement_level": "L0_interpose_and_L1_planning",
+    "api_family": "semantic_contract_inventory",
+    "symbol": "*",
+    "oracle_kind": "artifact_shape_seed_source_cross_reference",
+    "expected": "all checks pass",
+    "actual": status,
+    "errno": None,
+    "decision_path": list(checks.keys()),
+    "healing_action": "none",
+    "latency_ns": 0,
+    "artifact_refs": report["artifact_refs"] + [
+        "target/conformance/semantic_contract_inventory.report.json",
+        "target/conformance/semantic_contract_inventory.log.jsonl",
+    ],
+    "source_commit": source_commit,
+    "target_dir": str(root / "target/conformance"),
+    "failure_signature": "; ".join(errors),
+    "entry_count": len(entries),
+    "semantic_class_counts": dict(class_counts),
+}
+log_path.write_text(json.dumps(log_event, sort_keys=True) + "\n", encoding="utf-8")
+
+print(json.dumps(report, indent=2, sort_keys=True))
+sys.exit(0 if status == "pass" else 1)
+PY

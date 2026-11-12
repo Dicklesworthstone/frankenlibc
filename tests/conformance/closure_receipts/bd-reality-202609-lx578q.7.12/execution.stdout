@@ -1,0 +1,11 @@
+
+running 6 tests
+test bounded_converter_keeps_own_implicit_state ... ok
+test c16rtomb_matches_glibc ... ok
+test c16rtomb_null_output_ignores_code_unit ... ok
+test implicit_decoder_states_are_independent ... ok
+test implicit_utf16_directions_are_independent ... ok
+test restartable_decoders_resume_implicit_state ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

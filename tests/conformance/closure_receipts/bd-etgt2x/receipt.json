@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-etgt2x",
+  "contract": {
+    "behavior": "Fast infallible cos/tan ABI entrypoints preserve IEEE-754 CORE-MATH accuracy across known values",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-core/src/math/coremath.rs",
+      "crates/frankenlibc-abi/src/math_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/math_abi_test.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/math_abi.rs": "0621615d6db9b78510e6ca8ca47c15051594d10a6586ce7a7b66643a2e07741b",
+        "crates/frankenlibc-abi/tests/math_abi_test.rs": "debbe577ec666fcaed7e2e99f68d7d6b5c6befc4797b855ee7f71a62097ad1e7",
+        "crates/frankenlibc-core/src/math/coremath.rs": "19bf427b4b9a702e220a5fa8cd0d042408efd9a4e0e21a25e0e7fb55fbffb077",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-01T22:53:47.100033699Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4eec13c4642ebdcb/out/math_abi_test-4eec13c4642ebdcb",
+        "known_values",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "math_abi_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4eec13c4642ebdcb/out/math_abi_test-4eec13c4642ebdcb"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "cos_known_values",
+        "tan_known_values"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "math_abi_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:24.527058+00:00",
+    "finished_at": "2026-11-12T05:03:24.746218+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "9272f240682089bb766cac6e2b3fb3da0d6788f5e594c5fc9bb5762d9cec00f2",
+    "stderr_sha256": "cb90005141d5b96203a53c77858fd07c60f3f2abd12724240477f4a8ff143e55",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4eec13c4642ebdcb/out/math_abi_test-4eec13c4642ebdcb",
+      "known_values",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T05:03:24.754104+00:00",
+    "finished_at": "2026-11-12T05:03:24.787294+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "4df37b06e97d3cdb0a4a3105a2050ab6a1c6f12bb15a12a625bdb4fbafbd6685",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 39
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4eec13c4642ebdcb/out/math_abi_test-4eec13c4642ebdcb": "acbd5e8bf74dc75b7a168ba5065ff89b6a216fbaf217fb9e30d13cd2db0c4025"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/4eec13c4642ebdcb/out/math_abi_test-4eec13c4642ebdcb": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/math_abi.rs": "0621615d6db9b78510e6ca8ca47c15051594d10a6586ce7a7b66643a2e07741b",
+    "crates/frankenlibc-abi/tests/math_abi_test.rs": "debbe577ec666fcaed7e2e99f68d7d6b5c6befc4797b855ee7f71a62097ad1e7",
+    "crates/frankenlibc-core/src/math/coremath.rs": "19bf427b4b9a702e220a5fa8cd0d042408efd9a4e0e21a25e0e7fb55fbffb077",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "acbd5e8bf74dc75b7a168ba5065ff89b6a216fbaf217fb9e30d13cd2db0c4025"
+}

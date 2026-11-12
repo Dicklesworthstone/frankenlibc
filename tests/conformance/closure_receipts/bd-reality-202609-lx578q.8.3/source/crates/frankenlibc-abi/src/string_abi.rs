@@ -1,0 +1,16225 @@
+//! ABI layer for `<string.h>` functions.
+//!
+//! Each function is an `extern "C"` entry point that:
+//! 1. Validates pointer arguments through the membrane pipeline
+//! 2. In hardened mode, applies healing (bounds clamping, null truncation)
+//! 3. Delegates to `frankenlibc-core` safe implementations or inline unsafe primitives
+
+use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
+use std::fmt::Write as _;
+use std::sync::{
+    Once,
+    atomic::{AtomicU32, Ordering as AtomicOrdering},
+};
+
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
+use frankenlibc_membrane::runtime_math::clifford::{
+    SimdIsa, SimdStringOperation, certify_simd_string_operation,
+};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
+
+use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
+use crate::malloc_abi::known_remaining;
+use crate::runtime_policy;
+use frankenlibc_core::syscall as raw_syscall;
+
+#[cfg(feature = "owned-tls-cache")]
+static STRING_MEMBRANE_DEPTH_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+const MEMCPY_HTM_MAX_BYTES: usize = 256;
+static MEMCPY_HTM_SITE: HtmSite = HtmSite::new("memcpy");
+const SIMD_FEATURE_SSE42: u32 = 1 << 0;
+const SIMD_FEATURE_AVX2: u32 = 1 << 1;
+const SIMD_FEATURE_NEON: u32 = 1 << 2;
+const SIMD_FEATURE_OVERRIDE_DISABLED: u32 = u32::MAX;
+const SIMD_ISOMORPHISM_AUDIT_JSON: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/simd_isomorphism_audit.json"));
+
+static STRING_SIMD_FEATURE_OVERRIDE: AtomicU32 = AtomicU32::new(SIMD_FEATURE_OVERRIDE_DISABLED);
+static MEMCPY_SIMD_LOG_ONCE: Once = Once::new();
+static MEMCMP_SIMD_LOG_ONCE: Once = Once::new();
+static STRLEN_SIMD_LOG_ONCE: Once = Once::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StringSimdDispatch {
+    isa: SimdIsa,
+    label: &'static str,
+    lane_bytes: usize,
+}
+
+impl StringSimdDispatch {
+    const SCALAR: Self = Self {
+        isa: SimdIsa::Scalar,
+        label: "scalar",
+        lane_bytes: 1,
+    };
+
+    const fn from_isa(isa: SimdIsa) -> Self {
+        Self {
+            isa,
+            label: isa.label(),
+            lane_bytes: isa.lane_bytes(),
+        }
+    }
+}
+
+struct StringMembraneGuard {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    flag: &'static std::sync::atomic::AtomicBool,
+}
+
+impl Drop for StringMembraneGuard {
+    #[inline(always)]
+    fn drop(&mut self) {
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            STRING_MEMBRANE_DEPTH_OWNED_TLS.with(|depth| {
+                *depth = depth.saturating_sub(1);
+            });
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            self.flag.store(false, AtomicOrdering::Relaxed);
+        }
+    }
+}
+
+#[inline(always)]
+fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
+    // `string_raw_passthrough_active()`, with the allocator-reentry test,
+    // the signal-handler test, and the string-membrane recursion flag answered
+    // by one reentry-slot lookup.
+    if runtime_policy::bootstrap_passthrough_active()
+        || runtime_policy::runtime_policy_tls_access_active()
+        || crate::pthread_abi::pthread_tls_access_active()
+    {
+        return None;
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let (in_allocator_reentry, in_signal_handler) =
+            crate::malloc_abi::allocator_reentry_and_signal_state();
+        if in_allocator_reentry
+            || in_signal_handler
+            || frankenlibc_membrane::ptr_validator::in_validation_context()
+            || runtime_policy::in_policy_reentry_context()
+            || crate::pthread_abi::in_threading_policy_context()
+        {
+            return None;
+        }
+        STRING_MEMBRANE_DEPTH_OWNED_TLS.with(|depth| {
+            if *depth > 0 {
+                None
+            } else {
+                *depth += 1;
+                Some(StringMembraneGuard {})
+            }
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let flag = crate::malloc_abi::try_string_membrane_slot_flag()?;
+        // A signal handler must not re-enter the membrane/policy state the frame
+        // it interrupted on this thread may be in the middle of (bd-na6ede).
+        if flag.load(AtomicOrdering::Relaxed)
+            || frankenlibc_membrane::ptr_validator::in_validation_context()
+            || runtime_policy::in_policy_reentry_context()
+            || crate::pthread_abi::in_threading_policy_context()
+        {
+            return None;
+        }
+        flag.store(true, AtomicOrdering::Relaxed);
+        Some(StringMembraneGuard { flag })
+    }
+}
+
+#[inline]
+fn string_raw_passthrough_active() -> bool {
+    runtime_policy::bootstrap_passthrough_active()
+        || runtime_policy::runtime_policy_tls_access_active()
+        || crate::pthread_abi::pthread_tls_access_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context()
+}
+
+/// Declares a string kernel whose portable-SIMD body is compiled twice and
+/// chosen per call (bd-rc0923-epic-eeuy4f.13).
+///
+/// The shipped library is built for baseline x86-64, where a 32-lane
+/// `Simd<u8, 32>` is two SSE2 halves and LLVM spills its masks to the stack and
+/// reads them back a byte at a time: `strcmp` measured 4-17x slower than the
+/// x86-64-v3 build. `unsafe fn name(..) -> ret => body;` emits `name`, which runs
+/// a twin of `body` compiled with AVX2 -- the code the v3 build gave it -- when
+/// the CPU has AVX2, and the baseline `body` otherwise. `body` must be
+/// `#[inline(always)]`. Same results either way: the twin is the same source.
+/// The check is a test of the CPUID bits `std` caches; a build that already
+/// targets AVX2 compiles the twin out. The baseline copy is out of line as
+/// well, so the dispatcher inlined at a call site is just the test and a call,
+/// not the baseline body's register and stack setup paid on every call.
+macro_rules! avx2_dispatch {
+    ($(#[$attr:meta])* $vis:vis unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
+        $(#[$attr])*
+        #[allow(unreachable_code)]
+        $vis unsafe fn $name($($arg: $ty),*) -> $ret {
+            #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+            {
+                #[target_feature(enable = "avx2")]
+                unsafe fn avx2_twin($($arg: $ty),*) -> $ret {
+                    // SAFETY: forwarded from the caller's contract.
+                    unsafe { $body($($arg),*) }
+                }
+                #[inline(never)]
+                unsafe fn baseline($($arg: $ty),*) -> $ret {
+                    // SAFETY: forwarded from the caller's contract.
+                    unsafe { $body($($arg),*) }
+                }
+                if std::is_x86_feature_detected!("avx2") {
+                    // SAFETY: the CPU has AVX2, checked just above; the rest is
+                    // the caller's contract.
+                    return unsafe { avx2_twin($($arg),*) };
+                }
+                // SAFETY: forwarded from the caller's contract.
+                return unsafe { baseline($($arg),*) };
+            }
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { $body($($arg),*) }
+        }
+    };
+}
+pub(crate) use avx2_dispatch;
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn string_simd_avx2_enabled() -> bool {
+    let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);
+    if override_mask != SIMD_FEATURE_OVERRIDE_DISABLED {
+        return (override_mask & SIMD_FEATURE_AVX2) != 0;
+    }
+    std::is_x86_feature_detected!("avx2")
+}
+
+fn active_string_simd_feature_mask() -> u32 {
+    let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);
+    if override_mask != SIMD_FEATURE_OVERRIDE_DISABLED {
+        return override_mask;
+    }
+
+    let mut mask = 0u32;
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("sse4.2") {
+            mask |= SIMD_FEATURE_SSE42;
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            mask |= SIMD_FEATURE_AVX2;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            mask |= SIMD_FEATURE_NEON;
+        }
+    }
+    mask
+}
+
+#[cfg(feature = "runtime-tracing")]
+fn string_simd_feature_list(mask: u32) -> &'static str {
+    match (
+        mask & SIMD_FEATURE_AVX2 != 0,
+        mask & SIMD_FEATURE_SSE42 != 0,
+        mask & SIMD_FEATURE_NEON != 0,
+    ) {
+        (true, true, false) => "avx2,sse4.2",
+        (true, false, false) => "avx2",
+        (false, true, false) => "sse4.2",
+        (false, false, true) => "neon",
+        (true, false, true) => "avx2,neon",
+        (false, true, true) => "sse4.2,neon",
+        (true, true, true) => "avx2,sse4.2,neon",
+        (false, false, false) => "scalar-only",
+    }
+}
+
+fn log_string_simd_dispatch_once(function: &'static str, dispatch: StringSimdDispatch, mask: u32) {
+    let once = match function {
+        "memcpy" => &MEMCPY_SIMD_LOG_ONCE,
+        "memcmp" => &MEMCMP_SIMD_LOG_ONCE,
+        "strlen" => &STRLEN_SIMD_LOG_ONCE,
+        _ => return,
+    };
+    once.call_once(|| {
+        #[cfg(feature = "runtime-tracing")]
+        tracing::info!(
+            target: "simd_dispatch",
+            function,
+            selected_impl = dispatch.label,
+            cpu_features = string_simd_feature_list(mask),
+            lane_bytes = dispatch.lane_bytes
+        );
+        #[cfg(not(feature = "runtime-tracing"))]
+        let _ = (dispatch, mask);
+    });
+}
+
+fn dispatch_threshold(operation: SimdStringOperation, isa: SimdIsa) -> usize {
+    match (operation, isa) {
+        (_, SimdIsa::Scalar) => usize::MAX,
+        (SimdStringOperation::Memcpy, SimdIsa::Avx2) => 128,
+        (SimdStringOperation::Memcpy, SimdIsa::Sse42 | SimdIsa::Neon) => 32,
+        (SimdStringOperation::Memcmp, SimdIsa::Avx2) => 64,
+        (SimdStringOperation::Memcmp, SimdIsa::Sse42 | SimdIsa::Neon) => 16,
+        (SimdStringOperation::Strlen, SimdIsa::Avx2) => 64,
+        (SimdStringOperation::Strlen, SimdIsa::Sse42 | SimdIsa::Neon) => 16,
+    }
+}
+
+fn regions_overlap(dst_addr: usize, src_addr: usize, len: usize) -> bool {
+    if len == 0 {
+        return false;
+    }
+    let dst_end = dst_addr.saturating_add(len);
+    let src_end = src_addr.saturating_add(len);
+    dst_addr < src_end && src_addr < dst_end
+}
+
+fn try_simd_dispatch_candidate(
+    operation: SimdStringOperation,
+    isa: SimdIsa,
+    src_addr: usize,
+    dst_addr: usize,
+    len_hint: usize,
+    overlap: bool,
+) -> Option<StringSimdDispatch> {
+    if len_hint < dispatch_threshold(operation, isa) {
+        return None;
+    }
+    // Strict mode: skip certification and assume SIMD operations are safe.
+    // This avoids CliffordController overhead for trusted workloads.
+    if runtime_policy::strict_passthrough_active() {
+        return Some(StringSimdDispatch::from_isa(isa));
+    }
+    let certificate =
+        certify_simd_string_operation(operation, isa, src_addr, dst_addr, len_hint, overlap);
+    certificate
+        .equivalent
+        .then(|| StringSimdDispatch::from_isa(isa))
+}
+
+fn select_string_simd_dispatch(
+    operation: SimdStringOperation,
+    src_addr: usize,
+    dst_addr: usize,
+    len_hint: usize,
+) -> StringSimdDispatch {
+    let mask = active_string_simd_feature_mask();
+    let overlap = matches!(operation, SimdStringOperation::Memcpy)
+        && regions_overlap(dst_addr, src_addr, len_hint);
+
+    let dispatch = if mask & SIMD_FEATURE_AVX2 != 0 {
+        try_simd_dispatch_candidate(
+            operation,
+            SimdIsa::Avx2,
+            src_addr,
+            dst_addr,
+            len_hint,
+            overlap,
+        )
+    } else {
+        None
+    }
+    .or_else(|| {
+        if mask & SIMD_FEATURE_SSE42 != 0 {
+            try_simd_dispatch_candidate(
+                operation,
+                SimdIsa::Sse42,
+                src_addr,
+                dst_addr,
+                len_hint,
+                overlap,
+            )
+        } else {
+            None
+        }
+    })
+    .or_else(|| {
+        if mask & SIMD_FEATURE_NEON != 0 {
+            try_simd_dispatch_candidate(
+                operation,
+                SimdIsa::Neon,
+                src_addr,
+                dst_addr,
+                len_hint,
+                overlap,
+            )
+        } else {
+            None
+        }
+    })
+    .unwrap_or(StringSimdDispatch::SCALAR);
+
+    log_string_simd_dispatch_once(operation.symbol(), dispatch, mask);
+    dispatch
+}
+
+#[doc(hidden)]
+pub fn string_simd_swap_feature_mask_for_tests(mask: Option<u32>) -> u32 {
+    STRING_SIMD_FEATURE_OVERRIDE.swap(
+        mask.unwrap_or(SIMD_FEATURE_OVERRIDE_DISABLED),
+        AtomicOrdering::SeqCst,
+    )
+}
+
+#[doc(hidden)]
+pub fn string_simd_restore_feature_mask_for_tests(previous: u32) {
+    STRING_SIMD_FEATURE_OVERRIDE.store(previous, AtomicOrdering::SeqCst);
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_sse42_for_tests() -> u32 {
+    SIMD_FEATURE_SSE42
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_avx2_for_tests() -> u32 {
+    SIMD_FEATURE_AVX2
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_neon_for_tests() -> u32 {
+    SIMD_FEATURE_NEON
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_avx2_sse42_for_tests() -> u32 {
+    SIMD_FEATURE_AVX2 | SIMD_FEATURE_SSE42
+}
+
+#[doc(hidden)]
+pub fn simd_isomorphism_audit_json_for_tests() -> &'static str {
+    SIMD_ISOMORPHISM_AUDIT_JSON
+}
+
+#[doc(hidden)]
+pub fn memcpy_dispatch_label_for_tests(dst_addr: usize, src_addr: usize, n: usize) -> &'static str {
+    select_string_simd_dispatch(SimdStringOperation::Memcpy, src_addr, dst_addr, n).label
+}
+
+#[doc(hidden)]
+pub fn memcmp_dispatch_label_for_tests(s1_addr: usize, s2_addr: usize, n: usize) -> &'static str {
+    select_string_simd_dispatch(SimdStringOperation::Memcmp, s1_addr, s2_addr, n).label
+}
+
+#[doc(hidden)]
+pub fn strlen_dispatch_label_for_tests(s_addr: usize, len_hint: usize) -> &'static str {
+    select_string_simd_dispatch(SimdStringOperation::Strlen, s_addr, s_addr, len_hint).label
+}
+
+/// Recursion-safe overlapping power-of-2 forward copy for DISJOINT regions (memcpy
+/// semantics). Explicit unaligned u128/u64/u32 loads+stores are never coalesced into an
+/// `@llvm.memcpy` (which would resolve to this interposed symbol → self-recursion), so no
+/// `volatile` is needed; the overlapping tail replaces the per-byte volatile tail. Each
+/// store re-writes already-correct bytes at most (disjoint src), so the result is
+/// byte-identical to the scalar copy. NOT for memmove (overlap-unsafe). `n >= 1`.
+/// AVX2 128-byte-unrolled `vmovdqu` asm copy loop + minimal straight-line overlapping
+/// 64-byte unaligned copy using AVX-512 vmovdqu64. Never lowered to @llvm.memcpy (recursion-safe).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn copy_unaligned_64(dst: *mut u8, src: *const u8) {
+    unsafe {
+        core::arch::asm!(
+            "vmovdqu64 zmm0, [{s}]",
+            "vmovdqu64 [{d}], zmm0",
+            s = in(reg) src,
+            d = in(reg) dst,
+            out("zmm0") _,
+            options(nostack),
+        );
+    }
+}
+
+/// AVX-512 unrolled 256-byte loop descending from high to low. Used when dst and src
+/// share the same page offset modulo 4096 (4K aliasing), which causes store-forwarding stalls
+/// on forward sequential copies. Backward order eliminates the store-forwarding collision.
+/// Destination tail is peeled to 64-byte alignment; copies 256 bytes per iteration with 4 ZMM registers.
+/// Remainder at the low end is covered with minimal overlapping 64-byte copies.
+/// Caller guarantees n >= 384 and AVX-512F availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn raw_avx512_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        let tail = (dst.add(n) as usize) & 63;
+        if tail != 0 {
+            copy_unaligned_64(dst.add(n - 64), src.add(n - 64));
+        }
+        let mut d = dst.add(n - tail);
+        let s = src.add(n - tail);
+        let end = dst.add(256);
+        core::arch::asm!(
+            "2:",
+            "sub {s}, 256",
+            "vmovdqu64 zmm0, [{s}]",
+            "vmovdqu64 zmm1, [{s}+64]",
+            "vmovdqu64 zmm2, [{s}+128]",
+            "vmovdqu64 zmm3, [{s}+192]",
+            "sub {d}, 256",
+            "vmovdqa64 [{d}], zmm0",
+            "vmovdqa64 [{d}+64], zmm1",
+            "vmovdqa64 [{d}+128], zmm2",
+            "vmovdqa64 [{d}+192], zmm3",
+            "cmp {d}, {end}",
+            "jae 2b",
+            "vzeroupper",
+            s = inout(reg) s => _,
+            d = inout(reg) d,
+            end = in(reg) end,
+            out("zmm0") _, out("zmm1") _, out("zmm2") _, out("zmm3") _,
+            options(nostack),
+        );
+        let rem = d as usize - dst as usize;
+        if rem > 192 {
+            copy_unaligned_64(dst.add(192), src.add(192));
+            copy_unaligned_64(dst.add(128), src.add(128));
+            copy_unaligned_64(dst.add(64), src.add(64));
+            copy_unaligned_64(dst, src);
+        } else if rem > 128 {
+            copy_unaligned_64(dst.add(128), src.add(128));
+            copy_unaligned_64(dst.add(64), src.add(64));
+            copy_unaligned_64(dst, src);
+        } else if rem > 64 {
+            copy_unaligned_64(dst.add(64), src.add(64));
+            copy_unaligned_64(dst, src);
+        } else if rem > 0 {
+            copy_unaligned_64(dst, src);
+        }
+        if rem > 0 {
+            core::arch::asm!("vzeroupper", options(nostack));
+        }
+    }
+}
+
+/// AVX-512 unrolled 256-byte loop with 64-byte aligned stores (matching glibc's __memcpy_avx512).
+/// Destination is peeled to 64-byte alignment; copies 256 bytes per iteration with 4 ZMM registers.
+/// Remainder is covered with minimal overlapping 64-byte copies from the end.
+/// Checks 4K-aliasing: if (dst ^ src) & 0xfff == 0, routes to raw_avx512_copy_backward to avoid
+/// store-forwarding stalls (matching glibc's 4K-aliasing branch at 0x1b0d00).
+/// Caller guarantees n >= 384 and AVX-512F availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn raw_avx512_copy(dst: *mut u8, src: *const u8, n: usize) {
+    if (dst as usize).wrapping_sub(src as usize) & 0xf00 == 0 {
+        unsafe { raw_avx512_copy_backward(dst, src, n) };
+        return;
+    }
+    unsafe {
+        let head = (64 - (dst as usize & 63)) & 63;
+        if head != 0 {
+            copy_unaligned_64(dst, src);
+        }
+        let mut d = dst.add(head);
+        let s = src.add(head);
+        let end = dst.add(n - 256);
+        core::arch::asm!(
+            "2:",
+            "vmovdqu64 zmm0, [{s}]",
+            "vmovdqu64 zmm1, [{s}+64]",
+            "vmovdqu64 zmm2, [{s}+128]",
+            "vmovdqu64 zmm3, [{s}+192]",
+            "add {s}, 256",
+            "vmovdqa64 [{d}], zmm0",
+            "vmovdqa64 [{d}+64], zmm1",
+            "vmovdqa64 [{d}+128], zmm2",
+            "vmovdqa64 [{d}+192], zmm3",
+            "add {d}, 256",
+            "cmp {d}, {end}",
+            "jbe 2b",
+            "vzeroupper",
+            s = inout(reg) s => _,
+            d = inout(reg) d,
+            end = in(reg) end,
+            out("zmm0") _, out("zmm1") _, out("zmm2") _, out("zmm3") _,
+            options(nostack),
+        );
+        let rem = dst.add(n) as usize - d as usize;
+        if rem > 192 {
+            copy_unaligned_64(dst.add(n - 256), src.add(n - 256));
+            copy_unaligned_64(dst.add(n - 192), src.add(n - 192));
+            copy_unaligned_64(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_64(dst.add(n - 64), src.add(n - 64));
+        } else if rem > 128 {
+            copy_unaligned_64(dst.add(n - 192), src.add(n - 192));
+            copy_unaligned_64(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_64(dst.add(n - 64), src.add(n - 64));
+        } else if rem > 64 {
+            copy_unaligned_64(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_64(dst.add(n - 64), src.add(n - 64));
+        } else if rem > 0 {
+            copy_unaligned_64(dst.add(n - 64), src.add(n - 64));
+        }
+        if rem > 0 {
+            core::arch::asm!("vzeroupper", options(nostack));
+        }
+    }
+}
+
+/// AVX unrolled 256-byte loop descending from high to low. Used when dst and src
+/// share the same page offset modulo 4096 (4K aliasing), which causes store-forwarding stalls
+/// on forward sequential copies. Backward order eliminates the store-forwarding collision.
+/// Destination tail is peeled to 32-byte alignment; copies 256 bytes per iteration with 8 YMM registers.
+/// Remainder at the low end is covered with minimal overlapping 32-byte copies.
+/// AVX backward copy for 4K-aliasing: (dst ^ src) & 0xfff == 0.
+/// Preserves head [0..128) in ymm0, ymm5, ymm6, ymm7 and tail [n-32..n) in ymm8.
+/// Aligns destination end to 32 bytes and copies in 128-byte descending steps.
+/// Overlapping stores at head and tail eliminate all scalar/branchy remainder handling.
+/// Matches glibc's __memcpy_avx_unaligned_erms backward loop.
+/// Caller guarantees n >= 384 and AVX availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_copy_backward_disjoint(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        core::arch::asm!(
+            "vmovdqu ymm0, [{s}]",
+            "vmovdqu ymm5, [{s}+32]",
+            "vmovdqu ymm6, [{s}+64]",
+            "vmovdqu ymm7, [{s}+96]",
+            "vmovdqu ymm8, [{s}+{n}-32]",
+            "lea {d_end}, [{d}+{n}-129]",
+            "and {d_end}, -32",
+            "sub {s}, {d}",
+            "add {s}, {d_end}",
+            "2:",
+            "vmovdqu ymm1, [{s}+96]",
+            "vmovdqu ymm2, [{s}+64]",
+            "vmovdqu ymm3, [{s}+32]",
+            "vmovdqu ymm4, [{s}]",
+            "add {s}, -128",
+            "vmovdqa [{d_end}+96], ymm1",
+            "vmovdqa [{d_end}+64], ymm2",
+            "vmovdqa [{d_end}+32], ymm3",
+            "vmovdqa [{d_end}], ymm4",
+            "add {d_end}, -128",
+            "cmp {d_end}, {d}",
+            "ja 2b",
+            "vmovdqu [{d}], ymm0",
+            "vmovdqu [{d}+32], ymm5",
+            "vmovdqu [{d}+64], ymm6",
+            "vmovdqu [{d}+96], ymm7",
+            "vmovdqu [{d}+{n}-32], ymm8",
+            "vzeroupper",
+            d = in(reg) dst,
+            s = inout(reg) src => _,
+            n = in(reg) n,
+            d_end = out(reg) _,
+            out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+            out("ymm4") _, out("ymm5") _, out("ymm6") _, out("ymm7") _,
+            out("ymm8") _,
+            options(nostack),
+        );
+    }
+}
+
+/// AVX unrolled forward copy matching glibc's __memcpy_avx_unaligned_erms.
+/// Destination is peeled to 32-byte alignment.
+/// Preserves head [0..32) in ymm0 and tail [n-128..n) in ymm5, ymm6, ymm7, ymm8.
+/// Copies in 128-byte ascending steps with 32-byte aligned stores.
+/// Overlapping stores at head and tail eliminate all scalar/branchy remainder handling.
+/// Checks 4K-aliasing: if (dst ^ src) & 0xfff == 0, routes to raw_avx_copy_backward_disjoint to avoid
+/// store-forwarding stalls (matching glibc's 4K-aliasing branch at offset 0x9c/0xa5).
+/// Caller guarantees n >= 384 and AVX availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_copy(dst: *mut u8, src: *const u8, n: usize) {
+    if (dst as usize).wrapping_sub(src as usize) & 0xf00 == 0 {
+        unsafe { raw_avx_copy_backward_disjoint(dst, src, n) };
+        return;
+    }
+    unsafe {
+        core::arch::asm!(
+            "vmovdqu ymm0, [{s}]",
+            "vmovdqu ymm5, [{s}+{n}-32]",
+            "vmovdqu ymm6, [{s}+{n}-64]",
+            "vmovdqu ymm7, [{s}+{n}-96]",
+            "vmovdqu ymm8, [{s}+{n}-128]",
+            "mov {orig_d}, {d}",
+            "or {d}, 31",
+            "inc {d}",
+            "sub {s}, {orig_d}",
+            "add {s}, {d}",
+            "lea {d_end}, [{orig_d}+{n}-128]",
+            "2:",
+            "vmovdqu ymm1, [{s}]",
+            "vmovdqu ymm2, [{s}+32]",
+            "vmovdqu ymm3, [{s}+64]",
+            "vmovdqu ymm4, [{s}+96]",
+            "add {s}, 128",
+            "vmovdqa [{d}], ymm1",
+            "vmovdqa [{d}+32], ymm2",
+            "vmovdqa [{d}+64], ymm3",
+            "vmovdqa [{d}+96], ymm4",
+            "add {d}, 128",
+            "cmp {d}, {d_end}",
+            "jb 2b",
+            "vmovdqu [{d_end}+96], ymm5",
+            "vmovdqu [{d_end}+64], ymm6",
+            "vmovdqu [{d_end}+32], ymm7",
+            "vmovdqu [{d_end}], ymm8",
+            "vmovdqu [{orig_d}], ymm0",
+            "vzeroupper",
+            d = inout(reg) dst => _,
+            s = inout(reg) src => _,
+            n = in(reg) n,
+            orig_d = out(reg) _,
+            d_end = out(reg) _,
+            out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+            out("ymm4") _, out("ymm5") _, out("ymm6") _, out("ymm7") _,
+            out("ymm8") _,
+            options(nostack),
+        );
+    }
+}
+
+/// Strictly-ascending (low→high) AVX copy for a `dst <= src` OVERLAP, `n >= 128`. Unlike
+/// `raw_avx_copy` (disjoint-only: its tail re-reads `src[n-32..n]` with overlapping end-copies,
+/// which for a forward overlap has already been CLOBBERED by the main loop's store into the src
+/// region), this reads every byte exactly once in ascending order — the 128-byte asm main loop,
+/// then the true remainder `[main_end, n)` copied ascending (never re-reading the main region).
+/// For `dst <= src` every store lands at/below the just-read address, so no source byte is
+/// overwritten before it is read. Inline asm ⇒ never lowered to `@llvm.memmove` (recursion-safe).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_copy_forward(dst: *mut u8, src: *const u8, n: usize) {
+    // SAFETY: AVX enabled; caller guarantees dst/src valid for n bytes, dst <= src, n >= 128.
+    unsafe {
+        // Dest-align peel (same store-split lever as raw_avx_copy): unaligned `dst` splits
+        // every 32B store across a 64B line — measured ~1.30x vs glibc for a forward
+        // overlap at n=4096, dst+16/dst+8 (aligned-dst is parity). glibc aligns the dest.
+        // Peel is applied ONLY when the ascending order is preserved: the 32B head store
+        // `[dst,dst+32)` must not clobber any source byte the main loop still needs, which
+        // holds iff `dst+32 <= src` (overlap distance >= 32 — or disjoint). Then copy the
+        // head ascending, run an aligned-STORE loop from the next 32-aligned dst offset,
+        // and finish with the same ascending remainder. Small-distance overlaps (src-dst
+        // < 32) keep the original unaligned path (the head store there would corrupt src).
+        let head = (32 - (dst as usize & 31)) & 31;
+        if head != 0 && head + 128 <= n && (dst as usize) + 32 <= (src as usize) {
+            copy_unaligned_32(dst, src); // ascending head [0,32); dst+32<=src ⇒ no src clobber
+            let mut d = dst.add(head);
+            let mut s = src.add(head);
+            let mut rem = n - head;
+            core::arch::asm!(
+                "2:",
+                "vmovdqu ymm0, [{s}]",
+                "vmovdqu ymm1, [{s}+32]",
+                "vmovdqu ymm2, [{s}+64]",
+                "vmovdqu ymm3, [{s}+96]",
+                "vmovdqa [{d}], ymm0",
+                "vmovdqa [{d}+32], ymm1",
+                "vmovdqa [{d}+64], ymm2",
+                "vmovdqa [{d}+96], ymm3",
+                "add {s}, 128",
+                "add {d}, 128",
+                "sub {rem}, 128",
+                "cmp {rem}, 128",
+                "jae 2b",
+                "vzeroupper",
+                s = inout(reg) s,
+                d = inout(reg) d,
+                rem = inout(reg) rem,
+                out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+                options(nostack),
+            );
+            let _ = (d, s);
+            let mut i = n - rem;
+            while i + 32 <= n {
+                copy_unaligned_32(dst.add(i), src.add(i));
+                i += 32;
+            }
+            if i + 16 <= n {
+                copy_unaligned_16(dst.add(i), src.add(i));
+                i += 16;
+            }
+            while i < n {
+                std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+                i += 1;
+            }
+            return;
+        }
+        let mut d = dst;
+        let mut s = src;
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "vmovdqu ymm0, [{s}]",
+            "vmovdqu ymm1, [{s}+32]",
+            "vmovdqu ymm2, [{s}+64]",
+            "vmovdqu ymm3, [{s}+96]",
+            "vmovdqu [{d}], ymm0",
+            "vmovdqu [{d}+32], ymm1",
+            "vmovdqu [{d}+64], ymm2",
+            "vmovdqu [{d}+96], ymm3",
+            "add {s}, 128",
+            "add {d}, 128",
+            "sub {rem}, 128",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            s = inout(reg) s,
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            out("ymm0") _,
+            out("ymm1") _,
+            out("ymm2") _,
+            out("ymm3") _,
+            options(nostack),
+        );
+        let _ = (d, s);
+        // True remainder [n-rem, n) — the bytes the main loop did NOT copy. Ascending,
+        // read-once (copy_unaligned_16/32 load-then-store), so no re-read of the main region.
+        let mut i = n - rem;
+        while i + 32 <= n {
+            copy_unaligned_32(dst.add(i), src.add(i));
+            i += 32;
+        }
+        if i + 16 <= n {
+            copy_unaligned_16(dst.add(i), src.add(i));
+            i += 16;
+        }
+        while i < n {
+            std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+            i += 1;
+        }
+    }
+}
+
+/// Descending (high→low) AVX copy for a `dst > src` OVERLAP, `n >= 128`. Each 32-byte `vmovdqu`
+/// loads a full chunk into a register before the paired store, and chunks are processed
+/// top-down, so a store — which for `dst > src` lands ABOVE the address just read — can only
+/// overwrite bytes belonging to an already-copied higher chunk. Inline asm is opaque to LLVM's
+/// loop-idiom recognizer, so it is never lowered to `@llvm.memmove` into this interposed symbol
+/// (recursion-safe). Replaces the 16-byte `copy_unaligned_16` backward loop that lost ~1.7-2.5x
+/// to glibc on overlapping moves. The sub-128 low remainder finishes with the proven 16-byte
+/// descending path.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
+    // SAFETY: AVX enabled here; caller guarantees dst/src valid for n bytes with dst > src and
+    // n >= 128. Pointers start at the END and the asm predecrements by 128 each iteration.
+    unsafe {
+        // Dest-END-align peel: the descending `vmovdqu` stores split every 32B across a 64B
+        // line when the destination END `dst+n` is unaligned — measured ~1.95x vs glibc at
+        // n=4096 with `(dst+n)&31 != 0` (worse than the forward case; aligned-end is parity).
+        // glibc aligns the dest tail. Copy the top head first so the main region ends on a
+        // 32 boundary, then run the descending loop with aligned `vmovdqa` stores.
+        //
+        // The peel used to be `copy_unaligned_32(dst+n-32, src+n-32)` under a comment
+        // claiming it was "ALWAYS safe for backward overlap". It was not, in two
+        // independent ways, and conformance_diff_memmove was RED at HEAD because of them:
+        //
+        //  1. It writes a full 32 bytes at `[n-32, n)`, which reaches BELOW `dst+l` — and
+        //     the descending loop afterwards still has to READ `src[0, l)`. At len=200
+        //     disp=1 (top_head=9, l=191) the peel wrote base[233..265] and the loop then
+        //     re-read base[233..255] it had just clobbered.
+        //  2. `copy_unaligned_32` is an ASCENDING pair of 16-byte moves. In a BACKWARD
+        //     context with overlap distance < 16 its first store clobbers its own second
+        //     load: at len=200 disp=15 the low half stored base[247..263] and the high
+        //     half then loaded base[248..264].
+        //
+        // Both vanish if the peel copies EXACTLY the top `top_head` bytes `[l, n)` and does
+        // it descending. `copy_unaligned_16` is atomic (one u128 load, then the store), so
+        // it is safe at any overlap distance, and nothing is written below `dst+l` at all,
+        // which leaves the main loop's source untouched by construction. top_head < 32, so
+        // this is at most one 16-byte block plus a short byte tail — it runs once. bd-0lqilq.
+        let top_head = (dst as usize + n) & 31;
+        if top_head != 0 && top_head + 128 <= n {
+            let l = n - top_head; // dst+l is 32-aligned
+            let mut t = n;
+            while t - l >= 16 {
+                t -= 16;
+                copy_unaligned_16(dst.add(t), src.add(t));
+            }
+            while t > l {
+                t -= 1;
+                std::ptr::write_volatile(dst.add(t), std::ptr::read_volatile(src.add(t)));
+            }
+            let mut d = dst.add(l);
+            let mut s = src.add(l);
+            let mut rem = l;
+            core::arch::asm!(
+                "2:",
+                "sub {rem}, 128",
+                "sub {s}, 128",
+                "sub {d}, 128",
+                "vmovdqu ymm0, [{s}+96]",
+                "vmovdqu ymm1, [{s}+64]",
+                "vmovdqu ymm2, [{s}+32]",
+                "vmovdqu ymm3, [{s}]",
+                "vmovdqa [{d}+96], ymm0",
+                "vmovdqa [{d}+64], ymm1",
+                "vmovdqa [{d}+32], ymm2",
+                "vmovdqa [{d}], ymm3",
+                "cmp {rem}, 128",
+                "jae 2b",
+                "vzeroupper",
+                s = inout(reg) s,
+                d = inout(reg) d,
+                rem = inout(reg) rem,
+                out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+                options(nostack),
+            );
+            let _ = (d, s);
+            let mut i = rem;
+            while i >= 16 {
+                i -= 16;
+                copy_unaligned_16(dst.add(i), src.add(i));
+            }
+            while i > 0 {
+                i -= 1;
+                std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+            }
+            return;
+        }
+        let mut d = dst.add(n);
+        let mut s = src.add(n);
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "sub {rem}, 128",
+            "sub {s}, 128",
+            "sub {d}, 128",
+            "vmovdqu ymm0, [{s}+96]",
+            "vmovdqu ymm1, [{s}+64]",
+            "vmovdqu ymm2, [{s}+32]",
+            "vmovdqu ymm3, [{s}]",
+            "vmovdqu [{d}+96], ymm0",
+            "vmovdqu [{d}+64], ymm1",
+            "vmovdqu [{d}+32], ymm2",
+            "vmovdqu [{d}], ymm3",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            s = inout(reg) s,
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            out("ymm0") _,
+            out("ymm1") _,
+            out("ymm2") _,
+            out("ymm3") _,
+            options(nostack),
+        );
+        let _ = (d, s);
+        // rem ∈ [0,128): the LOW [0, rem) bytes are still uncopied. Descending 16-byte blocks
+        // (each an atomic u128 load-then-store) then a byte tail — the original proven backward
+        // path, on a bounded < 128-byte remainder.
+        let mut i = rem;
+        while i >= 16 {
+            i -= 16;
+            copy_unaligned_16(dst.add(i), src.add(i));
+        }
+        while i > 0 {
+            i -= 1;
+            std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+        }
+    }
+}
+
+/// Straight-line sub-128-byte forward copy: the whole small-`n` size-class ladder, with no
+/// loop and a fixed move count per class.
+///
+/// `#[inline(always)]` and factored out of `raw_overlap_copy` on purpose. It is the body a
+/// hot ABI entry wants to *inline*, not `call`: on the deployed strict `memcpy` path the
+/// call to `raw_overlap_copy` was costing far more than the copy — three callee-saved
+/// pushes and `sub $0x30,%rsp` to keep `dst`/`src`/`n` alive across it, six instructions
+/// shuffling them into and back out of `%rbx`/`%r14`/`%r15`, then the `call`/`ret` pair.
+/// Inlined here, the hot path holds everything in argument registers and needs no frame.
+///
+/// Classes are cut so the common power-of-two lengths tile exactly, and every class uses
+/// overlapping power-of-two windows so the move count is fixed and the trip count vanishes:
+/// `[8,16)` two u64 windows, `[4,8)` two u32, `[1,4)` three bytes, `[16,32)` two 16-byte,
+/// `[32,64]` two 32-byte (n=32 and n=64 tile with no duplicated move), `(64,128)` four
+/// 32-byte. dst/src are disjoint on this path — it is the forward `memcpy` primitive, and
+/// `memmove`'s backward path is a separate function — so the windows may overlap each other.
+///
+/// The explicit `read_unaligned`/`write_unaligned` (rather than a slice copy or a `[u8; N]`
+/// aggregate) is load-bearing: an aggregate copy is exactly what LLVM lowers back to
+/// `@llvm.memcpy`, which in this cdylib resolves to our own interposed `memcpy` and
+/// self-recurses.
+///
+/// SAFETY: caller guarantees `dst`/`src` are valid and disjoint for `n` bytes, and `n < 128`.
+#[inline(always)]
+unsafe fn raw_copy_under_128(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        if n < 16 {
+            if n >= 8 {
+                std::ptr::write_unaligned(
+                    dst.cast::<u64>(),
+                    std::ptr::read_unaligned(src.cast::<u64>()),
+                );
+                std::ptr::write_unaligned(
+                    dst.add(n - 8).cast::<u64>(),
+                    std::ptr::read_unaligned(src.add(n - 8).cast::<u64>()),
+                );
+            } else if n >= 4 {
+                std::ptr::write_unaligned(
+                    dst.cast::<u32>(),
+                    std::ptr::read_unaligned(src.cast::<u32>()),
+                );
+                std::ptr::write_unaligned(
+                    dst.add(n - 4).cast::<u32>(),
+                    std::ptr::read_unaligned(src.add(n - 4).cast::<u32>()),
+                );
+            } else {
+                // n ∈ [1,3]: straight-line byte copies (no loop ⇒ not an @llvm.memcpy).
+                *dst = *src;
+                if n > 1 {
+                    *dst.add(n - 1) = *src.add(n - 1);
+                    *dst.add(n / 2) = *src.add(n / 2);
+                }
+            }
+            return;
+        }
+        // [16,32) FIRST, and returning directly, so the whole sub-32 range reaches a return
+        // without any 256-bit register being live on the path. `vzeroupper` is inserted per
+        // return block that a `ymm` def can reach, so when the small classes fell through to
+        // a shared epilogue below they paid for a register width they never used: n=16 went
+        // 48.00 -> 50.00 and n=8 46.97 -> 48.00 purely from that merge.
+        if n < 32 {
+            copy_unaligned_16(dst, src);
+            copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
+            return;
+        }
+        if n <= 64 {
+            copy_unaligned_32(dst, src);
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        } else {
+            copy_unaligned_32(dst, src);
+            copy_unaligned_32(dst.add(32), src.add(32));
+            copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        }
+    }
+}
+
+/// Straight-line `[128,256)` forward copy: overlapping 32-byte windows, no loop, no
+/// alignment head-peel.
+///
+/// `n=128` is the smallest size that reached the AVX loop, and it was the worst ratio in
+/// the suite at 2.564x for a reason that instruction-level attribution made plain: of the
+/// 39 instructions `raw_overlap_copy` executed there, only EIGHT were the copy. The other
+/// 31 were a nine-instruction head-peel decision that computes "should I align the
+/// destination first?" and answers no; a six-instruction remainder tier ladder evaluated
+/// before any bytes move; three register moves; five of loop bookkeeping for a loop that
+/// runs exactly once; and two `vzeroupper`s. That is a kernel designed for large copies,
+/// charged in full to the smallest input that reaches it.
+///
+/// Overlapping windows make the move count fixed and drop all of it. Two sub-classes so
+/// that no window is wasted:
+///   * `n <= 192`: `[0,128)` as four windows, then `n-64` and `n-32` — the union is
+///     `[0,128) ∪ [n-64,n)`, and `n - 64 <= 128` here, so it is `[0,n)`. Six windows.
+///   * `n > 192`: `[0,128)` then `n-128, n-96, n-64, n-32` — union `[0,128) ∪ [n-128,n)`,
+///     and `n - 128 < 128` since `n < 256`, so again `[0,n)`. Eight windows.
+///
+/// SAFETY: caller guarantees `dst`/`src` valid and disjoint for `n` bytes, and `128 <= n < 256`.
+#[inline]
+unsafe fn raw_copy_128_to_256(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        copy_unaligned_32(dst, src);
+        copy_unaligned_32(dst.add(32), src.add(32));
+        copy_unaligned_32(dst.add(64), src.add(64));
+        copy_unaligned_32(dst.add(96), src.add(96));
+        if n > 192 {
+            copy_unaligned_32(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+        }
+        copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+        copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+    }
+}
+
+/// [256, 384): straight-line overlapping 32-byte windows. Covers [0, 256) with eight
+/// straight-line 32B copies, then [n-128, n) with overlapping 32B copies from the end.
+/// Eliminates loop setup and alignment peel overhead for sub-384 sizes.
+#[inline]
+unsafe fn raw_copy_256_to_384(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        copy_unaligned_32(dst, src);
+        copy_unaligned_32(dst.add(32), src.add(32));
+        copy_unaligned_32(dst.add(64), src.add(64));
+        copy_unaligned_32(dst.add(96), src.add(96));
+        copy_unaligned_32(dst.add(128), src.add(128));
+        copy_unaligned_32(dst.add(160), src.add(160));
+        copy_unaligned_32(dst.add(192), src.add(192));
+        copy_unaligned_32(dst.add(224), src.add(224));
+        if n > 320 {
+            copy_unaligned_32(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+        }
+        copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+        copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        // Only an AVX build emits `ymm` moves above; on baseline x86-64 they are
+        // SSE pairs and `vzeroupper` itself would be an illegal instruction
+        // (bd-rc0923-epic-eeuy4f.13).
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx"))]
+        core::arch::asm!("vzeroupper", options(nostack));
+    }
+}
+
+#[inline]
+pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        // [128,256): straight-line overlapping windows, ahead of the AVX loop below. See
+        // `raw_copy_128_to_256` — the loop's fixed setup dwarfed the copy at these sizes.
+        if (128..256).contains(&n) {
+            raw_copy_128_to_256(dst, src, n);
+            return;
+        }
+        if (256..384).contains(&n) {
+            raw_copy_256_to_384(dst, src, n);
+            return;
+        }
+        // Medium copies [384,131072): AVX-512 / AVX unrolled loop (256 bytes per iteration)
+        // with destination aligned stores and 4K-aliasing backward copy protection.
+        #[cfg(target_arch = "x86_64")]
+        if (384..131072).contains(&n) {
+            if std::is_x86_feature_detected!("avx512f") {
+                // SAFETY: n in [384,131072) and AVX-512F confirmed available.
+                raw_avx512_copy(dst, src, n);
+                return;
+            }
+            if std::is_x86_feature_detected!("avx") {
+                // SAFETY: n in [384,131072) and AVX confirmed available.
+                raw_avx_copy(dst, src, n);
+                return;
+            }
+        }
+        // Huge copies (>=128 KiB) and the non-AVX medium-large fallback: `rep movsb` (x86
+        // ERMS) — glibc's large-memcpy path. Inline asm is opaque to LLVM's loop-idiom
+        // recognizer, so (unlike a Rust copy loop) it is never lowered to @llvm.memcpy into
+        // this interposed symbol — recursion-safe. DF=0 on entry (SysV ABI) ⇒ forward copy.
+        #[cfg(target_arch = "x86_64")]
+        if n >= 2048 {
+            // SAFETY: copies exactly `n` bytes src→dst (caller-guaranteed disjoint & valid);
+            // clobbers rcx/rsi/rdi/flags per the asm contract.
+            core::arch::asm!(
+                "rep movsb",
+                inout("rcx") n => _,
+                inout("rdi") dst => _,
+                inout("rsi") src => _,
+                options(nostack, preserves_flags),
+            );
+            return;
+        }
+        if n < 128 {
+            raw_copy_under_128(dst, src, n);
+            return;
+        }
+        // n >= 128 on the non-AVX fallback path: 32-byte explicit copies for the bulk, then
+        // an overlapping 16-byte copy for the [0,32) remainder (covers all of [i,n) without
+        // a volatile tail).
+        let mut i = 0usize;
+        while i + 32 <= n {
+            copy_unaligned_32(dst.add(i), src.add(i));
+            i += 32;
+        }
+        if i < n {
+            if n - i > 16 {
+                copy_unaligned_16(dst.add(i), src.add(i));
+            }
+            copy_unaligned_16(dst.add(n - 16), src.add(n - 16));
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    // Wide-word forward copy (memcpy semantics: dst/src disjoint). We must not let
+    // LLVM lower the copy to `@llvm.memcpy`, which in the shipped libc.so resolves
+    // back to our own interposed `memcpy` symbol (self-recursion) and can pull in
+    // dlvsym during init. The explicit u128 unaligned loads/stores in
+    // `copy_unaligned_16/32` are never coalesced into an `@llvm.mem*` intrinsic, so
+    // they stay recursion-safe while copying 16-32 bytes per step instead of one
+    // volatile byte; the sub-16 tail stays volatile-byte. Pure pointer ops with no
+    // SIMD-dispatch global state, so early-startup / reentrant callers are safe too.
+    // This is the shared bulk-copy primitive behind strcpy/strcat/strncat and the
+    // string_abi copy paths, so widening it here speeds all of them at once.
+    // SAFETY: caller guarantees dst/src are valid for n bytes and do not overlap.
+    unsafe {
+        if n == 0 {
+            return;
+        }
+        // Overlapping power-of-2 copy (recursion-safe; no per-byte volatile tail).
+        // 1.5-2.5x over the old copy_unaligned+volatile-tail at small n; beats glibc
+        // for n<32. Shared with raw_lane_memcpy_bytes.
+        raw_overlap_copy(dst, src, n);
+    }
+}
+
+/// Fused single-pass strcpy: copy `src` through its terminating NUL into `dst`, writing
+/// exactly `len + 1` bytes, in ONE pass (vs `scan_c_string` + `raw_memcpy_bytes`, which
+/// reads `src` twice). Aligned-load-down + head-mask read discipline (32|4096 keeps each
+/// 32-byte read in-page, same as `scan_c_string`'s None path); full NUL-free 32-byte
+/// chunks are SIMD-stored, the NUL-containing tail is copied scalar up to and including
+/// the NUL. Returns `len` (the NUL index) so callers can return the `stpcpy` end pointer.
+///
+/// # Safety
+/// `src` must be a valid NUL-terminated C string and `dst` must have room for
+/// `strlen(src) + 1` bytes.
+#[inline]
+unsafe fn fused_strcpy_bytes(dst: *mut u8, src: *const u8) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let z = Simd::<u8, 32>::splat(0);
+    let align = (src as usize) & 31;
+    // SAFETY: `base` is aligned down <= 31 bytes, in the same mapped page as `src`.
+    let base = unsafe { src.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        let nul = m0.trailing_zeros() as usize - align;
+        // Copy [0, nul] (the payload + NUL) with the fast overlapping-SIMD small-copy
+        // rather than a scalar byte loop — the scalar tail made fused LOSE to the
+        // two-pass at n<32 (its bulk copy is SIMD). The copy touches exactly `nul+1`
+        // bytes, all within the string + its terminator.
+        //
+        // `raw_copy_under_128` (`#[inline(always)]`), not `raw_overlap_copy` (out of
+        // line): `nul` is a trailing-zero index in a 32-lane mask, so `nul + 1` is in
+        // 1..=32 and the dispatcher's AVX and `rep movsb` tests could never fire. Same
+        // bound argument as the four sites in `fused_strncpy_prefix`.
+        unsafe { raw_copy_under_128(dst, src, nul + 1) };
+        return nul;
+    }
+    let first = 32 - align; // elements from src to the next 32-byte boundary
+    if align == 0 {
+        // base == src: the head window IS the first aligned chunk, all non-NUL.
+        v0.copy_to_slice(unsafe { core::slice::from_raw_parts_mut(dst, 32) });
+    } else {
+        for j in 0..first {
+            // SAFETY: within the just-read window; these are non-NUL string bytes.
+            unsafe { *dst.add(j) = *src.add(j) };
+        }
+    }
+    let mut i = first; // src+i is 32-byte aligned
+    loop {
+        // SAFETY: src+i is 32-byte aligned ⇒ the 32-byte load stays in one page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(src.add(i), 32) });
+        let m = v.simd_eq(z).to_bitmask();
+        if m != 0 {
+            let nul = m.trailing_zeros() as usize;
+            // Overlapping-SIMD tail copy of [i, i+nul] (see the head-window note);
+            // `nul + 1` is in 1..=32, so the inline sub-128 kernel again.
+            unsafe { raw_copy_under_128(dst.add(i), src.add(i), nul + 1) };
+            return i + nul;
+        }
+        // No NUL: all 32 lanes are real bytes ⇒ dst has room for [i, i+32). SIMD store.
+        v.copy_to_slice(unsafe { core::slice::from_raw_parts_mut(dst.add(i), 32) });
+        i += 32;
+    }
+}
+
+/// Bench hook: current two-pass strcpy body (scan + block copy). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strcpy_two_pass(dst: *mut u8, src: *const u8) -> usize {
+    let src_len = unsafe { scan_c_string(src.cast(), None).0 };
+    if src_len > 0 {
+        unsafe { raw_memcpy_bytes(dst, src, src_len) };
+    }
+    unsafe { *dst.add(src_len) = 0 };
+    src_len
+}
+
+/// Bench hook: fused single-pass strcpy. Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strcpy_fused(dst: *mut u8, src: *const u8) -> usize {
+    unsafe { fused_strcpy_bytes(dst, src) }
+}
+
+/// Bounded fused strncpy prefix copy: copies `min(strnlen(src, n), n)` non-NUL bytes
+/// from `src` to `dst` in ONE page-safe pass and returns that count (the strncpy
+/// `copy_len`). Does NOT write the terminator or pad — the caller zero-fills
+/// `dst[copy_len..n]` afterward. Fuses the `scan_c_string(src, Some(n))` +
+/// `raw_memcpy_bytes(dst, src, copy_len)` two-pass (which read the prefix twice).
+///
+/// Read discipline is identical to `fused_strcpy_bytes` (aligned-load-down + head-mask,
+/// 32|4096 keeps each 32-byte read in-page); the `n` cap only bounds how many bytes are
+/// COPIED and where the scan stops — it never enlarges a read, so page-safety is
+/// unchanged. `n > 0` is guaranteed by the caller.
+///
+/// # Safety
+/// `src` readable up to its NUL or `n` bytes (C strncpy contract); `dst` writable for
+/// at least `min(strnlen(src, n), n)` bytes.
+#[inline]
+unsafe fn fused_strncpy_prefix(dst: *mut u8, src: *const u8, n: usize) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let z = Simd::<u8, 32>::splat(0);
+    let align = (src as usize) & 31;
+    // SAFETY: `base` aligned down <= 31 bytes, same mapped page as `src`.
+    let base = unsafe { src.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        // NUL in the head window: copy min(nul, n) real bytes.
+        let nul = m0.trailing_zeros() as usize - align;
+        let take = nul.min(n);
+        // `raw_copy_under_128` assumes n>0 (its caller guards); guard the empty case
+        // (NUL at src[0], or n cap of 0).
+        //
+        // EVERY copy site in this function is bounded by 32 bytes, so all four call
+        // `raw_copy_under_128` (`#[inline(always)]`) rather than `raw_overlap_copy`
+        // (a real out-of-line call). The bound is structural, not incidental:
+        //   * here, `take = nul.min(n)` and `nul` is an index inside a 32-byte window;
+        //   * the head window, `head_take = first.min(n)` with `first = 32 - align` in 1..=32;
+        //   * the final partial window, `stop <= rem = n - i < 32` (that branch is
+        //     entered precisely when `i + 32 > n`);
+        //   * the NUL-containing window, `nul = m.trailing_zeros() < 32`.
+        // So the general dispatcher's AVX range test and `rep movsb` test can never fire
+        // from here, and paying an out-of-line call to reach them was pure overhead:
+        // copying a 40-byte source made TWO such calls (a 32-byte head, an 8-byte tail),
+        // measured at 35.00 Ir of the entry's 145.00.
+        if take > 0 {
+            unsafe { raw_copy_under_128(dst, src, take) };
+        }
+        return take;
+    }
+    let first = 32 - align; // bytes from src to the next 32-byte boundary (all non-NUL)
+    let head_take = first.min(n);
+    unsafe { raw_copy_under_128(dst, src, head_take) };
+    if head_take == n {
+        return n; // hit the n cap inside the head window
+    }
+    let mut i = first; // src+i is 32-byte aligned; i < n here
+    loop {
+        if i >= n {
+            return n;
+        }
+        // SAFETY: src+i is 32-byte aligned ⇒ the 32-byte load stays in one page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(src.add(i), 32) });
+        let m = v.simd_eq(z).to_bitmask();
+        if i + 32 > n {
+            // Final partial window: fewer than 32 bytes remain before the n cap.
+            let rem = n - i;
+            let stop = if m != 0 {
+                (m.trailing_zeros() as usize).min(rem)
+            } else {
+                rem
+            };
+            if stop > 0 {
+                unsafe { raw_copy_under_128(dst.add(i), src.add(i), stop) };
+            }
+            return i + stop;
+        }
+        if m != 0 {
+            let nul = m.trailing_zeros() as usize; // < 32 <= n-i
+            if nul > 0 {
+                unsafe { raw_copy_under_128(dst.add(i), src.add(i), nul) };
+            }
+            return i + nul;
+        }
+        // Full non-NUL window entirely within [i, n): SIMD store.
+        v.copy_to_slice(unsafe { core::slice::from_raw_parts_mut(dst.add(i), 32) });
+        i += 32;
+    }
+}
+
+/// Bench hook: current two-pass strncpy prefix (scan + block copy). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strncpy_two_pass(dst: *mut u8, src: *const u8, n: usize) -> usize {
+    let k = unsafe { scan_c_string(src.cast(), Some(n)).0 };
+    let copy_len = k.min(n);
+    if copy_len > 0 {
+        unsafe { raw_memcpy_bytes(dst, src, copy_len) };
+    }
+    copy_len
+}
+
+/// Bench hook: bounded fused single-pass strncpy prefix. Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strncpy_fused(dst: *mut u8, src: *const u8, n: usize) -> usize {
+    unsafe { fused_strncpy_prefix(dst, src, n) }
+}
+
+#[inline(never)]
+unsafe fn raw_dispatch_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    let dispatch =
+        select_string_simd_dispatch(SimdStringOperation::Memcpy, src as usize, dst as usize, n);
+    // SAFETY: caller guarantees memcpy preconditions for `n` bytes.
+    unsafe {
+        if dispatch.lane_bytes > 1 {
+            raw_lane_memcpy_bytes(dst, src, n, dispatch.lane_bytes);
+        } else {
+            raw_memcpy_bytes(dst, src, n);
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    // Wide-word overlap-aware move. `std::ptr::copy` compiles to `@llvm.memmove`,
+    // which in the shipped libc.so resolves back to our own interposed `memmove`
+    // symbol (self-recursion), so we move explicitly. Instead of one volatile byte
+    // per step we use the same explicit u128 unaligned loads/stores as the memcpy
+    // lane copier (`copy_unaligned_16/32`): LLVM does not coalesce those back into
+    // an `@llvm.mem*` intrinsic, so they stay recursion-safe while moving 16-32
+    // bytes per step (the sub-16 tail stays volatile-byte). These are pure pointer
+    // ops with no SIMD-dispatch global state, so early-startup callers are safe too.
+    // SAFETY: caller guarantees dst/src are valid for n bytes (may overlap).
+    unsafe {
+        let dst_addr = dst as usize;
+        let src_addr = src as usize;
+        // Disjoint regions (the common memmove case): route to the fast memcpy path
+        // (overlapping small-n / AVX vmovdqu loop / rep movsb) — 1.4-2.5x over the
+        // copy_unaligned+volatile loop, parity-to-win vs glibc memmove. Overlapping
+        // copies are safe ONLY when truly disjoint, so the careful forward/backward
+        // copy below still handles every overlapping case.
+        if n != 0
+            && (src_addr.saturating_add(n) <= dst_addr || dst_addr.saturating_add(n) <= src_addr)
+        {
+            raw_overlap_copy(dst, src, n);
+            return;
+        }
+        if dst_addr <= src_addr || dst_addr >= src_addr.saturating_add(n) {
+            // Forward copy (low -> high), safe when dst <= src or disjoint. Strictly ascending:
+            // each chunk is read-then-written in place, and for dst <= src every store lands at
+            // an address <= the address just read, so no source byte is overwritten before it
+            // is read. NOTE: raw_overlap_copy CANNOT be used here — its small-n path does an
+            // end-overlapping store ([n-16,n) after [0,16)) tuned for DISJOINT copies, which
+            // clobbers the source on a forward OVERLAP (e.g. n=17, dst=src-8).
+            //
+            // For n >= 128, a strictly-ascending AVX loop (raw_avx_copy_forward) — NOT
+            // raw_avx_copy, whose end-overlapping tail re-reads src[n-32..n] that the main store
+            // has already clobbered on a forward overlap. 1.7-2.5x over the copy_unaligned loop.
+            #[cfg(target_arch = "x86_64")]
+            if n >= 128 && std::is_x86_feature_detected!("avx") {
+                // SAFETY: dst <= src overlap (or disjoint), n >= 128, AVX present.
+                raw_avx_copy_forward(dst, src, n);
+                return;
+            }
+            let mut i = 0usize;
+            while i + 32 <= n {
+                copy_unaligned_32(dst.add(i), src.add(i));
+                i += 32;
+            }
+            if i + 16 <= n {
+                copy_unaligned_16(dst.add(i), src.add(i));
+                i += 16;
+            }
+            while i < n {
+                std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+                i += 1;
+            }
+        } else {
+            // Backward copy (high -> low), dst > src overlap. For n >= 128, a descending AVX
+            // loop (atomic 32-byte chunks, top-down) — 1.7-2.5x over the 16-byte copy_unaligned
+            // loop below. Smaller n keeps the proven 16-byte path: `copy_unaligned_16` loads the
+            // whole block into one register before storing, so no unread source byte in the
+            // block is clobbered; processing blocks top-down means any byte a store could
+            // overwrite belongs to an already-copied higher block. Sub-16 low tail is byte-wise.
+            #[cfg(target_arch = "x86_64")]
+            if n >= 128 && std::is_x86_feature_detected!("avx") {
+                // SAFETY: dst > src overlap, n >= 128, AVX present.
+                raw_avx_copy_backward(dst, src, n);
+                return;
+            }
+            let mut i = n;
+            while i >= 16 {
+                i -= 16;
+                copy_unaligned_16(dst.add(i), src.add(i));
+            }
+            while i > 0 {
+                i -= 1;
+                std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+            }
+        }
+    }
+}
+
+/// Raw strstr without membrane validation. Used during early startup and
+/// when called from within the membrane/allocator to prevent re-entrant deadlock.
+unsafe fn raw_strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    if haystack.is_null() {
+        return std::ptr::null_mut();
+    }
+    if needle.is_null() {
+        return haystack as *mut c_char;
+    }
+    // SAFETY: both pointers are valid NUL-terminated strings.
+    unsafe {
+        if *needle == 0 {
+            return haystack as *mut c_char;
+        }
+        // Compute lengths with plain inline scalar scans (NO membrane / known_remaining
+        // lookup) so this stays deadlock-safe on the early-startup / membrane-reentrant
+        // path, then route the MATCH to the pure core Two-Way searcher instead of the old
+        // naive O(hay*needle) double loop (a latent quadratic-DoS vector even here). core
+        // memmem allocates nothing and holds no locks, so it is safe in this context.
+        let hay_len = scan_c_string(haystack, None).0;
+        let needle_len = scan_c_string(needle, None).0;
+        if hay_len < needle_len {
+            return std::ptr::null_mut();
+        }
+        let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+        let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+        match frankenlibc_core::string::mem::memmem(hay_slice, hay_len, needle_slice, needle_len) {
+            Some(idx) => haystack.add(idx) as *mut c_char,
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// AVX2 128-byte-unrolled `vmovdqu` STORE loop + minimal straight-line overlapping 32-byte
+/// SSE tail. Inline asm ⇒ never lowered to `@llvm.memset` (recursion-safe). The volatile
+/// u64 loop emits 8-byte stores (1/4 glibc's 32-byte ymm); this matches/beats glibc for
+/// medium n. `vzeroupper` avoids the AVX↔SSE penalty (the tail is pure SSE). Caller
+/// guarantees n >= 128 and AVX availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_memset(dst: *mut u8, value: u8, n: usize) {
+    use core::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128, _mm256_set1_epi8};
+    unsafe {
+        let v = _mm256_set1_epi8(value as i8);
+        let mut d = dst;
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "vmovdqu [{d}], {v}",
+            "vmovdqu [{d}+32], {v}",
+            "vmovdqu [{d}+64], {v}",
+            "vmovdqu [{d}+96], {v}",
+            "add {d}, 128",
+            "sub {rem}, 128",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            v = in(ymm_reg) v,
+            options(nostack),
+        );
+        let _ = d;
+        // rem ∈ [0,128): minimal straight-line overlapping 32-byte SSE stores from the end.
+        let vx = _mm_set1_epi8(value as i8);
+        let set32 = |off: usize| {
+            _mm_storeu_si128(dst.add(off).cast::<__m128i>(), vx);
+            _mm_storeu_si128(dst.add(off + 16).cast::<__m128i>(), vx);
+        };
+        if rem > 96 {
+            set32(n - 128);
+            set32(n - 96);
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 64 {
+            set32(n - 96);
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 32 {
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 0 {
+            set32(n - 32);
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
+    // Wide-word volatile fill. The fill MUST NOT lower to an `@llvm.memset`
+    // intrinsic: in the shipped `libc.so` that intrinsic resolves to our own
+    // interposed `memset` symbol, so a plain `for b { *b = value }` / `.fill()`
+    // would self-recurse. Volatile stores are never coalesced by LLVM's loop-
+    // idiom recognizer, so they stay recursion-safe — but a byte-at-a-time
+    // volatile loop emits one store per byte (a 4 KiB fill = 4096 stores). Here
+    // we broadcast the byte into a `u64` and store 8 bytes per volatile op
+    // (32 bytes per unrolled iteration), an 8-32x reduction in store count that
+    // produces byte-for-byte identical memory to the scalar loop.
+    //
+    // `write_volatile::<u64>` requires 8-byte alignment, so the leading bytes up
+    // to the next 8-byte boundary (and the sub-8-byte tail) are filled byte-wise;
+    // every wide store is therefore naturally aligned.
+    // SAFETY: caller guarantees dst is valid for n bytes; the offsets below stay
+    // within `0..n`, and each `*mut u64` store starts on an 8-aligned address.
+    unsafe {
+        if n == 0 {
+            return;
+        }
+
+        // Straight-line overlapping-store small-n fast path. Unlike the volatile loop
+        // below, these are NOT loops, so LLVM's loop-idiom recognizer cannot fold them
+        // into an `@llvm.memset` call (which resolves to this interposed symbol and would
+        // self-recurse) — so no `volatile` is needed and wide vector/word stores are
+        // used directly. Measured 1.7-2.4x over the volatile path, parity-to-win vs glibc
+        // for n < 32 (the common small-fill range; memset is the hottest libc fn).
+        #[cfg(target_arch = "x86_64")]
+        if (16..128).contains(&n) {
+            use core::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128};
+            // SSE2 is baseline on x86_64 (no runtime feature detect). Explicit unaligned
+            // 16-byte stores covering the head [0,min(n,64)) and tail [n-min(n,64),n)
+            // (overlapping) set every byte to `value`, byte-identical to the scalar fill.
+            // No loop ⇒ never lowered to @llvm.memset (which resolves to this interposed
+            // symbol and would self-recurse). Three overlapping tiers by size:
+            //   n∈[16,32]: 2 stores    n∈(32,64]: 4 stores    n∈(64,128): 8 stores
+            // This closes the [64,128) band that previously fell through to the slow
+            // volatile u64 loop below (measured 2.9x slower than glibc at n=64) — glibc
+            // fills this range with a couple of overlapping vector stores, not a loop.
+            let v = _mm_set1_epi8(value as i8);
+            _mm_storeu_si128(dst.cast::<__m128i>(), v); // [0,16)
+            _mm_storeu_si128(dst.add(n - 16).cast::<__m128i>(), v); // [n-16,n)
+            if n > 32 {
+                _mm_storeu_si128(dst.add(16).cast::<__m128i>(), v); // [16,32)
+                _mm_storeu_si128(dst.add(n - 32).cast::<__m128i>(), v); // [n-32,n-16)
+            }
+            if n > 64 {
+                _mm_storeu_si128(dst.add(32).cast::<__m128i>(), v); // [32,48)
+                _mm_storeu_si128(dst.add(48).cast::<__m128i>(), v); // [48,64)
+                _mm_storeu_si128(dst.add(n - 48).cast::<__m128i>(), v); // [n-48,n-32)
+                _mm_storeu_si128(dst.add(n - 64).cast::<__m128i>(), v); // [n-64,n-48)
+            }
+            return;
+        }
+        if (8..16).contains(&n) {
+            let word = (value as u64).wrapping_mul(0x0101_0101_0101_0101);
+            // SAFETY: n>=8 so both 8-byte windows are within [0,n) (they may overlap).
+            std::ptr::write_unaligned(dst.cast::<u64>(), word);
+            std::ptr::write_unaligned(dst.add(n - 8).cast::<u64>(), word);
+            return;
+        }
+
+        // Medium fills [128,16384): AVX vmovdqu store loop. Measured crossover vs `rep stosb`
+        // (memset_direct_ab / memset_xover): the AVX loop beats rep stosb below ~16 KiB
+        // because ERMS startup dominates there — at 4 KiB the AVX loop is parity vs glibc
+        // (0.99x) while rep stosb was 1.56x; at 8 KiB 1.09x vs 1.28x. Above ~16 KiB rep stosb
+        // (ERMS steady-state / less cache pollution) wins (16 KiB rep 1.14x < AVX 1.19x;
+        // 64 KiB 1.10x < 1.26x), so it stays the large-fill path. Gated on runtime AVX;
+        // non-AVX machines fall through to the rep stosb / volatile paths below unchanged.
+        #[cfg(target_arch = "x86_64")]
+        if (128..16384).contains(&n) && std::is_x86_feature_detected!("avx") {
+            // SAFETY: n in [128,16384) and AVX confirmed available.
+            raw_avx_memset(dst, value, n);
+            return;
+        }
+        // Large fills (>=16 KiB) and the non-AVX medium-large fallback: `rep stosb` (x86
+        // ERMS) — glibc's own large-memset path. Inline asm is opaque to LLVM's loop-idiom
+        // recognizer, so (unlike a Rust vector-store loop) it is NEVER lowered to an
+        // @llvm.memset call into this interposed symbol — recursion-safe without volatile.
+        #[cfg(target_arch = "x86_64")]
+        if n >= 2048 {
+            // SAFETY: fills exactly `n` bytes at `dst` with `value` (caller-guaranteed
+            // valid for n writes); clobbers rcx/rdi/flags per the asm contract.
+            core::arch::asm!(
+                "rep stosb",
+                inout("rcx") n => _,
+                inout("rdi") dst => _,
+                in("al") value,
+                options(nostack, preserves_flags),
+            );
+            return;
+        }
+
+        let word = (value as u64).wrapping_mul(0x0101_0101_0101_0101);
+        let mut i = 0usize;
+
+        // Head: byte-fill until `dst + i` reaches an 8-byte boundary.
+        let head = ((dst as usize).wrapping_neg() & 7).min(n);
+        while i < head {
+            std::ptr::write_volatile(dst.add(i), value);
+            i += 1;
+        }
+
+        // Body: 32-byte unrolled aligned u64 volatile stores, then 8-byte stores.
+        while i + 32 <= n {
+            let p = dst.add(i).cast::<u64>();
+            std::ptr::write_volatile(p, word);
+            std::ptr::write_volatile(p.add(1), word);
+            std::ptr::write_volatile(p.add(2), word);
+            std::ptr::write_volatile(p.add(3), word);
+            i += 32;
+        }
+        while i + 8 <= n {
+            std::ptr::write_volatile(dst.add(i).cast::<u64>(), word);
+            i += 8;
+        }
+
+        // Tail: remaining sub-8-byte bytes.
+        while i < n {
+            std::ptr::write_volatile(dst.add(i), value);
+            i += 1;
+        }
+    }
+}
+
+/// Benchmark/test hook: exposes [`raw_memset_bytes`] under a stable name so the
+/// `frankenlibc-bench` crate can measure the shipped wide-word fill against the
+/// host `memset` without going through the no-mangle `memset` symbol (which
+/// would collide with libc at link time). Not part of the public ABI.
+///
+/// # Safety
+/// `dst` must be valid for `n` writes.
+#[doc(hidden)]
+pub unsafe fn bench_raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
+    unsafe { raw_memset_bytes(dst, value, n) }
+}
+
+/// Benchmark/test hook for the shipped overlap-aware [`raw_memmove_bytes`] move.
+/// Not part of the public ABI.
+///
+/// # Safety
+/// `dst`/`src` must be valid for `n` bytes (may overlap).
+#[doc(hidden)]
+pub unsafe fn bench_raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe { raw_memmove_bytes(dst, src, n) }
+}
+
+/// Benchmark/test hook for the shared bulk-copy primitive [`raw_memcpy_bytes`]
+/// (behind strcpy/strcat/strncat). Not part of the public ABI.
+///
+/// # Safety
+/// `dst`/`src` must be valid for `n` bytes and must not overlap.
+#[doc(hidden)]
+pub unsafe fn bench_raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe { raw_memcpy_bytes(dst, src, n) }
+}
+
+/// Benchmark/test hook for the SWAR [`scan_c_string`] NUL scanner (behind
+/// strcpy/stpcpy/strncat). Not part of the public ABI.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated when `bound` is `None`, else valid for `bound`
+/// bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    unsafe { scan_c_string(ptr, bound) }
+}
+
+/// Benchmark/test hook for the SWAR [`scan_c_string_for_byte`] scanner (behind
+/// strchr). Not part of the public ABI.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated when `bound` is `None`, else valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_c_string_for_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (usize, bool, bool) {
+    unsafe { scan_c_string_for_byte(ptr, target, bound) }
+}
+
+/// Benchmark/test hook for the SWAR [`scan_strcmp`] scanner (behind
+/// strcmp/strncmp). Not part of the public ABI.
+///
+/// # Safety
+/// `s1`/`s2` must be NUL-terminated, or valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_strcmp(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
+    unsafe { scan_strcmp::<true>(s1, s2, bound) }
+}
+
+/// Benchmark/test hook for the SWAR [`scan_c_string_last_byte`] scanner (behind
+/// strrchr). Not part of the public ABI.
+///
+/// # Safety
+/// `ptr` must be NUL-terminated when `bound` is `None`, else valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_c_string_last_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (Option<usize>, usize, bool) {
+    unsafe { scan_c_string_last_byte(ptr, target, bound) }
+}
+
+/// Test hook: per-lane SWAR ASCII lowercase, for exhaustive parity vs
+/// `to_ascii_lowercase`. Not part of the public ABI.
+#[doc(hidden)]
+pub fn test_swar_ascii_lower(w: u64) -> u64 {
+    swar_ascii_lower(w)
+}
+
+/// Benchmark/test hook for the fused SWAR [`scan_strcasecmp`] (behind
+/// strcasecmp/strncasecmp). Not part of the public ABI.
+///
+/// # Safety
+/// `s1`/`s2` must be NUL-terminated, or valid for `bound` bytes.
+#[doc(hidden)]
+pub unsafe fn bench_scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) -> c_int {
+    unsafe { scan_strcasecmp::<true>(s1, s2, bound).0 }
+}
+
+#[inline]
+unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
+    // SAFETY: caller guarantees 16 readable/writable bytes.
+    unsafe {
+        let lane = std::ptr::read_unaligned(src.cast::<u128>());
+        std::ptr::write_unaligned(dst.cast::<u128>(), lane);
+    }
+}
+
+#[inline]
+unsafe fn copy_unaligned_32(dst: *mut u8, src: *const u8) {
+    // ONE 32-byte `ymm` move, not two `u128` halves. As two halves this emitted four
+    // `vmovups` on `xmm`, so a 64-byte `memcpy` — the commonest size there is — issued
+    // EIGHT of them to move sixty-four bytes, using half of each register. glibc moves
+    // the same 64 bytes in four.
+    //
+    // Legal on every x86_64 CPU: portable SIMD lowers to the widest vector the build
+    // targets. That is one `ymm` move in an AVX build and two SSE `movups` in the
+    // shipped baseline x86-64 build (bd-rc0923-epic-eeuy4f.13), never an instruction
+    // the build did not enable.
+    //
+    // `Simd<u8, 32>` rather than a `[u8; 32]` aggregate: an aggregate copy is what LLVM
+    // lowers back to `@llvm.memcpy`, which in this cdylib resolves to our own interposed
+    // `memcpy` and self-recurses. This is the same `from_slice`/`copy_to_slice` pattern
+    // the fused strcpy/strncpy kernels in this file already rely on, and the emitted code
+    // is checked for a `call` back into `memcpy` after every change here.
+    //
+    // SAFETY: caller guarantees 32 readable/writable bytes; the slices are exactly 32
+    // long, so `from_slice`/`copy_to_slice` cannot panic.
+    unsafe {
+        let v = core::simd::Simd::<u8, 32>::from_slice(core::slice::from_raw_parts(src, 32));
+        v.copy_to_slice(core::slice::from_raw_parts_mut(dst, 32));
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize, lane_bytes: usize) {
+    // SAFETY: caller guarantees dst/src are valid for n bytes with memcpy semantics.
+    unsafe {
+        if n == 0 {
+            return;
+        }
+        if lane_bytes >= 16 {
+            // Overlapping power-of-2 copy (recursion-safe, no per-byte volatile tail) —
+            // the wide lane the dispatch selected. 1.5-2.5x over the old
+            // copy_unaligned+volatile-tail at small n; beats glibc for n<32.
+            raw_overlap_copy(dst, src, n);
+            return;
+        }
+        // lane_bytes < 16 (raw passthrough): pure volatile byte copy, unchanged.
+        let mut i = 0usize;
+        while i < n {
+            std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+            i += 1;
+        }
+    }
+}
+
+#[inline]
+unsafe fn chunk_equal_16(lhs: *const u8, rhs: *const u8) -> bool {
+    // SAFETY: caller guarantees 16 readable bytes from each pointer.
+    unsafe {
+        std::ptr::read_unaligned(lhs.cast::<u128>()) == std::ptr::read_unaligned(rhs.cast::<u128>())
+    }
+}
+
+#[inline]
+unsafe fn chunk_equal_32(lhs: *const u8, rhs: *const u8) -> bool {
+    // SAFETY: caller guarantees 32 readable bytes from each pointer.
+    unsafe { chunk_equal_16(lhs, rhs) && chunk_equal_16(lhs.add(16), rhs.add(16)) }
+}
+
+#[inline(never)]
+/// Sign of the first differing byte in `[lo, hi)` (`-1`/`+1`), or `0` if equal.
+/// Only ever called on a window already known to contain a difference (the equal
+/// case returns 0 harmlessly).
+unsafe fn memcmp_first_diff(s1: *const u8, s2: *const u8, lo: usize, hi: usize) -> c_int {
+    let mut j = lo;
+    while j < hi {
+        // SAFETY: caller guarantees `[lo, hi) ⊆ [0, n)` readable.
+        let av = unsafe { *s1.add(j) };
+        let bv = unsafe { *s2.add(j) };
+        if av != bv {
+            return if av < bv { -1 } else { 1 };
+        }
+        j += 1;
+    }
+    0
+}
+
+unsafe fn raw_lane_memcmp_bytes(
+    s1: *const u8,
+    s2: *const u8,
+    n: usize,
+    lane_bytes: usize,
+) -> c_int {
+    // SAFETY: caller guarantees both regions are readable for n bytes.
+    unsafe {
+        let mut i = 0usize;
+        if lane_bytes >= 16 {
+            // 32-byte main loop for the bulk. `chunk_equal_32` is two SSE2 u128
+            // compares so this is valid for the whole lane_bytes>=16 path (no AVX
+            // required); a 16-byte-lane dispatch still gets the wider stride here.
+            while i + 32 <= n {
+                if !chunk_equal_32(s1.add(i), s2.add(i)) {
+                    return memcmp_first_diff(s1, s2, i, i + 32);
+                }
+                i += 32;
+            }
+            // glibc-style overlapping power-of-2 tail: after the 32-byte chunks the
+            // remainder r = n - i is in [0, 32); one overlapping wide load per size
+            // class replaces the per-byte scalar tail (n=31 was 1×16B + 15 scalar; now
+            // 2×16B). Each window ends at n so it stays in bounds; the overlapped
+            // prefix is already equal, so the first mismatch found is the true first
+            // differing byte. `chunk_equal_32/16` are SSE2 (u128) so the 32-byte main
+            // loop is valid even when the dispatch picked a 16-byte lane. (Was the
+            // small-n memcmp floor: ~8x vs glibc → parity, bd string-scan vein.)
+            if i == n {
+                return 0;
+            }
+            let r = n - i;
+            if r >= 16 {
+                if !chunk_equal_16(s1.add(i), s2.add(i)) {
+                    return memcmp_first_diff(s1, s2, i, i + 16);
+                }
+                let off = n - 16;
+                if !chunk_equal_16(s1.add(off), s2.add(off)) {
+                    return memcmp_first_diff(s1, s2, off, n);
+                }
+            } else if r >= 8 {
+                if core::ptr::read_unaligned(s1.add(i).cast::<u64>())
+                    != core::ptr::read_unaligned(s2.add(i).cast::<u64>())
+                {
+                    return memcmp_first_diff(s1, s2, i, i + 8);
+                }
+                let off = n - 8;
+                if core::ptr::read_unaligned(s1.add(off).cast::<u64>())
+                    != core::ptr::read_unaligned(s2.add(off).cast::<u64>())
+                {
+                    return memcmp_first_diff(s1, s2, off, n);
+                }
+            } else if r >= 4 {
+                if core::ptr::read_unaligned(s1.add(i).cast::<u32>())
+                    != core::ptr::read_unaligned(s2.add(i).cast::<u32>())
+                {
+                    return memcmp_first_diff(s1, s2, i, i + 4);
+                }
+                let off = n - 4;
+                if core::ptr::read_unaligned(s1.add(off).cast::<u32>())
+                    != core::ptr::read_unaligned(s2.add(off).cast::<u32>())
+                {
+                    return memcmp_first_diff(s1, s2, off, n);
+                }
+            } else {
+                return memcmp_first_diff(s1, s2, i, n);
+            }
+            return 0;
+        }
+        // lane_bytes < 16 (raw passthrough): pure scalar, unchanged.
+        while i < n {
+            let av = *s1.add(i);
+            let bv = *s2.add(i);
+            if av != bv {
+                return if av < bv { -1 } else { 1 };
+            }
+            i += 1;
+        }
+        0
+    }
+}
+
+/// AVX2 memcmp bulk kernel for `n >= 32`.
+///
+/// The scalar `raw_lane_memcmp_bytes` path uses `u128 ==` (`chunk_equal_16`),
+/// which LLVM lowers to two data-dependent 64-bit integer compares — so a 32-byte
+/// window is 4 serial scalar compares, never a vector op. glibc's AVX2 memcmp does
+/// one `vpcmpeqb` + `vpmovmskb` per 32 bytes, unrolled. This kernel matches that:
+/// a 128-byte main loop that ANDs four eq-masks and branches once per 128 bytes in
+/// the all-equal case (the throughput bound), then a 32-byte loop and an overlapping
+/// final 32-byte window for the tail. First-diff is located via `movemask` + `tzcnt`.
+///
+/// Byte-identical result to the scalar path: returns the sign (`-1`/`+1`) of the
+/// first differing byte compared as `u8`, or `0` when the two regions are equal.
+///
+/// # Safety
+/// Caller guarantees `n >= 32` and both regions readable for `n` bytes; AVX2 present.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
+    // SAFETY: AVX2 enabled on this fn; every load stays within `[0, n)` (caller
+    // guarantees `n` readable bytes and every offset below is `<= n - 32`).
+    unsafe {
+        #[inline(always)]
+        unsafe fn diff_at(s1: *const u8, s2: *const u8, idx: usize) -> c_int {
+            // SAFETY: `idx < n`, readable per the outer contract.
+            let av = unsafe { *s1.add(idx) };
+            let bv = unsafe { *s2.add(idx) };
+            if av < bv { -1 } else { 1 }
+        }
+        #[inline(always)]
+        unsafe fn block_mask(s1: *const u8, s2: *const u8, off: usize) -> u32 {
+            use std::arch::x86_64::*;
+            // SAFETY: `[off, off+32) ⊆ [0, n)`, readable per the outer contract.
+            unsafe {
+                let a = _mm256_loadu_si256(s1.add(off).cast());
+                let b = _mm256_loadu_si256(s2.add(off).cast());
+                // eq-mask bit = 1 where bytes are EQUAL, 0 where they differ.
+                _mm256_movemask_epi8(_mm256_cmpeq_epi8(a, b)) as u32
+            }
+        }
+        let mut i = 0usize;
+        // 128-byte all-equal throughput loop. glibc's AVX2 memcmp folds the
+        // second load into `vpcmpeqb ymm, ymm, [mem]`; the intrinsic form above
+        // forced 8 explicit loads per 128B. The asm only advances over proven
+        // equal chunks. On the first differing chunk, `i` still points at that
+        // chunk and the unchanged 32B block path below locates the exact byte.
+        //
+        // Head-peel to 32-align `s1`: with both operands loaded unaligned, EVERY
+        // 32B load can straddle a 64B cache line (measured ~1.5x vs glibc at
+        // n>=4096 when both pointers share a non-32 offset — the split penalty,
+        // not instruction count). glibc peels one pointer to alignment so only the
+        // other operand can split. Here: compare the first 32B unaligned (covers
+        // the sub-32 head), then start the loop at the next 32-aligned `s1` offset
+        // and use aligned `vmovdqa` loads for `s1` (a 32-aligned 32B load never
+        // crosses a 64B line). `s2` stays the unaligned `vpcmpeqb` memory operand.
+        // Byte-identical: `[0,32)` already verified equal, `start <= 31 < 32` so the
+        // loop's first window re-covers `[start,32)` with no gap; page-safe because
+        // alignment rounds UP (every offset stays in `[0, n)`).
+        if n >= 128 {
+            let m0 = block_mask(s1, s2, 0);
+            if m0 != 0xFFFF_FFFF {
+                return diff_at(s1, s2, (!m0).trailing_zeros() as usize);
+            }
+            i = (32 - (s1 as usize & 31)) & 31;
+        }
+        if i + 128 <= n {
+            core::arch::asm!(
+                "2:",
+                "vmovdqa ymm0, [{s1}+{i}]",
+                "vpcmpeqb ymm0, ymm0, [{s2}+{i}]",
+                "vmovdqa ymm1, [{s1}+{i}+32]",
+                "vpcmpeqb ymm1, ymm1, [{s2}+{i}+32]",
+                "vmovdqa ymm2, [{s1}+{i}+64]",
+                "vpcmpeqb ymm2, ymm2, [{s2}+{i}+64]",
+                "vmovdqa ymm3, [{s1}+{i}+96]",
+                "vpcmpeqb ymm3, ymm3, [{s2}+{i}+96]",
+                "vpand ymm0, ymm0, ymm1",
+                "vpand ymm2, ymm2, ymm3",
+                "vpand ymm0, ymm0, ymm2",
+                "vpmovmskb {tmp:e}, ymm0",
+                "cmp {tmp:e}, -1",
+                "jne 3f",
+                "add {i}, 128",
+                "lea {tmp}, [{i}+128]",
+                "cmp {tmp}, {n}",
+                "jbe 2b",
+                "3:",
+                "vzeroupper",
+                s1 = in(reg) s1,
+                s2 = in(reg) s2,
+                n = in(reg) n,
+                i = inout(reg) i,
+                tmp = out(reg) _,
+                out("ymm0") _,
+                out("ymm1") _,
+                out("ymm2") _,
+                out("ymm3") _,
+                options(nostack, readonly),
+            );
+        }
+        while i + 32 <= n {
+            let m = block_mask(s1, s2, i);
+            if m != 0xFFFF_FFFF {
+                return diff_at(s1, s2, i + (!m).trailing_zeros() as usize);
+            }
+            i += 32;
+        }
+        // Overlapping final 32-byte window (n >= 32 ⇒ off is in bounds). The prefix
+        // it re-scans is already known equal, so the first mismatch found is the true
+        // first differing byte.
+        if i < n {
+            let off = n - 32;
+            let m = block_mask(s1, s2, off);
+            if m != 0xFFFF_FFFF {
+                return diff_at(s1, s2, off + (!m).trailing_zeros() as usize);
+            }
+        }
+        0
+    }
+}
+
+/// SSE2 memcmp for `16 <= n < 32`: two overlapping 16-byte `pcmpeqb` windows.
+///
+/// SSE2 is part of the x86_64 baseline, so no runtime feature check is needed.
+/// Replaces the scalar path's two `chunk_equal_16` (`u128 ==` → serial 64-bit
+/// compares) with real vector compares. First-diff via `movemask` + `tzcnt`.
+/// Byte-identical result to the scalar path.
+///
+/// # Safety
+/// Caller guarantees `16 <= n < 32` and both regions readable for `n` bytes.
+#[cfg(target_arch = "x86_64")]
+unsafe fn memcmp_sse16(s1: *const u8, s2: *const u8, n: usize) -> c_int {
+    // SAFETY: SSE2 is baseline on x86_64; both windows lie within `[0, n)`
+    // (first at 0, second at `n-16`, and `n >= 16`).
+    unsafe {
+        #[inline(always)]
+        unsafe fn win(s1: *const u8, s2: *const u8, off: usize) -> u32 {
+            use std::arch::x86_64::*;
+            // SAFETY: `[off, off+16) ⊆ [0, n)`, readable per the outer contract.
+            unsafe {
+                let a = _mm_loadu_si128(s1.add(off).cast());
+                let b = _mm_loadu_si128(s2.add(off).cast());
+                // 16-bit mask: bit = 1 where EQUAL.
+                (_mm_movemask_epi8(_mm_cmpeq_epi8(a, b)) as u32) & 0xFFFF
+            }
+        }
+        #[inline(always)]
+        unsafe fn diff_at(s1: *const u8, s2: *const u8, idx: usize) -> c_int {
+            // SAFETY: `idx < n`, readable per the outer contract.
+            let av = unsafe { *s1.add(idx) };
+            let bv = unsafe { *s2.add(idx) };
+            if av < bv { -1 } else { 1 }
+        }
+        let m0 = win(s1, s2, 0);
+        if m0 != 0xFFFF {
+            return diff_at(s1, s2, (!m0 & 0xFFFF).trailing_zeros() as usize);
+        }
+        let off = n - 16;
+        let m1 = win(s1, s2, off);
+        if m1 != 0xFFFF {
+            return diff_at(s1, s2, off + (!m1 & 0xFFFF).trailing_zeros() as usize);
+        }
+        0
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c_int {
+    // `select_string_simd_dispatch(Memcmp)` cost ~8ns/call (atomic feature-mask + ISA probe
+    // + once-logger) to pick a lane whose ONLY effect here is `>1` (SIMD) vs `==1` (scalar).
+    // In strict mode that maps exactly to the byte boundary n>=16 (Sse42 threshold) → the
+    // wide `raw_lane_memcmp_bytes` (its 32-byte SSE2 loop is valid for any lane>=16), else
+    // n<16 → overlapping wide-word compare. Branch on `n` directly and drop the dead dispatch —
+    // byte-identical (same boundary, same comparison semantics).
+    // SAFETY: caller guarantees both regions are readable for `n` bytes.
+    unsafe {
+        if n >= 16 {
+            // Real AVX2 kernel for the bulk (n>=32) when the CPU has it: one
+            // `vpcmpeqb` per 32B vs the scalar path's 4 serial `u128 ==` compares.
+            // The 16<=n<32 sliver and no-AVX2 fallback keep the proven scalar path.
+            #[cfg(target_arch = "x86_64")]
+            {
+                if n >= 32 {
+                    if string_simd_avx2_enabled() {
+                        return memcmp_avx2(s1, s2, n);
+                    }
+                } else {
+                    // 16 <= n < 32: two overlapping SSE2 `pcmpeqb` windows (SSE2 is
+                    // baseline on x86_64) beat the scalar path's serial `u128 ==`.
+                    return memcmp_sse16(s1, s2, n);
+                }
+            }
+            raw_lane_memcmp_bytes(s1, s2, n, 32)
+        } else if n >= 8 {
+            let hx = u64::from_be(core::ptr::read_unaligned(s1.cast::<u64>()));
+            let hy = u64::from_be(core::ptr::read_unaligned(s2.cast::<u64>()));
+            if hx != hy {
+                return if hx < hy { -1 } else { 1 };
+            }
+            let off = n - 8;
+            let tx = u64::from_be(core::ptr::read_unaligned(s1.add(off).cast::<u64>()));
+            let ty = u64::from_be(core::ptr::read_unaligned(s2.add(off).cast::<u64>()));
+            if tx == ty {
+                0
+            } else if tx < ty {
+                -1
+            } else {
+                1
+            }
+        } else if n >= 4 {
+            let hx = u32::from_be(core::ptr::read_unaligned(s1.cast::<u32>()));
+            let hy = u32::from_be(core::ptr::read_unaligned(s2.cast::<u32>()));
+            if hx != hy {
+                return if hx < hy { -1 } else { 1 };
+            }
+            let off = n - 4;
+            let tx = u32::from_be(core::ptr::read_unaligned(s1.add(off).cast::<u32>()));
+            let ty = u32::from_be(core::ptr::read_unaligned(s2.add(off).cast::<u32>()));
+            if tx == ty {
+                0
+            } else if tx < ty {
+                -1
+            } else {
+                1
+            }
+        } else if n >= 2 {
+            let hx = u16::from_be(core::ptr::read_unaligned(s1.cast::<u16>()));
+            let hy = u16::from_be(core::ptr::read_unaligned(s2.cast::<u16>()));
+            if hx != hy {
+                return if hx < hy { -1 } else { 1 };
+            }
+            let off = n - 2;
+            let tx = u16::from_be(core::ptr::read_unaligned(s1.add(off).cast::<u16>()));
+            let ty = u16::from_be(core::ptr::read_unaligned(s2.add(off).cast::<u16>()));
+            if tx == ty {
+                0
+            } else if tx < ty {
+                -1
+            } else {
+                1
+            }
+        } else if n == 1 {
+            let a = *s1;
+            let b = *s2;
+            if a == b {
+                0
+            } else if a < b {
+                -1
+            } else {
+                1
+            }
+        } else {
+            0
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_strlen_bytes(s: *const c_char, _lane_bytes: usize) -> usize {
+    // SWAR word-at-a-time NUL scan via the shared, exhaustively-gated
+    // `scan_c_string`. The old body chunked by `lane_bytes` but still compared
+    // one byte at a time (data-dependent early return = unvectorizable); the SWAR
+    // scan supersedes it (5-15x), so the dispatch hint is no longer needed.
+    // SAFETY: caller guarantees a valid NUL-terminated string.
+    unsafe { scan_c_string(s, None).0 }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_strnlen_bytes(
+    s: *const c_char,
+    max: usize,
+    _lane_bytes: usize,
+) -> (usize, bool) {
+    // SWAR bounded NUL scan via the shared `scan_c_string`, which has the identical
+    // `(index_of_nul_or_max, found_nul)` contract. Supersedes the old byte-chunked
+    // loop with the proven word-at-a-time scan.
+    // SAFETY: caller guarantees `s` readable up to `max`.
+    unsafe { scan_c_string(s, Some(max)) }
+}
+
+// `#[cold] #[inline(never)]`: reachable only under a forced HTM test mode, but when it was
+// inlined its pointer-triple spill was what forced `sub $0x30,%rsp` into `memcpy`'s entry
+// block — a 48-byte frame rented by every deployed call for a branch none of them take.
+#[cold]
+#[inline(never)]
+fn try_memcpy_htm(dst: *mut u8, src: *const u8, n: usize) -> bool {
+    if n > MEMCPY_HTM_MAX_BYTES {
+        return false;
+    }
+
+    matches!(
+        MEMCPY_HTM_SITE.run(|| {
+            // SAFETY: callers only invoke the HTM helper after validating the
+            // same preconditions as the raw memcpy fallback.
+            unsafe { raw_memcpy_bytes(dst, src, n) };
+        }),
+        Ok(())
+    )
+}
+
+#[doc(hidden)]
+pub fn memcpy_htm_reset_for_tests() {
+    MEMCPY_HTM_SITE.reset_for_tests();
+}
+
+#[doc(hidden)]
+#[must_use]
+pub fn memcpy_htm_snapshot_for_tests() -> HtmSiteSnapshot {
+    MEMCPY_HTM_SITE.snapshot()
+}
+
+#[doc(hidden)]
+pub fn signal_runtime_ready_for_tests() {
+    runtime_policy::signal_runtime_ready();
+}
+
+#[doc(hidden)]
+pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
+    runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
+}
+
+#[inline(always)]
+fn maybe_clamp_copy_len_fast(
+    symbol: &'static str,
+    requested: usize,
+    primary_addr: usize,
+    primary_remaining: crate::malloc_abi::KnownRemaining,
+    secondary_addr: Option<usize>,
+    secondary_remaining: crate::malloc_abi::KnownRemaining,
+    enable_repair: bool,
+) -> (usize, bool) {
+    if !enable_repair || requested <= primary_remaining.min(secondary_remaining).raw() {
+        return (requested, false);
+    }
+    maybe_clamp_copy_len(
+        symbol,
+        requested,
+        primary_addr,
+        primary_remaining.into_option(),
+        secondary_addr,
+        secondary_remaining.into_option(),
+        true,
+    )
+}
+
+#[inline(always)]
+fn maybe_clamp_copy_len(
+    symbol: &'static str,
+    requested: usize,
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
+    enable_repair: bool,
+) -> (usize, bool) {
+    if !enable_repair || requested == 0 {
+        return (requested, false);
+    }
+
+    let action =
+        global_healing_policy().heal_copy_bounds(requested, secondary_remaining, primary_remaining);
+    match action {
+        HealingAction::ClampSize {
+            requested: _,
+            clamped,
+        } => {
+            record_clamp_copy_bounds(
+                symbol,
+                &action,
+                primary_addr,
+                primary_remaining,
+                secondary_addr,
+                secondary_remaining,
+            );
+            (clamped, true)
+        }
+        _ => (requested, false),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn record_clamp_copy_bounds(
+    symbol: &'static str,
+    action: &HealingAction,
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
+) {
+    // The primary pointer is the destination for writes and the first
+    // operand for comparisons/scans. A strictly smaller secondary
+    // extent is the actual bound that caused the clamp; ties remain
+    // attributed to the primary operation pointer.
+    let address = bound_causing_address(
+        primary_addr,
+        primary_remaining,
+        secondary_addr,
+        secondary_remaining,
+    );
+    global_healing_policy().record(
+        "string_memory",
+        symbol,
+        action,
+        RepairLogContext::new(0, Some(address)),
+    );
+}
+
+#[inline]
+fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
+    heals_enabled || matches!(action, MembraneAction::Repair(_))
+}
+
+#[inline]
+fn clamp_destination_size_for_repair(
+    requested: usize,
+    dst_remaining: Option<usize>,
+    repair: bool,
+) -> (usize, bool) {
+    if !repair {
+        return (requested, false);
+    }
+    match dst_remaining {
+        Some(bound) if bound < requested => (bound, true),
+        _ => (requested, false),
+    }
+}
+
+#[doc(hidden)]
+pub fn clamp_destination_size_for_tests(
+    requested: usize,
+    dst_remaining: Option<usize>,
+    repair: bool,
+) -> (usize, bool) {
+    clamp_destination_size_for_repair(requested, dst_remaining, repair)
+}
+
+fn bound_causing_address(
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
+) -> usize {
+    match (primary_remaining, secondary_remaining) {
+        (None, Some(_)) => secondary_addr.unwrap_or(primary_addr),
+        (Some(primary), Some(secondary)) if secondary < primary => {
+            secondary_addr.unwrap_or(primary_addr)
+        }
+        _ => primary_addr,
+    }
+}
+
+fn record_truncation(symbol: &'static str, requested: usize, truncated: usize, address: usize) {
+    global_healing_policy().record(
+        "string_memory",
+        symbol,
+        &HealingAction::TruncateWithNull {
+            requested,
+            truncated,
+        },
+        RepairLogContext::new(0, Some(address)),
+    );
+}
+
+#[inline]
+fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
+    ordering.iter().position(|s| *s == stage).unwrap_or(0)
+}
+
+#[inline]
+fn stage_context_one(addr: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = (addr & 0x7) == 0;
+    let recent_page = addr != 0 && crate::malloc_abi::check_ownership(addr);
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn stage_context_two(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = ((addr1 | addr2) & 0x7) == 0;
+    let recent_page = (addr1 != 0 && crate::malloc_abi::check_ownership(addr1))
+        || (addr2 != 0 && crate::malloc_abi::check_ownership(addr2));
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn stage_context_from_remaining_one(
+    addr: usize,
+    rem: Option<usize>,
+) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = (addr & 0x7) == 0;
+    let recent_page = rem.is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn stage_context_from_remaining_two(
+    addr1: usize,
+    rem1: Option<usize>,
+    addr2: usize,
+    rem2: Option<usize>,
+) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = ((addr1 | addr2) & 0x7) == 0;
+    let recent_page = rem1.is_some() || rem2.is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn record_string_stage_outcome(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    runtime_policy::note_check_order_outcome(
+        ApiFamily::StringMemory,
+        aligned,
+        recent_page,
+        ordering,
+        exit_stage,
+    );
+}
+
+/// Scan a C string with an optional hard bound.
+///
+/// Returns `(len, terminated)` where:
+/// - `len` is the byte length before the first NUL or before the bound.
+/// - `terminated` indicates whether a NUL byte was observed.
+///
+/// # Safety
+///
+/// `ptr` must be valid to read up to the discovered length (and bound when given).
+/// SWAR zero-byte test: true iff any byte of `w` is 0. The classic
+/// `(w - 0x01..) & ~w & 0x80..` haszero trick — a candidate that can false-flag
+/// only when a high bit is set, so the caller resolves the exact index byte-wise.
+#[inline(always)]
+fn swar_word_has_zero(w: u64) -> bool {
+    w.wrapping_sub(0x0101_0101_0101_0101) & !w & 0x8080_8080_8080_8080 != 0
+}
+
+/// Scan a C string for its terminating NUL, word-at-a-time (SWAR) instead of
+/// byte-at-a-time. Returns `(index_of_nul_or_limit, found_nul)`.
+///
+/// Bounded mode reads only within `limit` (8-byte windows then a byte tail), so
+/// it never over-reads. Unbounded mode aligns the pointer to 8 bytes first, then
+/// reads *aligned* u64s: an 8-aligned 8-byte load never straddles a 4096-byte
+/// page boundary, so it cannot fault past the NUL's own (mapped) page — the same
+/// safety argument glibc/musl strlen rely on.
+/// # NOT [`crate::util::scan_c_string`], and the difference is a page fault
+///
+/// Two functions in this crate carry this name. THIS one's bounded arm takes
+/// `bound` as a PROMISE of readable bytes and loads whole 128-byte windows under
+/// it, which is correct for `memchr(p, c, n)` and wrong for any caller whose
+/// `bound` is a defensive cap over a pointer it does not own. `util::scan_c_string`
+/// walks byte by byte and is the one to reach for there; every module that wants
+/// a cap imports that one, and this function is only ever called FULLY QUALIFIED
+/// (see `tests/capped_scans_use_the_scalar_scanner.rs`). For a caller-supplied
+/// ceiling that must still be fast, use [`scan_c_string_nul_or_bound`].
+///
+/// Runs an AVX2 build of [`scan_c_string_body`] on CPUs that have it
+/// (`avx2_dispatch!`): its 32/64-lane portable-SIMD tiers are SSE2 halves in
+/// the baseline x86-64 build.
+///
+/// In that build an unbounded scan first checks its first one or two 64-byte
+/// blocks inline ([`scan_c_string_head`]) and dispatches only the rest: with
+/// every call dispatched, strlen of 16- and 64-byte strings measured 1.09x
+/// main's x86-64-v3 build, against 0.93x for the same source built baseline
+/// with no dispatch (incumbent_coverage_ab isa_kernels, same-invocation
+/// self-A/B, hz4; bd-rc0923-epic-eeuy4f.13).
+#[inline(always)]
+pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    avx2_dispatch! {
+        #[inline(always)]
+        unsafe fn dispatch(ptr: *const c_char, bound: Option<usize>) -> (usize, bool)
+            => scan_c_string_body;
+    }
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+    {
+        if bound.is_none() {
+            // SAFETY: an unbounded scan's contract is a readable NUL-terminated
+            // string at `ptr`, which is what the head check needs.
+            match unsafe { scan_c_string_head(ptr) } {
+                Ok(len) => return (len, true),
+                Err(skip) => {
+                    // SAFETY: none of the `skip` bytes from `ptr` is NUL, so the
+                    // string continues at `ptr + skip`, and the rest of it is
+                    // the caller's NUL-terminated, readable string.
+                    let (len, found) = unsafe { dispatch(ptr.add(skip), None) };
+                    return (skip + len, found);
+                }
+            }
+        }
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { dispatch(ptr, bound) }
+}
+
+/// The first bytes of an unbounded scan, inline and compiled for the baseline:
+/// the 64-aligned block holding `ptr` (its bytes before `ptr` masked off) and,
+/// if that has no NUL, the next block. Returns `Ok(len)` for a NUL in them;
+/// otherwise `Err(skip)`, where the `skip` bytes from `ptr` hold no NUL and
+/// `ptr + skip` is 64-aligned.
+///
+/// The probes are 16-lane, one `pcmpeqb`/`pmovmskb` pair each: a 64-lane mask
+/// in this build is the SSE2 halves whose spilled masks made strcmp 6x slower.
+///
+/// # Safety
+///
+/// `ptr` must point to a readable NUL-terminated string.
+#[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+#[inline(always)]
+unsafe fn scan_c_string_head(ptr: *const c_char) -> Result<usize, usize> {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+
+    /// Bit `i` set iff byte `i` of the 64-byte block at `block` is NUL.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be 64-aligned in a mapped page.
+    #[inline(always)]
+    unsafe fn block_nul_mask(block: *const u8) -> u64 {
+        let zero = Simd::<u8, 16>::splat(0);
+        let mut mask = 0u64;
+        for k in 0..4 {
+            // SAFETY: 64 | 4096, so the aligned block lies in its one mapped page.
+            let v = Simd::<u8, 16>::from_slice(unsafe {
+                core::slice::from_raw_parts(block.wrapping_add(16 * k), 16)
+            });
+            mask |= v.simd_eq(zero).to_bitmask() << (16 * k);
+        }
+        mask
+    }
+
+    let p = ptr.cast::<u8>();
+    let align = p as usize & 63;
+    let base = p.wrapping_sub(align);
+    // SAFETY: `base` is `p` aligned down to 64 bytes, inside `p`'s page, which is
+    // mapped because `p` is readable -- the same argument as the 32-byte head
+    // window of `scan_c_string_body`.
+    let m0 = unsafe { block_nul_mask(base) } & (u64::MAX << align);
+    if m0 != 0 {
+        return Ok(m0.trailing_zeros() as usize - align);
+    }
+    // No NUL from `p` to the block's end, so the string continues at `base + 64`:
+    // that byte is readable, hence its page and the aligned block it starts.
+    // SAFETY: as just argued.
+    let m1 = unsafe { block_nul_mask(base.wrapping_add(64)) };
+    if m1 != 0 {
+        return Ok(64 - align + m1.trailing_zeros() as usize);
+    }
+    Err(128 - align)
+}
+
+/// The scanner behind [`scan_c_string`]; see there.
+#[inline(always)]
+unsafe fn scan_c_string_body(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    let p = ptr.cast::<u8>();
+    match bound {
+        Some(limit) => {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // Small bounded scan in [16, 32): the 32-byte loop below can't run, so the
+            // old code fell to an 8-byte SWAR + scalar tail (limit=31 = 3×8B SWAR + 7
+            // scalar). glibc-style two OVERLAPPING 16-byte SIMD probes — `[0,16)` and
+            // `[limit-16, limit)` — cover all `limit` bytes in-bounds (caller guarantees
+            // `limit` readable bytes). First-NUL ordering holds: probe 0 owns `[0,16)`;
+            // if empty, every NUL position < 16 is ruled out so probe 1's lowest set bit
+            // is the true first NUL ≥ 16. Benefits strnlen + every bounded scan caller.
+            // ...and the same trick one tier down for `[8, 16)`, which previously
+            // fell through to the generic ladder and descended 128 -> 64 -> 32 ->
+            // 8B SWAR -> scalar, testing tiers that cannot fire at that bound.
+            // Measured (callgrind two-point vs live glibc in the same process
+            // image): an 8-byte string in a 9-byte tracked allocation spent 53 Ir
+            // in this scanner against 19 Ir for the identical string scanned
+            // unbounded — the bound, not the bytes, was the cost.
+            //
+            if limit <= 64 {
+                if limit < 32 {
+                    if limit >= 16 {
+                        let v0 = Simd::<u8, 16>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p, 16)
+                        });
+                        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                        if m0 != 0 {
+                            return (m0.trailing_zeros() as usize, true);
+                        }
+                        if limit == 16 {
+                            return (16, false);
+                        }
+                        let off = limit - 16;
+                        let v1 = Simd::<u8, 16>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p.add(off), 16)
+                        });
+                        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                        if m1 != 0 {
+                            return (off + m1.trailing_zeros() as usize, true);
+                        }
+                        return (limit, false);
+                    }
+                    if limit >= 8 {
+                        let v0 =
+                            Simd::<u8, 8>::from_slice(unsafe { core::slice::from_raw_parts(p, 8) });
+                        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                        if m0 != 0 {
+                            return (m0.trailing_zeros() as usize, true);
+                        }
+                        if limit == 8 {
+                            return (8, false);
+                        }
+                        let off = limit - 8;
+                        let v1 = Simd::<u8, 8>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p.add(off), 8)
+                        });
+                        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                        if m1 != 0 {
+                            return (off + m1.trailing_zeros() as usize, true);
+                        }
+                        return (limit, false);
+                    }
+                    if limit >= 4 {
+                        let v0 =
+                            Simd::<u8, 4>::from_slice(unsafe { core::slice::from_raw_parts(p, 4) });
+                        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                        if m0 != 0 {
+                            return (m0.trailing_zeros() as usize, true);
+                        }
+                        if limit == 4 {
+                            return (4, false);
+                        }
+                        let off = limit - 4;
+                        let v1 = Simd::<u8, 4>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p.add(off), 4)
+                        });
+                        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                        if m1 != 0 {
+                            return (off + m1.trailing_zeros() as usize, true);
+                        }
+                        return (limit, false);
+                    }
+                    let mut k = 0usize;
+                    while k < limit {
+                        if unsafe { *p.add(k) } == 0 {
+                            return (k, true);
+                        }
+                        k += 1;
+                    }
+                    return (limit, false);
+                } else {
+                    // 32 <= limit <= 64: two overlapping 32-byte SIMD probes cover the entire span.
+                    let v0 =
+                        Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p, 32) });
+                    let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m0 != 0 {
+                        return (m0.trailing_zeros() as usize, true);
+                    }
+                    if limit == 32 {
+                        return (32, false);
+                    }
+                    let off = limit - 32;
+                    let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(off), 32)
+                    });
+                    let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                    if m1 != 0 {
+                        return (off + m1.trailing_zeros() as usize, true);
+                    }
+                    return (limit, false);
+                }
+            }
+            let mut i = 0usize;
+            // 128-byte folded tier for large bounded scans: ONE combined NUL check per
+            // 128 B (4×32-lane min-fold, the same structure the unbounded None path uses
+            // to reach glibc parity at large sizes). Bounded ⇒ [i, i+128) ⊆ [0, limit) is
+            // in-bounds, no page guard. A flagged block breaks to the 64B/32B tiers below,
+            // which resolve the exact first-NUL index (unchanged result).
+            while i + 128 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::{SimdOrd, SimdPartialEq};
+                let z = Simd::<u8, 32>::splat(0);
+                // SAFETY: [i, i+128) ⊆ [0, limit); `limit` bytes are readable.
+                let a = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let b = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let c = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 64), 32)
+                });
+                let d = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 96), 32)
+                });
+                if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
+                    break;
+                }
+                i += 128;
+            }
+            // 64-byte combined tier: ONE movemask+branch per 64 B (2×32-lane,
+            // `m0 | m1<<32`) — the bounded path had only a per-32B-branch loop, so
+            // strnlen/bounded scans lost in the medium+ range like unbounded strlen did
+            // before its 64B tier (c442ceba2). Bounded mode guarantees `limit` readable
+            // bytes ⇒ [i, i+64) ⊆ [0, limit) is in-bounds, no page guard. The two 32-lane
+            // compares are independent (good ILP — explicit 2×32-lane beats Simd<u8,64>,
+            // see f8d2259ef). First-NUL holds: left-to-right, trailing_zeros of the 64-bit
+            // combined mask is the lowest NUL in the window.
+            while i + 64 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let z = Simd::<u8, 32>::splat(0);
+                // SAFETY: [i, i+64) ⊆ [0, limit); `limit` bytes are readable.
+                let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let m = v0.simd_eq(z).to_bitmask() | (v1.simd_eq(z).to_bitmask() << 32);
+                if m != 0 {
+                    return (i + m.trailing_zeros() as usize, true);
+                }
+                i += 64;
+            }
+            // Wide 32-byte portable-SIMD NUL scan (AVX width, like glibc's
+            // strnlen). Bounded mode guarantees `limit` readable bytes, so a
+            // 32-byte load is in-bounds whenever i+32 <= limit. NUL-free panels
+            // advance 32; a panel containing a NUL drops to the 8-byte SWAR /
+            // scalar tail below, which returns the exact NUL index unchanged.
+            while i + 32 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                // SAFETY: [i, i+32) ⊆ [0, limit); `limit` bytes are readable.
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                // O(1) NUL index via the SIMD mask instead of breaking to the 8-byte SWAR
+                // tail to re-locate the byte (same fix as wmemchr/memrchr).
+                let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
+                if mask != 0 {
+                    return (i + mask.trailing_zeros() as usize, true);
+                }
+                i += 32;
+            }
+            if i < limit {
+                // Since limit > 64 and i is within 31 bytes of limit,
+                // limit >= 32, so an overlapping 32-byte SIMD probe at limit - 32
+                // covers all remaining bytes [i, limit) in ONE shot!
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let off = limit - 32;
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(off), 32)
+                });
+                let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
+                if mask != 0 {
+                    return (off + mask.trailing_zeros() as usize, true);
+                }
+            }
+            (limit, false)
+        }
+        None => {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // glibc-style aligned-load-with-head-mask: align the pointer DOWN to a
+            // residual short-string floor identified in NEGATIVE_EVIDENCE.md.
+            let align = (p as usize) & 31;
+            // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31
+            // bytes); the full 32-byte aligned window is in that page.
+            let base = unsafe { p.sub(align) };
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+            // Clear the low `align` bits so head bytes before `p` can't match.
+            let mask0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & !((1u64 << align) - 1);
+            if mask0 != 0 {
+                // NUL at base+tz ⇒ length from p is tz-align (tz ≥ align by the mask).
+                return (mask0.trailing_zeros() as usize - align, true);
+            }
+            // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
+            // Every subsequent load is 32-aligned ⇒ in-page, no guard needed.
+            let mut i = 32 - align;
+            // Bridge to 64-alignment for the 64-byte combined tier below (at most one
+            // 32-byte step from the 32-aligned start). Short strings whose NUL lands in
+            // this window terminate here.
+            if (p as usize + i) & 63 != 0 {
+                // SAFETY: p+i is 32-aligned, so the 32-byte window stays in one page.
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
+                if mask != 0 {
+                    return (i + mask.trailing_zeros() as usize, true);
+                }
+                i += 32; // now 64-aligned
+            }
+            // 64-byte combined tier: ONE movemask+branch per 64 bytes (2×32B halves,
+            // `m0 | m1<<32`) for the medium range (64 B..2 KB) that the old per-32B-branch
+            // loop ran at 1.4-1.8x vs glibc. Each 32B half is 32-aligned and the 64-aligned
+            // 64-byte window is within one 4 KiB page (64 | 4096). Escalates to the 128-byte
+            // tier ONLY at i >= 256 AND 128-aligned — so long strings keep the proven 4×32B
+            // tier for the bulk and cannot regress (the entry point is unchanged).
+            while i < 256 || (p as usize + i) & 127 != 0 {
+                // SAFETY: p+i is 64-aligned ⇒ [i, i+64) is within one mapped page.
+                let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let zc = Simd::splat(0u8);
+                let m = v0.simd_eq(zc).to_bitmask() | (v1.simd_eq(zc).to_bitmask() << 32);
+                if m != 0 {
+                    return (i + m.trailing_zeros() as usize, true);
+                }
+                i += 64;
+            }
+            // 128-aligned 4×32B unrolled tier: ONE combined NUL check per 128 bytes
+            // (glibc's structure — vs one movemask+branch per 32 B), then resolve the
+            // exact panel/index only when a NUL is present. ~2-2.5x over the 32B loop
+            // for long strings (parity-to-beat glibc at >=64 KiB).
+            loop {
+                // SAFETY: p+i is 128-aligned ⇒ [i, i+128) is within one mapped page.
+                let a = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let b = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let c = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 64), 32)
+                });
+                let d = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 96), 32)
+                });
+                let z = Simd::splat(0u8);
+                // Combined NUL check via bytewise min: `min(a,b,c,d)` has a 0 lane iff at
+                // least one of the four vectors has a 0 there — 3 vpminub + 1 vpcmpeqb,
+                // cheaper than 4 vpcmpeqb + 3 mask-ORs (measured ~10-13% faster in the
+                // L1/L2 range [4K,16K], taking strlen to parity-to-WIN vs glibc there).
+                use core::simd::cmp::SimdOrd;
+                if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
+                    let ma = a.simd_eq(z).to_bitmask();
+                    if ma != 0 {
+                        return (i + ma.trailing_zeros() as usize, true);
+                    }
+                    let mb = b.simd_eq(z).to_bitmask();
+                    if mb != 0 {
+                        return (i + 32 + mb.trailing_zeros() as usize, true);
+                    }
+                    let mc = c.simd_eq(z).to_bitmask();
+                    if mc != 0 {
+                        return (i + 64 + mc.trailing_zeros() as usize, true);
+                    }
+                    return (
+                        i + 96 + d.simd_eq(z).to_bitmask().trailing_zeros() as usize,
+                        true,
+                    );
+                }
+                i += 128;
+            }
+        }
+    }
+}
+
+/// Page granularity, the unit at which readability is decided.
+const SCAN_PAGE: usize = 4096;
+
+/// Scan for a NUL that may appear BEFORE `bound`, reading no page the caller was
+/// not obliged to map. Returns `(index_of_nul_or_bound, found_nul)`.
+///
+/// # Why this is not [`scan_c_string`]`(p, Some(bound))`
+///
+/// The two take incompatible contracts, and the difference is observable as a
+/// SIGSEGV rather than as a wrong answer. `scan_c_string`'s bounded arm assumes
+/// `bound` READABLE bytes and says so — "Bounded ⇒ [i, i+128) ⊆ [0, limit) is
+/// in-bounds, no page guard" — which is exactly right for `memchr(p, c, n)`,
+/// where the caller does promise `n` bytes. `strnlen(p, n)` promises no such
+/// thing: `n` is a CEILING, and a caller may legitimately pass `strnlen(p, 64)`
+/// for a 2-byte string sitting 2 bytes from the end of its mapping. Reading the
+/// 8-byte SWAR window that the bounded arm's `i + 8 <= limit` admits then faults
+/// on a call glibc completes. `bounded_scan_guard_page_safety` measured this at
+/// every `n >= 8`.
+///
+/// # How the footprint is bounded
+///
+/// Readability is page-granular: if one byte of a page is mapped, all of it is.
+/// So the bytes from `p` to the end of `p`'s own page are readable whenever `p`
+/// itself is, and a chunk clamped to that boundary can be handed to the fast
+/// bounded scan with its contract genuinely satisfied. Crossing into the next
+/// page happens only after the current one is exhausted with no NUL in it, which
+/// means `bound` still has room and the caller is therefore obliged to have
+/// mapped what comes next.
+///
+/// A whole bound that cannot leave `ptr`'s page needs no clamping at all, which
+/// is the common case and is taken with one add and one branch: the entire scan
+/// then runs as the same call it was before this function existed. Only a bound
+/// that reaches past the page boundary pays the loop, and there the arithmetic is
+/// per PAGE rather than per window, so the steady-state scan speed is unchanged.
+///
+/// # Run-time dispatch (bd-rc0923-epic-eeuy4f.13)
+///
+/// A bound under [`SCAN_TWIN_MIN_SPAN`] that cannot leave `ptr`'s page -- the
+/// common short call -- runs the baseline scanner inline, with no call on its
+/// path. Everything else goes to [`scan_c_string_nul_or_bound_long`], which
+/// sends spans of [`SCAN_TWIN_MIN_SPAN`]+ to the AVX2 twin. Dispatching every
+/// bound cost the short calls the check, a call, and the registers that call
+/// makes the caller save: strnlen at bounds 4..128 measured 1.11-1.43x main's
+/// x86-64-v3 build (incumbent_coverage_ab bounded_len vs live glibc, hz4),
+/// against 0.75-1.00x for main's source built baseline with no dispatch.
+///
+/// # Safety
+///
+/// `ptr` must be readable up to the first NUL or `bound` bytes, whichever comes
+/// first. That is strictly weaker than what [`scan_c_string`] requires.
+#[inline(always)]
+pub(crate) unsafe fn scan_c_string_nul_or_bound(ptr: *const c_char, bound: usize) -> (usize, bool) {
+    // `[ptr, ptr+bound)` lies in one page, and that page is mapped because `ptr`
+    // is readable — so every byte the scan may load is readable and
+    // `scan_c_string`'s stronger contract already holds. Written as a comparison
+    // against the distance to the page end rather than as `offset + bound <=
+    // SCAN_PAGE`, because `bound` is caller-controlled and `strnlen(p, SIZE_MAX)`
+    // is a legal call: that sum would wrap and take this path with the whole
+    // address space nominally in one page.
+    if bound < SCAN_TWIN_MIN_SPAN && bound <= SCAN_PAGE - (ptr as usize & (SCAN_PAGE - 1)) {
+        // SAFETY: as argued above, all `bound` bytes are readable.
+        return unsafe { scan_c_string_body(ptr, Some(bound)) };
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { scan_c_string_nul_or_bound_long(ptr, bound) }
+}
+
+/// Bounded spans at least this long go to the AVX2 twin of the scanner on CPUs
+/// with AVX2; shorter ones run its baseline copy inline. Measured: inline
+/// baseline wins at bounds up to 128 and the twin at 4096; the cut between them
+/// is not tuned.
+const SCAN_TWIN_MIN_SPAN: usize = 256;
+
+/// [`scan_c_string_nul_or_bound`] for a bound of [`SCAN_TWIN_MIN_SPAN`]+ bytes
+/// or one that leaves `ptr`'s page. Out of line, so its calls -- and the
+/// registers they make the caller save -- stay off the short path.
+///
+/// # Safety
+///
+/// As for [`scan_c_string_nul_or_bound`].
+#[inline(never)]
+unsafe fn scan_c_string_nul_or_bound_long(ptr: *const c_char, bound: usize) -> (usize, bool) {
+    /// Spans of [`SCAN_TWIN_MIN_SPAN`]+ through the dispatcher, shorter ones
+    /// (a page head or tail) inline.
+    #[inline(always)]
+    unsafe fn scan_span(p: *const c_char, n: usize) -> (usize, bool) {
+        if n >= SCAN_TWIN_MIN_SPAN {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_c_string(p, Some(n)) }
+        } else {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_c_string_body(p, Some(n)) }
+        }
+    }
+
+    // The whole bound lies in one page; see `scan_c_string_nul_or_bound`.
+    if bound <= SCAN_PAGE - (ptr as usize & (SCAN_PAGE - 1)) {
+        // SAFETY: all `bound` bytes are readable, as argued there.
+        return unsafe { scan_span(ptr, bound) };
+    }
+
+    let mut done = 0usize;
+    while done < bound {
+        // SAFETY: `done < bound`, so this is within the region the caller
+        // promised, and pointer arithmetic stays inside one allocation.
+        let here = unsafe { ptr.add(done) };
+        let to_page_end = SCAN_PAGE - (here as usize & (SCAN_PAGE - 1));
+        let chunk = (bound - done).min(to_page_end);
+        // SAFETY: byte `done` is readable (no NUL seen yet and `done < bound`),
+        // hence its whole page is, and `chunk` stops at that page's end — so all
+        // `chunk` bytes are readable, which is what `scan_c_string` requires.
+        let (idx, found) = unsafe { scan_span(here, chunk) };
+        if found {
+            return (done + idx, true);
+        }
+        done += chunk;
+    }
+    (bound, false)
+}
+
+/// SWAR scan for the first byte equal to `target` OR a terminating NUL, within
+/// `bound`. Returns `(index, found_target, hit_limit)`:
+///   - `found_target == true`  → `index` points at a `target` byte;
+///   - `hit_limit == true` (bounded only) → no target/NUL in `bound`, `index == bound`;
+///   - otherwise → `index` points at the terminating NUL.
+///
+/// Each 8-byte window is tested for a zero byte AND for a `target` byte with two
+/// exact haszero probes (`w` and `w ^ broadcast(target)`); the exact byte is then
+/// resolved in scan order, so target-before-NUL vs NUL-before-target is decided
+/// correctly. `target == 0` resolves to the NUL as a *found* target, matching
+/// glibc `strchr(s, '\0')`. Same alignment/page-safety discipline as
+/// [`scan_c_string`]: unbounded mode aligns to 8 so wide loads never fault past
+/// the NUL's page; bounded mode reads only within `bound`.
+unsafe fn scan_c_string_for_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (usize, bool, bool) {
+    let p = ptr.cast::<u8>();
+    let bcast = (target as u64).wrapping_mul(0x0101_0101_0101_0101);
+    match bound {
+        Some(limit) => {
+            let mut i = 0usize;
+            while i + 8 <= limit {
+                // SAFETY: [i, i+8) ⊆ [0, limit); caller guarantees `limit` bytes.
+                let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
+                if swar_word_has_zero(w) || swar_word_has_zero(w ^ bcast) {
+                    for j in 0..8 {
+                        // SAFETY: i+j < limit.
+                        let b = unsafe { *p.add(i + j) };
+                        if b == target {
+                            return (i + j, true, false);
+                        }
+                        if b == 0 {
+                            return (i + j, false, false);
+                        }
+                    }
+                }
+                i += 8;
+            }
+            while i < limit {
+                // SAFETY: i < limit.
+                let b = unsafe { *p.add(i) };
+                if b == target {
+                    return (i, true, false);
+                }
+                if b == 0 {
+                    return (i, false, false);
+                }
+                i += 1;
+            }
+            (limit, false, true)
+        }
+        None => {
+            #[cfg(target_arch = "x86_64")]
+            if active_string_simd_feature_mask() & SIMD_FEATURE_AVX2 != 0
+                && std::is_x86_feature_detected!("avx2")
+            {
+                // SAFETY: runtime AVX2 detection above satisfies the kernel's ISA
+                // precondition; it retains the same aligned/page-contained loads as
+                // the portable path below.
+                let (index, found_target) = unsafe { scan_c_string_for_byte_avx2(ptr, target) };
+                return (index, found_target, false);
+            }
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // glibc-style aligned-load-with-head-mask for the FIRST vector: align
+            // DOWN to a 32-byte boundary, do one aligned load, and mask off the
+            // `align` bytes that precede `ptr`. A 32-aligned 32-byte window is
+            // contained in one 4 KiB page (32 | 4096) and the page holding `ptr` is
+            // mapped, so reading head bytes `base..ptr` is safe. Eliminates BOTH the
+            // scalar head-align scan and the per-chunk page-cross guard the old loop
+            // paid on every 32B chunk (same fix as scan_c_string's None path).
+            let align = (p as usize) & 31;
+            // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31).
+            let base = unsafe { p.sub(align) };
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+            let headclear = !((1u64 << align) - 1);
+            let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+            let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
+            let comb0 = nul0 | tgt0;
+            if comb0 != 0 {
+                let pos = comb0.trailing_zeros() as usize;
+                // `target == 0` (strchr(s,'\0')) reports the NUL as a *found* target.
+                let found = (tgt0 >> pos) & 1 == 1;
+                return (pos - align, found, false);
+            }
+            // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
+            // Every subsequent load is 32-aligned ⇒ a 32-byte read stays in-page, so
+            // the 32B tier needs no per-chunk guard; only the 128B folded tier (whose
+            // window can straddle a page from a 32-aligned, non-128-aligned address)
+            // keeps its guard.
+            let mut i = 32 - align;
+            loop {
+                // Length-escalated folded 4x32 = 128-byte skip tier: one `.any()`
+                // reduction per 128 bytes for the bulk of *long* strings. Gated on
+                // `i >= 128` so short strings terminate in the 32-byte tier and never
+                // pay the folded overhead (measured escalation guard, bd-4rxozm). A
+                // folded hit falls through to the 32B tier, which resolves the exact
+                // first match — index unchanged.
+                if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+                    let tv = Simd::<u8, 32>::splat(target);
+                    let zv = Simd::<u8, 32>::splat(0);
+                    // SAFETY: [i, i+128) stays within the current mapped page.
+                    let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    let v2 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 32), 32)
+                    });
+                    let v3 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 64), 32)
+                    });
+                    let v4 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 96), 32)
+                    });
+                    let any = (v1.simd_eq(tv) | v1.simd_eq(zv))
+                        | (v2.simd_eq(tv) | v2.simd_eq(zv))
+                        | (v3.simd_eq(tv) | v3.simd_eq(zv))
+                        | (v4.simd_eq(tv) | v4.simd_eq(zv));
+                    if !any.any() {
+                        i += 128;
+                        continue;
+                    }
+                }
+                // SAFETY: p+i is 32-aligned, so this 32-byte window stays in one page;
+                // the string is NUL-terminated within a mapped page. O(1) resolve via
+                // the combined target|NUL bitmask (trailing_zeros).
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let nul = v.simd_eq(Simd::splat(0)).to_bitmask();
+                let tgt = v.simd_eq(Simd::splat(target)).to_bitmask();
+                let comb = nul | tgt;
+                if comb != 0 {
+                    let pos = comb.trailing_zeros() as usize;
+                    let found = (tgt >> pos) & 1 == 1;
+                    return (i + pos, found, false);
+                }
+                i += 32;
+            }
+        }
+    }
+}
+
+/// AVX2 target-or-NUL scanner for unbounded C strings matching glibc's __strchr_avx2.
+///
+/// Uses the mathematical property that `min(v, v ^ target) == 0` iff byte is 0 or target.
+/// Combines four 32-byte vectors with `vpminub` into a single 128-byte check with ONE
+/// `vpcmpeqb` and ONE `vpmovmskb` per 128 bytes.
+/// Aligns the initial load down within `ptr`'s mapped page, bridges to 128-byte alignment,
+/// and runs the 128-byte unrolled loop without per-iteration page checks (128 divides 4096).
+///
+/// # Safety
+///
+/// `ptr` must point to a readable NUL-terminated C string and the caller must
+/// have established AVX2 availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_c_string_for_byte_avx2(ptr: *const c_char, target: u8) -> (usize, bool) {
+    use std::arch::x86_64::*;
+
+    unsafe {
+        let p = ptr.cast::<u8>();
+        let target_v = _mm256_set1_epi8(target as i8);
+        let zero = _mm256_setzero_si256();
+        let align = (p as usize) & 31;
+        // SAFETY: rounding down by at most 31 bytes stays inside p's mapped page.
+        let base = p.sub(align);
+        let v0 = _mm256_load_si256(base.cast());
+        let m0 = _mm256_min_epu8(v0, _mm256_xor_si256(v0, target_v));
+        let bits0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m0, zero)) as u32;
+        let head_clear = !((1u32 << align) - 1);
+        let first = bits0 & head_clear;
+        if first != 0 {
+            let offset = first.trailing_zeros() as usize;
+            let found_target = *base.add(offset) == target;
+            return (offset - align, found_target);
+        }
+
+        let mut i = 32 - align;
+        // Bridge to 128-byte alignment using 32-aligned single steps (at most 3 steps).
+        // Since p+i is 32-aligned, each 32B window stays inside one 4096-byte page.
+        while (p as usize + i) & 127 != 0 {
+            let v = _mm256_load_si256(p.add(i).cast());
+            let m = _mm256_min_epu8(v, _mm256_xor_si256(v, target_v));
+            let bits = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m, zero)) as u32;
+            if bits != 0 {
+                let offset = bits.trailing_zeros() as usize;
+                let found_target = *p.add(i + offset) == target;
+                return (i + offset, found_target);
+            }
+            i += 32;
+        }
+
+        // 128-byte aligned loop: four 32-byte chunks per iteration.
+        // 128 divides 4096, so [p+i, p+i+128) is guaranteed to stay within the current page.
+        // Single vpcmpeqb + vpmovmskb per 128 bytes, matching glibc's __strchr_avx2.
+        loop {
+            let v0 = _mm256_load_si256(p.add(i).cast());
+            let v1 = _mm256_load_si256(p.add(i + 32).cast());
+            let v2 = _mm256_load_si256(p.add(i + 64).cast());
+            let v3 = _mm256_load_si256(p.add(i + 96).cast());
+
+            let m0 = _mm256_min_epu8(v0, _mm256_xor_si256(v0, target_v));
+            let m1 = _mm256_min_epu8(v1, _mm256_xor_si256(v1, target_v));
+            let m2 = _mm256_min_epu8(v2, _mm256_xor_si256(v2, target_v));
+            let m3 = _mm256_min_epu8(v3, _mm256_xor_si256(v3, target_v));
+
+            let m01 = _mm256_min_epu8(m0, m1);
+            let m23 = _mm256_min_epu8(m2, m3);
+            let min_all = _mm256_min_epu8(m01, m23);
+
+            let mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(min_all, zero)) as u32;
+            if mask == 0 {
+                i += 128;
+                continue;
+            }
+
+            // Hit found in this 128-byte block. Resolve which chunk had the first match:
+            let mask0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m0, zero)) as u32;
+            if mask0 != 0 {
+                let offset = mask0.trailing_zeros() as usize;
+                let found_target = *p.add(i + offset) == target;
+                return (i + offset, found_target);
+            }
+            let mask1 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m1, zero)) as u32;
+            if mask1 != 0 {
+                let offset = mask1.trailing_zeros() as usize;
+                let found_target = *p.add(i + 32 + offset) == target;
+                return (i + 32 + offset, found_target);
+            }
+            let mask2 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m2, zero)) as u32;
+            if mask2 != 0 {
+                let offset = mask2.trailing_zeros() as usize;
+                let found_target = *p.add(i + 64 + offset) == target;
+                return (i + 64 + offset, found_target);
+            }
+            let mask3 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(m3, zero)) as u32;
+            let offset = mask3.trailing_zeros() as usize;
+            let found_target = *p.add(i + 96 + offset) == target;
+            return (i + 96 + offset, found_target);
+        }
+    }
+}
+
+/// Builds the Langdale/Lemire 2-PSHUFB membership LUTs for an ALL-ASCII byte set
+/// `[set, set+set_len)` (every byte `< 0x80`): `lo16[v&0xF] |= 1<<(v>>4)` per set
+/// byte, `hi16[h] = 1<<h` for h<8. Membership of `b` iff `lo16[b&0xF] & hi16[b>>4]
+/// != 0` (bytes `>= 0x80` and NUL map to non-members — exact). Scalar/cheap.
+///
+/// # Safety
+/// `set` readable for `set_len` bytes.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn build_pshufb_lut(set: *const u8, set_len: usize) -> ([u8; 16], [u8; 16]) {
+    let mut lo16 = [0u8; 16];
+    let mut hi16 = [0u8; 16];
+    let mut k = 0;
+    while k < set_len {
+        // SAFETY: k < set_len, caller guarantees readability.
+        let v = unsafe { *set.add(k) };
+        lo16[(v & 0x0F) as usize] |= 1u8 << (v >> 4);
+        k += 1;
+    }
+    let mut h = 0;
+    while h < 8 {
+        hi16[h] = 1u8 << h;
+        h += 1;
+    }
+    (lo16, hi16)
+}
+
+/// True iff all `len` bytes at `p` are ASCII (`< 0x80`) — the precondition for the
+/// PSHUFB classifier (a set byte `>= 0x80` would be misclassified as a non-member).
+///
+/// # Safety
+/// `p` readable for `len` bytes.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn all_bytes_ascii(p: *const u8, len: usize) -> bool {
+    let mut k = 0;
+    while k < len {
+        // SAFETY: k < len, caller guarantees readability.
+        if unsafe { *p.add(k) } >= 0x80 {
+            return false;
+        }
+        k += 1;
+    }
+    true
+}
+
+/// Page-safe FUSED early-stop PSHUFB membership scan over a NUL-terminated string
+/// for an arbitrary-size ALL-ASCII set (via the `lo16`/`hi16` LUTs from
+/// [`build_pshufb_lut`]). The LARGE-set (>4-byte) analog of
+/// [`scan_c_string_for_set4`]: ONE early-stopping AVX2 pass from the raw pointer
+/// (2 vpshufb + compare per 32 bytes — classifier throughput, ~glibc), so a
+/// tokenization loop / a strcspn over a >4-byte set stays O(n) with a fast body
+/// scan (no O(n²) prescan, no scalar-bitmap long-run regression).
+///
+/// `stop_in_set == true` → strcspn (stop on member OR NUL); `false` → strspn (stop
+/// on NON-member OR NUL). Byte-identical to `core::str::span_pshufb_ascii` (same
+/// LUT + stop math), which the `span_pshufb_matches_scalar` proptest pins to the
+/// scalar reference.
+///
+/// PAGE-SAFETY is identical to [`scan_c_string_for_set4`]: align DOWN to 32 and
+/// head-mask the bytes before `ptr`, then every 32-aligned 32-byte load stays in
+/// one 4 KiB page up to and including the NUL's page. The PSHUFB classify is pure
+/// register arithmetic on the loaded vector — no extra memory access — so it adds
+/// no page-crossing risk over the proven set4 loads.
+///
+/// # Safety
+/// `ptr` must be a valid NUL-terminated C string, and the CPU must have AVX2:
+/// callers check [`span_simd_available`].
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_c_string_pshufb(
+    ptr: *const c_char,
+    lo16: &[u8; 16],
+    hi16: &[u8; 16],
+    stop_in_set: bool,
+) -> usize {
+    use std::arch::x86_64::*;
+    // SAFETY of every intrinsic below: AVX2 is enabled on this function and the
+    // caller checked the CPU has it (`span_simd_available`); loads are page-safe
+    // per the doc comment (aligned-down first load + head-mask, 32-aligned after).
+    unsafe {
+        let lo_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(lo16.as_ptr().cast()));
+        let hi_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(hi16.as_ptr().cast()));
+        let zero = _mm256_setzero_si256();
+        let low_mask = _mm256_set1_epi8(0x0F);
+        let ones = _mm256_set1_epi8(-1i8);
+        let p = ptr.cast::<u8>();
+
+        #[inline(always)]
+        unsafe fn window_stop_bits(
+            lanes: std::arch::x86_64::__m256i,
+            lo_table: std::arch::x86_64::__m256i,
+            hi_table: std::arch::x86_64::__m256i,
+            zero: std::arch::x86_64::__m256i,
+            low_mask: std::arch::x86_64::__m256i,
+            ones: std::arch::x86_64::__m256i,
+            stop_in_set: bool,
+        ) -> u32 {
+            use std::arch::x86_64::*;
+            unsafe {
+                let lo = _mm256_and_si256(lanes, low_mask);
+                let hi = _mm256_and_si256(_mm256_srli_epi16(lanes, 4), low_mask);
+                let lo_bits = _mm256_shuffle_epi8(lo_table, lo);
+                let hi_bits = _mm256_shuffle_epi8(hi_table, hi);
+                let member = _mm256_and_si256(lo_bits, hi_bits);
+                let nonmember = _mm256_cmpeq_epi8(member, zero); // 0xFF where NON-member
+                let nul = _mm256_cmpeq_epi8(lanes, zero);
+                let stop = if stop_in_set {
+                    _mm256_or_si256(_mm256_andnot_si256(nonmember, ones), nul)
+                } else {
+                    _mm256_or_si256(nonmember, nul)
+                };
+                _mm256_movemask_epi8(stop) as u32
+            }
+        }
+
+        // FIRST vector: aligned-down load + head-mask (page-safe).
+        let align = (p as usize) & 31;
+        let base = p.sub(align);
+        let v0 = _mm256_loadu_si256(base.cast());
+        let head_clear = if align == 0 {
+            u32::MAX
+        } else {
+            !((1u32 << align) - 1)
+        };
+        let bits0 = window_stop_bits(v0, lo_table, hi_table, zero, low_mask, ones, stop_in_set)
+            & head_clear;
+        if bits0 != 0 {
+            return bits0.trailing_zeros() as usize - align;
+        }
+        // Every subsequent 32-byte window is 32-aligned ⇒ within one page.
+        let mut i = 32 - align;
+        loop {
+            let v = _mm256_loadu_si256(p.add(i).cast());
+            let bits = window_stop_bits(v, lo_table, hi_table, zero, low_mask, ones, stop_in_set);
+            if bits != 0 {
+                return i + bits.trailing_zeros() as usize;
+            }
+            i += 32;
+        }
+    }
+}
+
+/// Byte budget for the `pcmpistri` span probe. Spans that stop inside this many
+/// bytes are answered entirely by `pcmpistri`; longer ones hand the probe's proven
+/// prefix to the LUT + 32-byte AVX2 loop, which beats glibc ~2x from ~1 KiB up.
+///
+/// Because the budget is handed over rather than discarded, its only cost on a
+/// non-resolving call is the delta between `pcmpistri` (~0.045 ns/byte) and the
+/// AVX2 loop (~0.015) across the budget — ~8 ns at 256 bytes, against a ~120 ns
+/// span-4096 call that still finishes at ~0.5x glibc. What the budget buys is the
+/// whole short-span regime, which is where real callers live (field widths,
+/// whitespace runs, token lengths) and where the LUT setup cost 3-15x.
+///
+/// A span landing just PAST the budget is the worst case: it pays the probe and
+/// then the LUT setup. That penalty scales with the budget, so the budget also
+/// bounds the regression — ~+3-5 ns at 128 bytes. 64 and 256 were both measured
+/// and rejected: 64 puts the penalty band at spans 64-128 (common — punct16
+/// regressed to 3.57x), and 256 both widens the band and pushes span-4096 to
+/// ~139 ns from ~120.
+#[cfg(target_arch = "x86_64")]
+const CMPISTRI_PROBE_BYTES: usize = 128;
+
+/// How many 16-byte `pcmpistr*` needles the probe will hold, i.e. the widest set it
+/// answers: 4 x 16 = 64 bytes. Sets wider than this decline to the LUT path.
+///
+/// Why widen past one needle at all: a set of 17+ bytes is where glibc ITSELF gives
+/// up on `pcmpistri` and falls back to `__strcspn_sse2` — a 256-byte table build and
+/// a 4-byte-per-iteration scalar walk. So on long spans our AVX2 LUT loop already
+/// beats it 5-7x (measured: 22-byte set, span 4096, strcspn 0.14x). The ONLY region
+/// we lost was short spans, and for exactly the same reason as the <=16 case: a fixed
+/// setup, three passes over the set, paid before the haystack is touched. The needle
+/// bank deletes those passes for 17..=64-byte sets too — the loads that find the set's
+/// NUL ARE the length scan, and their sign bits ARE the ASCII test.
+///
+/// 4 is the width at which the per-chunk cost still pays for itself inside the budget:
+/// n needles cost n `pcmpistrm` per 16 haystack bytes (~0.9 cycles/byte at n=4) against
+/// a ~48 ns `build_pshufb_lut` for a 63-byte set, so the LUT only amortizes past
+/// ~140 bytes — just outside [`CMPISTRI_PROBE_BYTES`], which is why the same 128-byte
+/// budget is correct for every needle count and is not scaled down.
+#[cfg(target_arch = "x86_64")]
+const CMPISTRI_MAX_NEEDLES: usize = 4;
+
+/// Outcome of [`span_probe_cmpistri`].
+#[cfg(target_arch = "x86_64")]
+enum SpanProbe {
+    /// Resolved: the stop is at this index from `s`.
+    Stop(usize),
+    /// Not resolved inside the budget, but the first `consumed` bytes of `s` are
+    /// proven stop-free and the set is `set_len` bytes wide — so the caller resumes
+    /// its own scan at `s + consumed` rather than rescanning from the start. Without
+    /// this the probe would be pure waste on long spans (measured: +13 ns at span
+    /// 256 when the prefix was discarded).
+    ///
+    /// `all_ascii` is the PSHUFB classifier's precondition, read straight off the
+    /// set vector the probe already loaded, so the handoff never re-walks the set
+    /// with `all_bytes_ascii`. Pure edge-band savings: it costs nothing on the
+    /// resolved path, where it is never read.
+    Resume {
+        consumed: usize,
+        /// `u8`, not `usize`, and that is the point: this enum is RETURNED, and at
+        /// 24 bytes it exceeded the two-register limit and came back through an sret
+        /// pointer -- four of the eighteen instructions on the deployed `strpbrk`
+        /// decline path were writing that buffer. The probe only ever reports
+        /// `set_len <= 64` (its own upper bound), so `u8` narrows nothing in practice,
+        /// and with `Decline` carrying `Option<u8>` the largest variant becomes
+        /// 8 + 1 + 1 bytes and the enum fits in `rax:rdx`.
+        set_len: u8,
+        all_ascii: bool,
+    },
+    /// The probe does not apply; use the existing path from `s`, unchanged.
+    ///
+    /// `set_len` carries the accept/reject set's length when the probe had already
+    /// measured it before deciding not to apply -- which is the common case, because
+    /// the most frequent decline is "the set is shorter than 5 bytes" and that test
+    /// needs the length. Callers then skip their own `scan_c_string(set, None)`.
+    /// `None` means the probe bailed BEFORE measuring (a page-guard decline), and the
+    /// caller must scan for itself.
+    Decline { set_len: Option<u8> },
+}
+
+/// SSE4.2 `pcmpistr*` early-stop span probe for a 5..=64-byte accept/reject set —
+/// the deployed answer to a FIXED per-call setup floor that glibc does not pay.
+///
+/// For a set of at most 16 bytes glibc's `__strspn_sse42` / `__strcspn_sse42` /
+/// `__strpbrk_sse42` do ONE unaligned 16-byte load of the set and then one
+/// instruction per 16 input bytes; their per-call setup is O(1). FrankenLibC's LUT
+/// path instead makes THREE scalar passes over the set — `scan_c_string` for its
+/// length, `all_bytes_ascii`, and `build_pshufb_lut` — before it touches the
+/// haystack, and the strcspn slice fallback additionally materializes a 256-byte
+/// `byte_membership_table`. Measured against live glibc (`span_largeset_ab`), that
+/// setup is a flat ~12-50 ns: invisible at span 4096 (where the AVX2 loop wins
+/// ~2x) and 3-15x of the whole call at span <= 64 — worst arm strcspn/16-byte-set
+/// 14.81x at span 4. This probe deletes the setup rather than shaving it: the set
+/// goes straight into a bank of up to [`CMPISTRI_MAX_NEEDLES`] xmm registers and each
+/// needle's implicit NUL length supplies the set length for free.
+///
+/// Past 16 bytes glibc stops using `pcmpistri` too and falls back to `__strcspn_sse2`
+/// — a 256-byte table build plus a 4-byte-per-iteration scalar walk — so on long spans
+/// our AVX2 LUT loop already beats it 5-7x there. The needle bank exists for the other
+/// end: at span <= 100 a 22-byte set cost us a flat 53-63 ns against glibc's 24-54, and
+/// a 63-byte set a flat 102-153 ns against 48-88, purely because those three passes
+/// over the set run before the first haystack byte is read.
+///
+/// Returns [`SpanProbe::Stop`] when the answer is resolved inside the probe budget,
+/// [`SpanProbe::Resume`] when the span outran the budget (the caller continues past
+/// the proven prefix), and [`SpanProbe::Decline`] when the probe does not apply at
+/// all — a set outside 5..=64 bytes or a page-crossing load. Neither non-`Stop`
+/// outcome ever means "no stop exists"; they only mean "not answered here", so
+/// every caller stays correct by falling through unchanged.
+///
+/// `stop_in_set == false` is strspn (stop at the first NON-member or the NUL);
+/// `true` is strcspn/strpbrk (stop at the first member or the NUL).
+///
+/// Sets of 1..=4 bytes are deliberately excluded: they have their own tuned splat
+/// kernels (`scan_c_string_for_set4`, `scan_c_string_first_not_byte`) that already
+/// run at glibc's level, and fronting them with a probe would only add work.
+///
+/// Unlike the PSHUFB classifier this path needs no ASCII precondition —
+/// `_SIDD_UBYTE_OPS` compares raw bytes — so it also covers non-ASCII sets that the
+/// LUT path refuses.
+///
+/// # Safety
+/// `s` and `set` must be valid NUL-terminated C strings, and the CPU must have
+/// SSE4.2: callers check [`span_simd_available`].
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -> SpanProbe {
+    use std::arch::x86_64::*;
+
+    // SAFETY of every load below: a 16-byte load stays inside one 4 KiB page iff it
+    // starts at most 16 bytes before the page end. Byte 0 of a valid C string is
+    // mapped, so a non-crossing load touches only mapped bytes — the same page-cross
+    // reasoning the AVX2 scans use, with a 16-byte window instead of 32.
+    unsafe {
+        let zero = _mm_setzero_si128();
+
+        // ---- Needle 0: the whole answer for a set of at most 16 bytes -----------
+        // This load IS the length scan and IS the ASCII test: `pcmpistr*` reads the
+        // needle's own terminator out of the register (lanes at and past it are marked
+        // invalid and can never match), and the same vector's sign bits give the PSHUFB
+        // handoff's `all_ascii` precondition. So the set is never walked — which is the
+        // whole point, since walking it is the cost glibc does not pay.
+        if (set as usize) & 0xFFF > 0xFF0 {
+            return SpanProbe::Decline { set_len: None };
+        }
+        let setv = _mm_loadu_si128(set.cast());
+        let set_nul = _mm_movemask_epi8(_mm_cmpeq_epi8(setv, zero)) as u32;
+        let signs = _mm_movemask_epi8(setv) as u32;
+
+        // Sets of 17+ bytes leave through ONE branch into an out-of-line function, so
+        // everything below is the <=16-byte path exactly as it shipped: same loads, same
+        // registers, same straight line. That placement is load-bearing — folding the
+        // wider needle bank into this body cost the <=16 arms 1.1-1.25x (punct16 span-4
+        // strcspn 11.3 -> 13.7 ns) even when the bank itself was never entered, because
+        // the ABI entry points carry no `target_feature`, so this probe is already a real
+        // call whose frame and layout every narrow-set call pays for.
+        let set_len = if set_nul != 0 {
+            let l = set_nul.trailing_zeros() as usize;
+            if l < 5 {
+                return SpanProbe::Decline {
+                    set_len: Some(l as u8),
+                };
+            }
+            l
+        } else if *set.add(16) == 0 {
+            // Exactly 16 bytes: no terminator in the register, so `pcmpistri` treats all
+            // 16 lanes as valid — which is the correct needle. Index 16 is the string's
+            // own NUL, hence readable. Answering this with a byte load rather than a
+            // second vector load is what keeps a 16-byte set at its shipped cost.
+            16
+        } else {
+            return span_probe_wide(s, set, setv, signs, stop_in_set);
+        };
+        // The PSHUFB handoff's precondition, straight off the vector already loaded:
+        // no set byte within `set_len` has its high bit set.
+        let all_ascii = signs & ((1u32 << set_len) - 1) == 0;
+
+        // `pcmpistri`'s INDEX form: it names the stop directly, so no mask arithmetic.
+        let mut base = 0usize;
+        while base < CMPISTRI_PROBE_BYTES {
+            let cur = s.add(base);
+            if (cur as usize) & 0xFFF > 0xFF0 {
+                // The prefix already cleared is still sound to hand over.
+                return SpanProbe::Resume {
+                    consumed: base,
+                    set_len: set_len as u8,
+                    all_ascii,
+                };
+            }
+            let data = _mm_loadu_si128(cur.cast());
+            if stop_in_set {
+                // strcspn/strpbrk: EQUAL_ANY reports the first data lane that equals
+                // some set byte. Lanes at or past the data NUL are invalid and so are
+                // forced to "no match", which means the terminator has to be found
+                // separately — one `pcmpeqb` against zero.
+                let idx =
+                    _mm_cmpistri::<{ _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ANY }>(setv, data) as usize;
+                let nul = _mm_movemask_epi8(_mm_cmpeq_epi8(data, zero)) as u32;
+                if nul != 0 {
+                    // A member can only be reported before the terminator, so `min`
+                    // is exactly "first member, else the terminator".
+                    return SpanProbe::Stop(base + idx.min(nul.trailing_zeros() as usize));
+                }
+                if idx < 16 {
+                    return SpanProbe::Stop(base + idx);
+                }
+            } else {
+                // strspn: NEGATIVE_POLARITY inverts every lane, including the invalid
+                // ones at and past the terminator — a NUL is never "in set", so it
+                // inverts to a stop. That is precisely strspn's "stop at the first
+                // non-member or the terminator", in one instruction.
+                let idx = _mm_cmpistri::<
+                    { _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_NEGATIVE_POLARITY },
+                >(setv, data) as usize;
+                if idx < 16 {
+                    return SpanProbe::Stop(base + idx);
+                }
+            }
+            base += 16;
+        }
+        SpanProbe::Resume {
+            consumed: base,
+            set_len: set_len as u8,
+            all_ascii,
+        }
+    }
+}
+
+/// The 17..=64-byte half of [`span_probe_cmpistri`]: widen the single needle into a bank
+/// of up to [`CMPISTRI_MAX_NEEDLES`], then scan with it.
+///
+/// Past 16 bytes glibc stops using `pcmpistri` too and falls back to `__strcspn_sse2` —
+/// a 256-byte table build plus a 4-byte-per-iteration scalar walk — so on long spans our
+/// AVX2 LUT loop already beats it 5-7x there. This exists for the other end: at span
+/// <= 100 a 22-byte set cost a flat 53-63 ns against glibc's 24-54, and a 63-byte set a
+/// flat 102-153 ns against 48-88, purely because three passes over the set (`scan_c_string`,
+/// `all_bytes_ascii`, `build_pshufb_lut`) run before the first haystack byte is read. The
+/// bank deletes all three: each further needle is loaded only once the previous one has
+/// proved the set runs past it, so it costs one load per 16 bytes of set and nothing else.
+///
+/// `inline(never)`: this is the cold half, and its cost is a rounding error against the
+/// work it does, whereas hoisting it into the caller taxes every narrow-set call.
+///
+/// `setv0`/`signs0` are needle 0 and its sign bits, already loaded by the caller, which
+/// has also proved needle 0 holds no NUL and `set[16] != 0` — so the set is 17+ bytes.
+///
+/// # Safety
+/// `s` and `set` must be valid NUL-terminated C strings; SSE4.2 enabled.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+#[inline(never)]
+unsafe fn span_probe_wide(
+    s: *const u8,
+    set: *const u8,
+    setv0: std::arch::x86_64::__m128i,
+    signs0: u32,
+    stop_in_set: bool,
+) -> SpanProbe {
+    use std::arch::x86_64::*;
+    // SAFETY: forwarded from the caller's contract; every load is page-guarded below.
+    unsafe {
+        let zero = _mm_setzero_si128();
+        macro_rules! next_needle {
+            ($idx:expr) => {{
+                let p = set.add($idx * 16);
+                // Byte 0 of this window is a byte of the set string (the previous needle
+                // held no NUL), hence mapped; a 16-byte load stays inside its page iff it
+                // starts at most 16 bytes before the page end.
+                if (p as usize) & 0xFFF > 0xFF0 {
+                    return SpanProbe::Decline { set_len: None };
+                }
+                let v = _mm_loadu_si128(p.cast());
+                let nul = _mm_movemask_epi8(_mm_cmpeq_epi8(v, zero)) as u32;
+                let sg = _mm_movemask_epi8(v) as u32;
+                (v, nul, sg)
+            }};
+        }
+        // A terminating needle whose NUL sits at lane 0 carries no set bytes at all, so
+        // the bank stays one narrower rather than scanning with an empty needle.
+        macro_rules! valid_prefix {
+            ($nul:expr, $sg:expr, $prev_signs:expr, $idx:expr) => {{
+                let l = $nul.trailing_zeros() as usize;
+                ($idx * 16 + l, $prev_signs | ($sg & ((1u32 << l) - 1)), l)
+            }};
+        }
+
+        // The caller proved `set[16] != 0`, so this needle's NUL cannot be at lane 0.
+        let (n1, nul1, sg1) = next_needle!(1);
+        if nul1 != 0 {
+            let (set_len, signs, _) = valid_prefix!(nul1, sg1, signs0, 1);
+            return span_probe_scan_bank(s, [setv0, n1], set_len, signs == 0, stop_in_set);
+        }
+
+        let (n2, nul2, sg2) = next_needle!(2);
+        if nul2 != 0 {
+            let (set_len, signs, l) = valid_prefix!(nul2, sg2, signs0 | sg1, 2);
+            return if l == 0 {
+                span_probe_scan_bank(s, [setv0, n1], set_len, signs == 0, stop_in_set)
+            } else {
+                span_probe_scan_bank(s, [setv0, n1, n2], set_len, signs == 0, stop_in_set)
+            };
+        }
+
+        let (n3, nul3, sg3) = next_needle!(3);
+        if nul3 != 0 {
+            let (set_len, signs, l) = valid_prefix!(nul3, sg3, signs0 | sg1 | sg2, 3);
+            return if l == 0 {
+                span_probe_scan_bank(s, [setv0, n1, n2], set_len, signs == 0, stop_in_set)
+            } else {
+                span_probe_scan_bank(s, [setv0, n1, n2, n3], set_len, signs == 0, stop_in_set)
+            };
+        }
+
+        // Exactly `MAX*16` bytes: no terminator in any needle, so every lane of every
+        // needle is a valid set byte — the correct bank. That index is the string's own
+        // NUL, hence readable. Anything wider declines to the LUT path.
+        if *set.add(CMPISTRI_MAX_NEEDLES * 16) != 0 {
+            return SpanProbe::Decline { set_len: None };
+        }
+        span_probe_scan_bank(
+            s,
+            [setv0, n1, n2, n3],
+            CMPISTRI_MAX_NEEDLES * 16,
+            signs0 | sg1 | sg2 | sg3 == 0,
+            stop_in_set,
+        )
+    }
+}
+
+/// The multi-needle (17..=64-byte set) probe scan.
+///
+/// `pcmpistrm` (mask form) rather than `pcmpistri` (index form): with more than one
+/// needle the per-needle answers must be combined before a stop can be named, and only
+/// strcspn's "first member" would compose as a `min` of indices. strspn asks for the
+/// first byte in NO needle — a property of the UNION — so take the 16-bit match masks
+/// and OR them. Invalid data lanes (at and past the haystack NUL) are forced to "no
+/// match" by EQUAL_ANY, as are needle lanes past each needle's own NUL, which is what
+/// lets a partly-filled last needle be used raw.
+///
+/// `N` is a const parameter so the needle loop unrolls and the bank stays in registers.
+///
+/// # Safety
+/// `s` must be a valid NUL-terminated C string; SSE4.2 enabled.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+#[inline]
+unsafe fn span_probe_scan_bank<const N: usize>(
+    s: *const u8,
+    needles: [std::arch::x86_64::__m128i; N],
+    set_len: usize,
+    all_ascii: bool,
+    stop_in_set: bool,
+) -> SpanProbe {
+    use std::arch::x86_64::*;
+    const MSK: i32 = _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ANY | _SIDD_BIT_MASK;
+    // SAFETY: forwarded from the caller's contract; every load is page-guarded below.
+    unsafe {
+        let zero = _mm_setzero_si128();
+        let mut base = 0usize;
+        while base < CMPISTRI_PROBE_BYTES {
+            let cur = s.add(base);
+            if (cur as usize) & 0xFFF > 0xFF0 {
+                return SpanProbe::Resume {
+                    consumed: base,
+                    set_len: set_len as u8,
+                    all_ascii,
+                };
+            }
+            let data = _mm_loadu_si128(cur.cast());
+            let mut members = 0u32;
+            for needle in needles {
+                members |= _mm_cvtsi128_si32(_mm_cmpistrm::<MSK>(needle, data)) as u32 & 0xFFFF;
+            }
+            let stop = if stop_in_set {
+                // strcspn/strpbrk: first member, else the terminator.
+                members | (_mm_movemask_epi8(_mm_cmpeq_epi8(data, zero)) as u32)
+            } else {
+                // strspn: first NON-member. The NUL lane is never a member, so it
+                // inverts to a stop on its own — no separate terminator test.
+                !members & 0xFFFF
+            };
+            if stop != 0 {
+                return SpanProbe::Stop(base + stop.trailing_zeros() as usize);
+            }
+            base += 16;
+        }
+        SpanProbe::Resume {
+            consumed: base,
+            set_len: set_len as u8,
+            all_ascii,
+        }
+    }
+}
+
+/// Whether this CPU may run the span kernels: the SSE4.2 `pcmpistri` probe
+/// ([`span_probe_cmpistri`]) and the AVX2 PSHUFB classifier
+/// ([`scan_c_string_pshufb`]). The shipped library is built for baseline x86-64,
+/// so nothing implies either; without them strspn/strcspn/strpbrk/strtok/
+/// strtok_r/strsep take their portable scans (bd-rc0923-epic-eeuy4f.13). A test
+/// of the CPUID bits `std` caches; constant `true` in a build targeting AVX2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn span_simd_available() -> bool {
+    std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("sse4.2")
+}
+
+/// One COMPLETE span scan for a 5..=64-byte set: [`span_probe_cmpistri`] answers it
+/// outright when the span is short, and hands its proven prefix to the PSHUFB loop
+/// when the span outruns the probe budget. `None` means the probe declined (set
+/// outside 5..=64 bytes, a page-crossing set load, or a non-ASCII set that has no
+/// PSHUFB form) or the CPU lacks the kernels' ISA, and the caller must use its
+/// existing path.
+///
+/// # Safety
+/// `s` and `set` must be valid NUL-terminated C strings.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn span_scan_cmpistri(
+    s: *const c_char,
+    set: *const c_char,
+    stop_in_set: bool,
+) -> Option<usize> {
+    if !span_simd_available() {
+        return None;
+    }
+    // SAFETY: forwarded from the caller's contract; the CPU has SSE4.2 and AVX2,
+    // checked just above.
+    unsafe {
+        match span_probe_cmpistri(s.cast::<u8>(), set.cast::<u8>(), stop_in_set) {
+            SpanProbe::Stop(idx) => Some(idx),
+            SpanProbe::Resume {
+                consumed,
+                set_len,
+                all_ascii: true,
+            } => {
+                let (lo16, hi16) = build_pshufb_lut(set.cast::<u8>(), set_len as usize);
+                Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, stop_in_set))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Page-safe FUSED early-stop membership scan over a NUL-terminated string for a
+/// SMALL set of 1..=4 bytes (`set`, duplicate-filled to 4 — same membership set).
+///
+/// Returns the index of the first byte that satisfies the stop predicate:
+///   - `complement == false` (strcspn / strpbrk): byte `== NUL` OR byte ∈ `set`;
+///   - `complement == true`  (strspn):            byte `== NUL` OR byte ∉ `set`.
+///
+/// This is the *fused* analog of the ABI strict path's `scan_c_string(s)` pre-scan +
+/// `core::str::{strspn,strcspn}` second pass: it makes ONE early-stopping SIMD
+/// pass from the raw pointer, never scanning past the stop byte (glibc's structure).
+/// Byte-identical to those core functions over the NUL-inclusive slice:
+///   - strcspn(2..=4): first reject-member OR NUL == `find_any_of4_or_nul_fused`.
+///   - strspn(2..=4):  first non-member  OR NUL == `find_non_any_of4_or_nul`
+///     (NUL is never a set member — set bytes come from a C string — so `!member`
+///     already covers the NUL stop).
+///   - strpbrk(2..=4): same stop index; the caller reads the stop byte to map
+///     member→pointer, NUL→null.
+///
+/// Page-safety is identical to [`scan_c_string`] / [`scan_c_string_for_byte`]:
+/// align DOWN to a 32-byte boundary and head-mask the bytes before `ptr`, then
+/// every subsequent 32-aligned 32-byte load stays within one 4 KiB page (32 | 4096)
+/// up to and including the NUL's page. The 128-byte folded tier keeps the same
+/// page-cross guard as `scan_c_string_for_byte`.
+///
+/// `strspn` fast path for a single-char accept: the index of the first byte that is
+/// NOT `c`. For any valid accept the char `c != 0`, so the terminating NUL is itself
+/// `!= c` and stops the scan — exactly `scan_c_string_for_set4([c;4], complement=true)`
+/// but with ONE splat / ONE `simd_eq` per window instead of four, cutting the fixed
+/// SIMD-setup floor that made 1-char `strspn` lose to glibc's early-stopping scan on
+/// short leading runs. Same aligned-head-mask + 128 B folded-tier page-safety
+/// discipline as [`scan_c_string_for_set4`] (a 32-aligned window stays within one
+/// page; the NUL is always a stop lane, so the scan never reads past its page).
+///
+/// # Safety
+///
+/// `ptr` must be a valid NUL-terminated C string; `c != 0`.
+unsafe fn scan_c_string_first_not_byte(ptr: *const c_char, c: u8) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let p = ptr.cast::<u8>();
+    let cv = Simd::<u8, 32>::splat(c);
+    // "stop here" bitmask for a window: lanes that are NOT `c` (incl. the NUL).
+    // `simd_ne` (not `!...to_bitmask()`) so only the 32 real lane bits are set — a
+    // u64-level `!` would flip the upper 32 non-lane bits and make an all-`c` window
+    // (the absent case) report a spurious stop at bit 32.
+    let ne = |v: Simd<u8, 32>| -> u64 { v.simd_ne(cv).to_bitmask() };
+    let align = (p as usize) & 31;
+    // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31 bytes).
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    // Clear the head bytes before `p` so they can't be reported as the stop.
+    let bits0 = ne(v0) & !((1u64 << align) - 1);
+    if bits0 != 0 {
+        return bits0.trailing_zeros() as usize - align;
+    }
+    let mut i = 32 - align;
+    loop {
+        // 128-byte folded skip tier for long all-`c` runs; gated on i >= 128 and a
+        // page-cross guard (same as scan_c_string_for_set4). A folded hit falls to the
+        // 32B tier, which resolves the exact first-not-`c` index unchanged.
+        if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+            // SAFETY: [i, i+128) stays within the current mapped page.
+            let w1 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+            let w2 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 32), 32)
+            });
+            let w3 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 64), 32)
+            });
+            let w4 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 96), 32)
+            });
+            if (ne(w1) | ne(w2) | ne(w3) | ne(w4)) == 0 {
+                i += 128;
+                continue;
+            }
+        }
+        // SAFETY: p+i is 32-aligned ⇒ the 32-byte window stays in one page; the NUL is
+        // a stop lane, so the scan stops at/before it — never reading a faulting page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+        let bits = ne(v);
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+}
+
+/// # Safety
+///
+/// `ptr` must be a valid NUL-terminated C string.
+unsafe fn scan_c_string_for_set4(ptr: *const c_char, set: [u8; 4], complement: bool) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let p = ptr.cast::<u8>();
+    let s0 = Simd::<u8, 32>::splat(set[0]);
+    let s1 = Simd::<u8, 32>::splat(set[1]);
+    let s2 = Simd::<u8, 32>::splat(set[2]);
+    let s3 = Simd::<u8, 32>::splat(set[3]);
+    let zv = Simd::<u8, 32>::splat(0);
+    // Computes the 32-lane "stop here" bitmask for a loaded window.
+    let stop_bits = |v: Simd<u8, 32>| -> u64 {
+        let member = v.simd_eq(s0) | v.simd_eq(s1) | v.simd_eq(s2) | v.simd_eq(s3);
+        let stop = if complement {
+            !member
+        } else {
+            member | v.simd_eq(zv)
+        };
+        stop.to_bitmask()
+    };
+
+    // FIRST vector: aligned-down load + head-mask (page-safe; see doc comment).
+    let align = (p as usize) & 31;
+    // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31 bytes).
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let headclear = !((1u64 << align) - 1);
+    let bits0 = stop_bits(v0) & headclear;
+    if bits0 != 0 {
+        // Stop index is `pos - align` relative to `p` (pos ≥ align by the head mask).
+        return bits0.trailing_zeros() as usize - align;
+    }
+    // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
+    let mut i = 32 - align;
+    loop {
+        // Length-escalated folded 4x32 = 128-byte skip tier for long strings; one
+        // `.any()` reduction per 128 bytes. Gated on `i >= 128` (short strings stay
+        // in the 32B tier) AND a page-cross guard (the 128B window from a 32-aligned,
+        // non-128-aligned address can straddle a page). A folded hit falls through to
+        // the 32B tier, which resolves the exact first stop index unchanged.
+        if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+            // SAFETY: [i, i+128) stays within the current mapped page.
+            let w1 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+            let w2 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 32), 32)
+            });
+            let w3 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 64), 32)
+            });
+            let w4 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 96), 32)
+            });
+            if (stop_bits(w1) | stop_bits(w2) | stop_bits(w3) | stop_bits(w4)) == 0 {
+                i += 128;
+                continue;
+            }
+        }
+        // SAFETY: p+i is 32-aligned, so this 32-byte window stays in one page; the
+        // string is NUL-terminated within a mapped page, so the scan stops at/before
+        // the NUL (which is always a stop lane) — never reading a faulting page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+        let bits = stop_bits(v);
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+}
+
+/// SWAR scan for the LAST byte equal to `target` at or before the terminating
+/// NUL (or `bound`). Returns `(last_match_index, stop_index, hit_limit)`:
+///   - `last_match_index` = index of the last `target` (None if absent);
+///   - `stop_index` = index of the terminating NUL, or `bound` if the limit was
+///     reached first;
+///   - `hit_limit` = the limit was reached with no NUL.
+///
+/// Each 8-byte window is probed for a NUL and a `target` byte with two exact
+/// haszero tests. A NUL-free window with a target is resolved back-to-front for
+/// the last match; the terminating window is resolved front-to-back (updating the
+/// last match on each `target`, stopping at the NUL) so `target == 0` reports the
+/// NUL itself — matching glibc `strrchr(s, '\0')`. Same alignment/page discipline
+/// as [`scan_c_string`].
+unsafe fn scan_c_string_last_byte(
+    ptr: *const c_char,
+    target: u8,
+    bound: Option<usize>,
+) -> (Option<usize>, usize, bool) {
+    let p = ptr.cast::<u8>();
+    let bcast = (target as u64).wrapping_mul(0x0101_0101_0101_0101);
+    let mut last: Option<usize> = None;
+    match bound {
+        Some(limit) => {
+            let mut i = 0usize;
+            while i + 8 <= limit {
+                // Wide 32-byte portable-SIMD skip, mirroring the unbounded (None)
+                // path: a panel with NEITHER the target NOR a NUL cannot change
+                // `last` or terminate, so advance it whole. Taken only when the
+                // 32-byte window stays inside the bound (`i + 32 <= limit`) and the
+                // current page; any panel with a target or NUL drops to the 8-byte
+                // SWAR resolve below, which updates `last` and resolves the NUL
+                // exactly — byte-identical. Closes the bounded-path gap where the
+                // SWAR scan was ~7x slower than the SIMD unbounded path at 64 KiB.
+                if i + 32 <= limit && (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+                    use core::simd::Simd;
+                    use core::simd::cmp::SimdPartialEq;
+                    // SAFETY: [i, i+32) ⊆ [0, limit) and within the current page.
+                    let v = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    let hit = v.simd_eq(Simd::splat(target)) | v.simd_eq(Simd::splat(0));
+                    if !hit.any() {
+                        i += 32;
+                        continue;
+                    }
+                }
+                // SAFETY: [i, i+8) ⊆ [0, limit).
+                let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
+                if swar_word_has_zero(w) {
+                    for j in 0..8 {
+                        // SAFETY: i+j < limit.
+                        let b = unsafe { *p.add(i + j) };
+                        if b == target {
+                            last = Some(i + j);
+                        }
+                        if b == 0 {
+                            return (last, i + j, false);
+                        }
+                    }
+                } else if swar_word_has_zero(w ^ bcast) {
+                    for j in (0..8).rev() {
+                        // SAFETY: i+j < limit.
+                        if unsafe { *p.add(i + j) } == target {
+                            last = Some(i + j);
+                            break;
+                        }
+                    }
+                }
+                i += 8;
+            }
+            while i < limit {
+                // SAFETY: i < limit.
+                let b = unsafe { *p.add(i) };
+                if b == target {
+                    last = Some(i);
+                }
+                if b == 0 {
+                    return (last, i, false);
+                }
+                i += 1;
+            }
+            (last, limit, true)
+        }
+        None => {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // glibc-style aligned-load-with-head-mask: align DOWN to a 32-byte
+            // boundary, do one aligned load, mask off the `align` bytes before
+            // `ptr`. A 32-aligned 32-byte window is in one 4 KiB page (32 | 4096)
+            // and the page holding `ptr` is mapped, so reading head bytes is safe.
+            // Resolves the LAST target ≤ the terminating NUL via the per-block
+            // target/NUL bitmasks (highest set bit = 63 - leading_zeros), dropping
+            // the scalar head-align loop and the per-chunk page guard the old loop
+            // paid on every 32B chunk. `target == 0` includes the NUL position so
+            // strrchr(s,'\0') reports the NUL itself.
+            let align = (p as usize) & 31;
+            // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31).
+            let base = unsafe { p.sub(align) };
+            let headclear = !((1u64 << align) - 1);
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+            let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+            let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
+            if nul0 != 0 {
+                let nul_pos = nul0.trailing_zeros();
+                // Targets at or before the NUL (inclusive covers target==0).
+                let upto = tgt0 & ((1u64 << (nul_pos + 1)) - 1);
+                let last = if upto != 0 {
+                    Some((63 - upto.leading_zeros()) as usize - align)
+                } else {
+                    None
+                };
+                return (last, nul_pos as usize - align, false);
+            }
+            // No NUL in the first block: record its last target, then continue from
+            // the next 32-aligned boundary (all subsequent loads in-page, no guard).
+            let mut last = if tgt0 != 0 {
+                Some((63 - tgt0.leading_zeros()) as usize - align)
+            } else {
+                None
+            };
+            let mut i = 32 - align;
+            loop {
+                // SAFETY: p+i is 32-aligned ⇒ the 32-byte window stays in one page.
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                // ONE combined target|NUL reduction per panel; split into the two masks
+                // only when a panel actually contains a target or NUL.
+                let hit = (v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target))).to_bitmask();
+                if hit == 0 {
+                    // Empty panel. 128-byte folded skip: fold the NEXT three 32B panels in
+                    // ONE `.any()` and jump 128 B total if they are also target/NUL-free —
+                    // the structure strlen's 128B tier used for large-size parity. Entered
+                    // ONLY after a confirmed-empty panel, so a FREQUENT target (which hits
+                    // the first panel) never pays the fold; an always-on tier degenerated to
+                    // ~5x on all-target input (see wcsrchr's rejected fold).
+                    i += 32;
+                    if (p as usize + i) & 0xFFF <= 0x1000 - 96 {
+                        // SAFETY: the guard keeps [i, i+96) inside one mapped page.
+                        let b = Simd::<u8, 32>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p.add(i), 32)
+                        });
+                        let c = Simd::<u8, 32>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p.add(i + 32), 32)
+                        });
+                        let d = Simd::<u8, 32>::from_slice(unsafe {
+                            core::slice::from_raw_parts(p.add(i + 64), 32)
+                        });
+                        let z = Simd::<u8, 32>::splat(0);
+                        let t = Simd::<u8, 32>::splat(target);
+                        let hit3 = (b.simd_eq(t) | b.simd_eq(z))
+                            | (c.simd_eq(t) | c.simd_eq(z))
+                            | (d.simd_eq(t) | d.simd_eq(z));
+                        if !hit3.any() {
+                            i += 96;
+                        }
+                    }
+                    continue;
+                }
+                let nul = v.simd_eq(Simd::splat(0)).to_bitmask();
+                let tgt = v.simd_eq(Simd::splat(target)).to_bitmask();
+                if nul != 0 {
+                    let nul_pos = nul.trailing_zeros();
+                    let upto = tgt & ((1u64 << (nul_pos + 1)) - 1);
+                    if upto != 0 {
+                        last = Some(i + (63 - upto.leading_zeros()) as usize);
+                    }
+                    return (last, i + nul_pos as usize, false);
+                }
+                // hit != 0 with no NUL ⇒ tgt != 0 (hit == nul | tgt).
+                last = Some(i + (63 - tgt.leading_zeros()) as usize);
+                i += 32;
+            }
+        }
+    }
+}
+
+/// True iff an 8-byte read starting at `addr` stays within `addr`'s own 4096-byte
+/// page, so it cannot fault into an adjacent (possibly unmapped) page. Gates wide
+/// reads in the dual-pointer strcmp/strncmp scan, where neither pointer can be
+/// pre-aligned.
+#[inline(always)]
+fn wide_read_within_page(addr: usize) -> bool {
+    (addr & 0xFFF) <= 0x1000 - 8
+}
+
+/// SWAR scan for the first index where two C strings differ or `s1` terminates,
+/// within `bound`. Returns `(index, hit_limit)`:
+///   - `hit_limit == true`  → the first `bound` bytes compared equal with no NUL;
+///     `index == bound`.
+///   - otherwise → `index` is the first position with `s1[i] != s2[i]` or
+///     `s1[i] == 0`; the caller reads both bytes there to form the signed diff (a
+///     shared NUL yields 0, a shorter `s1` yields a negative diff, etc.).
+///
+/// A wide 8-byte compare runs only when both reads stay inside their pages (no
+/// fault past a NUL near a page boundary) AND within `bound`; otherwise a single
+/// byte step is taken. A flagged window (words unequal OR containing a NUL) is
+/// resolved byte-wise in scan order, so the exact first diff/NUL is returned —
+/// byte-identical to the scalar loop it replaces.
+/// `#[inline]`: this is called from exactly two strict fast paths (`strcmp` with
+/// `BOUNDED=false`, `strncmp`/`strncasecmp` with `true`), and as an out-of-line
+/// call each one paid four callee-saved pushes plus the matching pops. Line-level
+/// profiling (callgrind `--dump-line`, two-point) charged 25 of the bounded
+/// instantiation's 83 Ir to this signature line -- the pushes plus the guard
+/// arithmetic the compiler hoists to entry. Inlining lets each caller keep only
+/// the registers its own instantiation actually needs.
+///
+/// Runs an AVX2 build of [`scan_strcmp_body`] on CPUs that have it (as
+/// `avx2_dispatch!`, written out for the const generic): in the baseline x86-64
+/// build its 32-lane masks are spilled and re-read a byte at a time, and strcmp
+/// measured 4-17x slower than the x86-64-v3 build (bd-rc0923-epic-eeuy4f.13).
+#[inline(always)]
+#[allow(unreachable_code)]
+unsafe fn scan_strcmp<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+    {
+        #[target_feature(enable = "avx2")]
+        unsafe fn avx2_twin<const B: bool>(
+            s1: *const c_char,
+            s2: *const c_char,
+            bound: usize,
+        ) -> (usize, bool) {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_strcmp_body::<B>(s1, s2, bound) }
+        }
+        #[inline(never)]
+        unsafe fn baseline<const B: bool>(
+            s1: *const c_char,
+            s2: *const c_char,
+            bound: usize,
+        ) -> (usize, bool) {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_strcmp_body::<B>(s1, s2, bound) }
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU has AVX2, checked just above; the rest is the
+            // caller's contract.
+            return unsafe { avx2_twin::<BOUNDED>(s1, s2, bound) };
+        }
+        // SAFETY: forwarded from the caller's contract.
+        return unsafe { baseline::<BOUNDED>(s1, s2, bound) };
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { scan_strcmp_body::<BOUNDED>(s1, s2, bound) }
+}
+
+/// The comparator behind [`scan_strcmp`]; see there.
+#[inline(always)]
+unsafe fn scan_strcmp_body<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
+    let p1 = s1.cast::<u8>();
+    let p2 = s2.cast::<u8>();
+    let mut i = 0usize;
+    loop {
+        // ONE GATE FOR THE THREE WIDE TIERS. Each of the three blocks below
+        // already carries a condition that implies `bound >= 32` (`i + 128 <=
+        // bound`, `i + 32 <= bound`, and the panel's explicit `bound >= 32`), so
+        // this guard is logically redundant and is here purely for codegen: it is
+        // a loop-invariant test LLVM will not synthesise on its own, because it
+        // cannot unswitch a loop with this many exits on a runtime `bound`.
+        //
+        // Without it a SHORT bounded compare re-evaluates all three gates on every
+        // pass -- two adds, three compares and two page tests that can never
+        // succeed -- and then falls to the 8-byte SWAR tier anyway. `strncmp` at
+        // bound 31 makes ten passes before it is done, which is where a bound the
+        // wide tiers cannot serve turns into the suite's worst measured ratio.
+        //
+        // For `BOUNDED == false` (`strcmp`) the term is a const `true` and the
+        // guard vanishes. Indentation inside the guard is deliberately left as it
+        // was; reflowing it would rewrite the whole body for no semantic change.
+        if !BOUNDED || bound >= 32 {
+            // Wide 128-byte unrolled fast path: the plain 32B loop below re-ran the
+            // dual page-guard (`&0xFFF <= 0x1000-32` on BOTH pointers) AND the `i+32<=bound`
+            // check on EVERY 32 bytes — ~2.7x slower than glibc for long equal strings
+            // (measured strcmp_align, alignment-independent ⇒ pure per-iter overhead, not
+            // splits). glibc unrolls and amortizes the page check. Here: one guard covers a
+            // full 128B window (both pointers in-page), then four 32-lane compares whose
+            // flag masks are OR-combined so the all-equal common case takes a SINGLE branch
+            // and advances 128B. Byte-identical: the first set bit across the four masks (in
+            // order) is the exact first differing-or-s1-NUL byte the 32B/SWAR tail resolves to.
+            let o1 = (p1 as usize + i) & 0xFFF;
+            let o2 = (p2 as usize + i) & 0xFFF;
+            let safe_bytes = (0x1000 - o1).min(0x1000 - o2);
+            let limit = i + safe_bytes.min(bound.saturating_sub(i));
+
+            while i + 128 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let zero = Simd::<u8, 32>::splat(0);
+                let a0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i), 32)
+                });
+                let b0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i), 32)
+                });
+                let a1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + 32), 32)
+                });
+                let b1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + 32), 32)
+                });
+                let a2 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + 64), 32)
+                });
+                let b2 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + 64), 32)
+                });
+                let a3 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + 96), 32)
+                });
+                let b3 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + 96), 32)
+                });
+
+                let diff0 = a0.simd_ne(b0) | a0.simd_eq(zero);
+                let diff1 = a1.simd_ne(b1) | a1.simd_eq(zero);
+                let diff2 = a2.simd_ne(b2) | a2.simd_eq(zero);
+                let diff3 = a3.simd_ne(b3) | a3.simd_eq(zero);
+
+                let diff_all = (diff0 | diff1) | (diff2 | diff3);
+                if !diff_all.any() {
+                    i += 128;
+                    continue;
+                }
+
+                let f0 = diff0.to_bitmask();
+                if f0 != 0 {
+                    return (i + f0.trailing_zeros() as usize, false);
+                }
+                let f1 = diff1.to_bitmask();
+                if f1 != 0 {
+                    return (i + 32 + f1.trailing_zeros() as usize, false);
+                }
+                let f2 = diff2.to_bitmask();
+                if f2 != 0 {
+                    return (i + 64 + f2.trailing_zeros() as usize, false);
+                }
+                let f3 = diff3.to_bitmask();
+                return (i + 96 + f3.trailing_zeros() as usize, false);
+            }
+            // Wide 32-byte portable-SIMD fast path: skip whole equal, NUL-free panels
+            // at AVX width (glibc's strcmp/strncmp step 16-32 bytes; the 8-byte SWAR
+            // below was the bottleneck — strncmp was ~1.5x slower). A flagged panel
+            // falls through to the SWAR/scalar tail, which resolves the exact first
+            // differing-or-NUL index, so the returned (index, hit_limit) is unchanged.
+            if i + 32 <= bound
+                && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
+                && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
+            {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                // SAFETY: both 32-byte reads stay within their mapped pages and bound.
+                let va = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i), 32)
+                });
+                let vb = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i), 32)
+                });
+                let flagged = (va.simd_ne(vb) | va.simd_eq(Simd::splat(0))).to_bitmask();
+                if flagged == 0 {
+                    i += 32;
+                    continue;
+                }
+                // Flagged panel: the first set bit is the exact first
+                // differing-or-s1-NUL byte (the same index the SWAR/scalar tail would
+                // resolve to). Return it directly via trailing_zeros instead of
+                // re-scanning the same 32 bytes with the 8-byte SWAR path below — the
+                // same O(1) resolve used in scan_c_string/strchr. Byte-identical.
+                return (i + flagged.trailing_zeros() as usize, false);
+            }
+            // OVERLAPPING FINAL PANEL, placed ABOVE the 8-byte SWAR tier. An earlier
+            // version sat below every tier and measured -10 Ir: by the time it ran,
+            // SWAR had already nibbled the remainder down to about three bytes, so the
+            // panel paid two 32-byte loads to replace three scalar compares. Here it
+            // takes the WHOLE remainder instead. `strncmp(a, b, 43)` clears the 32B
+            // tier once to i=32, then `32 + 32 <= 43` fails and this resolves
+            // [11, 43) in one panel rather than SWAR-at-32, SWAR-declines-at-40, three
+            // scalar.
+            //
+            // `i + 32 > bound` is REQUIRED, not implied: the 32B tier declines both for
+            // a short remainder AND for a failed page guard, and only the first makes
+            // `bound - 32` meaningful. Omitting it in the `wcsncmp` version computed
+            // `usize::MAX - 32` on an unbounded call that declined on its page guard
+            // and read a wild address -- 114 conformance failures. With it,
+            // `start <= i` holds by construction.
+            if BOUNDED
+                && bound >= 32
+                && i + 32 > bound
+                && (p1 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+                && (p2 as usize + bound - 32) & 0xFFF <= 0x1000 - 32
+            {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let start = bound - 32;
+                let skip = i - start;
+                // SAFETY: `[bound-32, bound)` is one 32-byte window, page-guarded above.
+                let a = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(start), 32)
+                });
+                let b = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(start), 32)
+                });
+                let m =
+                    (a.simd_ne(b) | a.simd_eq(Simd::splat(0))).to_bitmask() & !((1u64 << skip) - 1);
+                if m == 0 {
+                    // Every byte in [i, bound) is equal and non-NUL: bound reached.
+                    return (bound, true);
+                }
+                return (start + m.trailing_zeros() as usize, false);
+            }
+        }
+        if i + 8 <= bound
+            && wide_read_within_page(p1 as usize + i)
+            && wide_read_within_page(p2 as usize + i)
+        {
+            // SAFETY: both 8-byte reads stay within their mapped pages and bound.
+            let wa = unsafe { core::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { core::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if wa == wb && !swar_word_has_zero(wa) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                // SAFETY: i+j < bound; within the just-read in-page window.
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                if a != b || a == 0 {
+                    return (i + j, false);
+                }
+            }
+            i += 8; // defensive: a flagged window always returns above.
+            continue;
+        }
+        if i >= bound {
+            return (bound, true);
+        }
+        // NO OVERLAPPING TAIL PANEL HERE, and that is a measured decision. The
+        // equivalent panel in `scan_wcscmp_simd` is worth +52 Ir, but here it
+        // measured **-10 Ir on `strncmp(a, b, 43)`** and was removed. The reason is
+        // the 8-byte SWAR tier directly above: unlike the wide scanner, this one
+        // has an intermediate tier that already grinds the remainder down to a few
+        // bytes, so a 32-byte panel arrives with ~3 bytes left to resolve and pays
+        // two 32-byte loads, a mask and a shift to replace about three scalar
+        // compares. **The same lever is not worth the same amount in two scanners
+        // with different tier ladders.** See the 2026-08-26 ledger row.
+        // SAFETY: i < bound.
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        if a != b || a == 0 {
+            return (i, false);
+        }
+        i += 1;
+    }
+}
+
+/// Branchless SWAR ASCII lowercase: folds bytes in `'A'..='Z'` to `'a'..='z'`
+/// and leaves every other byte (incl. non-ASCII `>= 0x80`) untouched — exactly C
+/// `tolower` in the POSIX/C locale, applied to all 8 lanes at once.
+///
+/// Per-byte range test `0x41 <= b <= 0x5A`, made borrow-safe by forcing each
+/// byte's high bit (`w | HIGHS`) so a within-byte borrow is absorbed by that
+/// guard bit instead of leaking into the next lane. `ge_a`/`ge_5b` read the
+/// surviving guard bit as `(b & 0x7F) >= 0x41` / `>= 0x5B`; `ascii` excludes
+/// bytes `>= 0x80`. The resulting `0x80` flag is shifted to the `0x20` case bit.
+#[inline(always)]
+fn swar_ascii_lower(w: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    let guarded = w | HIGHS;
+    let ge_a = guarded.wrapping_sub(ONES.wrapping_mul(0x41)) & HIGHS; // (b&0x7F) >= 'A'
+    let ge_5b = guarded.wrapping_sub(ONES.wrapping_mul(0x5B)) & HIGHS; // (b&0x7F) >= '['
+    let ascii = !w & HIGHS; // b < 0x80
+    let is_upper = ge_a & !ge_5b & ascii;
+    w | (is_upper >> 2)
+}
+
+/// Fused single-pass SWAR case-insensitive compare of two C strings within
+/// `bound`. Returns `(result, span)`: `result` is the signed difference of the
+/// lowercased bytes at the first position that differs (0 if equal up to a shared
+/// NUL or to `bound`); `span` is the compared extent (for cost accounting).
+///
+/// Equal-and-NUL-free 8-byte windows (after folding both via [`swar_ascii_lower`])
+/// advance 8; any other window is resolved byte-wise with `to_ascii_lowercase`
+/// (byte-identical to the scalar loop). The same page-cross guard as
+/// [`scan_strcmp`] keeps the dual-pointer wide reads from faulting past a NUL.
+unsafe fn scan_strcasecmp<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (c_int, usize) {
+    let p1 = s1.cast::<u8>();
+    let p2 = s2.cast::<u8>();
+    let mut i = 0usize;
+    // PRECOMPUTED TIER THRESHOLDS. Both gates below tested `i + N <= bound` on
+    // every pass, recomputing an add against a value that never changes. The
+    // equivalent `i < bound - (N-1)` is one compare instead of an add and a
+    // compare, and -- because the subtraction saturates -- it is ALSO how a bound
+    // too small for a tier stops paying to be offered it: `bound <= 31` gives
+    // `wide_end == 0`, so `i < 0` is false on the first pass and every pass after.
+    //
+    // Exact, not approximate. Over the integers `i + N <= bound` iff `i <= bound - N`
+    // iff `i < bound - (N-1)`, and for `bound < N` both forms are false -- the
+    // saturating floor of 0 reproduces that rather than wrapping. Unbounded callers
+    // (`bound == usize::MAX`) get `usize::MAX - 31`, which no reachable `i` crosses.
+    //
+    // This matters here more than in the sibling scanners because
+    // `scan_strcasecmp` is NOT generic over a `const BOUNDED: bool`: unbounded
+    // `strcasecmp` arrives with `bound == usize::MAX`, so a plain `bound >= 32`
+    // guard cannot const-fold and taxes it on every pass. That variant was measured
+    // and REJECTED (-3 Ir on `strcasecmp`, -5 at bound 128); this one costs the
+    // unbounded case nothing because it REPLACES the test rather than adding one.
+    //
+    // The `BOUNDED` parameter earns its keep on exactly these two lines. Computing
+    // the saturating thresholds unconditionally cost unbounded `strcasecmp` 3 Ir --
+    // measured -- because a 43-byte compare makes about two passes and cannot
+    // amortise five instructions of setup. Under `BOUNDED == false` the thresholds
+    // are compile-time constants that no reachable `i` crosses, so the setup folds
+    // away and the compare is against an immediate. Same tiers, same order, same
+    // result; the const parameter only decides whether the bound is a value or a
+    // constant.
+    let (wide_end, swar_end) = if BOUNDED {
+        (bound.saturating_sub(31), bound.saturating_sub(7))
+    } else {
+        (usize::MAX, usize::MAX)
+    };
+    loop {
+        // Wide 32-byte portable-SIMD fast path: skip whole panels that are equal
+        // after ASCII case-folding and NUL-free, at AVX width (glibc's strcasecmp
+        // steps 16-32 bytes; the 8-byte SWAR below was the bottleneck). A flagged
+        // panel falls through to the SWAR/scalar tail, which resolves the exact
+        // first differing-or-NUL index — so the returned result is unchanged.
+        if i < wide_end
+            && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
+            && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
+        {
+            use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+            use core::simd::{Select, Simd};
+            // SAFETY: both 32-byte reads stay within their mapped pages and bound.
+            let va =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
+            let vb =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
+            let fold = |v: Simd<u8, 32>| {
+                let up = v.simd_ge(Simd::splat(b'A')) & v.simd_le(Simd::splat(b'Z'));
+                up.select(v + Simd::splat(0x20), v)
+            };
+            let z = Simd::<u8, 32>::splat(0);
+            let flagged = (fold(va).simd_ne(fold(vb)) | va.simd_eq(z)).to_bitmask();
+            if flagged == 0 {
+                i += 32;
+                continue;
+            }
+            // Flagged panel: the first set bit is the exact first case-folded-differing
+            // or s1-NUL byte (the same index the SWAR/scalar tail would resolve to).
+            // Resolve it directly via trailing_zeros instead of re-scanning the same 32
+            // bytes with the 8-byte SWAR path below — same O(1) resolve as scan_strcmp.
+            // Byte-identical: at `k` either fold(a)!=fold(b) (return the case-folded
+            // difference) or a==0 (a NUL; equal-so-far ⇒ return 0).
+            let k = i + flagged.trailing_zeros() as usize;
+            // SAFETY: k < bound (the flagged 32-byte window is within bound).
+            let a = unsafe { *p1.add(k) };
+            let b = unsafe { *p2.add(k) };
+            let la = a.to_ascii_lowercase();
+            let lb = b.to_ascii_lowercase();
+            if la != lb {
+                return ((la as c_int) - (lb as c_int), k + 1);
+            }
+            return (0, k + 1);
+        }
+        if i < swar_end
+            && wide_read_within_page(p1 as usize + i)
+            && wide_read_within_page(p2 as usize + i)
+        {
+            // SAFETY: both 8-byte reads stay within their mapped pages and bound.
+            let wa = unsafe { core::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { core::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if swar_ascii_lower(wa) == swar_ascii_lower(wb) && !swar_word_has_zero(wa) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                // SAFETY: i+j < bound; within the just-read in-page window.
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                let la = a.to_ascii_lowercase();
+                let lb = b.to_ascii_lowercase();
+                if la != lb {
+                    return ((la as c_int) - (lb as c_int), i + j + 1);
+                }
+                if a == 0 {
+                    return (0, i + j + 1);
+                }
+            }
+            i += 8; // defensive: a flagged window always returns above.
+            continue;
+        }
+        if i >= bound {
+            return (0, bound);
+        }
+        // SAFETY: i < bound.
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        let la = a.to_ascii_lowercase();
+        let lb = b.to_ascii_lowercase();
+        if la != lb {
+            return ((la as c_int) - (lb as c_int), i + 1);
+        }
+        if a == 0 {
+            return (0, i + 1);
+        }
+        i += 1;
+    }
+}
+
+unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
+}
+
+unsafe fn read_c_string_bytes_with_nul(ptr: *const c_char) -> Option<Vec<u8>> {
+    let bytes = unsafe { read_c_string_bytes(ptr) }?;
+    let capacity = bytes.len().checked_add(1)?;
+    let mut with_nul = Vec::with_capacity(capacity);
+    with_nul.extend_from_slice(&bytes);
+    with_nul.push(0);
+    Some(with_nul)
+}
+
+// ---------------------------------------------------------------------------
+// memcpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `memcpy` -- copies `n` bytes from `src` to `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    if n == 0 {
+        return dst;
+    }
+    if dst.is_null() || src.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp/heal, so the result is exactly the raw copy. Skip the
+    // entrypoint trace scope + proof-carried/observe machinery (byte-identical to the
+    // `!heals_enabled` raw_dispatch path below), like the inet_strict family. Hardened mode
+    // falls through to the full validating path.
+    //
+    // Checked BEFORE `string_raw_passthrough_active()`: the strict path is membrane-free
+    // (pure pointer copy, no alloc/TLS/validation/membrane), so it is safe in EVERY context —
+    // bootstrap (MODE_UNRESOLVED → strict active), allocator/validation reentrancy, and
+    // steady state. The raw-passthrough guard below is only needed in HARDENED mode (its
+    // fall-through is the recursion-prone full membrane); in strict mode it was a redundant
+    // ~3-5ns of TLS-context reads (allocator-reentry + validation-depth + bootstrap-phase).
+    if runtime_policy::strict_passthrough_active() {
+        // HTM only carries meaning under a forced test mode: real RTM is absent on most
+        // deployed CPUs (all AMD, most Intel), so attempting a transaction in `Real` mode
+        // cost ~10ns/call to detect-unsupported-and-fall-back on EVERY memcpy <= 256B, and
+        // a plain (disjoint) memcpy has no atomicity contract for HTM to provide anyway.
+        // Mirror the raw-passthrough branch: try HTM only under a forced test mode, else
+        // copy directly. `raw_overlap_copy` handles ALL sizes (overlapping small-n / AVX2
+        // vmovdqu loop / rep movsb) and is byte-identical to a memcpy for disjoint regions —
+        // it supersedes `raw_dispatch_memcpy_bytes`, whose `select_string_simd_dispatch`
+        // returned SCALAR (lane 1 → slow volatile byte loop) for every n < 32.
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            // LEAF SUB-128 PATH. `raw_overlap_copy` is a real out-of-line `call`, and for a
+            // small copy the call convention cost more than the copy: keeping dst/src/n live
+            // across it forced three callee-saved pushes and `sub $0x30,%rsp`, six moves
+            // shuffling them into `%rbx`/`%r14`/`%r15` and back, plus `call`/`ret`. Taking
+            // n < 128 inline here leaves everything in argument registers, so the deployed
+            // strict path becomes a frameless leaf. Sizes >= 128 still go out of line, where
+            // the AVX/`rep movsb` kernels dwarf the call.
+            //
+            // Placed AFTER the forced-mode test on purpose: under a forced HTM test mode a
+            // small `memcpy` must still take the transactional path, so this must not
+            // short-circuit ahead of it.
+            if n < 128 {
+                unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            } else {
+                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            }
+        }
+        return dst;
+    }
+
+    // Out-of-line tail, kept `#[inline(never)]` (without `#[cold]`) so `memcpy` stays a
+    // frameless leaf on the strict path and a frameless tail-jump in hardened mode while
+    // `memcpy_validating` is compiled as a hot function with full inlining of guard,
+    // TLS/PCC, and bloom helpers.
+    unsafe { memcpy_validating(dst, src, n) }
+}
+
+#[inline(never)]
+unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
+        return dst;
+    };
+
+    if cfg!(test) && !runtime_policy::mode().heals_enabled() {
+        let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
+        if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::StringMemory, dst as usize, n, true, true, 0);
+            // See strict-path note: HTM only meaningful under forced test mode; else copy
+            // directly via raw_overlap_copy (all sizes, byte-identical for disjoint memcpy).
+            if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+                && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+            {
+                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            }
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(7, n),
+                false,
+            );
+            return dst;
+        }
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
+        return dst;
+    }
+
+    let (dst_rem_fast, src_rem_fast) =
+        crate::malloc_abi::known_remaining_write_pair_fast_in_guarded_string(
+            dst as usize,
+            src as usize,
+            n,
+        );
+    let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMCPY_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let (copy_len, clamped) = maybe_clamp_copy_len_fast(
+            "memcpy",
+            n,
+            dst as usize,
+            dst_rem_fast,
+            Some(src as usize),
+            src_rem_fast,
+            mode.heals_enabled(),
+        );
+        if copy_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(7, n),
+                    true,
+                );
+            }
+            return dst;
+        }
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len))
+        {
+            if copy_len < 128 {
+                unsafe { raw_copy_under_128(dst.cast::<u8>(), src.cast::<u8>(), copy_len) };
+            } else {
+                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), copy_len) };
+            }
+        }
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, copy_len),
+                true,
+            );
+        }
+        return dst;
+    }
+    let (dst_rem, src_rem) = (dst_rem_fast.into_option(), src_rem_fast.into_option());
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = !bloom_negative;
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        "memcpy",
+        n,
+        dst as usize,
+        dst_rem,
+        Some(src as usize),
+        src_rem,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
+    if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+        && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len))
+    {
+        unsafe {
+            raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        }
+    }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, copy_len),
+        clamped,
+    );
+    dst
+}
+
+// ---------------------------------------------------------------------------
+// memmove
+// ---------------------------------------------------------------------------
+
+/// POSIX `memmove` -- copies `n` bytes from `src` to `dst`, handling overlap.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    if n == 0 {
+        return dst;
+    }
+    if dst.is_null() || src.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp/heal, so `copy_len == n` and the result is
+    // exactly the raw overlap-safe move (byte-identical to the full path below).
+    // Skip the membrane guard + decide + stage-trace + observe machinery, mirroring
+    // the sibling `memcpy` strict fast path. Hardened mode falls through. Checked
+    // before `string_raw_passthrough_active()`: the strict path is membrane-free/pure
+    // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only
+    // needed in hardened mode — see the memcpy strict-path note.
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        return dst;
+    }
+
+    unsafe { memmove_validating(dst, src, n) }
+}
+
+#[inline(never)]
+unsafe fn memmove_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memmove semantics.
+        unsafe {
+            raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n);
+        }
+        return dst;
+    };
+
+    let (dst_rem_fast, src_rem_fast) =
+        crate::malloc_abi::known_remaining_write_pair_fast_in_guarded_string(
+            dst as usize,
+            src as usize,
+            n,
+        );
+    let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMMOVE_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let (copy_len, clamped) = maybe_clamp_copy_len_fast(
+            "memmove",
+            n,
+            dst as usize,
+            dst_rem_fast,
+            Some(src as usize),
+            src_rem_fast,
+            mode.heals_enabled(),
+        );
+        if copy_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(8, n),
+                    true,
+                );
+            }
+            return dst;
+        }
+        unsafe {
+            raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        }
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, copy_len),
+                true,
+            );
+        }
+        return dst;
+    }
+    let (dst_rem, src_rem) = (dst_rem_fast.into_option(), src_rem_fast.into_option());
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memmove");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        "memmove",
+        n,
+        dst as usize,
+        dst_rem,
+        Some(src as usize),
+        src_rem,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: memmove handles overlap. `copy_len` may be clamped in hardened mode.
+    unsafe {
+        raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+    }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, copy_len),
+        clamped,
+    );
+    dst
+}
+
+// ---------------------------------------------------------------------------
+// memset
+// ---------------------------------------------------------------------------
+
+/// POSIX `memset` -- fills `n` bytes of `dst` with byte value `c`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_void {
+    if n == 0 {
+        return dst;
+    }
+    if dst.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): in strict passthrough the
+    // StringMemory membrane is a no-op — `decide()` forces Allow (StringMemory is on the
+    // strict fast-list) and no clamp/heal occurs, so the membrane's only output is a raw
+    // memset. Skip the whole membrane (known_remaining + check_ordering + decide + record +
+    // observe), exactly as the inet_strict family already does. Hardened mode
+    // (`strict_passthrough_active() == false`) falls through to the full validating path.
+    // Checked before `string_raw_passthrough_active()`: the strict path is membrane-free/pure
+    // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only needed
+    // in hardened mode — see the memcpy strict-path note.
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
+        return dst;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memset semantics.
+        unsafe {
+            raw_memset_bytes(dst.cast::<u8>(), c as u8, n);
+        }
+        return dst;
+    };
+
+    let dst_rem = crate::malloc_abi::known_remaining_write_in_guarded_string(dst as usize, n);
+    let bloom_negative = dst_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMSET_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let (fill_len, clamped) = maybe_clamp_copy_len(
+            "memset",
+            n,
+            dst as usize,
+            dst_rem,
+            None,
+            None,
+            mode.heals_enabled(),
+        );
+        if fill_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(6, n),
+                    true,
+                );
+            }
+            return dst;
+        }
+        unsafe {
+            raw_memset_bytes(dst.cast::<u8>(), c as u8, fill_len);
+        }
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, fill_len),
+                true,
+            );
+        }
+        return dst;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memset");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(dst as usize, dst_rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (fill_len, clamped) = maybe_clamp_copy_len(
+        "memset",
+        n,
+        dst as usize,
+        dst_rem,
+        None,
+        None,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if fill_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: `fill_len` is either original `n` (strict) or clamped to known bounds.
+    unsafe {
+        raw_memset_bytes(dst.cast::<u8>(), c as u8, fill_len);
+    }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, fill_len),
+        clamped,
+    );
+    dst
+}
+
+// ---------------------------------------------------------------------------
+// memcmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `memcmp` -- compares `n` bytes of `s1` and `s2`.
+///
+/// Returns negative, zero, or positive integer.
+///
+/// # Safety
+///
+/// Caller must ensure `s1` and `s2` are valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces Allow
+    // with no clamp (cmp_len == n), so the result is exactly the dispatched raw compare.
+    // Skip entrypoint_scope + stage_context + decide + maybe_clamp + record + observe
+    // (byte-identical to the strict full path below), like the inet_strict family. Hardened
+    // mode keeps the full validating path.
+    //
+    // Checked BEFORE `string_raw_passthrough_active()`: the strict path is membrane-free
+    // (pure pointer reads + raw compare, no alloc/TLS/validation), so it is safe in EVERY
+    // context — bootstrap (MODE_UNRESOLVED → strict active), allocator/validation reentrancy,
+    // and steady state alike. The `string_raw_passthrough_active()` guard below is only
+    // needed in HARDENED mode, where the fall-through is the recursion-prone full membrane;
+    // in strict mode it was a redundant ~3-5ns of TLS-context reads (allocator-reentry +
+    // validation-depth + bootstrap-phase) on every call. Ordering strict first elides them.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        return unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n) };
+    }
+
+    unsafe { memcmp_validating(s1, s2, n) }
+}
+
+#[inline(never)]
+unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        if string_raw_passthrough_active() {
+            return 0;
+        }
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+        // Membrane: null pointer in memcmp is UB in C. Return safe default.
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
+    };
+    // Resolve `known_remaining` BEFORE entering the memcmp PCC scope. The
+    // read-only PCC sets `proof_carried_pointer_validation_active() == true`,
+    // which causes `validate_ptr_in_slot` to return `Unknown` and previously
+    // routed `memcmp_validating` through `known_remaining_for_certified_read`
+    // (skipping `AllocationArena` live bounds and `SafetyState::Quarantined =>
+    // Some(0)` UAF detection on hardened heap allocations, and scanning the
+    // 64-slot fallback table twice on every call; bd-rc0923-epic-eeuy4f.28,
+    // same ordering invariant as `strlen_validating` in bd-k3skh6).
+    let (lhs_fast, rhs_fast) =
+        crate::malloc_abi::known_remaining_pair_fast_in_guarded_string(s1 as usize, s2 as usize);
+    let _ = crate::malloc_abi::known_remaining_for_certified_read;
+    let bloom_negative = lhs_fast.is_none() && rhs_fast.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMCMP_INDEX,
+            s1 as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let (cmp_len, _clamped) = maybe_clamp_copy_len_fast(
+            "memcmp",
+            n,
+            s1 as usize,
+            lhs_fast,
+            Some(s2 as usize),
+            rhs_fast,
+            mode.heals_enabled(),
+        );
+        if cmp_len == 0 {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, n),
+                true,
+            );
+            return 0;
+        }
+        // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
+        if cmp_len >= 8 {
+            let hx = u64::from_be(unsafe { core::ptr::read_unaligned(s1.cast::<u64>()) });
+            let hy = u64::from_be(unsafe { core::ptr::read_unaligned(s2.cast::<u64>()) });
+            if hx != hy {
+                if cmp_len < n {
+                    runtime_policy::observe(
+                        ApiFamily::StringMemory,
+                        ValidationProfile::Fast,
+                        runtime_policy::scaled_cost(6, cmp_len),
+                        true,
+                    );
+                }
+                return if hx < hy { -1 } else { 1 };
+            }
+        }
+        let out = unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), cmp_len) };
+        if cmp_len < n {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, cmp_len),
+                true,
+            );
+        }
+        return out;
+    }
+    let (lhs_remaining, rhs_remaining) = (lhs_fast.into_option(), rhs_fast.into_option());
+
+    let _trace_scope = runtime_policy::entrypoint_scope_memcmp();
+    let certified_read = runtime_policy::active_memcmp_pcc_token();
+    let certified_read_active = certified_read.is_some();
+    // In deployed builds a verified memcmp certificate makes StringMemory stage
+    // ordering a compile-time passthrough and stage-outcome recording an
+    // unconditional no-op. Do not enter those runtime-policy helpers merely to
+    // obtain/discard those exact results. Unit tests retain the full route, and
+    // the uncertified early-startup path still uses the generic machinery.
+    let stage_context = (cfg!(test) || !certified_read_active).then(|| {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_two(
+            s1 as usize,
+            lhs_remaining,
+            s2 as usize,
+            rhs_remaining,
+        );
+        (ordering, aligned, recent_page)
+    });
+    let (mode, decision) = if let Some(token) = certified_read {
+        runtime_policy::decide_certified_memcmp(token, s1 as usize, n, bloom_negative)
+    } else {
+        runtime_policy::decide(
+            ApiFamily::StringMemory,
+            s1 as usize,
+            n,
+            false,
+            bloom_negative,
+            0,
+        )
+    };
+    if matches!(decision.action, MembraneAction::Deny) {
+        if let Some((ordering, aligned, recent_page)) = stage_context.as_ref() {
+            record_string_stage_outcome(
+                ordering,
+                *aligned,
+                *recent_page,
+                Some(stage_index(ordering, CheckStage::Arena)),
+            );
+        }
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return 0;
+    }
+
+    let (cmp_len, _clamped) = maybe_clamp_copy_len(
+        "memcmp",
+        n,
+        s1 as usize,
+        lhs_remaining,
+        Some(s2 as usize),
+        rhs_remaining,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if cmp_len == 0 {
+        if let Some((ordering, aligned, recent_page)) = stage_context.as_ref() {
+            record_string_stage_outcome(
+                ordering,
+                *aligned,
+                *recent_page,
+                Some(stage_index(ordering, CheckStage::Bounds)),
+            );
+        }
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return 0;
+    }
+
+    // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
+    let out = unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), cmp_len) };
+    if let Some((ordering, aligned, recent_page)) = stage_context.as_ref() {
+        record_string_stage_outcome(
+            ordering,
+            *aligned,
+            *recent_page,
+            Some(stage_index(ordering, CheckStage::Bounds)),
+        );
+    }
+    let adverse = cmp_len < n;
+    // Deployed observe() already discards every non-adverse StringMemory
+    // result before touching policy state. Avoid its call boundary here while
+    // preserving the full observation for clamps and the unit-test route.
+    if cfg!(test) || adverse {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, cmp_len),
+            adverse,
+        );
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// memchr
+// ---------------------------------------------------------------------------
+
+/// POSIX `memchr` -- locates first occurrence of byte `c` in first `n` bytes of `s`.
+///
+/// Returns pointer to the matching byte, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces Allow
+    // with no clamp (scan_len == n), so the result is exactly the SIMD core scan over the
+    // caller-bounded `n` bytes. Skip stage_context + decide + maybe_clamp + record + observe
+    // (byte-identical to the strict full path), like the inet_strict family. Hardened mode
+    // keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || s.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SHORT-INPUT INLINE SCAN. Below 32 bytes the cross-crate call was most of the
+        // work: `frankenlibc_core::string::mem::memchr` is reached through a GOT-indirect
+        // call, and it opens by building a slice, then evaluating three loop guards — the
+        // 256-byte fold tier, the 32-byte SIMD tier, the 8-byte word tier — before an input
+        // this small can reach the tier that serves it. Attribution measured 65.00 of
+        // `memchr`'s 97.00 Ir inside core for a SIXTEEN-byte scan, against live glibc's
+        // 29.00 for the whole call.
+        //
+        // The same SWAR fold core uses, applied directly: XOR the broadcast needle to zero,
+        // then Mycroft's zero-byte mask, whose high bit is set in exactly the matching lanes.
+        // `to_le()` before the bit scan keeps the lane order right on either endianness, and
+        // the trailing 1..7 bytes are a straight byte loop rather than a masked word, so no
+        // read ever crosses past `s + n`. This is the short-input path the neighbouring
+        // string entries in this file already have; `memchr` was the one without it.
+        //
+        // SAFETY: caller guarantees `s` is valid for `n` bytes (memchr's contract); every
+        // read below is at an offset < n.
+        let needle = c as u8;
+        if n < 32 {
+            const ONES: u64 = 0x0101_0101_0101_0101;
+            const HIGHS: u64 = 0x8080_8080_8080_8080;
+            let splat = ONES.wrapping_mul(needle as u64);
+            let p = s.cast::<u8>();
+            // n < 8 handled first, on its own straight path: an 8-byte read could cross the
+            // end of the object, so this range must be scanned a byte at a time, and testing
+            // for it inside the tail below instead cost it 3 Ir it need not pay.
+            if n < 8 {
+                let mut k = 0usize;
+                unsafe {
+                    while k < n {
+                        if *p.add(k) == needle {
+                            return (p as *mut u8).add(k).cast();
+                        }
+                        k += 1;
+                    }
+                }
+                return std::ptr::null_mut();
+            }
+            // A word read past a match could fault when the range crosses into a
+            // page the caller only covered with an overshooting `n`.
+            if (p as usize & (MEMCHR_PAGE - 1)) + n > MEMCHR_PAGE {
+                return match unsafe { memchr_page_bounded(p, needle, n) } {
+                    Some(idx) => unsafe { (p as *mut u8).add(idx).cast() },
+                    None => std::ptr::null_mut(),
+                };
+            }
+            let mut i = 0usize;
+            unsafe {
+                while i + 8 <= n {
+                    let x = std::ptr::read_unaligned(p.add(i).cast::<u64>()) ^ splat;
+                    let mask = x.wrapping_sub(ONES) & !x & HIGHS;
+                    if mask != 0 {
+                        let j = (mask.to_le().trailing_zeros() / 8) as usize;
+                        return (p as *mut u8).add(i + j).cast();
+                    }
+                    i += 8;
+                }
+                if i < n {
+                    {
+                        // OVERLAPPING FINAL WORD instead of a byte tail. `n - 8 <= i`
+                        // (the loop above left `n - i < 8`), so this window covers all of
+                        // `[i, n)` in one read. It also re-reads `[n-8, i)`, which is
+                        // harmless AND still correct: control only reaches here because
+                        // that region contained no match, so its lanes are zero in the
+                        // mask and `trailing_zeros` still names the first match at or
+                        // after `i`. At n=31 the byte tail ran seven times.
+                        let x = std::ptr::read_unaligned(p.add(n - 8).cast::<u64>()) ^ splat;
+                        let mask = x.wrapping_sub(ONES) & !x & HIGHS;
+                        if mask != 0 {
+                            let j = (mask.to_le().trailing_zeros() / 8) as usize;
+                            return (p as *mut u8).add(n - 8 + j).cast();
+                        }
+                    }
+                }
+            }
+            return std::ptr::null_mut();
+        }
+        // One-page range (the common case): no later page to protect.
+        let found = if (s as usize & (MEMCHR_PAGE - 1)) + n <= MEMCHR_PAGE {
+            // SAFETY: memchr's contract: `n` readable bytes at `s`.
+            unsafe { core_memchr(s.cast::<u8>(), needle, n) }
+        } else {
+            unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
+        };
+        return match found {
+            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            None => std::ptr::null_mut(),
+        };
+    }
+
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` — the same six callee-saved
+    // registers and 136-byte frame `memrchr` had, rented by the strict fast path
+    // above on every call for registers it never touches. Measured there: a flat
+    // 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    unsafe { memchr_validating(s, c, n) }
+}
+
+const MEMCHR_PAGE: usize = 4096;
+
+/// First `needle` in `[s, s + n)`, never touching a page beyond the one holding
+/// the first match. memchr stops at the first occurrence (Austin Group 454), so
+/// callers may pass an `n` running past the object into an unmapped page; the
+/// core scan reads whole SIMD blocks of its slice and faulted there (gnulib
+/// test-memchr, SIGSEGV). It is handed one page-bounded segment at a time.
+///
+/// # Safety
+///
+/// Every byte of `[s, s + n)` up to and including the first match is readable.
+#[inline]
+unsafe fn memchr_within_page_short(p: *const u8, needle: u8, seg: usize) -> Option<usize> {
+    debug_assert!(seg < 32);
+    #[cfg(target_arch = "x86_64")]
+    if seg >= 16 {
+        use std::arch::x86_64::*;
+        // SAFETY: SSE2 is baseline on x86_64; `[0, 16)` and `[seg - 16, seg)` lie within `[0, seg)`.
+        unsafe {
+            let vneedle = _mm_set1_epi8(needle as i8);
+            let m0 = (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.cast()), vneedle)) as u32)
+                & 0xFFFF;
+            if m0 != 0 {
+                return Some(m0.trailing_zeros() as usize);
+            }
+            if seg > 16 {
+                let off = seg - 16;
+                let m1 =
+                    (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.add(off).cast()), vneedle))
+                        as u32)
+                        & 0xFFFF;
+                if m1 != 0 {
+                    return Some(off + m1.trailing_zeros() as usize);
+                }
+            }
+            return None;
+        }
+    }
+    if seg >= 8 {
+        const ONES: u64 = 0x0101_0101_0101_0101;
+        const HIGHS: u64 = 0x8080_8080_8080_8080;
+        let splat = ONES.wrapping_mul(needle as u64);
+        // SAFETY: `[0, 8)` and `[seg - 8, seg)` lie within `[0, seg)`.
+        unsafe {
+            let x0 = std::ptr::read_unaligned(p.cast::<u64>()) ^ splat;
+            let mask0 = x0.wrapping_sub(ONES) & !x0 & HIGHS;
+            if mask0 != 0 {
+                return Some((mask0.to_le().trailing_zeros() / 8) as usize);
+            }
+            if seg > 8 {
+                let off = seg - 8;
+                let x1 = std::ptr::read_unaligned(p.add(off).cast::<u64>()) ^ splat;
+                let mask1 = x1.wrapping_sub(ONES) & !x1 & HIGHS;
+                if mask1 != 0 {
+                    return Some(off + (mask1.to_le().trailing_zeros() / 8) as usize);
+                }
+            }
+        }
+        return None;
+    }
+    let mut k = 0usize;
+    while k < seg {
+        // SAFETY: `k < seg`.
+        if unsafe { *p.add(k) } == needle {
+            return Some(k);
+        }
+        k += 1;
+    }
+    None
+}
+
+#[inline]
+unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    let mut off = 0usize;
+    while off < n {
+        let addr = (s as usize).wrapping_add(off);
+        let seg = (MEMCHR_PAGE - (addr & (MEMCHR_PAGE - 1))).min(n - off);
+        // SAFETY: `[s + off, s + off + seg)` lies in one page, which holds an
+        // unexamined byte the caller vouches for, so the whole page is mapped.
+        let p = unsafe { s.add(off) };
+        if seg < 32 {
+            if let Some(idx) = unsafe { memchr_within_page_short(p, needle, seg) } {
+                return Some(off + idx);
+            }
+        } else {
+            #[cfg(target_arch = "x86_64")]
+            {
+                use std::arch::x86_64::*;
+                // Check the first 32 bytes inline via baseline SSE2 before crossing
+                // into out-of-line `core_memchr`.
+                unsafe {
+                    let vneedle = _mm_set1_epi8(needle as i8);
+                    let m0 = (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128(p.cast()), vneedle))
+                        as u32)
+                        & 0xFFFF;
+                    if m0 != 0 {
+                        return Some(off + m0.trailing_zeros() as usize);
+                    }
+                    let m1 = (_mm_movemask_epi8(_mm_cmpeq_epi8(
+                        _mm_loadu_si128(p.add(16).cast()),
+                        vneedle,
+                    )) as u32)
+                        & 0xFFFF;
+                    if m1 != 0 {
+                        return Some(off + 16 + m1.trailing_zeros() as usize);
+                    }
+                }
+                if seg > 32
+                    && let Some(idx) = unsafe { core_memchr(p.add(32), needle, seg - 32) }
+                {
+                    return Some(off + 32 + idx);
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            if let Some(idx) = unsafe { core_memchr(p, needle, seg) } {
+                return Some(off + idx);
+            }
+        }
+        off += seg;
+    }
+    None
+}
+
+avx2_dispatch! {
+    /// `frankenlibc_core::string::mem::memchr` over `n` readable bytes at `s`,
+    /// as an AVX2 build on CPUs that have it: its 256-byte fold and 32-lane
+    /// panels are SSE2 halves in the baseline x86-64 build, which measured 2x
+    /// slower than the x86-64-v3 build at 4 KiB (bd-rc0923-epic-eeuy4f.13).
+    #[inline(always)]
+    unsafe fn core_memchr(s: *const u8, needle: u8, n: usize) -> Option<usize> => core_memchr_body;
+}
+
+#[inline(always)]
+unsafe fn core_memchr_body(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    // SAFETY: the caller guarantees `n` readable bytes at `s`.
+    let bytes = unsafe { std::slice::from_raw_parts(s, n) };
+    frankenlibc_core::string::mem::memchr(bytes, needle, n)
+}
+
+/// `memccpy` that reads `src` only up to the first `c`, like glibc: `n` may run
+/// past the source object (e.g. `memccpy(dst, str, 0, sizeof dst)` on a string
+/// ending at a page edge), which the core's whole-range scan faulted on.
+///
+/// # Safety
+///
+/// `src` is readable up to and including the first `c` (or for `n` bytes), and
+/// `dst` is writable for as many bytes as are copied.
+#[inline]
+unsafe fn memccpy_page_bounded(dst: *mut u8, src: *const u8, c: u8, n: usize) -> *mut c_void {
+    let found = unsafe { memchr_page_bounded(src, c, n) };
+    let len = found.map_or(n, |i| i + 1);
+    unsafe { std::ptr::copy(src, dst, len) };
+    match found {
+        Some(_) => unsafe { dst.add(len).cast() },
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[inline(never)]
+unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    if n == 0 || s.is_null() {
+        if s.is_null() {
+            let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
+        return std::ptr::null_mut();
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe {
+            match memchr_page_bounded(s.cast::<u8>(), c as u8, n) {
+                Some(idx) => (s as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMCHR_INDEX,
+            s as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let (scan_len, clamped) = maybe_clamp_copy_len(
+            "memchr",
+            n,
+            s as usize,
+            rem,
+            None,
+            None,
+            mode.heals_enabled(),
+        );
+        if scan_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(6, n),
+                    true,
+                );
+            }
+            return std::ptr::null_mut();
+        }
+        let found = unsafe { memchr_page_bounded(s.cast::<u8>(), c as u8, scan_len) };
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, scan_len),
+                true,
+            );
+        }
+        return match found {
+            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            None => std::ptr::null_mut(),
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (scan_len, clamped) = maybe_clamp_copy_len(
+        "memchr",
+        n,
+        s as usize,
+        rem,
+        None,
+        None,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if scan_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
+    unsafe {
+        if let Some(idx) = memchr_page_bounded(s.cast::<u8>(), c as u8, scan_len) {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(6, scan_len),
+                clamped,
+            );
+            return (s as *mut u8).add(idx).cast();
+        }
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, scan_len),
+        clamped,
+    );
+    std::ptr::null_mut()
+}
+
+// ---------------------------------------------------------------------------
+// memrchr
+// ---------------------------------------------------------------------------
+
+/// POSIX `memrchr` (GNU extension) -- locates last occurrence of byte `c` in first `n` bytes of `s`.
+///
+/// Returns pointer to the matching byte, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`scan_len == n`), byte-identical to the strict body — core memrchr over `n`,
+    // returning `s+idx`/null. Skips stage_context + decide + observe + stage-trace.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || s.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
+            match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+                Some(idx) => (s as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
+    // Cold tail lives in its own frame. The validating path below needs six
+    // callee-saved registers and a 136-byte frame (`push rbp/r15/r14/r13/r12/rbx;
+    // sub $0x88,%rsp`), and because it shared this function body the STRICT fast
+    // path above paid that prologue and its matching epilogue on every call --
+    // ~14 instructions of frame management for registers it never touches.
+    // Measured (callgrind two-point vs live glibc in the same process image):
+    // the ABI entry cost a flat 36 Ir at every length, which alone is 2x glibc's
+    // entire 16-byte memrchr. Splitting the tail out keeps the hot frame small.
+    unsafe { memrchr_validating(s, c, n) }
+}
+
+#[inline(never)]
+unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    if n == 0 || s.is_null() {
+        if s.is_null() {
+            let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
+        return std::ptr::null_mut();
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe {
+            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
+            match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+                Some(idx) => (s as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMRCHR_INDEX,
+            s as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let (scan_len, clamped) = maybe_clamp_copy_len(
+            "memrchr",
+            n,
+            s as usize,
+            rem,
+            None,
+            None,
+            mode.heals_enabled(),
+        );
+        if scan_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(6, n),
+                    true,
+                );
+            }
+            return std::ptr::null_mut();
+        }
+        let found = unsafe {
+            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
+            frankenlibc_core::string::mem::memrchr(bytes, c as u8, scan_len)
+        };
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, scan_len),
+                true,
+            );
+        }
+        return match found {
+            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            None => std::ptr::null_mut(),
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memrchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (scan_len, clamped) = maybe_clamp_copy_len(
+        "memrchr",
+        n,
+        s as usize,
+        rem,
+        None,
+        None,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if scan_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
+    unsafe {
+        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
+        if let Some(idx) = frankenlibc_core::string::mem::memrchr(bytes, c as u8, scan_len) {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(6, scan_len),
+                clamped,
+            );
+            return (s as *mut u8).add(idx).cast();
+        }
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, scan_len),
+        clamped,
+    );
+    std::ptr::null_mut()
+}
+
+/// glibc reserved-namespace alias for [`memrchr`]. Some headers
+/// and a few third-party callers link against the underscored
+/// variant instead of the public name.
+///
+/// # Safety
+///
+/// Same as [`memrchr`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    unsafe { memrchr(s, c, n) }
+}
+
+// ---------------------------------------------------------------------------
+// strlen
+// ---------------------------------------------------------------------------
+
+/// POSIX `strlen` -- computes length of null-terminated string.
+///
+/// # Safety
+///
+/// Caller must ensure `s` points to a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
+    if s.is_null() {
+        if runtime_policy::is_runtime_ready() && runtime_policy::resolved_mode().heals_enabled() {
+            global_healing_policy().record(
+                "string_memory",
+                "strlen",
+                &HealingAction::ReturnSafeDefault,
+                RepairLogContext::new(0, Some(s as usize)),
+            );
+        }
+        return 0;
+    }
+
+    // Earliest-bootstrap guard (cheap: one atomic runtime-phase read). Keep the
+    // scalar scan the dl-linker bootstrap chain (dlvsym → strlen) relies on, BEFORE
+    // any TLS-touching probe. The full `string_raw_passthrough_active()` fan-out is
+    // FIVE chained checks including two `#[thread_local]`/reentry-slot reads
+    // (`in_validation_context`, `in_allocator_reentry_context`) that cost ~4ns on
+    // EVERY call — the measured deployed-strlen floor (probe: n=16 fl 6.3 vs glibc
+    // 2.0ns = 3.2x, while the raw SIMD kernel is at parity). Hoisting only the one
+    // cheap phase-read out front lets the strict fast path skip the other four.
+    if runtime_policy::bootstrap_passthrough_active() {
+        return unsafe { scan_c_string(s, None).0 };
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): glibc's result for the same
+    // memory. Strict means "no repair rewrites"; it used to cap the scan at the
+    // allocation's tracked size, so a string overflowing its allocation measured as
+    // the allocation size (strcpy of 26 bytes into malloc(8): 8, glibc 26), a silent
+    // repair that belongs to hardened (bd-rc0923-epic-eeuy4f.8). The page-safe
+    // scanner never crosses into an unmapped page.
+    if runtime_policy::strict_passthrough_active() {
+        // SAFETY: strlen's contract (a NUL-terminated string); page-safe scan.
+        return unsafe { scan_c_string(s, None).0 };
+    }
+
+    // NOT SPLIT, and this is load-bearing. `strlen`'s entry carries the largest
+    // frame of the string family (`sub $0xb8,%rsp`) so it looks like the best
+    // candidate, and an isolated split does measure 17 Ir. But unlike its
+    // siblings this tail opens with `string_raw_passthrough_active()` — the
+    // re-entrancy/TLS bypass that stands between an interposed `strlen` and the
+    // validating membrane that itself calls `strlen`. Putting it behind a
+    // `#[cold] #[inline(never)]` boundary made hardened-mode startup SIGSEGV
+    // deterministically (3/3 runs, dying before `main`; strict mode unaffected).
+    // The 17 Ir is real and is not worth this. See the 2026-08-26 ledger row.
+
+    // Hardened mode only: acquire the complete membrane guard here before the cold
+    // validating boundary (matching `memcmp`), so `strlen_validating` can use
+    // `known_remaining_in_guarded_string` without repeating reentry/TLS checks.
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { scan_c_string(s, None).0 };
+    };
+
+    // Cold tail in its own frame — but split BELOW the bypass above, not above it.
+    // An earlier attempt moved the whole tail starting at `string_raw_passthrough_active()`
+    // and made hardened startup SIGSEGV deterministically: that bypass is the
+    // re-entrancy/TLS guard standing between an interposed `strlen` and a membrane
+    // that itself calls `strlen`, and it must not sit behind a `#[cold]
+    // #[inline(never)]` boundary. Everything from the trace scope down is ordinary
+    // validating work and moves safely. Worth 17 Ir on the entry (measured on an
+    // isolated split; `memrchr`/`memchr` measured 14.0 Ir for the same shape).
+    unsafe { strlen_validating(s) }
+}
+
+#[inline(never)]
+unsafe fn strlen_validating(s: *const c_char) -> usize {
+    // BOUND LOOKUP BEFORE THE TRACE SCOPE, and the order is the whole fix (bd-k3skh6).
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRLEN_INDEX,
+            s as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        if !mode.heals_enabled() && bloom_negative {
+            return unsafe { scan_c_string(s, None).0 };
+        }
+        if let Some(limit) = rem {
+            // SAFETY: bounded scan within known allocation extent.
+            let (len, terminated) = unsafe { scan_c_string(s, Some(limit)) };
+            if terminated {
+                return len;
+            }
+            let action = HealingAction::TruncateWithNull {
+                requested: limit.saturating_add(1),
+                truncated: limit,
+            };
+            global_healing_policy().record(
+                "string_memory",
+                "strlen",
+                &action,
+                RepairLogContext::new(0, Some(s as usize)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, limit),
+                true,
+            );
+            return limit;
+        }
+        return unsafe { scan_c_string(s, None).0 };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strlen");
+    if !runtime_policy::mode().heals_enabled() && bloom_negative {
+        // Same dead-dispatch elision as the strict path above (byte-identical).
+        return unsafe { scan_c_string(s, None).0 };
+    }
+
+    let aligned = (s as usize) & 0x7 == 0;
+    let recent_page = !bloom_negative;
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    if let Some(limit) = rem {
+        let dispatch = select_string_simd_dispatch(
+            SimdStringOperation::Strlen,
+            s as usize,
+            s as usize,
+            limit.max(1),
+        );
+        // SAFETY: bounded scan within known allocation extent.
+        let (len, terminated) = unsafe { raw_lane_strnlen_bytes(s, limit, dispatch.lane_bytes) };
+        if terminated {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(7, len),
+                false,
+            );
+            return len;
+        }
+        let action = HealingAction::TruncateWithNull {
+            requested: limit.saturating_add(1),
+            truncated: limit,
+        };
+        global_healing_policy().record(
+            "string_memory",
+            "strlen",
+            &action,
+            RepairLogContext::new(0, Some(s as usize)),
+        );
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, limit),
+            true,
+        );
+        return limit;
+    }
+
+    // SAFETY: strict mode preserves libc-like raw scan semantics.
+    let dispatch =
+        select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
+    unsafe {
+        let len = raw_lane_strlen_bytes(s, dispatch.lane_bytes);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, len),
+            false,
+        );
+        len
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strnlen
+// ---------------------------------------------------------------------------
+
+/// POSIX `strnlen` -- computes string length up to at most `n` bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `s` points to readable memory for the compared span.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // clamp (`repair` false → `scan_limit == n`), byte-identical to the strict full
+    // path — the page-clamped bounded NUL scan. Skips the decide + observe +
+    // stage-trace bookkeeping. (Unlike `wcslen`, strnlen gates its
+    // `known_remaining` clamp on `repair`, so strict is plain bounded scan.)
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return 0;
+        }
+        // SAFETY: `n` is strnlen's ceiling, not a readability promise, which is
+        // precisely `scan_c_string_nul_or_bound`'s contract. `scan_c_string`
+        // itself would be wrong here — it may load a whole window under `n` and
+        // fault past the terminator (bounded_scan_guard_page_safety).
+        return unsafe { scan_c_string_nul_or_bound(s, n).0 };
+    }
+
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x58,%rsp` — six callee-saved registers
+    // and an 88-byte frame sized for the validating path below, rented by the
+    // strict fast path above on every call. Measured on `memrchr`, identical
+    // prologue shape: a flat 14.0 Ir per call.
+    unsafe { strnlen_validating(s, n) }
+}
+
+#[inline(never)]
+unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
+    if s.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { scan_c_string_nul_or_bound(s, n).0 };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRNLEN_INDEX,
+            s as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let mut scan_limit = n;
+        let mut adverse = false;
+        if mode.heals_enabled()
+            && let Some(bound) = rem
+            && bound < scan_limit
+        {
+            scan_limit = bound;
+            adverse = true;
+        }
+        let len = unsafe { scan_c_string_nul_or_bound(s, scan_limit).0 };
+        if adverse {
+            record_truncation("strnlen", n, scan_limit, s as usize);
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, len),
+                true,
+            );
+        }
+        return len;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strnlen");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let mut scan_limit = n;
+    let mut adverse = false;
+    if repair
+        && let Some(bound) = rem
+        && bound < scan_limit
+    {
+        scan_limit = bound;
+        adverse = true;
+    }
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    // Page-clamped bounded NUL scan: returns the NUL index or `scan_limit`,
+    // identical to the old byte loop. `span` tracked the scanned extent, which
+    // equals `len` in both branches. `scan_limit` is a ceiling even after the
+    // membrane clamp — it can only shrink `n`, never certify readability — so
+    // this needs the nul-or-bound contract, not `scan_c_string`'s.
+    let len = unsafe { scan_c_string_nul_or_bound(s, scan_limit).0 };
+    let span = len;
+
+    if adverse {
+        record_truncation("strnlen", n, scan_limit, s as usize);
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    len
+}
+
+// ---------------------------------------------------------------------------
+// strcmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcmp` -- compares two null-terminated strings lexicographically.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough does no
+    // validation (cmp_bound == None), so the result is exactly the page-cross-guarded raw
+    // SWAR compare. Skip stage_context + decide + record + observe (byte-identical to the
+    // strict full path: scan_strcmp with no limit), like the inet_strict family. Hardened
+    // mode keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        // SAFETY: `scan_strcmp` with usize::MAX is the page-cross-guarded raw scan — the
+        // identical call the strict full path makes (cmp_bound == None).
+        let (i, _hit_limit) = unsafe { scan_strcmp::<false>(s1, s2, usize::MAX) };
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    }
+
+    // Cold tail in its own frame: see `memrchr_validating`. This entry opened
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x78,%rsp` — six callee-saved
+    // registers and a 120-byte frame sized for the validating path below, which
+    // the strict fast path above rented on every call for registers it never
+    // touches. Measured on `memrchr`, whose entry had the identical shape: a
+    // flat 14.0 Ir per call at every length, equal to the prologue/epilogue count.
+    unsafe { strcmp_validating(s1, s2) }
+}
+
+#[inline(never)]
+unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+        if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
+            global_healing_policy().record(
+                "string_memory",
+                "strcmp",
+                &HealingAction::ReturnSafeDefault,
+                RepairLogContext::new(
+                    0,
+                    Some(if s1.is_null() {
+                        s1 as usize
+                    } else {
+                        s2 as usize
+                    }),
+                ),
+            );
+        }
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let (i, _hit_limit) = unsafe { scan_strcmp::<false>(s1, s2, usize::MAX) };
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    };
+
+    let (lhs_rem, rhs_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
+    let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRCMP_INDEX,
+            s1 as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let lhs_bound = if repair { lhs_rem } else { None };
+        let rhs_bound = if repair { rhs_rem } else { None };
+        let cmp_bound = match (lhs_bound, rhs_bound) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        let (result, adverse, span) = unsafe {
+            let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+            if hit_limit {
+                (0, true, i)
+            } else {
+                let a = *s1.add(i) as u8;
+                let b = *s2.add(i) as u8;
+                ((a as c_int) - (b as c_int), false, i.saturating_add(1))
+            }
+        };
+        if adverse {
+            record_truncation(
+                "strcmp",
+                cmp_bound.unwrap_or(span),
+                span,
+                bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, span),
+                true,
+            );
+        }
+        return result;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strcmp");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        0,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair { lhs_rem } else { None };
+    let rhs_bound = if repair { rhs_rem } else { None };
+    let cmp_bound = match (lhs_bound, rhs_bound) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    // SWAR word-at-a-time compare (shared scan_strcmp, page-cross guarded),
+    // byte-identical to the old scalar loop. `cmp_bound == None` => no limit.
+    let (result, adverse, span) = unsafe {
+        let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        if hit_limit {
+            (0, true, i)
+        } else {
+            let a = *s1.add(i) as u8;
+            let b = *s2.add(i) as u8;
+            ((a as c_int) - (b as c_int), false, i.saturating_add(1))
+        }
+    };
+
+    if adverse {
+        record_truncation(
+            "strcmp",
+            cmp_bound.unwrap_or(span),
+            span,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strncmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strncmp` -- compares at most `n` bytes of two strings.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid memory for the
+/// compared span.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough has no
+    // membrane clamp (`cmp_limit == n`, not adverse), so this is byte-identical to
+    // the strict full path — the page-guarded SWAR/SIMD `scan_strcmp` bounded by `n`.
+    // Skips stage_context + decide + observe + stage-trace, mirroring the deployed
+    // `strcmp` fast path and the shipped `wcsncmp` one. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        let (i, hit_limit) = unsafe { scan_strcmp::<true>(s1, s2, n) };
+        if hit_limit {
+            return 0;
+        }
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    }
+
+    // Cold tail in its own frame. This entry rented
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x88,%rsp` from the validating path
+    // below on every strict call; line-level profiling (callgrind --dump-line,
+    // two-point) charged 8 Ir to the signature line and 8 to the closing brace --
+    // 16 Ir of prologue and epilogue, out of a 40 Ir entry whose actual strict
+    // work is about 13. Nothing between the strict gate and here is a re-entrancy
+    // bypass, so the cut is at the gate.
+    unsafe { strncmp_validating(s1, s2, n) }
+}
+
+#[inline(never)]
+unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
+    if s1.is_null() || s2.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let (i, hit_limit) = unsafe { scan_strcmp::<true>(s1, s2, n) };
+        if hit_limit {
+            return 0;
+        }
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    };
+
+    let (lhs_rem, rhs_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
+    let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRNCMP_INDEX,
+            s1 as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let lhs_bound = if repair { lhs_rem } else { None };
+        let rhs_bound = if repair { rhs_rem } else { None };
+        let cmp_limit = match (lhs_bound, rhs_bound) {
+            (Some(a), Some(b)) => a.min(b).min(n),
+            (Some(a), None) => a.min(n),
+            (None, Some(b)) => b.min(n),
+            (None, None) => n,
+        };
+        let (result, span, hit_limit) = unsafe {
+            let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
+            if hit_limit {
+                (0, i, true)
+            } else {
+                let a = *s1.add(i) as u8;
+                let b = *s2.add(i) as u8;
+                ((a as c_int) - (b as c_int), i.saturating_add(1), false)
+            }
+        };
+        let adverse = repair && cmp_limit < n && hit_limit;
+        if adverse {
+            record_truncation(
+                "strncmp",
+                n,
+                cmp_limit,
+                bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, span),
+                true,
+            );
+        }
+        return result;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strncmp");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        n,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair { lhs_rem } else { None };
+    let rhs_bound = if repair { rhs_rem } else { None };
+    let cmp_limit = match (lhs_bound, rhs_bound) {
+        (Some(a), Some(b)) => a.min(b).min(n),
+        (Some(a), None) => a.min(n),
+        (None, Some(b)) => b.min(n),
+        (None, None) => n,
+    };
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    // SWAR word-at-a-time compare via the shared page-guarded scan_strcmp, bounded
+    // by `cmp_limit`; byte-identical to the old scalar loop.
+    let (result, span, hit_limit) = unsafe {
+        let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
+        if hit_limit {
+            (0, i, true)
+        } else {
+            let a = *s1.add(i) as u8;
+            let b = *s2.add(i) as u8;
+            ((a as c_int) - (b as c_int), i.saturating_add(1), false)
+        }
+    };
+    // Only a compare that actually ran into the clamp was repaired: one that
+    // stopped at a difference or a NUL first never needed the bytes past it
+    // (OpenSSL's `strncmp(name, "...", n)` against short allocations).
+    let adverse = repair && cmp_limit < n && hit_limit;
+
+    if adverse {
+        record_truncation(
+            "strncmp",
+            n,
+            cmp_limit,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strcpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcpy` -- copies the null-terminated string `src` into `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is large enough to hold `src` including the null terminator,
+/// and that the buffers do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Shared single-scan core for `strcpy`/`stpcpy`. Scans the source length once,
+/// copies the payload, writes the terminator, and returns the END pointer (the
+/// written NUL position, `dst + copied_payload` — the `stpcpy` result) wrapped in
+/// `Some`. Returns `None` only when the membrane denies the call. `strcpy` then
+/// returns the original `dst`; `stpcpy` returns the end pointer directly, so it no
+/// longer re-scans the just-copied string with a second `strlen` pass.
+unsafe fn strcpy_core(
+    symbol: &'static str,
+    dst: *mut c_char,
+    src: *const c_char,
+) -> Option<*mut c_char> {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // decide() Allow with no clamp and heals off, so this is byte-identical to the
+    // full body's non-repair branch — scan src, bulk-copy the payload, append the NUL,
+    // return the terminator position (the stpcpy result). Skips stage_context_two +
+    // decide + observe + record_string_stage_outcome, whose combined fixed cost made
+    // deployed strcpy/stpcpy ~7-10x glibc at small/medium sizes (~30ns flat regardless
+    // of length). Mirrors the shipped wcscpy/strncpy strict fast paths. Hardened/test
+    // mode falls through to the full validating path below.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() {
+            return Some(dst);
+        }
+        // Single-pass fused copy-through-NUL: reads `src` ONCE (vs the old
+        // `scan_c_string` + `raw_memcpy_bytes`, which read `src` twice — ~2x the src
+        // traffic, the measured 2.5-2.7x-vs-glibc gap). Byte-identical: `dst` receives
+        // `src[0..=len]` incl. the terminator, and the returned NUL index gives the same
+        // `stpcpy` end pointer. Same-process A/B (strcpy_fused_ab): fused/two-pass
+        // 0.58-0.90 across n=8..256, uniform win.
+        // SAFETY: strict follows raw libc strcpy semantics — `src` is a valid
+        // NUL-terminated string and `dst` has room for its length + terminator.
+        let end = unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
+        return Some(unsafe { dst.add(end) });
+    }
+
+    if dst.is_null() || src.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return Some(dst);
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let end = unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
+        return Some(unsafe { dst.add(end) });
+    };
+
+    let (dst_rem, src_rem) = crate::malloc_abi::known_remaining_write_pair_in_guarded_string(
+        dst as usize,
+        src as usize,
+        1,
+    );
+    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRCPY_INDEX,
+            dst as usize,
+            0,
+            true,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let src_bound = if repair { src_rem } else { None };
+        let dst_bound = if repair { dst_rem } else { None };
+
+        let (copied_len, adverse) = unsafe {
+            let (src_len, src_terminated) = scan_c_string(src, src_bound);
+            let requested = src_len.saturating_add(1);
+            let dst_bound = if repair
+                && let Some(limit) = dst_bound
+                && limit > 64
+                && requested >= limit
+            {
+                crate::malloc_abi::known_remaining_write_in_guarded_string(dst as usize, requested)
+            } else {
+                dst_bound
+            };
+            if repair {
+                match dst_bound {
+                    Some(0) => {
+                        record_truncation(symbol, requested, 0, dst as usize);
+                        (0, true)
+                    }
+                    Some(limit) => {
+                        let max_payload = limit.saturating_sub(1);
+                        let copy_payload = src_len.min(max_payload);
+                        if copy_payload > 0 {
+                            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_payload);
+                        }
+                        *dst.add(copy_payload) = 0;
+                        let truncated = !src_terminated || copy_payload < src_len;
+                        if truncated {
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(symbol, requested, copy_payload, address);
+                        }
+                        (copy_payload.saturating_add(1), truncated)
+                    }
+                    None => {
+                        if src_len > 0 {
+                            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
+                        }
+                        *dst.add(src_len) = 0;
+                        let truncated = !src_terminated;
+                        if truncated {
+                            record_truncation(symbol, requested, src_len, src as usize);
+                        }
+                        (src_len.saturating_add(1), truncated)
+                    }
+                }
+            } else {
+                if src_len > 0 {
+                    raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
+                }
+                *dst.add(src_len) = 0;
+                (src_len.saturating_add(1), false)
+            }
+        };
+        if adverse {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, copied_len),
+                true,
+            );
+        }
+        return Some(unsafe { dst.add(copied_len.saturating_sub(1)) });
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strcpy");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        0,
+        true,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return None;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let src_bound = if repair { src_rem } else { None };
+    let dst_bound = if repair { dst_rem } else { None };
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads/writes.
+    let (copied_len, adverse) = unsafe {
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let requested = src_len.saturating_add(1);
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation(symbol, requested, 0, dst as usize);
+                    (0, true)
+                }
+                Some(limit) => {
+                    let max_payload = limit.saturating_sub(1);
+                    let copy_payload = src_len.min(max_payload);
+                    if copy_payload > 0 {
+                        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_payload);
+                    }
+                    *dst.add(copy_payload) = 0;
+                    let truncated = !src_terminated || copy_payload < src_len;
+                    if truncated {
+                        let address = if copy_payload < src_len {
+                            dst as usize
+                        } else {
+                            src as usize
+                        };
+                        record_truncation(symbol, requested, copy_payload, address);
+                    }
+                    (copy_payload.saturating_add(1), truncated)
+                }
+                None => {
+                    if src_len > 0 {
+                        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
+                    }
+                    *dst.add(src_len) = 0;
+                    let truncated = !src_terminated;
+                    if truncated {
+                        record_truncation(symbol, requested, src_len, src as usize);
+                    }
+                    (src_len.saturating_add(1), truncated)
+                }
+            }
+        } else {
+            // Common (non-repair) path: reuse the single source-length scan from
+            // above (src_bound is None here, so the outer scan already computed the
+            // exact length — re-scanning was redundant), then copy the payload with
+            // the wide block memcpy and append the terminator. Byte-identical to the
+            // byte-at-a-time fused loop for any NUL-terminated source.
+            if src_len > 0 {
+                raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
+            }
+            *dst.add(src_len) = 0;
+            (src_len.saturating_add(1), false)
+        }
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, copied_len),
+        adverse,
+    );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    // End pointer = the written-NUL position (`stpcpy` result). copied_len counts
+    // the payload plus the terminator, so the NUL sits at dst + (copied_len - 1).
+    // SAFETY: `dst` was checked for null above and the copy wrote exactly
+    // `copied_len` bytes, including the terminator at this offset.
+    Some(unsafe { dst.add(copied_len.saturating_sub(1)) })
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    match unsafe { strcpy_core("strcpy", dst, src) } {
+        Some(_) => dst,
+        None => std::ptr::null_mut(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// stpcpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `stpcpy` -- copies `src` to `dst` and returns a pointer to the
+/// trailing NUL byte in `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is large enough for `src` including NUL and that
+/// both pointers are valid.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    // Single shared scan: `strcpy_core` already knows where it wrote the NUL, so
+    // stpcpy no longer re-scans the copied string with a second strlen pass.
+    match unsafe { strcpy_core("stpcpy", dst, src) } {
+        Some(end) => end,
+        None => std::ptr::null_mut(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strncpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `strncpy` -- copies at most `n` bytes from `src` to `dst`.
+///
+/// If `src` is shorter than `n`, the remainder of `dst` is filled with null bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is at least `n` bytes and `src` is a valid string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Shared single-scan core for `strncpy`/`stpncpy`. Runs the membrane bookkeeping
+/// and the source scan/copy/pad once and returns `Some(offset)`, where `offset` is
+/// the index of the terminating NUL within the written region (== `strnlen(dst,n)`
+/// in the common path) — the `stpncpy` result. Returns `None` only on membrane
+/// deny. `strncpy` returns the original `dst`; `stpncpy` returns `dst + offset`, so
+/// it no longer re-scans the just-written destination with a second `strnlen` pass.
+unsafe fn strncpy_core(
+    symbol: &'static str,
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+) -> Option<usize> {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp (`safe_dst_len == safe_src_len == n`), so this
+    // is byte-identical to the strict full body — scan src (bounded by `n`), bulk
+    // copy the prefix, NUL-pad the remainder. Skips stage_context + decide + observe
+    // + stage-trace bookkeeping. Bounded-`n` write (caller-controlled extent), the
+    // analog of the shipped `wcsncpy`/`memmove` fast paths and the deployed `memcpy`
+    // one — NOT the unbounded strcpy/strcat builder class. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() || n == 0 {
+            return Some(0);
+        }
+        let copy_len = unsafe {
+            // Single-pass fused prefix copy (copy-through-NUL-or-`n`) instead of
+            // `scan_c_string(src, Some(n))` + `raw_memcpy_bytes`, which read the copied
+            // prefix TWICE. Same strncpy semantics: `copy_len = min(strnlen(src,n), n)`
+            // bytes copied, then zero-pad `dst[copy_len..n]`. A/B (strncpy_fused_ab,
+            // prefix-only p10): fused/two-pass 0.70-0.99, uniform win; 166,320
+            // (align×slen×n) combos byte-identical incl. every 32-byte-window edge.
+            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
+            if copy_len < n {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
+            }
+            copy_len
+        };
+        return Some(copy_len);
+    }
+
+    if dst.is_null() || src.is_null() || n == 0 {
+        if dst.is_null() || src.is_null() {
+            let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
+        return Some(0);
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let copy_len = unsafe {
+            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
+            if copy_len < n {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
+            }
+            copy_len
+        };
+        return Some(copy_len);
+    };
+
+    let (dst_rem, src_rem) = crate::malloc_abi::known_remaining_write_pair_in_guarded_string(
+        dst as usize,
+        src as usize,
+        n,
+    );
+    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRNCPY_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let mut adverse = false;
+
+        let safe_dst_len = if repair {
+            match dst_rem {
+                Some(b) if b < n => {
+                    adverse = true;
+                    global_healing_policy().record(
+                        "string_memory",
+                        symbol,
+                        &HealingAction::ClampSize {
+                            requested: n,
+                            clamped: b,
+                        },
+                        RepairLogContext::new(0, Some(dst as usize)),
+                    );
+                    b
+                }
+                _ => n,
+            }
+        } else {
+            n
+        };
+
+        let safe_src_len = if repair {
+            match src_rem {
+                Some(b) if b < n && !unsafe { scan_c_string(src, Some(b)) }.1 => {
+                    adverse = true;
+                    global_healing_policy().record(
+                        "string_memory",
+                        symbol,
+                        &HealingAction::ClampSize {
+                            requested: n,
+                            clamped: b,
+                        },
+                        RepairLogContext::new(0, Some(src as usize)),
+                    );
+                    b
+                }
+                Some(b) if b < n => b,
+                _ => n,
+            }
+        } else {
+            n
+        };
+
+        if safe_dst_len == 0 {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, n),
+                true,
+            );
+            return Some(0);
+        }
+
+        let copy_len = unsafe {
+            let k = scan_c_string_nul_or_bound(src, safe_src_len).0;
+            let copy_len = k.min(safe_dst_len);
+            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+            if copy_len < safe_dst_len {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, safe_dst_len - copy_len);
+            }
+            copy_len
+        };
+        if adverse {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, safe_dst_len),
+                true,
+            );
+        }
+        return Some(copy_len);
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strncpy");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            true,
+        );
+        return None;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let mut adverse = false;
+
+    let safe_dst_len = if repair {
+        match dst_rem {
+            Some(b) if b < n => {
+                adverse = true;
+                global_healing_policy().record(
+                    "string_memory",
+                    symbol,
+                    &HealingAction::ClampSize {
+                        requested: n,
+                        clamped: b,
+                    },
+                    RepairLogContext::new(0, Some(dst as usize)),
+                );
+                b
+            }
+            _ => n,
+        }
+    } else {
+        n
+    };
+
+    let safe_src_len = if repair {
+        match src_rem {
+            // strncpy stops reading at the NUL: a source shorter than `n` that
+            // is terminated inside its allocation is the ordinary case (Python's
+            // `strncpy(janname, tm->tm_zone, 9)`), not an over-read to repair.
+            Some(b) if b < n && !unsafe { scan_c_string(src, Some(b)) }.1 => {
+                adverse = true;
+                global_healing_policy().record(
+                    "string_memory",
+                    symbol,
+                    &HealingAction::ClampSize {
+                        requested: n,
+                        clamped: b,
+                    },
+                    RepairLogContext::new(0, Some(src as usize)),
+                );
+                b
+            }
+            Some(b) if b < n => b,
+            _ => n,
+        }
+    } else {
+        n
+    };
+
+    if safe_dst_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            true,
+        );
+        return Some(0);
+    }
+
+    // SAFETY: bounded by safe_dst_len and safe_src_len.
+    // SWAR scan for the NUL, then a wide block copy of the prefix and a wide NUL
+    // pad of the remainder — composing the proven scan_c_string / raw_memcpy_bytes
+    // / raw_memset_bytes primitives instead of the byte-at-a-time copy+pad loop.
+    // `k` is the source NUL index (or safe_src_len if none within bound); the copy
+    // is clamped to safe_dst_len, and everything after it is NUL-filled — exactly
+    // what the scalar loop produced.
+    let copy_len = unsafe {
+        // `safe_src_len` is `n` whenever the source's extent is unknown: a cap,
+        // not a promise of readable bytes. `scan_c_string` loads whole windows
+        // under its bound and faulted on a string ending just before an
+        // unmapped page (gnulib test-strncpy, hardened); this scanner reads
+        // only up to the NUL or the bound.
+        let k = scan_c_string_nul_or_bound(src, safe_src_len).0;
+        let copy_len = k.min(safe_dst_len);
+        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        if copy_len < safe_dst_len {
+            raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, safe_dst_len - copy_len);
+        }
+        copy_len
+    };
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, safe_dst_len),
+        adverse,
+    );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    // Offset of the terminating NUL in the written region (== strnlen(dst, n) in
+    // the common path): src NUL index clamped to the destination capacity.
+    Some(copy_len)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    match unsafe { strncpy_core("strncpy", dst, src, n) } {
+        Some(_) => dst,
+        None => std::ptr::null_mut(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// stpncpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `stpncpy` -- copies at most `n` bytes from `src` to `dst` and returns
+/// the end pointer according to C `stpncpy` semantics.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for at least `n` bytes and `src` is valid
+/// for reads as required by `n`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    if dst.is_null() || src.is_null() {
+        return dst;
+    }
+    if n == 0 {
+        return dst;
+    }
+
+    // Single shared scan: `strncpy_core` returns the terminating-NUL offset it
+    // just wrote, so stpncpy no longer re-scans the destination with strnlen.
+    match unsafe { strncpy_core("stpncpy", dst, src, n) } {
+        // SAFETY: offset is bounded by `n` (and any clamped membrane bound).
+        Some(offset) => unsafe { dst.add(offset) },
+        None => std::ptr::null_mut(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strcat
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcat` -- appends `src` to the end of `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` has enough space for the concatenated result
+/// including null terminator, and that the buffers do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict (non-repair)
+    // full body — scan dst for its NUL, then a fused byte-by-byte copy of src onto the
+    // end of dst until NUL. Skips stage_context + decide + observe + stage-trace AND the
+    // redundant `scan_c_string(src)` the full body computes but never uses on the
+    // non-repair branch. Strict = glibc semantics (no clamp), so the write is unchanged;
+    // hardened mode keeps the full membrane (bounds/heal) below.
+    if !dst.is_null() && !src.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            // dst-end scan is inherent to strcat. The src side is then a SINGLE fused
+            // copy-through-NUL (`fused_strcpy_bytes`) instead of scan_c_string(src) +
+            // raw_memcpy — which read `src` TWICE (the same double-read the strcpy strict
+            // path shed in c80c2f5ed). Byte-identical: dst[dst_len..] receives
+            // src[0..=src_len] incl. the terminator (fused copies through the NUL).
+            let (dst_len, _) = scan_c_string(dst.cast_const(), None);
+            fused_strcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>());
+            dst
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+    if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return dst;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        0,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw strcat behavior; hardened mode bounds writes.
+    let (work, adverse) = unsafe {
+        let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation("strcat", src_len.saturating_add(1), 0, dst as usize);
+                    (0, true)
+                }
+                Some(limit) => {
+                    if !dst_terminated {
+                        *dst.add(limit.saturating_sub(1)) = 0;
+                        record_truncation("strcat", limit, limit.saturating_sub(1), dst as usize);
+                        (limit, true)
+                    } else {
+                        let available = limit.saturating_sub(dst_len.saturating_add(1));
+                        let copy_payload = src_len.min(available);
+                        if copy_payload > 0 {
+                            raw_memcpy_bytes(
+                                dst.add(dst_len).cast::<u8>(),
+                                src.cast::<u8>(),
+                                copy_payload,
+                            );
+                        }
+                        *dst.add(dst_len.saturating_add(copy_payload)) = 0;
+                        let truncated = !src_terminated || copy_payload < src_len;
+                        if truncated {
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(
+                                "strcat",
+                                src_len.saturating_add(1),
+                                copy_payload,
+                                address,
+                            );
+                        }
+                        (
+                            dst_len.saturating_add(copy_payload).saturating_add(1),
+                            truncated,
+                        )
+                    }
+                }
+                None => {
+                    if src_len > 0 {
+                        raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), src_len);
+                    }
+                    *dst.add(dst_len.saturating_add(src_len)) = 0;
+                    let truncated = !src_terminated;
+                    if truncated {
+                        record_truncation(
+                            "strcat",
+                            src_len.saturating_add(1),
+                            src_len,
+                            src as usize,
+                        );
+                    }
+                    (dst_len.saturating_add(src_len).saturating_add(1), truncated)
+                }
+            }
+        } else {
+            let mut d = dst_len;
+            let mut s = 0usize;
+            loop {
+                let ch = *src.add(s);
+                *dst.add(d) = ch;
+                if ch == 0 {
+                    break (d.saturating_add(1), false);
+                }
+                d += 1;
+                s += 1;
+            }
+        }
+    };
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(9, work),
+        adverse,
+    );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    dst
+}
+
+// ---------------------------------------------------------------------------
+// strncat
+// ---------------------------------------------------------------------------
+
+/// POSIX `strncat` -- appends at most `n` bytes from `src` to `dst`.
+///
+/// Always null-terminates the result.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` has enough space for the concatenated result
+/// (up to `strlen(dst) + n + 1` bytes).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp, so this is byte-identical to the strict full
+    // body — scan dst's NUL, append `min(strlen(src), n)` bytes, NUL-terminate (the
+    // scalar copy loop becomes a bulk `raw_memcpy_bytes`, same bytes). Skips the
+    // stage_context + decide + observe + stage-trace bookkeeping. Bounded-`n` write,
+    // the narrow analog of the shipped `wcsncat` fast path. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() || n == 0 {
+            return dst;
+        }
+        unsafe {
+            // dst-end scan is inherent to strncat. The src side is then a SINGLE bounded
+            // fused prefix copy (`fused_strncpy_prefix`, copy-through-NUL-or-`n`) instead
+            // of scan_c_string(src, Some(n)) + raw_memcpy, which read the prefix twice.
+            // Byte-identical: appends `min(strnlen(src,n), n)` bytes then the terminator.
+            let dst_len = scan_c_string(dst.cast_const(), None).0;
+            let copy = fused_strncpy_prefix(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), n);
+            *dst.add(dst_len + copy) = 0;
+        }
+        return dst;
+    }
+
+    // COLD-TAIL SPLIT. Everything below runs only in hardened mode, but its frame was
+    // rented by every deployed call: `strncat`'s entry was six callee-saved pushes plus
+    // `sub $0xa8,%rsp` — 168 bytes of stack — for a strict path that is a NUL scan, a
+    // fused bounded copy and a terminator store. The tail needs that frame (stage
+    // context, an ordering array, decide/observe bookkeeping); the fast path does not.
+    //
+    // Safe to cut here, unlike `strlen`: this tail opens on `stage_context_two`, not on
+    // `string_raw_passthrough_active()`. That bypass is the re-entrancy guard standing
+    // between an interposed entry and a membrane that itself calls back into the same
+    // family, and putting it behind a cold boundary made hardened startup SIGSEGV
+    // deterministically. `strncat` has no such bypass anywhere in this tail.
+    unsafe { strncat_validating(dst, src, n) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+    if dst.is_null() || src.is_null() || n == 0 {
+        if dst.is_null() || src.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
+        return dst;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(9, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw strncat behavior; hardened mode bounds writes.
+    let (work, adverse) = unsafe {
+        let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
+        // A cap (`n`) unless the source extent is known: scan to the NUL or
+        // the bound without loading past either (see strncpy_core).
+        let src_scan_bound = src_bound.unwrap_or(usize::MAX).min(n);
+        let (src_len, src_terminated) = scan_c_string_nul_or_bound(src, src_scan_bound);
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation("strncat", n.saturating_add(1), 0, dst as usize);
+                    (0, true)
+                }
+                Some(limit) => {
+                    if !dst_terminated {
+                        *dst.add(limit.saturating_sub(1)) = 0;
+                        record_truncation("strncat", limit, limit.saturating_sub(1), dst as usize);
+                        (limit, true)
+                    } else {
+                        let available = limit.saturating_sub(dst_len.saturating_add(1));
+                        let copy_payload = src_len.min(available);
+                        if copy_payload > 0 {
+                            raw_memcpy_bytes(
+                                dst.add(dst_len).cast::<u8>(),
+                                src.cast::<u8>(),
+                                copy_payload,
+                            );
+                        }
+                        *dst.add(dst_len.saturating_add(copy_payload)) = 0;
+                        let hit_src_alloc_bound =
+                            !src_terminated && src_bound.is_some_and(|b| b < n && src_len == b);
+                        let truncated = hit_src_alloc_bound || copy_payload < src_len;
+                        if truncated {
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(
+                                "strncat",
+                                n.saturating_add(1),
+                                copy_payload,
+                                address,
+                            );
+                        }
+                        (
+                            dst_len.saturating_add(copy_payload).saturating_add(1),
+                            truncated,
+                        )
+                    }
+                }
+                None => {
+                    if src_len > 0 {
+                        raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), src_len);
+                    }
+                    *dst.add(dst_len.saturating_add(src_len)) = 0;
+                    let hit_src_alloc_bound =
+                        !src_terminated && src_bound.is_some_and(|b| b < n && src_len == b);
+                    let truncated = hit_src_alloc_bound;
+                    if truncated {
+                        record_truncation("strncat", n.saturating_add(1), src_len, src as usize);
+                    }
+                    (dst_len.saturating_add(src_len).saturating_add(1), truncated)
+                }
+            }
+        } else {
+            let mut i = 0usize;
+            while i < n {
+                let ch = *src.add(i);
+                if ch == 0 {
+                    break;
+                }
+                *dst.add(dst_len + i) = ch;
+                i += 1;
+            }
+            *dst.add(dst_len + i) = 0;
+            (dst_len.saturating_add(i).saturating_add(1), false)
+        }
+    };
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(9, work),
+        adverse,
+    );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    dst
+}
+
+// ---------------------------------------------------------------------------
+// strchr
+// ---------------------------------------------------------------------------
+
+/// POSIX `strchr` -- locates the first occurrence of `c` in the string `s`.
+///
+/// Returns pointer to the first occurrence, or null if not found.
+/// If `c` is '\0', returns pointer to the terminating null byte.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Shared single-scan core for `strchr`/`strchrnul`. Runs the membrane
+/// bookkeeping and the `target`-or-NUL scan exactly once and returns
+/// `Some((located, found))`:
+///   * `located` points at the first `target` byte, or at the terminating NUL
+///     (or the bounded-truncation point) — i.e. the `strchrnul` result;
+///   * `found` is true iff `located` is a real `target` byte (not the NUL/limit),
+///     i.e. `strchr` returns `located` when `found`, else NULL.
+///
+/// Returns `None` only when `s` is NULL or the membrane denies the call (the
+/// caller picks the fallback). Folding both entry points onto this eliminates
+/// strchrnul's old strchr()+strlen() double scan on a miss.
+unsafe fn strchr_locate(
+    symbol: &'static str,
+    s: *const c_char,
+    c: c_int,
+) -> Option<(*mut c_char, bool)> {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no repair, so `bound` is `None` and the result is exactly the
+    // page-safe raw `target`-or-NUL scan below. Skip the stage context + decide + observe +
+    // record machinery (byte-identical to the strict full path), like the inet_strict family.
+    // Hardened mode (`strict_passthrough_active() == false`) keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return None;
+        }
+        let target = c as c_char;
+        // SAFETY: `scan_c_string_for_byte` with no bound is the page-safe SIMD scan; this is
+        // the identical call the strict full path makes (bound == None).
+        let (i, found_target, _) = unsafe { scan_c_string_for_byte(s, target as u8, None) };
+        return Some((unsafe { s.add(i) } as *mut c_char, found_target));
+    }
+
+    if s.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return None;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let target = c as c_char;
+        let (i, found_target, _) = unsafe { scan_c_string_for_byte(s, target as u8, None) };
+        return Some((unsafe { s.add(i) } as *mut c_char, found_target));
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    let target = c as c_char;
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRCHR_INDEX,
+            s as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        let bound = if mode.heals_enabled() { rem } else { None };
+        let (located, found, adverse, span) = unsafe {
+            let (i, found_target, hit_limit) = scan_c_string_for_byte(s, target as u8, bound);
+            let ptr = s.add(i) as *mut c_char;
+            if hit_limit {
+                (ptr, false, true, i)
+            } else {
+                (ptr, found_target, false, i.saturating_add(1))
+            }
+        };
+        if adverse {
+            record_truncation(symbol, bound.unwrap_or(span), span, s as usize);
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, span),
+                true,
+            );
+        }
+        return Some((located, found));
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return None;
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        rem
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw behavior; hardened mode bounds the scan.
+    // SWAR scan for `target`-or-NUL (shared scan_c_string_for_byte), byte-identical
+    // to the old loop including target=='\0' (returns the NUL).
+    let (located, found, adverse, span) = unsafe {
+        let (i, found_target, hit_limit) = scan_c_string_for_byte(s, target as u8, bound);
+        // `s.add(i)` is the target / NUL / truncation position in every case.
+        let ptr = s.add(i) as *mut c_char;
+        if hit_limit {
+            (ptr, false, true, i)
+        } else {
+            (ptr, found_target, false, i.saturating_add(1))
+        }
+    };
+
+    if adverse {
+        record_truncation(symbol, bound.unwrap_or(span), span, s as usize);
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, span),
+        adverse,
+    );
+    Some((located, found))
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+    match unsafe { strchr_locate("strchr", s, c) } {
+        Some((located, true)) => located,
+        _ => std::ptr::null_mut(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strchrnul
+// ---------------------------------------------------------------------------
+
+/// GNU `strchrnul` -- locates the first occurrence of `c` in `s`, returning
+/// the string terminator when `c` is absent.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Single shared scan: `strchr_locate` returns the target-or-NUL position
+    // directly, so a miss no longer re-scans the whole string with strlen.
+    match unsafe { strchr_locate("strchrnul", s, c) } {
+        Some((located, _found)) => located,
+        // Membrane-denied: preserve the previous degraded-mode result (the old
+        // strchr()=>NULL then strlen()=>0 path returned `s`).
+        None => s as *mut c_char,
+    }
+}
+
+/// glibc reserved-namespace alias for [`strchrnul`]. Some headers
+/// and a few third-party callers (notably glibc's own internal
+/// headers and certain RH toolchain shims) link against the
+/// underscored variant instead of the public name.
+///
+/// # Safety
+///
+/// Same as [`strchrnul`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
+    unsafe { strchrnul(s, c) }
+}
+
+// ---------------------------------------------------------------------------
+// strrchr
+// ---------------------------------------------------------------------------
+
+/// POSIX `strrchr` -- locates the last occurrence of `c` in the string `s`.
+///
+/// Returns pointer to the last occurrence, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full body
+    // — `scan_c_string_last_byte(s, target, None)` (bound is None in strict, so
+    // hit_limit is always false and the result is just the last-match mapping). Skips
+    // stage_context + decide + observe + stage-trace, mirroring `strchr`'s fast path
+    // (strrchr had been left on the full membrane path).
+    if !s.is_null() && runtime_policy::strict_passthrough_active() {
+        // NOTE: a strlen+memrchr routing (glibc's two-pass shape, reusing fl's fast memrchr)
+        // was measured SLOWER here (2.3-3.8x vs this single-pass's 1.2-1.7x) — two full SIMD
+        // scans cost more than one heavier last-match pass. strrchr's residual loss is the
+        // portable-SIMD-vs-AVX2 kernel ceiling (asm-only). See NEGATIVE_EVIDENCE.md 2026-07-02.
+        let target = c as c_char;
+        let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
+        return match last_idx {
+            Some(idx) => unsafe { s.add(idx) as *mut c_char },
+            None => std::ptr::null_mut(),
+        };
+    }
+
+    if s.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        let target = c as c_char;
+        let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
+        return match last_idx {
+            Some(idx) => unsafe { s.add(idx) as *mut c_char },
+            None => std::ptr::null_mut(),
+        };
+    };
+
+    let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
+    let bloom_negative = rem.is_none();
+    let target = c as c_char;
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRRCHR_INDEX,
+            s as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        let bound = if mode.heals_enabled() { rem } else { None };
+        let (result, adverse, span) = unsafe {
+            let (last_idx, stop_idx, hit_limit) = scan_c_string_last_byte(s, target as u8, bound);
+            let result_local = match last_idx {
+                Some(idx) => s.add(idx) as *mut c_char,
+                None => std::ptr::null_mut(),
+            };
+            if hit_limit {
+                (result_local, true, stop_idx)
+            } else {
+                (result_local, false, stop_idx.saturating_add(1))
+            }
+        };
+        if adverse {
+            record_truncation("strrchr", bound.unwrap_or(span), span, s as usize);
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, span),
+                true,
+            );
+        }
+        return result;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strrchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        rem
+    } else {
+        None
+    };
+    // SAFETY: strict mode preserves raw strrchr behavior; hardened mode bounds scan.
+    // SWAR last-match scan (shared scan_c_string_last_byte), byte-identical to the
+    // old loop including target=='\0' (returns the terminating NUL).
+    let (result, adverse, span) = unsafe {
+        let (last_idx, stop_idx, hit_limit) = scan_c_string_last_byte(s, target as u8, bound);
+        let result_local = match last_idx {
+            Some(idx) => s.add(idx) as *mut c_char,
+            None => std::ptr::null_mut(),
+        };
+        if hit_limit {
+            (result_local, true, stop_idx)
+        } else {
+            (result_local, false, stop_idx.saturating_add(1))
+        }
+    };
+    if adverse {
+        record_truncation("strrchr", bound.unwrap_or(span), span, s as usize);
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, span),
+        adverse,
+    );
+    result
+}
+
+/// FUSED exact strstr for an UNTRACKED NUL-terminated haystack (2 <= needle_len <=
+/// 256): find the first occurrence of `needle[0]` via the page-safe, NUL-AWARE
+/// `scan_c_string_for_byte` (ONE pass — no separate per-chunk NUL scan, unlike
+/// `substr_fused`), verify the rest of the needle there, and advance. This is
+/// glibc's structure and avoids `substr_fused`'s double-scan (chunk NUL scan THEN
+/// memmem). To keep the O(n+m) guarantee against adversarial input (a common first
+/// byte, e.g. `"aa…a"` searched for `"aa…ab"`), once cumulative verify work exceeds
+/// the scanned position it bails to Two-Way `memmem` over the NUL-terminated tail.
+/// Both paths return the leftmost match, so the result is byte-identical.
+///
+/// PAGE-SAFE: `scan_c_string_for_byte(None)` is page-safe (guard-page proven); the
+/// verify loop reads `haystack[cand+k]` for `k < needle_len` byte-by-byte and stops
+/// at the first mismatch OR NUL (the needle has no NUL), so it never reads past the
+/// terminating NUL's page.
+///
+/// # Safety
+/// `haystack` valid NUL-terminated; `needle` readable for `needle_len` (>=2) bytes.
+unsafe fn strstr_fused_firstbyte(
+    haystack: *const c_char,
+    needle: *const u8,
+    needle_len: usize,
+) -> *mut c_char {
+    let hp = haystack.cast::<u8>();
+    // SAFETY: needle readable for needle_len bytes.
+    let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
+    let n0 = ns[0];
+    let mut pos = 0usize; // absolute offset to resume the first-byte scan
+    let mut miss_work = 0usize;
+    loop {
+        // First occurrence of needle[0] at/after `pos`, or the terminating NUL.
+        // SAFETY: page-safe NUL-aware scan.
+        let (i, found, _) = unsafe { scan_c_string_for_byte(hp.add(pos).cast(), n0, None) };
+        if !found {
+            return std::ptr::null_mut(); // NUL reached before another needle[0]
+        }
+        let cand = pos + i;
+        // Verify needle[1..] at cand+1; stop at the first mismatch or NUL (page-safe:
+        // reads only up to the NUL, which is mapped).
+        let mut k = 1usize;
+        let mut matched = true;
+        while k < needle_len {
+            // SAFETY: cand+k <= NUL position while bytes match (needle has no NUL), so
+            // the read is within the mapped string up to and including its NUL.
+            if unsafe { *hp.add(cand + k) } != ns[k] {
+                matched = false;
+                break;
+            }
+            k += 1;
+        }
+        if matched {
+            return unsafe { hp.add(cand) as *mut c_char };
+        }
+        miss_work += needle_len;
+        pos = cand + 1;
+        // Adversarial guard: once verification work outweighs the scan distance,
+        // finish with the guaranteed O(n+m) Two-Way over the NUL-terminated tail.
+        if miss_work > cand.max(256) {
+            // SAFETY: page-safe scan to NUL, then a bounded slice search.
+            let (rest, _) = unsafe { scan_c_string(hp.add(cand).cast(), None) };
+            let win = unsafe { std::slice::from_raw_parts(hp.add(cand), rest) };
+            return match frankenlibc_core::string::mem::memmem(win, rest, ns, needle_len) {
+                Some(idx) => unsafe { hp.add(cand + idx) as *mut c_char },
+                None => std::ptr::null_mut(),
+            };
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strstr
+// ---------------------------------------------------------------------------
+
+/// FUSED case-insensitive strcasestr for an UNTRACKED NUL-terminated haystack
+/// (2 <= needle_len <= 256): find the first byte that case-folds to `needle[0]`
+/// (either case, or NUL) via the page-safe `scan_c_string_for_set4` (ONE NUL-aware
+/// pass — no separate per-chunk NUL scan like `substr_fused`), verify the rest
+/// case-insensitively, and advance. O(n+m) Two-Way bailout to `core::str::strcasestr`
+/// (dual-anchor) once verify work outweighs the scan distance — which also handles a
+/// COMMON first byte. Byte-identical to `core::str::strcasestr` over the full haystack
+/// (leftmost match).
+///
+/// PAGE-SAFE: `scan_c_string_for_set4` is page-safe (guard-page proven); the verify
+/// loop reads `haystack[cand+k]` byte-by-byte, stopping at NUL / mismatch.
+///
+/// # Safety
+/// `haystack` valid NUL-terminated; `needle` readable for `needle_len` (>=2) bytes.
+unsafe fn strcasestr_fused_firstbyte(
+    haystack: *const c_char,
+    needle: *const u8,
+    needle_len: usize,
+) -> *mut c_char {
+    let hp = haystack.cast::<u8>();
+    // SAFETY: needle readable for needle_len bytes.
+    let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
+    let n0 = ns[0];
+    let lo = n0.to_ascii_lowercase();
+    let up = n0.to_ascii_uppercase();
+    let set = [lo, up, lo, up]; // both cases of needle[0] (dedups when lo == up)
+    let mut pos = 0usize;
+    let mut miss_work = 0usize;
+    loop {
+        // First byte in {lo, up} at/after `pos`, or the terminating NUL.
+        // SAFETY: page-safe NUL-aware membership scan.
+        let idx = unsafe { scan_c_string_for_set4(hp.add(pos).cast(), set, false) };
+        let cand = pos + idx;
+        // SAFETY: cand <= strlen; the byte there is a set member or the NUL.
+        if unsafe { *hp.add(cand) } == 0 {
+            return std::ptr::null_mut();
+        }
+        // Verify needle[1..] case-insensitively (needle[0] already matched by the scan).
+        let mut k = 1usize;
+        let mut matched = true;
+        while k < needle_len {
+            // SAFETY: within the mapped string up to and including its NUL.
+            let b = unsafe { *hp.add(cand + k) };
+            if b == 0 || !b.eq_ignore_ascii_case(&ns[k]) {
+                matched = false;
+                break;
+            }
+            k += 1;
+        }
+        if matched {
+            return unsafe { hp.add(cand) as *mut c_char };
+        }
+        miss_work += needle_len;
+        pos = cand + 1;
+        if miss_work > cand.max(256) {
+            // SAFETY: page-safe scan to NUL, then a bounded case-insensitive search.
+            let (rest, _) = unsafe { scan_c_string(hp.add(cand).cast(), None) };
+            let win = unsafe { std::slice::from_raw_parts(hp.add(cand), rest) };
+            return match frankenlibc_core::string::str::strcasestr(win, ns) {
+                Some(i) => unsafe { hp.add(cand + i) as *mut c_char },
+                None => std::ptr::null_mut(),
+            };
+        }
+    }
+}
+
+/// POSIX `strstr` -- locates the first occurrence of substring `needle` in `haystack`.
+///
+/// Returns pointer to the beginning of the located substring, or null if not found.
+/// If `needle` is empty, returns `haystack`.
+///
+/// # Safety
+///
+/// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    // Fast path: skip membrane during early startup or when called from
+    // within the membrane/allocator (prevents re-entrant deadlock).
+    if string_raw_passthrough_active() {
+        return unsafe { raw_strstr(haystack, needle) };
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body's RETURN — scan needle + haystack (with the same ungated
+    // `known_remaining` bounds), then core Two-Way `memmem`. Skips stage_context +
+    // decide + observe + stage-trace (and `record_truncation`, a telemetry side
+    // effect skipped on every strict fast path this session — return value unchanged).
+    // Measured ~3.6x vs the full path (the bookkeeping here was ~60ns).
+    if runtime_policy::strict_passthrough_active() {
+        if haystack.is_null() {
+            return std::ptr::null_mut();
+        }
+        if needle.is_null() {
+            return haystack as *mut c_char;
+        }
+        return unsafe {
+            // Strict: glibc's result for the same memory, so no allocation-size cap on
+            // either scan (that truncation is a hardened repair; see `strlen`).
+            let needle_bound = None;
+            let hay_bound = None;
+            let (needle_len, _) = scan_c_string(needle, needle_bound);
+            if needle_len == 0 {
+                haystack as *mut c_char
+            } else if needle_len == 1 {
+                // strstr(h, [c]) == strchr(h, c): the page-safe early-stopping byte scan
+                // stops at the FIRST match — no full-haystack pre-scan (the general path
+                // pre-scans the whole haystack just to bound memmem). Byte-identical: same
+                // `hay_bound`, first occurrence; NUL/not-found → null.
+                let target = *(needle.cast::<u8>());
+                let (i, found, _) = scan_c_string_for_byte(haystack, target, hay_bound);
+                if found {
+                    haystack.add(i) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                }
+            } else if hay_bound.is_none() && needle_len <= 256 {
+                // Untracked haystack (no bound to preserve): FUSED first-byte scan +
+                // verify (NUL-aware, single pass — no per-chunk NUL prescan), returns
+                // at the first match (glibc's shape).
+                strstr_fused_firstbyte(haystack, needle.cast::<u8>(), needle_len)
+            } else {
+                // Tracked buffer (keep the bound → preserves unterminated-buffer bounding)
+                // or a very long needle: full pre-scan + Two-Way memmem.
+                let (hay_len, _) = scan_c_string(haystack, hay_bound);
+                if hay_len >= needle_len {
+                    let hs = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+                    let ns = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                    match frankenlibc_core::string::mem::memmem(hs, hay_len, ns, needle_len) {
+                        Some(idx) => haystack.add(idx) as *mut c_char,
+                        None => std::ptr::null_mut(),
+                    }
+                } else {
+                    std::ptr::null_mut()
+                }
+            }
+        };
+    }
+
+    // Cold tail in its own frame. Unlike `memcmp` there is no re-entrancy bypass
+    // between the strict gate and here, so the cut is at the gate. This entry
+    // opened `push rbp/r15/r14/r13/r12/rbx; sub $0x98,%rsp` — 152 bytes rented by
+    // the strict fast path on every call.
+    unsafe { strstr_validating(haystack, needle) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    if haystack.is_null() {
+        let (aligned, recent_page, ordering) =
+            stage_context_two(haystack as usize, needle as usize);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+    if needle.is_null() {
+        let (aligned, recent_page, ordering) =
+            stage_context_two(haystack as usize, needle as usize);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return haystack as *mut c_char;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        return unsafe { raw_strstr(haystack, needle) };
+    };
+
+    let (hay_known, needle_known) = crate::malloc_abi::known_remaining_pair_in_guarded_string(
+        haystack as usize,
+        needle as usize,
+    );
+    let bloom_negative = hay_known.is_none() && needle_known.is_none();
+    if cfg!(not(test))
+        && runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRSTR_INDEX,
+            haystack as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+        .is_some()
+    {
+        let hay_bound = hay_known;
+        let needle_bound = needle_known;
+        let (out, adverse, work) = unsafe {
+            let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+            let mut out_local = std::ptr::null_mut();
+            let work_local;
+
+            if needle_len == 0 {
+                out_local = haystack as *mut c_char;
+                work_local = 1;
+            } else if hay_len >= needle_len {
+                let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+                let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                match frankenlibc_core::string::mem::memmem(
+                    hay_slice,
+                    hay_len,
+                    needle_slice,
+                    needle_len,
+                ) {
+                    Some(idx) => {
+                        out_local = haystack.add(idx) as *mut c_char;
+                        work_local = idx.saturating_add(needle_len);
+                    }
+                    None => {
+                        work_local = hay_len;
+                    }
+                }
+            } else {
+                work_local = hay_len;
+            }
+
+            (
+                out_local,
+                !hay_terminated || !needle_terminated,
+                work_local.max(needle_len),
+            )
+        };
+
+        if adverse {
+            record_truncation(
+                "strstr",
+                hay_bound
+                    .unwrap_or(work)
+                    .saturating_add(needle_bound.unwrap_or(0)),
+                work,
+                bound_causing_address(
+                    haystack as usize,
+                    hay_bound,
+                    Some(needle as usize),
+                    needle_bound,
+                ),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(10, work),
+                true,
+            );
+        }
+        return out;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("strstr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_two(
+        haystack as usize,
+        hay_known,
+        needle as usize,
+        needle_known,
+    );
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        haystack as usize,
+        0,
+        false,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let hay_bound = hay_known;
+    let needle_bound = needle_known;
+
+    // SAFETY: known allocations are scanned only within their live extent;
+    // untracked strict-mode strings preserve raw libc scan semantics.
+    let (out, adverse, work) = unsafe {
+        let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+        let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+        let mut out_local = std::ptr::null_mut();
+        let work_local;
+
+        if needle_len == 0 {
+            out_local = haystack as *mut c_char;
+            work_local = 1;
+        } else if hay_len >= needle_len {
+            // Route the substring match to the core Two-Way searcher (O(hay+needle))
+            // instead of the old naive O(hay_len * needle_len) double loop, which was
+            // quadratic on adversarial inputs (e.g. hay="aaaa…", needle="aaa…c") —
+            // measured 164-455x slower than core memmem and a CPU-DoS vector. core memmem
+            // is pure (no global state), so it is safe on this strict/raw path.
+            let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+            let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+            match frankenlibc_core::string::mem::memmem(
+                hay_slice,
+                hay_len,
+                needle_slice,
+                needle_len,
+            ) {
+                Some(idx) => {
+                    out_local = haystack.add(idx) as *mut c_char;
+                    work_local = idx.saturating_add(needle_len);
+                }
+                None => {
+                    work_local = hay_len;
+                }
+            }
+        } else {
+            work_local = hay_len;
+        }
+
+        (
+            out_local,
+            !hay_terminated || !needle_terminated,
+            work_local.max(needle_len),
+        )
+    };
+
+    if adverse {
+        record_truncation(
+            "strstr",
+            hay_bound
+                .unwrap_or(work)
+                .saturating_add(needle_bound.unwrap_or(0)),
+            work,
+            bound_causing_address(
+                haystack as usize,
+                hay_bound,
+                Some(needle as usize),
+                needle_bound,
+            ),
+        );
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, work),
+        adverse,
+    );
+    out
+}
+
+// ---------------------------------------------------------------------------
+// strtok
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "owned-tls-cache")]
+static STRTOK_SAVE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static STRTOK_SAVE: std::cell::Cell<*mut c_char> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+fn strtok_saved_ptr() -> *mut c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRTOK_SAVE_OWNED_TLS.with(|saved| *saved as *mut c_char)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRTOK_SAVE.get()
+    }
+}
+
+fn set_strtok_saved_ptr(ptr: *mut c_char) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRTOK_SAVE_OWNED_TLS.with(|saved| *saved = ptr as usize);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRTOK_SAVE.set(ptr);
+    }
+}
+
+/// POSIX `strtok` -- splits string into tokens delimited by characters in `delim`.
+///
+/// On the first call, `s` should point to the string to tokenize.
+/// On subsequent calls, `s` should be null to continue tokenizing the same string.
+///
+/// # Safety
+///
+/// Caller must ensure `s` (if non-null) and `delim` are valid null-terminated strings.
+/// Note: `strtok` modifies the source string and is not reentrant. Use `strtok_r` for
+/// reentrant usage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict body's
+    // RETURN + thread-local saved-ptr update — mirrors the strtok_r fast path with
+    // `strtok_saved_ptr()`/`set_strtok_saved_ptr()` and `core::strtok::strtok`.
+    // Skips stage_context + decide + observe + stage-trace.
+    if runtime_policy::strict_passthrough_active() {
+        if delim.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe {
+            let saved = strtok_saved_ptr();
+            let current = if s.is_null() { saved } else { s };
+            if current.is_null() {
+                set_strtok_saved_ptr(std::ptr::null_mut());
+                return std::ptr::null_mut();
+            }
+            // Strict: a valid `delim` is NUL-terminated, so an unbounded page-safe
+            // scan is byte-identical AND skips the per-call `fallback_remaining`
+            // registry touch — matching the span functions (which already use None).
+            let (delim_len, delim_terminated) = scan_c_string(delim, None);
+            if !delim_terminated {
+                set_strtok_saved_ptr(std::ptr::null_mut());
+                return std::ptr::null_mut();
+            }
+            // FUSED small delim set (1..=4): mirror the strtok_r fused path (skip
+            // leading delimiters, find token end, NUL-write, advance the thread-local
+            // saved ptr) — O(n²) full-tokenization loop → O(n). Byte-identical to
+            // `core::str::strtok::strtok`.
+            if (1..=4).contains(&delim_len) {
+                let d = delim.cast::<u8>();
+                let set = match delim_len {
+                    1 => [*d, *d, *d, *d],
+                    2 => [*d, *d.add(1), *d, *d.add(1)],
+                    3 => [*d, *d.add(1), *d.add(2), *d.add(2)],
+                    _ => [*d, *d.add(1), *d.add(2), *d.add(3)],
+                };
+                let start = scan_c_string_for_set4(current, set, true);
+                if *current.add(start).cast::<u8>() == 0 {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    return std::ptr::null_mut();
+                }
+                let tok_len = scan_c_string_for_set4(current.add(start), set, false);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                set_strtok_saved_ptr(current.add(next));
+                return current.add(start) as *mut c_char;
+            }
+            // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB early-stop
+            // (mirrors the strtok_r >4 path; thread-local saved ptr). O(n) loop.
+            // 5..=64-byte delim set: `pcmpistr*` for BOTH per-token boundaries. strtok
+            // rebuilds the LUT on every call, i.e. once per token, so a tokenization
+            // loop pays that fixed setup N times while glibc's per-token setup is
+            // O(1) — and tokens are short, which is exactly where the probe wins.
+            #[cfg(target_arch = "x86_64")]
+            if (5..=CMPISTRI_MAX_NEEDLES * 16).contains(&delim_len)
+                && let Some(start) = span_scan_cmpistri(current, delim, false)
+                && let Some(tok_len) = span_scan_cmpistri(current.add(start), delim, true)
+            {
+                if *current.add(start).cast::<u8>() == 0 {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    return std::ptr::null_mut();
+                }
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                set_strtok_saved_ptr(current.add(next));
+                return current.add(start) as *mut c_char;
+            }
+            #[cfg(target_arch = "x86_64")]
+            if delim_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(delim.cast::<u8>(), delim_len)
+            {
+                let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
+                let start = scan_c_string_pshufb(current, &lo16, &hi16, false);
+                if *current.add(start).cast::<u8>() == 0 {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    return std::ptr::null_mut();
+                }
+                let tok_len = scan_c_string_pshufb(current.add(start), &lo16, &hi16, true);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                set_strtok_saved_ptr(current.add(next));
+                return current.add(start) as *mut c_char;
+            }
+            let (scan_limit, terminated) = scan_c_string(current, None);
+            let slice_len = if terminated {
+                scan_limit + 1
+            } else {
+                scan_limit
+            };
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+            let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
+            return match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
+                Some((start, len)) => {
+                    let token_start = current.add(start);
+                    let token_end_idx = start + len;
+                    let next_pos = if token_end_idx + 1 < s_slice.len() {
+                        token_end_idx + 1
+                    } else {
+                        token_end_idx
+                    };
+                    set_strtok_saved_ptr(current.add(next_pos));
+                    token_start
+                }
+                None => {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    std::ptr::null_mut()
+                }
+            };
+        }
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
+    if delim.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let addr_hint = if s.is_null() { 0 } else { s as usize };
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        addr_hint,
+        0,
+        true,
+        known_remaining(addr_hint).is_none() && known_remaining(delim as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+
+    // SAFETY: Thread-local access; strtok is specified as non-reentrant per POSIX.
+    let (token, adverse, work) = unsafe {
+        let saved = strtok_saved_ptr();
+        let current = if s.is_null() { saved } else { s };
+        let mut work = 0usize;
+
+        if current.is_null() {
+            set_strtok_saved_ptr(std::ptr::null_mut());
+            (std::ptr::null_mut(), false, work)
+        } else {
+            let bound = if repair {
+                known_remaining(current as usize)
+            } else {
+                None
+            };
+
+            // Determine a safe scan limit for finding delimiters
+
+            let (scan_limit, terminated) = scan_c_string(current, bound);
+
+            // In hardened mode, we effectively clamp the slice to the known bound or the next null.
+
+            // Only include the terminator byte in the slice if it was actually found.
+
+            let slice_len = if terminated {
+                scan_limit + 1
+            } else {
+                scan_limit
+            };
+
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+
+            // We also need a slice for delim.
+
+            // Warning: `delim` might be unbounded. We scan it safely.
+
+            let delim_bound = known_remaining(delim as usize);
+            let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+            if !delim_terminated {
+                set_strtok_saved_ptr(std::ptr::null_mut());
+                work = scan_limit.saturating_add(delim_len);
+                (std::ptr::null_mut(), true, work)
+            } else {
+                let delim_slice_len = delim_len + 1;
+                let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
+
+                // Core `strtok` returns (start_idx, token_len). It modifies s_slice in place.
+
+                match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
+                    Some((start, len)) => {
+                        let token_start = current.add(start);
+                        let token_end_idx = start + len;
+                        // strtok puts a NUL at token_end_idx. The next token starts after that NUL.
+                        // If we are at the end of the slice (NUL was already there), save_ptr is end.
+                        // But core's strtok writes NUL if needed.
+                        // We need to advance save pointer.
+                        // The core logic doesn't return the "next" position directly, but we can infer it:
+                        // it is token_start + len + 1.
+
+                        let next_pos = if token_end_idx + 1 < s_slice.len() {
+                            token_end_idx + 1
+                        } else {
+                            token_end_idx // End of string
+                        };
+
+                        // Update save pointer
+                        set_strtok_saved_ptr(current.add(next_pos));
+                        work = next_pos; // Approximate work
+                        (token_start, false, work)
+                    }
+                    None => {
+                        set_strtok_saved_ptr(std::ptr::null_mut());
+                        work = scan_limit;
+                        (std::ptr::null_mut(), false, work)
+                    }
+                }
+            }
+        }
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, work),
+        adverse,
+    );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    token
+}
+
+// ---------------------------------------------------------------------------
+// strtok_r
+// ---------------------------------------------------------------------------
+
+/// POSIX `strtok_r` -- reentrant version of `strtok`.
+///
+/// # Safety
+///
+/// Caller must ensure `s` (if non-null) and `delim` are valid null-terminated strings.
+/// `saveptr` must be a valid pointer to a `char *`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtok_r(
+    s: *mut c_char,
+    delim: *const c_char,
+    saveptr: *mut *mut c_char,
+) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict body's
+    // RETURN + `*saveptr` update — pick `current` (s or *saveptr), scan it (unbounded)
+    // + delim (same ungated `known_remaining(delim)`), core `strtok_r`, advance
+    // `*saveptr`. Skips stage_context + decide + observe + stage-trace (interleaved
+    // telemetry, return/side-effects unchanged). strsep-style clean replication.
+    if runtime_policy::strict_passthrough_active() {
+        if delim.is_null() || saveptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe {
+            let current = if s.is_null() { *saveptr } else { s };
+            if current.is_null() {
+                *saveptr = std::ptr::null_mut();
+                return std::ptr::null_mut();
+            }
+            // Strict: unbounded page-safe delim scan (valid delim is NUL-terminated),
+            // skipping the per-call fallback_remaining touch — same as the span fns.
+            let (delim_len, delim_terminated) = scan_c_string(delim, None);
+            if !delim_terminated {
+                *saveptr = std::ptr::null_mut();
+                return std::ptr::null_mut();
+            }
+            // FUSED small delim set (1..=4): TWO early-stopping passes — skip leading
+            // delimiters (strspn) then find the token end (strcspn) — instead of a
+            // full `scan_c_string(current)` pre-scan + core pass. Byte-identical to
+            // `core::str::strtok::strtok_r` (skip-leading via strspn_set, token end
+            // via strcspn_set, NUL-write the trailing delimiter, advance save_ptr).
+            // Turns a full tokenization loop from O(n²) into O(n) (see strsep).
+            if (1..=4).contains(&delim_len) {
+                let d = delim.cast::<u8>();
+                let set = match delim_len {
+                    1 => [*d, *d, *d, *d],
+                    2 => [*d, *d.add(1), *d, *d.add(1)],
+                    3 => [*d, *d.add(1), *d.add(2), *d.add(2)],
+                    _ => [*d, *d.add(1), *d.add(2), *d.add(3)],
+                };
+                // Skip leading delimiters: first non-delim-or-NUL (strspn == complement).
+                let start = scan_c_string_for_set4(current, set, true);
+                if *current.add(start).cast::<u8>() == 0 {
+                    // Only delimiters (or empty) remain → no token.
+                    *saveptr = std::ptr::null_mut();
+                    return std::ptr::null_mut();
+                }
+                // Token end from the token start: first delim-or-NUL (strcspn).
+                let tok_len = scan_c_string_for_set4(current.add(start), set, false);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0; // replace the trailing delimiter with NUL (matches core)
+                    end + 1
+                } else {
+                    end // token ran to the NUL; save_ptr points at it (next call → None)
+                };
+                *saveptr = current.add(next);
+                return current.add(start) as *mut c_char;
+            }
+            // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB early-stop for
+            // BOTH scans (skip leading delims via strspn, token end via strcspn) —
+            // classifier-throughput body scan, no prescan → O(n) loop, no scalar
+            // long-token regression. Non-ASCII sets fall through to the slice path.
+            // 5..=64-byte delim set: `pcmpistr*` for BOTH per-token boundaries. The
+            // LUT is rebuilt on every call, i.e. once per token, so a tokenization
+            // loop pays that fixed setup N times while glibc's per-token setup is
+            // O(1) — and tokens are short, which is exactly where the probe wins.
+            // The gate is the EXACT range the probe accepts, not `> 4`: `delim_len`
+            // is already known here, so a set the probe would refuse must never even
+            // call it. Letting it call and decline cost ~6 ns per token on a 22-byte
+            // set — back when 22 bytes was refused; the needle bank now accepts it,
+            // which is why the bound tracks `CMPISTRI_MAX_NEEDLES`. (strspn and
+            // friends cannot do this — there the whole point is to answer before
+            // the set has been measured.)
+            // NOTE: this is strtok_r, so the resume point goes to the CALLER's
+            // `saveptr`, not strtok's thread-local.
+            #[cfg(target_arch = "x86_64")]
+            if (5..=CMPISTRI_MAX_NEEDLES * 16).contains(&delim_len)
+                && let Some(start) = span_scan_cmpistri(current, delim, false)
+                && let Some(tok_len) = span_scan_cmpistri(current.add(start), delim, true)
+            {
+                if *current.add(start).cast::<u8>() == 0 {
+                    *saveptr = std::ptr::null_mut();
+                    return std::ptr::null_mut();
+                }
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                *saveptr = current.add(next);
+                return current.add(start) as *mut c_char;
+            }
+            #[cfg(target_arch = "x86_64")]
+            if delim_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(delim.cast::<u8>(), delim_len)
+            {
+                let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
+                let start = scan_c_string_pshufb(current, &lo16, &hi16, false);
+                if *current.add(start).cast::<u8>() == 0 {
+                    *saveptr = std::ptr::null_mut();
+                    return std::ptr::null_mut();
+                }
+                let tok_len = scan_c_string_pshufb(current.add(start), &lo16, &hi16, true);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                *saveptr = current.add(next);
+                return current.add(start) as *mut c_char;
+            }
+            let (scan_limit, terminated) = scan_c_string(current, None);
+            let slice_len = if terminated {
+                scan_limit + 1
+            } else {
+                scan_limit
+            };
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+            let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
+            return match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
+                Some((start, _len, next_offset)) => {
+                    *saveptr = current.add(next_offset);
+                    current.add(start)
+                }
+                None => {
+                    *saveptr = std::ptr::null_mut();
+                    std::ptr::null_mut()
+                }
+            };
+        }
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
+    if delim.is_null() || saveptr.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let addr_hint = if s.is_null() {
+        unsafe { *saveptr as usize }
+    } else {
+        s as usize
+    };
+
+    // Membrane decision logic similar to strtok
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        addr_hint,
+        0,
+        true,
+        known_remaining(addr_hint).is_none() && known_remaining(delim as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+
+    unsafe {
+        let current = if s.is_null() { *saveptr } else { s };
+
+        if current.is_null() {
+            *saveptr = std::ptr::null_mut();
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, 0),
+                false,
+            );
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+            return std::ptr::null_mut();
+        }
+
+        let bound = if repair {
+            known_remaining(current as usize)
+        } else {
+            None
+        };
+
+        let (scan_limit, terminated) = scan_c_string(current, bound);
+
+        // Create slice covering the string up to the terminator (or bound)
+
+        let slice_len = if terminated {
+            scan_limit + 1
+        } else {
+            scan_limit
+        };
+
+        let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+
+        let delim_bound = known_remaining(delim as usize);
+        let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+        if !delim_terminated {
+            *saveptr = std::ptr::null_mut();
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, scan_limit.saturating_add(delim_len)),
+                true,
+            );
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            return std::ptr::null_mut();
+        }
+
+        let delim_slice_len = delim_len + 1;
+        let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
+
+        // Core `strtok_r` returns (start, len, next_offset) relative to the slice start (0)
+
+        match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
+            Some((start, _len, next_offset)) => {
+                let token = current.add(start); // ubs:ignore - substring pointer, not a secret
+                *saveptr = current.add(next_offset);
+
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    decision.profile,
+                    runtime_policy::scaled_cost(8, next_offset),
+                    false,
+                );
+                record_string_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                token
+            }
+            None => {
+                *saveptr = std::ptr::null_mut();
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    decision.profile,
+                    runtime_policy::scaled_cost(8, scan_limit),
+                    false,
+                );
+                record_string_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strcasecmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcasecmp` -- case-insensitive comparison of two null-terminated strings.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // bound, byte-identical to the strict common branch — the fused SWAR
+    // case-compare `scan_strcasecmp(.., usize::MAX)`. Skips stage_context + decide +
+    // observe + stage-trace (read-family sibling of the strncmp fast path).
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        return unsafe { scan_strcasecmp::<false>(s1, s2, usize::MAX) }.0;
+    }
+
+    // Cold tail in its own frame. This entry rented
+    // `push rbp/r15/r14/r13/r12/rbx; sub $0x98,%rsp` -- 152 bytes -- from the
+    // validating path below, on every strict call. Nothing between the strict gate
+    // and here is a re-entrancy bypass, so the cut is at the gate.
+    unsafe { strcasecmp_validating(s1, s2) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strcasecmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+    if s1.is_null() || s2.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        0,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair {
+        known_remaining(s1 as usize)
+    } else {
+        None
+    };
+    let rhs_bound = if repair {
+        known_remaining(s2 as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan within known limits.
+    let (result, span) = unsafe {
+        if lhs_bound.is_none() && rhs_bound.is_none() {
+            // Common path: one fused SWAR case-compare with early exit, instead of
+            // two full length scans plus a separate compare pass.
+            scan_strcasecmp::<false>(s1, s2, usize::MAX)
+        } else {
+            // Repair path: preserve the exact clamped-slice semantics (out-of-bound
+            // bytes treated as NUL by the core comparator).
+            let (s1_len, s1_term) = scan_c_string(s1, lhs_bound);
+            let (s2_len, s2_term) = scan_c_string(s2, rhs_bound);
+            let s1_slice_len = if s1_term { s1_len + 1 } else { s1_len };
+            let s2_slice_len = if s2_term { s2_len + 1 } else { s2_len };
+            let s1_slice = std::slice::from_raw_parts(s1.cast::<u8>(), s1_slice_len);
+            let s2_slice = std::slice::from_raw_parts(s2.cast::<u8>(), s2_slice_len);
+            let r = frankenlibc_core::string::str::strcasecmp(s1_slice, s2_slice);
+            (r, s1_len.max(s2_len))
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        lhs_bound.is_some() || rhs_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strncasecmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strncasecmp` -- case-insensitive comparison of at most `n` bytes.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid memory for the compared span.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // clamp (`cmp_limit == n`, not adverse), byte-identical to the strict full path —
+    // the fused SWAR case-compare `scan_strcasecmp(.., n)`. Skips the bookkeeping.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        return unsafe { scan_strcasecmp::<true>(s1, s2, n) }.0;
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+    if s1.is_null() || s2.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        n,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair {
+        known_remaining(s1 as usize)
+    } else {
+        None
+    };
+    let rhs_bound = if repair {
+        known_remaining(s2 as usize)
+    } else {
+        None
+    };
+    let cmp_limit = match (lhs_bound, rhs_bound) {
+        (Some(a), Some(b)) => a.min(b).min(n),
+        (Some(a), None) => a.min(n),
+        (None, Some(b)) => b.min(n),
+        (None, None) => n,
+    };
+    // SAFETY: bounded compare within cmp_limit.
+    // Fused SWAR case-compare (shared scan_strcasecmp), byte-identical to the old
+    // scalar tolower loop; bounded by cmp_limit and page-cross guarded.
+    let (result, span) = unsafe { scan_strcasecmp::<true>(s1, s2, cmp_limit) };
+    // Repaired only if the compare ran into the clamp: equal through all
+    // `cmp_limit` bytes with no NUL among them (a NUL at the last byte also
+    // reports `span == cmp_limit`, so look at it). As in strncmp.
+    // SAFETY: `cmp_limit - 1` was just read by the scan.
+    let hit_limit = result == 0
+        && span == cmp_limit
+        && (cmp_limit == 0 || unsafe { *s1.add(cmp_limit - 1) } != 0);
+    let adverse = repair && cmp_limit < n && hit_limit;
+
+    if adverse {
+        record_truncation(
+            "strncasecmp",
+            n,
+            cmp_limit,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, cmp_limit),
+        adverse,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strspn
+// ---------------------------------------------------------------------------
+
+/// POSIX `strspn` -- returns length of initial segment of `s` consisting of
+/// bytes in `accept`.
+///
+/// # Safety
+///
+/// Caller must ensure both `s` and `accept` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usize {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp, so
+    // this is byte-identical to the strict full body — scan s + accept, core strspn.
+    // Skips stage_context + decide + observe + stage-trace.
+    if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            // 1-char accept (the common single-char run-skip): intercept with a lean
+            // scalar length probe (2 byte reads) + the single-splat scan, BEFORE the
+            // full SIMD strlen on `accept`. This is the case glibc's early-stopping scan
+            // beat us on (fixed 4-way-set setup floor). Byte-identical to the (1..=4)
+            // set4 path with set=[c;4], complement=true.
+            // ...and the same direct probe extended to sets of 2..=4 bytes, which
+            // previously fell into the gap between the 1-char shortcut and the
+            // 5..=64-byte `pcmpistri` probe. A 3-byte set like "abc" still ENDED
+            // in the `set4` path below, but only after paying a `pcmpistri` probe
+            // that declines every set under 5 bytes AND a full SIMD
+            // `scan_c_string` strlen over `accept` just to learn it is 3 long.
+            // Line-level profiling (callgrind --dump-line, two-point) put those at
+            // 16 and ~19 Ir of `strspn`'s 167.
+            //
+            // Each byte is read only after the previous one proved non-NUL, so
+            // this never reads past the terminator — exactly the safety argument
+            // the existing 2-byte probe already relies on.
+            let a = accept.cast::<u8>();
+            let a0 = *a;
+            if a0 != 0 {
+                let a1 = *a.add(1);
+                if a1 == 0 {
+                    return scan_c_string_first_not_byte(s, a0);
+                }
+                let a2 = *a.add(2);
+                if a2 == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a0, a1], true);
+                }
+                let a3 = *a.add(3);
+                if a3 == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a2, a2], true);
+                }
+                if *a.add(4) == 0 {
+                    return scan_c_string_for_set4(s, [a0, a1, a2, a3], true);
+                }
+            }
+            // 5..=64-byte accept set: answer short spans with `pcmpistr*` BEFORE any
+            // pass over `accept`, so the LUT path's fixed setup is skipped entirely
+            // rather than merely shortened.
+            #[cfg(target_arch = "x86_64")]
+            if span_simd_available() {
+                match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), false) {
+                    SpanProbe::Stop(idx) => return idx,
+                    // The probe consumes only for sets it accepted (5..=64 bytes), so
+                    // the LUT path below is the one that would run — enter it past the
+                    // proven prefix instead of rescanning. A non-ASCII set has no LUT
+                    // form, so it falls through whole to the slice path.
+                    SpanProbe::Resume {
+                        consumed,
+                        set_len,
+                        all_ascii: true,
+                    } => {
+                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len as usize);
+                        return consumed
+                            + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, false);
+                    }
+                    _ => {}
+                }
+            }
+            let (accept_len, accept_terminated) = scan_c_string(accept, None);
+            // Small accept set (1..=4): FUSED single early-stopping pass — stop at the
+            // first byte NOT in the set (or NUL) — instead of a full pre-scan of `s` +
+            // a second `core::str::strspn` pass. Byte-identical to the core span (NUL is
+            // never a set member, so `!member` is exactly the strspn stop predicate),
+            // same duplicate-fill of the membership set.
+            if (1..=4).contains(&accept_len) {
+                let a = accept.cast::<u8>();
+                let set = match accept_len {
+                    1 => [*a, *a, *a, *a],
+                    2 => [*a, *a.add(1), *a, *a.add(1)],
+                    3 => [*a, *a.add(1), *a.add(2), *a.add(2)],
+                    _ => [*a, *a.add(1), *a.add(2), *a.add(3)],
+                };
+                return scan_c_string_for_set4(s, set, true);
+            }
+            // Large ALL-ASCII accept set (>4): FUSED page-safe PSHUFB early-stop
+            // (strspn = stop on non-member OR NUL), no prescan. Byte-identical to
+            // core::str::strspn. Non-ASCII sets fall through to the slice path.
+            #[cfg(target_arch = "x86_64")]
+            if accept_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(accept.cast::<u8>(), accept_len)
+            {
+                let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), accept_len);
+                return scan_c_string_pshufb(s, &lo16, &hi16, false);
+            }
+            let (s_len, s_terminated) = scan_c_string(s, None);
+            let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+            let accept_slice_len = if accept_terminated {
+                accept_len + 1
+            } else {
+                accept_len
+            };
+            let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+            let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
+            frankenlibc_core::string::str::strspn(s_slice, accept_slice)
+        };
+    }
+
+    // Cold tail in its own frame. This entry rented the largest frame in the
+    // narrow family -- `push rbp/r15/r14/r13/r12/rbx; sub $0xb8,%rsp`, 184 bytes --
+    // from the validating path below, on every strict call. Line-level profiling
+    // (callgrind --dump-line, two-point) charged 8 Ir to the signature line alone
+    // out of a 44 Ir entry. Nothing between the strict gate and here is a
+    // re-entrancy bypass, so the cut is at the gate.
+    unsafe { strspn_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strspn_validating(s: *const c_char, accept: *const c_char) -> usize {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
+    if s.is_null() || accept.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(accept as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let accept_bound = if repair {
+        known_remaining(accept as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (s_len, s_terminated) = scan_c_string(s, s_bound);
+        let (accept_len, accept_terminated) = scan_c_string(accept, accept_bound);
+        let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+        let accept_slice_len = if accept_terminated {
+            accept_len + 1
+        } else {
+            accept_len
+        };
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
+        let r = frankenlibc_core::string::str::strspn(s_slice, accept_slice);
+        (r, s_len)
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        s_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strcspn
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcspn` -- returns length of initial segment of `s` consisting
+/// entirely of bytes NOT in `reject`.
+///
+/// # Safety
+///
+/// Caller must ensure both `s` and `reject` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usize {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body — scan s + reject, core strcspn. Skips the membrane bookkeeping.
+    if !s.is_null() && !reject.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            // Direct probe for reject sets of 1..=4 bytes, ahead of everything else —
+            // the same gap `strspn` had. Those sets already had dedicated handling
+            // below, but only after a `pcmpistri` probe that declines every set under
+            // 5 bytes AND a full SIMD `scan_c_string` strlen over `reject` just to
+            // learn its length. Each byte is read only after the previous proved
+            // non-NUL, so this never reads past the terminator.
+            {
+                let r = reject.cast::<u8>();
+                let r0 = *r;
+                if r0 != 0 {
+                    let r1 = *r.add(1);
+                    if r1 == 0 {
+                        let (i, _found, _) = scan_c_string_for_byte(s, r0, None);
+                        return i;
+                    }
+                    let r2 = *r.add(2);
+                    if r2 == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r0, r1], false);
+                    }
+                    let r3 = *r.add(3);
+                    if r3 == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r2, r2], false);
+                    }
+                    if *r.add(4) == 0 {
+                        return scan_c_string_for_set4(s, [r0, r1, r2, r3], false);
+                    }
+                }
+            }
+            // 5..=64-byte reject set: `pcmpistr*` first, before the `reject` scan —
+            // this is the arm that lost worst to glibc (14.81x at span 4 with a
+            // 16-byte set).
+            #[cfg(target_arch = "x86_64")]
+            if span_simd_available() {
+                match span_probe_cmpistri(s.cast::<u8>(), reject.cast::<u8>(), true) {
+                    SpanProbe::Stop(idx) => return idx,
+                    SpanProbe::Resume {
+                        consumed,
+                        set_len,
+                        all_ascii: true,
+                    } => {
+                        let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), set_len as usize);
+                        return consumed
+                            + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true);
+                    }
+                    _ => {}
+                }
+            }
+            let (reject_len, reject_terminated) = scan_c_string(reject, None);
+            // Single-char reject: strcspn(s, [c]) == index of the first `c` (or strlen(s)
+            // if none) — the page-safe early-stopping scan returns exactly that, with NO
+            // full-haystack pre-scan. Byte-identical.
+            if reject_len == 1 {
+                let target = *(reject.cast::<u8>());
+                let (i, _found, _) = scan_c_string_for_byte(s, target, None);
+                return i;
+            }
+            // Small reject set (2..=4): FUSED single early-stopping pass from the raw
+            // pointer instead of a full pre-scan of `s` + a second membership pass.
+            // Byte-identical to `core::str::strcspn` over the NUL-inclusive slice
+            // (`find_any_of4_or_nul_fused`), same duplicate-fill of the membership set.
+            if (2..=4).contains(&reject_len) {
+                let r = reject.cast::<u8>();
+                let set = match reject_len {
+                    2 => [*r, *r.add(1), *r, *r.add(1)],
+                    3 => [*r, *r.add(1), *r.add(2), *r.add(2)],
+                    _ => [*r, *r.add(1), *r.add(2), *r.add(3)],
+                };
+                return scan_c_string_for_set4(s, set, false);
+            }
+            // Large ALL-ASCII reject set (>4): FUSED page-safe PSHUFB early-stop
+            // (strcspn = stop on member OR NUL), no prescan. Byte-identical to
+            // core::str::strcspn. Non-ASCII sets fall through to the slice path.
+            #[cfg(target_arch = "x86_64")]
+            if reject_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(reject.cast::<u8>(), reject_len)
+            {
+                let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), reject_len);
+                return scan_c_string_pshufb(s, &lo16, &hi16, true);
+            }
+            let (s_len, s_terminated) = scan_c_string(s, None);
+            let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+            let reject_slice_len = if reject_terminated {
+                reject_len + 1
+            } else {
+                reject_len
+            };
+            let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+            let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_slice_len);
+            frankenlibc_core::string::str::strcspn(s_slice, reject_slice)
+        };
+    }
+
+    // COLD-TAIL SPLIT. The strict fast path above needs `s`, `reject` and a couple of
+    // scratch registers; the validating body below needs the lot. Sharing one frame
+    // charged EVERY call for the validating path's needs -- the prologue was six
+    // callee-saved pushes plus `sub $0xc8,%rsp`, two hundred bytes of stack, on a
+    // function whose deployed path is a five-byte probe and a scan.
+    //
+    // That fixed charge is what makes SHORT spans lose: `strcspn` measured a flat
+    // 47 Ir of entry at BOTH haystack length 8 and length 100, while live glibc
+    // answers the whole length-8 call in 41.
+    //
+    // Split BELOW the strict block, so the bypass keeps its own small frame and only
+    // the validating path pays for the large one. Same shape as the `memrchr`,
+    // `memchr` and `strcmp` splits already in this file.
+    unsafe { strcspn_validating(s, reject) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strcspn_validating(s: *const c_char, reject: *const c_char) -> usize {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, reject as usize);
+    if s.is_null() || reject.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(reject as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let reject_bound = if repair {
+        known_remaining(reject as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (s_len, s_terminated) = scan_c_string(s, s_bound);
+        let (reject_len, reject_terminated) = scan_c_string(reject, reject_bound);
+        let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+        let reject_slice_len = if reject_terminated {
+            reject_len + 1
+        } else {
+            reject_len
+        };
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+        let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_slice_len);
+        let r = frankenlibc_core::string::str::strcspn(s_slice, reject_slice);
+        (r, s_len)
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        s_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strpbrk
+// ---------------------------------------------------------------------------
+
+/// POSIX `strpbrk` -- locates the first occurrence in `s` of any byte from `accept`.
+///
+/// Returns pointer to the matching byte, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure both `s` and `accept` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body — scan s + accept, core strpbrk, map index to pointer. Skips bookkeeping.
+    if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            // 5..=64-byte accept set: `pcmpistr*` first. The probe returns the same
+            // stop index strcspn does — first member OR the NUL — so the member/NUL
+            // discrimination is the identical `*s.add(idx) != 0` test the 2..=4 path
+            // already uses.
+            // The probe measures the accept set on its way to deciding whether it
+            // applies, and the most common decline is "shorter than 5 bytes" -- which
+            // is exactly the case that then falls into the 1 / 2..=4 paths below and
+            // re-scanned the same set with `scan_c_string(accept, None)`. Carrying the
+            // measured length out of the decline removes that second walk.
+            #[allow(unused_mut)]
+            let mut known_accept_len: Option<usize> = None;
+            #[cfg(target_arch = "x86_64")]
+            if span_simd_available() {
+                let hit = match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), true) {
+                    SpanProbe::Stop(idx) => Some(idx),
+                    SpanProbe::Resume {
+                        consumed,
+                        set_len,
+                        all_ascii: true,
+                    } => {
+                        let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), set_len as usize);
+                        Some(consumed + scan_c_string_pshufb(s.add(consumed), &lo16, &hi16, true))
+                    }
+                    SpanProbe::Decline { set_len } => {
+                        known_accept_len = set_len.map(usize::from);
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(idx) = hit {
+                    return if *s.add(idx).cast::<u8>() != 0 {
+                        s.add(idx) as *mut c_char
+                    } else {
+                        std::ptr::null_mut()
+                    };
+                }
+            }
+            // A length from the probe came from a NUL found inside the set's first
+            // sixteen bytes, so the set is terminated by construction.
+            let (accept_len, accept_terminated) = match known_accept_len {
+                Some(len) => (len, true),
+                None => scan_c_string(accept, None),
+            };
+            // Single-char accept: strpbrk(s, [c]) == strchr(s, c) — the page-safe
+            // early-stopping scan stops at the first `c` (NO full-haystack pre-scan).
+            // Byte-identical: c found → s+i, NUL/not-found → null.
+            if accept_len == 1 {
+                let target = *(accept.cast::<u8>());
+                let (i, found, _) = scan_c_string_for_byte(s, target, None);
+                return if found {
+                    s.add(i) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            // Small accept set (2..=4): FUSED single early-stopping pass. The stop
+            // index is the first set-member OR the NUL; map member→pointer, NUL→null.
+            // Byte-identical to `core::str::strpbrk` (`find_any_of4_or_nul` + the
+            // `s[index] != 0` member test) over the NUL-inclusive slice.
+            if (2..=4).contains(&accept_len) {
+                let a = accept.cast::<u8>();
+                let set = match accept_len {
+                    2 => [*a, *a.add(1), *a, *a.add(1)],
+                    3 => [*a, *a.add(1), *a.add(2), *a.add(2)],
+                    _ => [*a, *a.add(1), *a.add(2), *a.add(3)],
+                };
+                let idx = scan_c_string_for_set4(s, set, false);
+                return if *s.add(idx).cast::<u8>() != 0 {
+                    s.add(idx) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            // Large ALL-ASCII accept set (>4): FUSED page-safe PSHUFB early-stop
+            // (first member OR NUL); map member→pointer, NUL→null. No prescan.
+            #[cfg(target_arch = "x86_64")]
+            if accept_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(accept.cast::<u8>(), accept_len)
+            {
+                let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), accept_len);
+                let idx = scan_c_string_pshufb(s, &lo16, &hi16, true);
+                return if *s.add(idx).cast::<u8>() != 0 {
+                    s.add(idx) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            let (s_len, s_terminated) = scan_c_string(s, None);
+            let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+            let accept_slice_len = if accept_terminated {
+                accept_len + 1
+            } else {
+                accept_len
+            };
+            let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+            let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
+            match frankenlibc_core::string::str::strpbrk(s_slice, accept_slice) {
+                Some(idx) => s.add(idx) as *mut c_char,
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
+    // COLD-TAIL SPLIT. The strict fast path needs its two pointers and a scan; the
+    // validating body below needs the lot. Sharing one frame charged EVERY call for the
+    // validating path's registers. Prologue survey of the deployed object put these four
+    // among the most expensive entries in the library: `wcsspn`, `wcspbrk` and `wcscspn`
+    // each entered on six callee-saved pushes plus `sub $0x128,%rsp` -- 296 bytes of
+    // stack -- and `strpbrk` on six pushes plus `sub $0xb8`.
+    //
+    // Their siblings already had it: `strspn` and `strcspn` carry `_validating` splits,
+    // and the same cut was worth +13 to +17 Ir on `wcschr`/`wmemchr`/`wmemcmp`/`wcscmp`
+    // and +11 on `wcsrchr`. Cut at the strict gate: none of these four has a
+    // `raw_passthrough`-style re-entrancy bypass between the gate and the validating
+    // body, which is the thing that forces `strlen` and `memcmp` to cut lower.
+    unsafe { strpbrk_validating(s, accept) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn strpbrk_validating(s: *const c_char, accept: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
+    if s.is_null() || accept.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(accept as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let accept_bound = if repair {
+        known_remaining(accept as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (s_len, s_terminated) = scan_c_string(s, s_bound);
+        let (accept_len, accept_terminated) = scan_c_string(accept, accept_bound);
+        let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+        let accept_slice_len = if accept_terminated {
+            accept_len + 1
+        } else {
+            accept_len
+        };
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
+        match frankenlibc_core::string::str::strpbrk(s_slice, accept_slice) {
+            Some(idx) => (s.add(idx) as *mut c_char, s_len),
+            None => (std::ptr::null_mut(), s_len),
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        s_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strdup
+// ---------------------------------------------------------------------------
+
+/// POSIX `strdup` -- duplicates a null-terminated string into malloc'd memory.
+///
+/// Returns pointer to the new string, or null on failure.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+/// The returned pointer must be freed with `free`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `bound == None`,
+    // byte-identical to the strict full body — scan s, malloc(len+1), copy, NUL-terminate.
+    // Skips stage_context + decide + observe + stage-trace. (malloc dominates strdup's
+    // cost, so this is a smaller margin, but strdup is extremely hot.)
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let (s_len, _) = scan_c_string(s, None);
+            let dst = crate::malloc_abi::malloc(s_len + 1);
+            if dst.is_null() {
+                return std::ptr::null_mut();
+            }
+            raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), s_len);
+            *(dst as *mut u8).add(s_len) = 0;
+            dst.cast::<c_char>()
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: scan string, allocate via libc::malloc, copy.
+    //
+    // Note: we use libc::malloc (not raw_alloc) so the alloc/free pair is
+    // consistent with the caller's libc::free. raw_alloc routes through
+    // native_libc_malloc which, under NATIVE_MALLOC_REENTRY contention,
+    // falls back to the static BUMP_HEAP arena — returning pointers that
+    // glibc's free cannot validate, aborting with "free(): invalid size".
+    // Under LD_PRELOAD libc::malloc is our own interposed symbol (so
+    // identical machinery); in debug test builds libc::malloc is glibc's
+    // malloc (so pairs with glibc's libc::free). Either way, no
+    // cross-allocator free.  bd-zgifl / bd-dqqh1 cluster.
+    unsafe {
+        let (s_len, _) = scan_c_string(s, bound);
+        let alloc_size = s_len + 1;
+
+        let dst = crate::malloc_abi::malloc(alloc_size);
+        if dst.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, s_len),
+                bound.is_some(),
+            );
+            return std::ptr::null_mut();
+        }
+
+        raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), s_len);
+        *(dst as *mut u8).add(s_len) = 0;
+
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, s_len),
+            bound.is_some(),
+        );
+        dst.cast::<c_char>()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strndup
+// ---------------------------------------------------------------------------
+
+/// POSIX `strndup` -- duplicates at most `n` bytes of a null-terminated string
+/// into malloc'd memory.
+///
+/// Always null-terminates the result.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+/// The returned pointer must be freed with `free`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `bound ==
+    // Some(n)` (repair false → no known-clamp), byte-identical to the strict body —
+    // scan s bounded by n, malloc(copy_len+1), copy, NUL. Skips the membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            // `n` is a ceiling on the READ, not a promise of `n` readable bytes —
+            // `strndup(p, 64)` on a 2-byte string is conforming. `scan_c_string`
+            // would load a whole window under `n` and fault past the terminator
+            // (bounded_scan_guard_page_safety measured SIGSEGV at every n >= 8).
+            let (s_len, _) = scan_c_string_nul_or_bound(s, n);
+            let copy_len = s_len.min(n);
+            let dst = crate::malloc_abi::malloc(copy_len + 1);
+            if dst.is_null() {
+                return std::ptr::null_mut();
+            }
+            if copy_len > 0 {
+                raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), copy_len);
+            }
+            *(dst as *mut u8).add(copy_len) = 0;
+            dst.cast::<c_char>()
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(s as usize).map(|b| b.min(n))
+    } else {
+        Some(n)
+    };
+
+    // SAFETY: scan string up to n, allocate via libc::malloc (see strdup
+    // comment on bd-zgifl for why not raw_alloc), copy.
+    unsafe {
+        // A `Some` bound here is `n` itself whenever `repair` is off, and `n` is a
+        // ceiling rather than a readability promise, so the scan must be page
+        // clamped. The repair branch derives its bound from `known_remaining` and
+        // so IS a guarantee, but it is routed the same way: the clamp costs one
+        // compare and picking per-branch would leave the unsound case one edit
+        // away from returning. `None` already means the page-safe unbounded scan.
+        let (s_len, _) = match bound {
+            Some(b) => scan_c_string_nul_or_bound(s, b),
+            None => scan_c_string(s, None),
+        };
+        let copy_len = s_len.min(n);
+        let alloc_size = copy_len + 1;
+
+        let dst = crate::malloc_abi::malloc(alloc_size);
+        if dst.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, copy_len),
+                bound.is_some() && bound != Some(n),
+            );
+            return std::ptr::null_mut();
+        }
+
+        if copy_len > 0 {
+            raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), copy_len);
+        }
+        *(dst as *mut u8).add(copy_len) = 0;
+
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, copy_len),
+            bound.is_some() && bound != Some(n),
+        );
+        dst.cast::<c_char>()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// memmem
+// ---------------------------------------------------------------------------
+
+/// GNU `memmem` -- locates the first occurrence of `needle` (of `needle_len`
+/// bytes) in `haystack` (of `haystack_len` bytes).
+///
+/// Returns pointer to the start of the match, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `haystack` is valid for `haystack_len` bytes and
+/// `needle` is valid for `needle_len` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memmem(
+    haystack: *const c_void,
+    haystack_len: usize,
+    needle: *const c_void,
+    needle_len: usize,
+) -> *mut c_void {
+    if needle_len == 0 {
+        return haystack as *mut c_void;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`hay_scan == haystack_len`, `needle_scan == needle_len`), byte-identical to
+    // the strict full body — core Two-Way `memmem` over the explicit lengths,
+    // returning `haystack+idx`/null. Skips stage_context + decide + observe +
+    // stage-trace. Explicit-length op (no NUL scan).
+    if runtime_policy::strict_passthrough_active() {
+        if haystack.is_null() || needle.is_null() || haystack_len == 0 {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let h_bytes = std::slice::from_raw_parts(haystack.cast::<u8>(), haystack_len);
+            let n_bytes = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+            match frankenlibc_core::string::mem::memmem(h_bytes, haystack_len, n_bytes, needle_len)
+            {
+                Some(idx) => (haystack as *mut u8).add(idx).cast::<c_void>(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
+    if haystack.is_null() || needle.is_null() || haystack_len == 0 {
+        if haystack.is_null() || needle.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        haystack as usize,
+        haystack_len,
+        false,
+        known_remaining(haystack as usize).is_none() && known_remaining(needle as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(10, haystack_len),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (hay_scan, clamped_h) = maybe_clamp_copy_len(
+        "memmem",
+        haystack_len,
+        haystack as usize,
+        known_remaining(haystack as usize),
+        None,
+        None,
+        repair_enabled(mode.heals_enabled(), decision.action),
+    );
+    let (needle_scan, _clamped_n) = maybe_clamp_copy_len(
+        "memmem",
+        needle_len,
+        needle as usize,
+        known_remaining(needle as usize),
+        None,
+        None,
+        repair_enabled(mode.heals_enabled(), decision.action),
+    );
+
+    // SAFETY: bounded by clamped lengths.
+    let result = unsafe {
+        let h_bytes = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_scan);
+        let n_bytes = std::slice::from_raw_parts(needle.cast::<u8>(), needle_scan);
+        match frankenlibc_core::string::mem::memmem(h_bytes, hay_scan, n_bytes, needle_scan) {
+            Some(idx) => (haystack as *mut u8).add(idx).cast::<c_void>(),
+            None => std::ptr::null_mut(),
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, hay_scan),
+        clamped_h,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// mempcpy
+// ---------------------------------------------------------------------------
+
+/// GNU `mempcpy` -- copies `n` bytes from `src` to `dst` and returns a pointer
+/// to the byte after the last written byte.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp, so the result is exactly the raw copy with the
+    // end pointer `dst + n` (byte-identical to the full path). Skip the membrane
+    // guard + decide + stage-trace + observe machinery, mirroring `memcpy`/`memmove`.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 {
+            return dst;
+        }
+        if dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        return unsafe { (dst as *mut u8).add(n).cast() };
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        if n == 0 {
+            return dst;
+        }
+        if dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: reentrant fallback.
+        unsafe {
+            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n);
+        }
+        return unsafe { (dst as *mut u8).add(n).cast() };
+    };
+
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = (!dst.is_null() && known_remaining(dst as usize).is_some())
+        || (!src.is_null() && known_remaining(src as usize).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    if n == 0 {
+        return dst;
+    }
+    if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        "mempcpy",
+        n,
+        dst as usize,
+        known_remaining(dst as usize),
+        Some(src as usize),
+        known_remaining(src as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
+    unsafe {
+        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+    }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, copy_len),
+        clamped,
+    );
+    // SAFETY: copy_len <= n, pointer arithmetic within copied range.
+    unsafe { (dst as *mut u8).add(copy_len).cast() }
+}
+
+// ---------------------------------------------------------------------------
+// strcasestr
+// ---------------------------------------------------------------------------
+
+/// GNU `strcasestr` -- case-insensitive version of strstr.
+///
+/// Returns pointer to the first case-insensitive occurrence of `needle`
+/// in `haystack`, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body's RETURN — scan haystack + needle (same ungated `known_remaining` bounds),
+    // then core case-insensitive `strcasestr` over the NUL-inclusive slices. Skips
+    // stage_context + decide + observe + stage-trace (mirrors the strstr fast path).
+    if runtime_policy::strict_passthrough_active() {
+        if haystack.is_null() {
+            return std::ptr::null_mut();
+        }
+        if needle.is_null() {
+            return haystack as *mut c_char;
+        }
+        return unsafe {
+            let hay_bound = known_remaining(haystack as usize);
+            let needle_bound = known_remaining(needle as usize);
+            let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+            // Untracked haystack + small needle: FUSED page-chunked case-insensitive
+            // search — no whole-haystack pre-scan (mirrors the strstr fused path). The
+            // core `strcasestr` matcher `strlen`s each window (no interior NUL before
+            // its end) and searches case-insensitively. Tracked buffers / large needles
+            // keep the bounded path (preserves the unterminated-tracked-buffer bound).
+            if hay_bound.is_none() && needle_terminated && (2..=256).contains(&needle_len) {
+                return strcasestr_fused_firstbyte(haystack, needle.cast::<u8>(), needle_len);
+            }
+            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+            let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
+            let n_slice_len = if needle_terminated {
+                needle_len + 1
+            } else {
+                needle_len
+            };
+            let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
+            let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
+            match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
+                Some(idx) => haystack.add(idx) as *mut c_char,
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
+    if haystack.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+    if needle.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return haystack as *mut c_char;
+    }
+
+    let hay_known = known_remaining(haystack as usize);
+    let needle_known = known_remaining(needle as usize);
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        haystack as usize,
+        0,
+        false,
+        hay_known.is_none() && needle_known.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let hay_bound = hay_known;
+    let needle_bound = needle_known;
+
+    // SAFETY: known allocations are scanned only within their live extent;
+    // untracked strict-mode strings preserve raw libc scan semantics.
+    let (out, span, adverse) = unsafe {
+        let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+        let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+        let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
+        let n_slice_len = if needle_terminated {
+            needle_len + 1
+        } else {
+            needle_len
+        };
+        let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
+        let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
+        match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
+            Some(idx) => (
+                haystack.add(idx) as *mut c_char,
+                hay_len,
+                !hay_terminated || !needle_terminated,
+            ),
+            None => (
+                std::ptr::null_mut(),
+                hay_len,
+                !hay_terminated || !needle_terminated,
+            ),
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, span),
+        adverse,
+    );
+    out
+}
+
+// ---------------------------------------------------------------------------
+// strerror
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "owned-tls-cache")]
+static STRERROR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 256]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static STRERROR_BUF: Box<std::cell::RefCell<[u8; 256]>> =
+        Box::new(std::cell::RefCell::new([0u8; 256]));
+}
+
+pub(crate) fn rendered_strerror_message(errnum: c_int) -> (String, bool) {
+    // Use `strerrordesc_np`'s description table, which is complete and glibc-exact
+    // across the full Linux errno range (the previous core table was missing the
+    // high errnos 102..=133 — ENETRESET, EHOSTUNREACH, ESTALE, EDQUOT, EOWNERDEAD,
+    // ERFKILL, EHWPOISON, etc. — and rendered them as "Unknown error N"). Found by
+    // strerror_scan_differential_fuzz.
+    let desc = strerrordesc_np(errnum);
+    if desc.is_null() {
+        (format!("Unknown error {errnum}"), true)
+    } else {
+        // SAFETY: strerrordesc_np returns a static NUL-terminated string or null.
+        let msg = unsafe { std::ffi::CStr::from_ptr(desc) }
+            .to_string_lossy()
+            .into_owned();
+        (msg, false)
+    }
+}
+
+/// POSIX `strerror` -- returns a pointer to a string describing the error number.
+///
+/// The returned string is stored in a thread-local buffer and must not be freed.
+///
+/// # Safety
+///
+/// The returned pointer is valid until the next call to `strerror` on the same thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strerror(errnum: c_int) -> *mut c_char {
+    let (msg, _) = rendered_strerror_message(errnum);
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRERROR_BUF_OWNED_TLS.with(|buf| {
+            let msg_bytes = msg.as_bytes();
+            let copy_len = msg_bytes.len().min(buf.len() - 1);
+            buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
+            buf[copy_len] = 0;
+            buf.as_mut_ptr() as *mut c_char
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRERROR_BUF
+            .try_with(|buf_cell| {
+                let mut buf = buf_cell.borrow_mut();
+                let msg_bytes = msg.as_bytes();
+                let copy_len = msg_bytes.len().min(buf.len() - 1);
+                buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
+                buf[copy_len] = 0;
+                buf.as_ptr() as *mut c_char
+            })
+            .unwrap_or(std::ptr::null_mut())
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static STRSIGNAL_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 64]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static STRSIGNAL_BUF: Box<std::cell::RefCell<[u8; 64]>> =
+        Box::new(std::cell::RefCell::new([0u8; 64]));
+}
+
+fn with_strsignal_buffer<R>(callback: impl FnOnce(&mut [u8; 64]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        STRSIGNAL_BUF_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        STRSIGNAL_BUF.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            callback(&mut buf)
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strerror_r
+// ---------------------------------------------------------------------------
+
+/// GNU `strerror_r` -- returns a pointer to the error message for `errnum`.
+///
+/// This is glibc's default (`_GNU_SOURCE`) variant and the one exported under
+/// the bare `strerror_r` symbol: it returns a `char *`, NOT an `int`. For a
+/// known errno it returns a pointer to a static, immutable message string and
+/// leaves `buf` untouched (matching glibc, which hands back the static string
+/// and ignores `buf`); for an unknown errno it formats "Unknown error N" into
+/// `buf` (truncated to `buflen`) and returns `buf`. The XSI/POSIX
+/// int-returning variant is [`crate::stdlib_abi::__xpg_strerror_r`].
+///
+/// fl previously exported the XSI (int) behavior under this symbol, so a
+/// `_GNU_SOURCE` caller (the common case) read the int return as a pointer and
+/// got garbage. Verified against the host glibc.
+///
+/// # Safety
+///
+/// Caller must ensure `buf` is valid for `buflen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> *mut c_char {
+    // Known errno: return the static description pointer; `buf` is unused.
+    let desc = strerrordesc_np(errnum);
+    if !desc.is_null() {
+        return desc as *mut c_char;
+    }
+    // Unknown errno: format "Unknown error N" into the caller buffer.
+    if buf.is_null() || buflen == 0 {
+        return buf;
+    }
+    let msg = format!("Unknown error {errnum}");
+    let msg_bytes = msg.as_bytes();
+    let copy_len = msg_bytes.len().min(buflen - 1);
+    // SAFETY: caller guarantees `buf` is valid for `buflen` bytes.
+    unsafe {
+        raw_memcpy_bytes(buf.cast::<u8>(), msg_bytes.as_ptr(), copy_len);
+        *buf.add(copy_len) = 0;
+    }
+    buf
+}
+
+// ---------------------------------------------------------------------------
+// memccpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `memccpy` -- copies bytes from `src` to `dst` until byte `c` is found
+/// or `n` bytes are copied.
+///
+/// Returns a pointer to the byte after `c` in `dst`, or null if `c` was not found.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memccpy(
+    dst: *mut c_void,
+    src: *const c_void,
+    c: c_int,
+    n: usize,
+) -> *mut c_void {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`copy_len == n`), byte-identical to the strict full body — core memccpy over
+    // `n` bytes, returning `dst+idx` past the copied `c` or null. Skips the membrane
+    // guard + decide + observe + stage-trace. Bounded-`n` op (fixed extent).
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, n) };
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        if n == 0 || dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: reentrant fallback -- simple byte-by-byte copy.
+        let c_byte = c as u8;
+        unsafe {
+            let s = src.cast::<u8>();
+            let d = dst.cast::<u8>();
+            for i in 0..n {
+                let b = std::ptr::read_volatile(s.add(i));
+                std::ptr::write_volatile(d.add(i), b);
+                if b == c_byte {
+                    return d.add(i + 1).cast();
+                }
+            }
+        }
+        return std::ptr::null_mut();
+    };
+
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = (!dst.is_null() && known_remaining(dst as usize).is_some())
+        || (!src.is_null() && known_remaining(src as usize).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    if n == 0 || dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        "memccpy",
+        n,
+        dst as usize,
+        known_remaining(dst as usize),
+        Some(src as usize),
+        known_remaining(src as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+
+    // SAFETY: `copy_len` is original `n` or clamped to known bounds.
+    let result = unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, copy_len) };
+
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, copy_len),
+        clamped,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// bzero
+// ---------------------------------------------------------------------------
+
+/// BSD `bzero` -- sets `n` bytes of `s` to zero.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bzero(s: *mut c_void, n: usize) {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`set_len == n`), byte-identical to the strict full body (`core::bzero` over
+    // `n`). Skips the membrane guard + decide + observe + stage-trace. Fixed-`n`
+    // write, mirroring the deployed `memset` fast path.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || s.is_null() {
+            return;
+        }
+        // raw_memset_bytes(.., 0, n) zeros exactly `n` bytes — byte-identical to the
+        // strict full body's `core::bzero` (same SIMD memset the reentrant fallback uses).
+        unsafe { raw_memset_bytes(s.cast::<u8>(), 0, n) };
+        return;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        if n == 0 || s.is_null() {
+            return;
+        }
+        // SAFETY: reentrant fallback.
+        unsafe {
+            raw_memset_bytes(s.cast::<u8>(), 0, n);
+        }
+        return;
+    };
+
+    let aligned = (s as usize) & 0x7 == 0;
+    let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    if n == 0 || s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        true,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(5, n),
+            true,
+        );
+        return;
+    }
+
+    let (set_len, clamped) = maybe_clamp_copy_len(
+        "bzero",
+        n,
+        s as usize,
+        known_remaining(s as usize),
+        None,
+        None,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+
+    // SAFETY: `set_len` is original `n` or clamped to known bounds.
+    unsafe {
+        let slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), set_len);
+        frankenlibc_core::string::bzero(slice, set_len);
+    }
+
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(5, set_len),
+        clamped,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// explicit_bzero
+// ---------------------------------------------------------------------------
+
+/// POSIX `explicit_bzero` -- like bzero but guaranteed not to be optimized away.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn explicit_bzero(s: *mut c_void, n: usize) {
+    // Delegates to bzero which already uses black_box internally.
+    // SAFETY: same contract as bzero.
+    unsafe {
+        bzero(s, n);
+    }
+}
+
+/// NetBSD `explicit_memset(s, c, n) -> *s` — `memset` variant
+/// guaranteed not to be optimized away. Companion to `explicit_bzero`
+/// for non-zero fill values.
+///
+/// # Safety
+///
+/// `s` must be valid for `n` bytes; `c` is interpreted as `unsigned
+/// char` and replicated across the buffer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn explicit_memset(s: *mut c_void, c: c_int, n: usize) -> *mut c_void {
+    // Route through our ABI memset so explicit_memset gets the same
+    // null handling, membrane accounting, and volatile byte path as memset.
+    let out = unsafe { memset(s, c, n) };
+    // Defeat dead-store elimination: ensure the compiler can't prove
+    // the write is unused. black_box pins the address through an
+    // optimization barrier.
+    std::hint::black_box(s);
+    out
+}
+
+/// C23 `memset_explicit(b, c, len) -> *b` — guaranteed non-elidable
+/// byte fill. NetBSD exposes this as an alias of [`explicit_memset`].
+///
+/// # Safety
+///
+/// `b` must be valid for `len` bytes; `c` is interpreted as `unsigned
+/// char` and replicated across the buffer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memset_explicit(b: *mut c_void, c: c_int, len: usize) -> *mut c_void {
+    unsafe { explicit_memset(b, c, len) }
+}
+
+// ---------------------------------------------------------------------------
+// bcmp
+// ---------------------------------------------------------------------------
+
+/// BSD `bcmp` -- compares `n` bytes of `s1` and `s2`. Returns 0 if equal.
+///
+/// # Safety
+///
+/// Caller must ensure `s1` and `s2` are valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+    if s1.is_null() || s2.is_null() {
+        return if s1 == s2 { 0 } else { 1 };
+    }
+
+    // SAFETY: caller contract for bcmp requires both pointers valid for `n` bytes.
+    unsafe {
+        let a = std::slice::from_raw_parts(s1.cast::<u8>(), n);
+        let b = std::slice::from_raw_parts(s2.cast::<u8>(), n);
+        frankenlibc_core::string::bcmp(a, b, n)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// bcopy
+// ---------------------------------------------------------------------------
+
+/// BSD `bcopy` -- copies `n` bytes from `src` to `dst` (handles overlap).
+///
+/// Note: argument order is (src, dst, n) unlike memcpy which is (dst, src, n).
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bcopy(src: *const c_void, dst: *mut c_void, n: usize) {
+    // bcopy is memmove with swapped argument order.
+    // SAFETY: same contract, delegates to memmove.
+    unsafe {
+        memmove(dst, src, n);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// swab
+// ---------------------------------------------------------------------------
+
+/// POSIX `swab` -- swaps adjacent bytes in pairs from `src` to `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is valid for `n` bytes and `dst` for `n` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, isize_n: isize) {
+    // POSIX swab takes ssize_t; negative values are a no-op.
+    if isize_n <= 0 {
+        return;
+    }
+    let n = isize_n as usize;
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`swap_len == n`), byte-identical to the strict body — core swab over `n`.
+    // Skips the membrane guard + decide + observe + stage-trace. Fixed-`n` write.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() {
+            return;
+        }
+        unsafe {
+            let s = std::slice::from_raw_parts(src.cast::<u8>(), n);
+            let d = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
+            frankenlibc_core::string::swab(s, d, n);
+        }
+        return;
+    }
+
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        if dst.is_null() || src.is_null() {
+            return;
+        }
+        // SAFETY: reentrant fallback.
+        unsafe {
+            let s = std::slice::from_raw_parts(src.cast::<u8>(), n);
+            let d = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
+            frankenlibc_core::string::swab(s, d, n);
+        }
+        return;
+    };
+
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = (!dst.is_null() && known_remaining(dst as usize).is_some())
+        || (!src.is_null() && known_remaining(src as usize).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(5, n),
+            true,
+        );
+        return;
+    }
+
+    let (swap_len, clamped) = maybe_clamp_copy_len(
+        "swab",
+        n,
+        dst as usize,
+        known_remaining(dst as usize),
+        Some(src as usize),
+        known_remaining(src as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+
+    // SAFETY: `swap_len` is original `n` or clamped to known bounds.
+    unsafe {
+        let s = std::slice::from_raw_parts(src.cast::<u8>(), swap_len);
+        let d = std::slice::from_raw_parts_mut(dst.cast::<u8>(), swap_len);
+        frankenlibc_core::string::swab(s, d, swap_len);
+    }
+
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(5, swap_len),
+        clamped,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// strsep
+// ---------------------------------------------------------------------------
+
+/// BSD `strsep` -- extracts the next token from `*stringp` delimited by `delim`.
+///
+/// Updates `*stringp` to point past the delimiter. Returns pointer to the token
+/// or null if `*stringp` is null.
+///
+/// # Safety
+///
+/// Caller must ensure `stringp` points to a valid `*char` pointer and `delim`
+/// is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char) -> *mut c_char {
+    if stringp.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller ensures stringp is valid.
+    let s = unsafe { *stringp };
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body's RETURN + `*stringp` update — scan s (unbounded) + delim (same ungated
+    // `known_remaining(delim)` bound), then core `strsep` with the post-delimiter
+    // `*stringp` advance. Skips stage_context + decide + observe + stage-trace.
+    if runtime_policy::strict_passthrough_active() {
+        if delim.is_null() {
+            unsafe { *stringp = std::ptr::null_mut() };
+            return s;
+        }
+        return unsafe {
+            // Strict: unbounded page-safe delim scan (valid delim is NUL-terminated),
+            // skipping the per-call fallback_remaining touch — same as the span fns.
+            let (delim_len, delim_term) = scan_c_string(delim, None);
+            if !delim_term {
+                return std::ptr::null_mut();
+            }
+            // 1-char delim (the common CSV/path case): a dedicated `scan_c_string_for_byte`
+            // scan — its None path now ORs target|NUL into ONE combined movemask per window
+            // with just 2 splats, vs set4's 5 (four redundant `==d` splats for `[d;4]`). The
+            // stale note below claimed for_byte did two separate movemasks; it no longer does.
+            if delim_len == 1 {
+                let dc = *delim.cast::<u8>();
+                let (idx, found, _) = scan_c_string_for_byte(s, dc, None);
+                let stop = s.add(idx).cast::<u8>();
+                if found {
+                    *stop = 0;
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            // Small delim set (2..=4): FUSED single early-stopping pass over `s`
+            // instead of the full `scan_c_string(s)` pre-scan + core membership
+            // pass. Byte-identical to `core::str::strsep` (first delim → NUL-write
+            // it, advance `*stringp` past it; no delim → NUL stop → `*stringp` null;
+            // returned token = original `s` either way).
+            if (2..=4).contains(&delim_len) {
+                let d = delim.cast::<u8>();
+                let set = match delim_len {
+                    1 => [*d, *d, *d, *d],
+                    2 => [*d, *d.add(1), *d, *d.add(1)],
+                    3 => [*d, *d.add(1), *d.add(2), *d.add(2)],
+                    _ => [*d, *d.add(1), *d.add(2), *d.add(3)],
+                };
+                let idx = scan_c_string_for_set4(s, set, false);
+                let stop = s.add(idx).cast::<u8>();
+                if *stop != 0 {
+                    *stop = 0; // replace the delimiter with NUL (matches core strsep)
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB first-delimiter
+            // scan (strcspn direction) — O(n) tokenization, classifier body scan.
+            // 5..=64-byte delim set: `pcmpistr*` first — same per-token argument as
+            // strtok, and strsep is the tokenizer that runs the tightest loop.
+            #[cfg(target_arch = "x86_64")]
+            if (5..=CMPISTRI_MAX_NEEDLES * 16).contains(&delim_len)
+                && let Some(idx) = span_scan_cmpistri(s, delim, true)
+            {
+                let stop = s.add(idx).cast::<u8>();
+                if *stop != 0 {
+                    *stop = 0;
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            #[cfg(target_arch = "x86_64")]
+            if delim_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(delim.cast::<u8>(), delim_len)
+            {
+                let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
+                let idx = scan_c_string_pshufb(s, &lo16, &hi16, true);
+                let stop = s.add(idx).cast::<u8>();
+                if *stop != 0 {
+                    *stop = 0;
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            let (s_len, s_term) = scan_c_string(s, None);
+            let s_slice_len = if s_term { s_len + 1 } else { s_len };
+            let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
+            let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_len + 1);
+            match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
+                Some(idx) => {
+                    *stringp = s.add(idx + 1);
+                    s
+                }
+                None => {
+                    *stringp = std::ptr::null_mut();
+                    s
+                }
+            }
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
+    if delim.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        // No delimiters -- entire string is token, *stringp = NULL.
+        unsafe { *stringp = std::ptr::null_mut() };
+        return s;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        true,
+        known_remaining(s as usize).is_none() && known_remaining(delim as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let delim_bound = known_remaining(delim as usize);
+
+    // SAFETY: bounded scan.
+    let (result, span, adverse) = unsafe {
+        let (s_len, s_term) = scan_c_string(s, s_bound);
+        let (delim_len, delim_term) = scan_c_string(delim, delim_bound);
+        let s_slice_len = if s_term { s_len + 1 } else { s_len };
+        if !delim_term {
+            (std::ptr::null_mut(), s_len.saturating_add(delim_len), true)
+        } else {
+            let delim_slice_len = delim_len + 1;
+            let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
+            let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_slice_len);
+            match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
+                Some(idx) => {
+                    // Update *stringp to point past the delimiter.
+                    *stringp = s.add(idx + 1);
+                    (s, s_len, s_bound.is_some())
+                }
+                None => {
+                    *stringp = std::ptr::null_mut();
+                    // Return the remaining string as the last token.
+                    (s, s_len, s_bound.is_some())
+                }
+            }
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strlcpy
+// ---------------------------------------------------------------------------
+
+/// BSD `strlcpy` -- copies `src` into `dst` of size `dstsize`, always NUL-terminating.
+///
+/// Returns the length of `src` (not counting NUL).
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `dstsize` bytes and `src` is NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: usize) -> usize {
+    // Strict-mode fast path (DEFAULT deployed) for the common case (valid dst): strict
+    // passthrough has no clamp, so this is byte-identical to the strict full body —
+    // scan src, copy `min(strlen, dstsize-1)` + NUL via the core, return strlen(src).
+    // Skips stage_context + decide + observe + stage-trace. The null/zero-size edges
+    // fall through to the full path (which returns strlen(src) per BSD contract).
+    if !dst.is_null()
+        && !src.is_null()
+        && dstsize != 0
+        && runtime_policy::strict_passthrough_active()
+    {
+        return unsafe {
+            // Inline core strlcpy using the already-scanned src_len (dstsize != 0
+            // guaranteed) — avoids the core's redundant SECOND strlen(src). Byte-
+            // identical: copy min(src_len, dstsize-1) chars + NUL, return src_len.
+            let (src_len, _src_terminated) = scan_c_string(src, None);
+            let copy_len = src_len.min(dstsize - 1);
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
+            }
+            *dst.cast::<u8>().add(copy_len) = 0;
+            src_len
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+    if src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+    if dst.is_null() || dstsize == 0 {
+        // Must still return strlen(src) even if dst is null/zero-sized.
+        let src_bound = known_remaining(src as usize);
+        let (src_len, _) = unsafe { scan_c_string(src, src_bound) };
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return src_len;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        dstsize,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, dstsize),
+            true,
+        );
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
+    if dst_clamped {
+        record_truncation("strlcpy", dstsize, dst_limit, dst as usize);
+    }
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
+        let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dst_limit);
+        let r = frankenlibc_core::string::str::strlcpy(dst_slice, src_slice);
+        (r, src_len.max(dst_limit))
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        src_bound.is_some() || dst_clamped,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strlcat
+// ---------------------------------------------------------------------------
+
+/// BSD `strlcat` -- appends `src` to `dst` of size `dstsize`, always NUL-terminating.
+///
+/// Returns the total length that would have resulted without truncation.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `dstsize` bytes and both are NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: usize) -> usize {
+    // Strict-mode fast path (DEFAULT deployed) for the common case (valid dst): strict
+    // passthrough has no clamp (`dst_limit == dstsize`), byte-identical to the strict
+    // full body — scan src, core strlcat into `dst[..dstsize]`, return the BSD total
+    // length. Skips stage_context + decide + observe + stage-trace. null/zero-size
+    // edges fall through to the full path.
+    if !dst.is_null()
+        && !src.is_null()
+        && dstsize != 0
+        && runtime_policy::strict_passthrough_active()
+    {
+        return unsafe {
+            // Inline core strlcat using the already-scanned src_len + a BOUNDED dst
+            // scan — avoids the core's redundant SECOND strlen(src). Byte-identical to
+            // the core BSD semantics: if dst has no NUL in dstsize bytes, return
+            // dstsize + src_len; else append min(src_len, dstsize-dest_len-1) + NUL and
+            // return dest_len + src_len.
+            let (src_len, _src_terminated) = scan_c_string(src, None);
+            let (dest_len, dest_terminated) = scan_c_string(dst.cast_const(), Some(dstsize));
+            if !dest_terminated {
+                return dstsize + src_len;
+            }
+            let available = dstsize - dest_len - 1;
+            let copy_len = src_len.min(available);
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(
+                    src.cast::<u8>(),
+                    dst.cast::<u8>().add(dest_len),
+                    copy_len,
+                );
+            }
+            *dst.cast::<u8>().add(dest_len + copy_len) = 0;
+            dest_len + src_len
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+    if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+    if dstsize == 0 {
+        let src_bound = known_remaining(src as usize);
+        let (src_len, _) = unsafe { scan_c_string(src, src_bound) };
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return dstsize + src_len;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        dstsize,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, dstsize),
+            true,
+        );
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
+    if dst_clamped {
+        record_truncation("strlcat", dstsize, dst_limit, dst as usize);
+    }
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
+        let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dst_limit);
+        let r = frankenlibc_core::string::str::strlcat(dst_slice, src_slice);
+        (r, src_len + dst_limit)
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        src_bound.is_some() || dst_clamped,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strcoll
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcoll` -- compares two strings using locale collation order.
+///
+/// In the C/POSIX locale, this is identical to `strcmp`.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int {
+    // A named LC_COLLATE with rules collates by the locale's weights.
+    if let Some(tables) = crate::locale_abi::named_collate()
+        && !s1.is_null()
+        && !s2.is_null()
+    {
+        if std::ptr::eq(s1, s2) {
+            return 0;
+        }
+        let (bound1, bound2) = if runtime_policy::strict_passthrough_active() {
+            (None, None)
+        } else {
+            (known_remaining(s1 as usize), known_remaining(s2 as usize))
+        };
+        // SAFETY: page-safe scan (bounded by live/quarantined extent in hardened mode)
+        // avoids std::ffi::CStr::from_ptr's PLT hop into exported strlen_validating.
+        let (a, b) = unsafe {
+            let (len1, _) = scan_c_string(s1, bound1);
+            let (len2, _) = scan_c_string(s2, bound2);
+            (
+                std::slice::from_raw_parts(s1.cast::<u8>(), len1),
+                std::slice::from_raw_parts(s2.cast::<u8>(), len2),
+            )
+        };
+        return tables.compare(a, b);
+    }
+    // FrankenLibC uses the C/POSIX locale, where collation order IS byte order, so
+    // strcoll is exactly strcmp (the core `strcoll` was already just `strcmp`).
+    // Delegating to the strcmp ABI gives collation the fused single-pass
+    // SWAR/32-byte-SIMD scan with early exit, instead of the old two full
+    // length scans (scan_c_string x2) plus a separate compare pass — that triple
+    // pass made strcoll ~4.4x slower than glibc strcoll on equal strings.
+    // NOTE (2026-07-12): inlining strcmp's strict fast path here to drop the PLT
+    // hop was measured NEUTRAL (same-fleet A/B: fl ~8.3ns both) — the residual
+    // ~2.2x vs glibc on a 45-byte differ-at-end compare is the strcmp SWAR-vs-AVX2
+    // ceiling at small n, NOT the call. Kept the simple delegation.
+    unsafe { strcmp(s1, s2) }
+}
+
+// ---------------------------------------------------------------------------
+// strxfrm
+// ---------------------------------------------------------------------------
+
+/// POSIX `strxfrm` -- transforms `src` for locale-aware comparison into `dst`.
+///
+/// In C/POSIX locale, this is a plain copy. Returns the length needed
+/// (not counting NUL).
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `n` bytes and `src` is NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strxfrm(dst: *mut c_char, src: *const c_char, n: usize) -> usize {
+    // A named LC_COLLATE with rules: the locale's sort key, so that strcmp
+    // on keys orders like strcoll.
+    if let Some(tables) = crate::locale_abi::named_collate()
+        && !src.is_null()
+    {
+        // SAFETY: strxfrm's contract: `src` is NUL-terminated.
+        let key = tables.sort_key(unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes());
+        if !dst.is_null() && key.len() < n {
+            // SAFETY: the caller provides `n` writable bytes at `dst`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(key.as_ptr(), dst.cast::<u8>(), key.len());
+                *dst.add(key.len()) = 0;
+            }
+        }
+        return key.len();
+    }
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `src_bound ==
+    // None`, byte-identical to the strict body — scan src; if dst null / n==0 return
+    // strlen(src), else core `strxfrm` into `dst[..n]`. Skips the membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        if src.is_null() {
+            return 0;
+        }
+        return unsafe {
+            let (src_len, _src_terminated) = scan_c_string(src, None);
+            if dst.is_null() || n == 0 {
+                src_len
+            } else {
+                // Inline the core strxfrm (C/POSIX-locale identity copy) using the
+                // already-scanned `src_len` — avoids the core's redundant SECOND
+                // `strlen(src)`. Byte-identical: copy min(src_len, n) chars, then
+                // NUL-terminate iff there is room (copy_len < n). Returns src_len.
+                let copy_len = src_len.min(n);
+                if copy_len > 0 {
+                    std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
+                }
+                if copy_len < n {
+                    *dst.cast::<u8>().add(copy_len) = 0;
+                }
+                src_len
+            }
+        };
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
+    if src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            true,
+        );
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
+        if dst.is_null() || n == 0 {
+            // Just return strlen(src).
+            (src_len, src_len)
+        } else {
+            let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
+            let r = frankenlibc_core::string::str::strxfrm(dst_slice, src_slice, n);
+            (r, src_len.max(n))
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        src_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// index
+// ---------------------------------------------------------------------------
+
+/// BSD `index` -- equivalent to `strchr`.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn index(s: *const c_char, c: c_int) -> *mut c_char {
+    // SAFETY: same contract as strchr.
+    unsafe { strchr(s, c) }
+}
+
+// ---------------------------------------------------------------------------
+// rindex
+// ---------------------------------------------------------------------------
+
+/// BSD `rindex` -- equivalent to `strrchr`.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
+    // SAFETY: same contract as strrchr.
+    unsafe { strrchr(s, c) }
+}
+
+// ---------------------------------------------------------------------------
+// regex — Implemented (native POSIX regex.h via frankenlibc-core)
+// ---------------------------------------------------------------------------
+
+// glob/globfree — Implemented (native POSIX glob via frankenlibc-core)
+
+/// Magic value to identify our regex_t vs a glibc-compiled one.
+const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
+
+const RE_BACKSLASH_ESCAPE_IN_LISTS: u64 = 1 << 0;
+const RE_BK_PLUS_QM: u64 = 1 << 1;
+const RE_CHAR_CLASSES: u64 = 1 << 2;
+const RE_CONTEXT_INDEP_OPS: u64 = 1 << 4;
+const RE_CONTEXT_INVALID_OPS: u64 = 1 << 5;
+const RE_INVALID_INTERVAL_ORD: u64 = 1 << 21;
+const RE_INTERVALS: u64 = 1 << 9;
+const RE_NEWLINE_ALT: u64 = 1 << 11;
+const RE_NO_BK_REFS: u64 = 1 << 14;
+const RE_CONTEXT_INVALID_DUP: u64 = 1 << 24;
+const RE_UNMATCHED_RIGHT_PAREN_ORD: u64 = 1 << 17;
+const RE_DOT_NEWLINE: u64 = 1 << 6;
+const RE_DOT_NOT_NULL: u64 = 1 << 7;
+const RE_HAT_LISTS_NOT_NEWLINE: u64 = 1 << 8;
+const RE_LIMITED_OPS: u64 = 1 << 10;
+const RE_NO_BK_BRACES: u64 = 1 << 12;
+const RE_NO_BK_PARENS: u64 = 1 << 13;
+const RE_NO_BK_VBAR: u64 = 1 << 15;
+const RE_NO_EMPTY_RANGES: u64 = 1 << 16;
+const RE_NO_GNU_OPS: u64 = 1 << 19;
+const RE_ICASE: u64 = 1 << 22;
+const RE_NO_SUB: u64 = 1 << 25;
+const REGS_ALLOCATED_SHIFT: u8 = 1;
+const REGS_ALLOCATED_MASK: u8 = 0b11 << REGS_ALLOCATED_SHIFT;
+const REGS_UNALLOCATED: u8 = 0;
+const REGS_REALLOCATE: u8 = 1;
+const REGEX_FLAG_FASTMAP_ACCURATE: u8 = 1 << 3;
+const REGEX_FLAG_NO_SUB: u8 = 1 << 4;
+const REGEX_FLAG_NOT_BOL: u8 = 1 << 5;
+const REGEX_FLAG_NOT_EOL: u8 = 1 << 6;
+const REGEX_FLAG_NEWLINE_ANCHOR: u8 = 1 << 7;
+
+#[repr(C)]
+struct RegexHandle {
+    magic: u64,
+    compiled: *mut frankenlibc_core::string::regex::CompiledRegex,
+    /// `re_compile_pattern` only: the pattern and cflags, so the re_search family
+    /// can honour a caller-toggled `newline_anchor` bit (GNU reads it at match
+    /// time; sed sets it per regex for `s///M`). Empty for `regcomp` handles.
+    pattern: Vec<u8>,
+    cflags: c_int,
+    /// Lazily compiled `cflags ^ REG_NEWLINE_ANCHOR` variant of `compiled`.
+    toggled: std::sync::atomic::AtomicPtr<frankenlibc_core::string::regex::CompiledRegex>,
+}
+
+/// glibc's `__re_error_msgid` text for a compile error code, NUL-terminated
+/// (what `re_compile_pattern` returns; sed prints it verbatim).
+fn regex_error_cstr(code: c_int) -> &'static core::ffi::CStr {
+    use frankenlibc_core::string::regex;
+    match code {
+        regex::REG_ECOLLATE => c"Invalid collation character",
+        regex::REG_ECTYPE => c"Invalid character class name",
+        regex::REG_EESCAPE => c"Trailing backslash",
+        regex::REG_ESUBREG => c"Invalid back reference",
+        regex::REG_EBRACK => c"Unmatched [, [^, [:, [., or [=",
+        regex::REG_EPAREN => c"Unmatched ( or \\(",
+        regex::REG_EBRACE => c"Unmatched \\{",
+        regex::REG_BADBR => c"Invalid content of \\{\\}",
+        regex::REG_ERANGE => c"Invalid range end",
+        regex::REG_ESPACE => c"Memory exhausted",
+        regex::REG_BADRPT => c"Invalid preceding regular expression",
+        regex::REG_EEND => c"Premature end of regular expression",
+        regex::REG_ESIZE => c"Regular expression too big",
+        regex::REG_ERPAREN => c"Unmatched ) or \\)",
+        _ => c"Invalid regular expression",
+    }
+}
+
+#[repr(C)]
+struct RegexBufferLayout {
+    buffer: *mut c_void,
+    allocated: libc::c_long,
+    used: libc::c_long,
+    syntax: u64,
+    fastmap: *mut c_char,
+    translate: *mut u8,
+    re_nsub: usize,
+    flags: u8,
+    reserved: [u8; 7],
+}
+
+#[repr(C)]
+struct LegacyReRegisters {
+    num_regs: usize,
+    start: *mut c_int,
+    end: *mut c_int,
+}
+
+fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    let mut cflags = 0;
+    let uses_extended_syntax = syntax & (RE_NO_BK_BRACES | RE_NO_BK_PARENS | RE_NO_BK_VBAR) != 0
+        && syntax & RE_BK_PLUS_QM == 0
+        && syntax & RE_LIMITED_OPS == 0;
+    if uses_extended_syntax {
+        cflags |= regex::REG_EXTENDED;
+    }
+    if syntax & RE_ICASE != 0 {
+        cflags |= regex::REG_ICASE;
+    }
+    if syntax & RE_NO_SUB != 0 {
+        cflags |= regex::REG_NOSUB;
+    }
+    if syntax & RE_DOT_NOT_NULL == 0 {
+        cflags |= regex::REG_DOT_NUL;
+    }
+    if syntax & RE_DOT_NEWLINE == 0 {
+        cflags |= regex::REG_DOT_NOT_NEWLINE;
+    }
+    if syntax & RE_HAT_LISTS_NOT_NEWLINE != 0 {
+        cflags |= regex::REG_LIST_NOT_NEWLINE;
+    }
+    if uses_extended_syntax {
+        if syntax & RE_CONTEXT_INVALID_OPS == 0 {
+            cflags |= if syntax & RE_CONTEXT_INDEP_OPS != 0 {
+                regex::REG_CONTEXT_INDEP_OPS
+            } else {
+                regex::REG_LEADING_OPS_LITERAL
+            };
+        }
+        if syntax & RE_INVALID_INTERVAL_ORD != 0 {
+            cflags |= regex::REG_INVALID_INTERVAL_ORD;
+        }
+    }
+    if syntax & RE_INTERVALS == 0 {
+        cflags |= regex::REG_NO_INTERVALS;
+    }
+    // BRE without RE_BK_PLUS_QM (e.g. the default syntax 0, which coreutils
+    // tac uses for -r separators): unescaped `+`/`?` are the operators.
+    if !uses_extended_syntax && syntax & (RE_BK_PLUS_QM | RE_LIMITED_OPS) == 0 {
+        cflags |= regex::REG_PLUS_QM_OPS;
+    }
+    if syntax & RE_NO_BK_REFS != 0 {
+        cflags |= regex::REG_NO_BK_REFS;
+    }
+    if !uses_extended_syntax && syntax & RE_CONTEXT_INVALID_DUP == 0 {
+        cflags |= regex::REG_DUP_STACKS;
+    }
+    // Unmatched close paren: ordinary under RE_UNMATCHED_RIGHT_PAREN_ORD,
+    // else "Unmatched ) or \)" (coreutils expr).
+    match (
+        uses_extended_syntax,
+        syntax & RE_UNMATCHED_RIGHT_PAREN_ORD != 0,
+    ) {
+        (true, false) => cflags |= regex::REG_RPAREN_ERROR,
+        (false, true) => cflags |= regex::REG_RPAREN_ORD,
+        _ => {}
+    }
+    if syntax & RE_NEWLINE_ALT != 0 {
+        cflags |= regex::REG_NEWLINE_ALT;
+    }
+    // Without RE_CHAR_CLASSES (the Emacs syntax m4 uses), `[:` in a bracket
+    // is literal: m4 compiles bison's skeleton regex `[^][:]` with it.
+    if syntax & RE_CHAR_CLASSES == 0 {
+        cflags |= regex::REG_NO_CHAR_CLASSES;
+    }
+    if syntax & RE_NO_EMPTY_RANGES == 0 {
+        cflags |= regex::REG_EMPTY_RANGES;
+    }
+    if syntax & RE_BACKSLASH_ESCAPE_IN_LISTS != 0 {
+        cflags |= regex::REG_BACKSLASH_IN_LISTS;
+    }
+    if syntax & RE_NO_GNU_OPS != 0 {
+        cflags |= regex::REG_NO_GNU_OPS;
+    }
+    if !uses_extended_syntax && syntax & RE_LIMITED_OPS != 0 {
+        cflags |= regex::REG_LIMITED_OPS;
+    }
+    cflags
+}
+
+unsafe fn regex_buffer_layout(buffer: *mut c_void) -> Option<&'static mut RegexBufferLayout> {
+    if buffer.is_null() {
+        return None;
+    }
+    Some(unsafe { &mut *(buffer as *mut RegexBufferLayout) })
+}
+
+unsafe fn regex_compiled_from_buffer(
+    buffer: *const c_void,
+) -> Option<&'static frankenlibc_core::string::regex::CompiledRegex> {
+    if buffer.is_null() {
+        return None;
+    }
+    let layout = unsafe { &*(buffer as *const RegexBufferLayout) };
+    let handle = layout.buffer as *const RegexHandle;
+    if handle.is_null() {
+        return None;
+    }
+    let handle = unsafe { &*handle };
+    if handle.magic != FRANKEN_REGEX_MAGIC || handle.compiled.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.compiled })
+}
+
+/// The compiled regex and eflags a GNU `re_search`/`re_match` call must use: the
+/// buffer's `newline_anchor`, `not_bol` and `not_eol` bits are read at match time,
+/// as glibc does, so a caller may flip them after `re_compile_pattern`.
+unsafe fn regex_compiled_for_search(
+    buffer: *const c_void,
+) -> Option<(
+    &'static frankenlibc_core::string::regex::CompiledRegex,
+    c_int,
+)> {
+    use frankenlibc_core::string::regex;
+    use std::sync::atomic::Ordering;
+
+    let base = unsafe { regex_compiled_from_buffer(buffer) }?;
+    let layout = unsafe { &*(buffer as *const RegexBufferLayout) };
+    let mut eflags = 0;
+    if layout.flags & REGEX_FLAG_NOT_BOL != 0 {
+        eflags |= regex::REG_NOTBOL;
+    }
+    if layout.flags & REGEX_FLAG_NOT_EOL != 0 {
+        eflags |= regex::REG_NOTEOL;
+    }
+    let handle = unsafe { &*(layout.buffer as *const RegexHandle) };
+    let want_anchor = layout.flags & REGEX_FLAG_NEWLINE_ANCHOR != 0;
+    if handle.pattern.is_empty() || base.newline_mode() == want_anchor {
+        return Some((base, eflags));
+    }
+    let mut toggled = handle.toggled.load(Ordering::Acquire);
+    if toggled.is_null() {
+        let Ok(variant) = regex::regex_compile_bytes_collated(
+            &handle.pattern,
+            handle.cflags ^ regex::REG_NEWLINE_ANCHOR,
+            regex_collation_for(&handle.pattern),
+        ) else {
+            return Some((base, eflags));
+        };
+        let fresh = Box::into_raw(variant);
+        toggled = match handle.toggled.compare_exchange(
+            core::ptr::null_mut(),
+            fresh,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => fresh,
+            Err(winner) => {
+                // SAFETY: `fresh` was never published.
+                let _ = unsafe { Box::from_raw(fresh) };
+                winner
+            }
+        };
+    }
+    Some((unsafe { &*toggled }, eflags))
+}
+
+/// Initialize a `regex_t` whose prior contents are indeterminate.
+///
+/// POSIX `regcomp` takes uninitialized storage (the normal `regex_t re;` on the
+/// stack), so it must never interpret what is already there. Releasing it
+/// first dereferenced stack garbage and SIGSEGV'd inside `regcomp`
+/// (bd-rc0923-epic-eeuy4f.4 corpus finding). Recompiling without `regfree`
+/// leaks the old compile, exactly as glibc does.
+fn regex_reset_uninitialized(layout: &mut RegexBufferLayout) {
+    layout.buffer = core::ptr::null_mut();
+    layout.allocated = 0;
+    layout.used = 0;
+    layout.syntax = 0;
+    layout.fastmap = core::ptr::null_mut();
+    layout.translate = core::ptr::null_mut();
+    layout.re_nsub = 0;
+    layout.flags = 0;
+    layout.reserved = [0; 7];
+}
+
+unsafe fn regex_release_buffer(layout: &mut RegexBufferLayout) {
+    let handle_ptr = layout.buffer as *mut RegexHandle;
+    if !handle_ptr.is_null() {
+        // SAFETY: handle_ptr was allocated via Box::into_raw in regcomp/re_compile_pattern.
+        let handle = unsafe { Box::from_raw(handle_ptr) };
+        if !handle.compiled.is_null() {
+            // SAFETY: compiled was allocated via Box::into_raw during compilation.
+            let _ = unsafe { Box::from_raw(handle.compiled) };
+        }
+        let toggled = handle.toggled.load(std::sync::atomic::Ordering::Acquire);
+        if !toggled.is_null() {
+            // SAFETY: published by regex_compiled_for_search via Box::into_raw.
+            let _ = unsafe { Box::from_raw(toggled) };
+        }
+    }
+
+    layout.buffer = core::ptr::null_mut();
+    layout.allocated = 0;
+    layout.used = 0;
+    layout.syntax = 0;
+    layout.fastmap = core::ptr::null_mut();
+    layout.translate = core::ptr::null_mut();
+    layout.re_nsub = 0;
+    layout.flags = 0;
+    layout.reserved = [0; 7];
+}
+
+fn regex_set_regs_allocated(flags: &mut u8, value: u8) {
+    *flags =
+        (*flags & !REGS_ALLOCATED_MASK) | ((value << REGS_ALLOCATED_SHIFT) & REGS_ALLOCATED_MASK);
+}
+
+fn legacy_regex_concat<'a>(
+    string1: *const c_char,
+    size1: c_int,
+    string2: *const c_char,
+    size2: c_int,
+) -> Result<std::borrow::Cow<'a, [u8]>, c_int> {
+    if size1 < 0 || size2 < 0 {
+        return Err(-2);
+    }
+
+    let size1 = size1 as usize;
+    let size2 = size2 as usize;
+    if size1 > 0 && string1.is_null() {
+        return Err(-2);
+    }
+    if size2 > 0 && string2.is_null() {
+        return Err(-2);
+    }
+
+    // One non-empty half (every `re_search`/`re_match` call): borrow it in place
+    // rather than copying the whole buffer on each call. SAFETY for both: the
+    // caller guarantees `size` readable bytes that outlive the call, and the
+    // callers keep the borrow inside their own frame.
+    if size1 == 0 {
+        return Ok(std::borrow::Cow::Borrowed(if size2 == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(string2 as *const u8, size2) }
+        }));
+    }
+    if size2 == 0 {
+        return Ok(std::borrow::Cow::Borrowed(unsafe {
+            core::slice::from_raw_parts(string1 as *const u8, size1)
+        }));
+    }
+
+    let mut haystack = Vec::with_capacity(size1 + size2);
+    if size1 > 0 {
+        // SAFETY: validated non-null above, length provided by caller contract.
+        haystack
+            .extend_from_slice(unsafe { core::slice::from_raw_parts(string1 as *const u8, size1) });
+    }
+    if size2 > 0 {
+        // SAFETY: validated non-null above, length provided by caller contract.
+        haystack
+            .extend_from_slice(unsafe { core::slice::from_raw_parts(string2 as *const u8, size2) });
+    }
+    Ok(std::borrow::Cow::Owned(haystack))
+}
+
+/// Copy a match into the caller's `re_registers`, managing their storage by the
+/// buffer's `regs_allocated` state exactly as glibc's `re_copy_regs` does:
+/// UNALLOCATED allocates `re_nsub + 2` fresh slots and switches the buffer to
+/// REALLOCATE; REALLOCATE grows a too-small array (sed reuses one `re_registers`
+/// across regexes of different group counts); FIXED uses the caller's array.
+/// Slots past the pattern's groups are set to -1.
+unsafe fn legacy_regex_write_regs(
+    buffer: *const c_void,
+    regs: *mut c_void,
+    matches: &[frankenlibc_core::string::regex::RegMatch],
+) {
+    if regs.is_null() || buffer.is_null() {
+        return;
+    }
+    let layout = unsafe { &mut *(buffer as *mut RegexBufferLayout) };
+    let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
+    let nregs = layout.re_nsub + 1;
+    let need = nregs + 1;
+    let bytes = need * core::mem::size_of::<c_int>();
+
+    match (layout.flags & REGS_ALLOCATED_MASK) >> REGS_ALLOCATED_SHIFT {
+        REGS_UNALLOCATED => {
+            let starts = unsafe { crate::malloc_abi::malloc(bytes) } as *mut c_int;
+            let ends = unsafe { crate::malloc_abi::malloc(bytes) } as *mut c_int;
+            if starts.is_null() || ends.is_null() {
+                unsafe {
+                    crate::malloc_abi::free(starts.cast());
+                    crate::malloc_abi::free(ends.cast());
+                }
+                return;
+            }
+            regs.start = starts;
+            regs.end = ends;
+            regs.num_regs = need;
+            regex_set_regs_allocated(&mut layout.flags, REGS_REALLOCATE);
+        }
+        REGS_REALLOCATE if need > regs.num_regs => {
+            let starts = unsafe { crate::malloc_abi::realloc(regs.start.cast(), bytes) };
+            if starts.is_null() {
+                return;
+            }
+            regs.start = starts as *mut c_int;
+            let ends = unsafe { crate::malloc_abi::realloc(regs.end.cast(), bytes) };
+            if ends.is_null() {
+                return;
+            }
+            regs.end = ends as *mut c_int;
+            regs.num_regs = need;
+        }
+        _ => {}
+    }
+    if regs.start.is_null() || regs.end.is_null() {
+        return;
+    }
+
+    for idx in 0..regs.num_regs {
+        let (so, eo) = match matches.get(idx) {
+            Some(m) if idx < nregs => (m.rm_so, m.rm_eo),
+            _ => (-1, -1),
+        };
+        unsafe {
+            *regs.start.add(idx) = so;
+            *regs.end.add(idx) = eo;
+        }
+    }
+}
+/// The engine flags the current locale implies: like glibc's regcomp, a
+/// pattern compiled under a UTF-8 LC_CTYPE matches whole characters.
+/// The locale's collation rules when `pattern` has a bracket expression,
+/// whose equivalence classes and ranges they define (glibc regcomp reads
+/// LC_COLLATE at compile time: in en_US.UTF-8 `[[=a=]]` matches à -- grep's
+/// equiv-classes test -- and `[a-z]` matches é).
+fn regex_collation_for(
+    pattern: &[u8],
+) -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
+    if pattern.contains(&b'[') {
+        crate::locale_abi::named_collate()
+    } else {
+        None
+    }
+}
+
+fn regex_locale_cflags() -> c_int {
+    if crate::locale_abi::mb_cur_max() > 1 {
+        frankenlibc_core::string::regex::REG_UTF8
+    } else {
+        0
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regcomp(
+    preg: *mut c_void,
+    pattern: *const c_char,
+    cflags: c_int,
+) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    if preg.is_null() || pattern.is_null() {
+        return regex::REG_BADPAT;
+    }
+
+    let Some(layout) = (unsafe { regex_buffer_layout(preg) }) else {
+        return regex::REG_BADPAT;
+    };
+    regex_reset_uninitialized(layout);
+
+    let Some(pat_bytes) = (unsafe { read_c_string_bytes_with_nul(pattern) }) else {
+        return regex::REG_BADPAT;
+    };
+
+    // Only the POSIX cflags reach the engine: its higher bits are fl-internal
+    // GNU-syntax selectors, and glibc ignores undefined regcomp flags.
+    let posix_cflags = (cflags
+        & (regex::REG_EXTENDED | regex::REG_ICASE | regex::REG_NEWLINE | regex::REG_NOSUB))
+        | regex_locale_cflags();
+    let pat_len = pat_bytes
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(pat_bytes.len());
+    let pat_bytes = &pat_bytes[..pat_len];
+    match regex::regex_compile_bytes_collated(
+        pat_bytes,
+        posix_cflags,
+        regex_collation_for(pat_bytes),
+    ) {
+        Ok(compiled) => {
+            let re_nsub = compiled.num_regs().saturating_sub(1);
+            let raw_ptr = Box::into_raw(compiled);
+            let handle = Box::new(RegexHandle {
+                magic: FRANKEN_REGEX_MAGIC,
+                compiled: raw_ptr,
+                pattern: Vec::new(),
+                cflags,
+                toggled: std::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            });
+
+            layout.buffer = Box::into_raw(handle).cast();
+            layout.allocated = core::mem::size_of::<RegexHandle>() as libc::c_long;
+            layout.used = layout.allocated;
+            layout.syntax = if cflags & regex::REG_EXTENDED != 0 {
+                RE_NO_BK_BRACES | RE_NO_BK_PARENS | RE_NO_BK_VBAR
+            } else {
+                0
+            };
+            layout.fastmap = core::ptr::null_mut();
+            layout.translate = core::ptr::null_mut();
+            layout.re_nsub = re_nsub;
+            layout.flags = 0;
+            if cflags & regex::REG_NOSUB != 0 {
+                layout.flags |= REGEX_FLAG_NO_SUB;
+            }
+            if cflags & regex::REG_NEWLINE != 0 {
+                layout.flags |= REGEX_FLAG_NEWLINE_ANCHOR;
+            }
+            regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
+            0
+        }
+        // glibc's regcomp reports an unmatched close paren as REG_EPAREN.
+        Err(regex::REG_ERPAREN) => regex::REG_EPAREN,
+        Err(code) => code,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regexec(
+    preg: *const c_void,
+    string: *const c_char,
+    nmatch: usize,
+    pmatch: *mut c_void,
+    eflags: c_int,
+) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    if preg.is_null() || string.is_null() {
+        return regex::REG_NOMATCH;
+    }
+    let Some(compiled) = (unsafe { regex_compiled_from_buffer(preg) }) else {
+        return regex::REG_BADPAT;
+    };
+
+    // REG_STARTEND (BSD/GNU): search `string[..rm_eo]` (embedded NULs allowed,
+    // no NUL terminator) for a match starting at or after rm_so. As in glibc,
+    // the bytes before rm_so stay context: `^` (REG_NEWLINE), `\<`, `\b` at
+    // rm_so see the byte before it, and REG_NOTBOL only concerns offset 0.
+    // Offsets come back relative to `string`. (rm_so/rm_eo are read regardless
+    // of nmatch, per the contract.)
+    if eflags & regex::REG_STARTEND != 0 && !pmatch.is_null() {
+        let first = unsafe { &*(pmatch as *const regex::RegMatch) };
+        let (so, eo) = (first.rm_so, first.rm_eo);
+        if so < 0 || eo < so {
+            return regex::REG_NOMATCH;
+        }
+        let (so, eo) = (so as usize, eo as usize);
+        // SAFETY: the caller guarantees `string[..eo]` is readable under the
+        // REG_STARTEND contract (no NUL scan).
+        let region = unsafe { core::slice::from_raw_parts(string as *const u8, eo) };
+        let exec_eflags = eflags & !regex::REG_STARTEND;
+
+        return if nmatch == 0 {
+            let mut dummy = [regex::RegMatch::default(); 1];
+            regex::regex_exec_bytes_from(compiled, region, so, &mut dummy, exec_eflags)
+        } else {
+            let pmatch_slice =
+                unsafe { core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch) };
+            regex::regex_exec_bytes_from(compiled, region, so, pmatch_slice, exec_eflags)
+        };
+    }
+
+    // Borrow the C string (INCL. its NUL, which the engine expects — same bytes as the
+    // old `read_c_string_bytes_with_nul`) instead of allocating a Vec copy on every call.
+    // That per-call alloc was part of deployed regexec's fixed overhead (the residual on
+    // the literal / dotstar fast paths). SAFETY: `string` is non-null (checked above) and
+    // NUL-terminated (C contract).
+    let input_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes_with_nul();
+
+    if nmatch == 0 || pmatch.is_null() {
+        // No submatch extraction needed: only the boolean rc is observable.
+        if regex::regex_is_match(compiled, input_bytes, eflags) {
+            0
+        } else {
+            regex::REG_NOMATCH
+        }
+    } else {
+        // Map pmatch to our RegMatch slice
+        let pmatch_slice =
+            unsafe { core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch) };
+        regex::regex_exec(compiled, input_bytes, pmatch_slice, eflags)
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regfree(preg: *mut c_void) {
+    if preg.is_null() {
+        return;
+    }
+    let Some(layout) = (unsafe { regex_buffer_layout(preg) }) else {
+        return;
+    };
+    unsafe { regex_release_buffer(layout) };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regerror(
+    errcode: c_int,
+    _preg: *const c_void,
+    errbuf: *mut c_char,
+    errbuf_size: usize,
+) -> usize {
+    use frankenlibc_core::string::regex;
+
+    let msg = regex::regex_error(errcode);
+    let msg_bytes = msg.as_bytes();
+    let needed = msg_bytes.len() + 1; // include null terminator
+
+    if !errbuf.is_null() && errbuf_size > 0 {
+        let copy_len = core::cmp::min(msg_bytes.len(), errbuf_size - 1);
+        unsafe {
+            core::ptr::copy_nonoverlapping(msg_bytes.as_ptr(), errbuf as *mut u8, copy_len);
+            *errbuf.add(copy_len) = 0; // null terminator
+        }
+    }
+
+    needed
+}
+
+const FNM_NOMATCH: c_int = 1;
+
+/// POSIX `fnmatch` — match a filename against a shell wildcard pattern.
+///
+/// Thin shim over [`frankenlibc_core::string::fnmatch::fnmatch_match`]
+/// (bd-fnm-2, epic bd-fnm-epic). The engine itself lives in core as a
+/// pure-safe pattern matcher operating on byte slices; this layer
+/// handles raw-pointer / NUL-terminated C string adaptation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fnmatch(
+    pattern: *const c_char,
+    string: *const c_char,
+    flags: c_int,
+) -> c_int {
+    if pattern.is_null() || string.is_null() {
+        return FNM_NOMATCH;
+    }
+    // Borrow the C strings directly (one strlen + a slice each) instead of
+    // `read_c_string_bytes`, which allocated a fresh Vec copy of BOTH the pattern and the
+    // string on EVERY call — the ~100 ns fixed overhead that made fnmatch 5-13x glibc
+    // regardless of pattern (even a plain literal). The matcher only reads the slices.
+    // SAFETY: both pointers are non-null (checked above) and NUL-terminated (C contract).
+    let pat_bytes = unsafe { core::ffi::CStr::from_ptr(pattern) }.to_bytes();
+    let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
+    let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
+    // Under collation rules (en_US.UTF-8) equivalence classes and ranges are
+    // collation-defined, even in an ASCII pattern: `[[=a=]]` matches "A" and
+    // `[B-a]` is empty (B sorts after a). glibc then reads the strings both
+    // as bytes and as characters and matches when either reading does, each
+    // with its own tables: the byte reading orders ranges by COLLSEQMB, where
+    // every non-ASCII byte has value 0 (so `[a-ö]` is empty there and
+    // `[à-é]?` matches "ß"), the character reading by COLLSEQWC.
+    if pat_bytes.contains(&b'[')
+        && (pat_bytes.windows(2).any(|w| w == b"[=") || pat_bytes.contains(&b'-'))
+        && crate::locale_abi::mb_cur_max() > 1
+        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
+        && let Some(tables) = crate::locale_abi::named_collate()
+    {
+        let bytes = |b: &[u8]| b.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
+        let matched = frankenlibc_core::string::fnmatch::fnmatch_wide(
+            &bytes(pat_bytes),
+            &bytes(str_bytes),
+            core_flags,
+            &ByteCollation(tables),
+        ) || fnmatch_by_characters(pat_bytes, str_bytes, core_flags, Some(tables))
+            == Some(true);
+        return if matched { 0 } else { FNM_NOMATCH };
+    }
+    if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
+        return 0;
+    }
+    // In a UTF-8 locale glibc 2.43 ALSO matches by characters: `?` and a
+    // bracket take one character and classes/case folding cover non-ASCII
+    // (gnulib test-fnmatch-3: fnmatch("x?y", "xüy") == 0). It reports a match
+    // when either reading matches -- measured: "?" and "??" both match "Ü",
+    // "???" does not; "[Ü][Ü]" matches "Ü" -- hence byte matching first and
+    // this only on a byte mismatch. Only relevant when a non-ASCII byte is
+    // present; invalid UTF-8 stays byte-only, as in glibc. Extended
+    // (FNM_EXTMATCH) patterns stay on the byte matcher.
+    if crate::locale_abi::mb_cur_max() > 1
+        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
+        && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
+        && let Some(matched) = fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None)
+    {
+        return if matched { 0 } else { FNM_NOMATCH };
+    }
+    FNM_NOMATCH
+}
+
+/// `fnmatch_wide` over the UTF-8 `pattern` and `string` in the active
+/// locale, with its collation rules `collate`; `None` when either is not
+/// valid UTF-8.
+fn fnmatch_by_characters(
+    pattern: &[u8],
+    string: &[u8],
+    flags: frankenlibc_core::string::fnmatch::FnmatchFlags,
+    collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
+) -> Option<bool> {
+    let p: Vec<u32> = core::str::from_utf8(pattern)
+        .ok()?
+        .chars()
+        .map(u32::from)
+        .collect();
+    let s: Vec<u32> = core::str::from_utf8(string)
+        .ok()?
+        .chars()
+        .map(u32::from)
+        .collect();
+    let ctype = LocaleWideCtype { collate };
+    Some(frankenlibc_core::string::fnmatch::fnmatch_wide(
+        &p, &s, flags, &ctype,
+    ))
+}
+
+/// The byte reading of fnmatch under collation rules (see `fnmatch`): each
+/// byte is one "character"; classes and case folding are ASCII-only, ranges
+/// use the single-byte COLLSEQMB values, and `[=x=]` the single-byte
+/// equivalence keys.
+struct ByteCollation(frankenlibc_core::locale::collate::CollateTables<'static>);
+
+impl frankenlibc_core::string::fnmatch::WideCtype for ByteCollation {
+    fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
+        LocaleWideCtype { collate: None }
+            .in_class(name, c)
+            .map(|hit| hit && c < 0x80)
+    }
+
+    fn fold(&self, c: u32) -> u32 {
+        if c < 0x80 {
+            u32::from((c as u8).to_ascii_lowercase())
+        } else {
+            c
+        }
+    }
+
+    fn has_collation(&self) -> bool {
+        true
+    }
+
+    fn equivalent(&self, a: u32, b: u32) -> bool {
+        let key = |c: u32| self.0.equivalence_key(&[u8::try_from(c).ok()?]);
+        a == b || key(a).is_some_and(|ka| key(b) == Some(ka))
+    }
+
+    fn collation_seq(&self, c: u32) -> Option<u32> {
+        self.0.collation_seq_byte(u8::try_from(c).ok()?)
+    }
+
+    /// glibc keys the text by the whole collating element starting at this
+    /// byte (yet consumes one byte): `[[=e=]]?` matches "é".
+    fn equivalent_at(&self, class: u32, text: &[u32], ti: usize) -> bool {
+        let rest: Vec<u8> = text[ti..].iter().take(16).map(|&b| b as u8).collect();
+        let Some(class_key) = u8::try_from(class)
+            .ok()
+            .and_then(|b| self.0.equivalence_key(&[b]))
+        else {
+            return class == text[ti];
+        };
+        self.0
+            .leading_equivalence_key(&rest)
+            .is_some_and(|(key, _)| key == class_key)
+    }
+}
+
+/// Wide-character classes, case folding and collation of the active locale,
+/// for `fnmatch_wide`.
+struct LocaleWideCtype {
+    collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
+}
+
+impl frankenlibc_core::string::fnmatch::WideCtype for LocaleWideCtype {
+    fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
+        let mut cname = [0u8; 16];
+        if name.len() >= cname.len() {
+            return None;
+        }
+        cname[..name.len()].copy_from_slice(name);
+        // SAFETY: `cname` is NUL-terminated (zero-initialised, name shorter).
+        let desc = unsafe { crate::wchar_abi::wctype(cname.as_ptr()) };
+        if desc == 0 {
+            return None;
+        }
+        // SAFETY: plain classification of a code point.
+        Some(unsafe { crate::wchar_abi::iswctype(c, desc) } != 0)
+    }
+
+    fn fold(&self, c: u32) -> u32 {
+        // SAFETY: plain case mapping of a code point.
+        unsafe { crate::wchar_abi::towlower(c) }
+    }
+
+    fn has_collation(&self) -> bool {
+        self.collate.is_some()
+    }
+
+    fn equivalent(&self, a: u32, b: u32) -> bool {
+        let Some(tables) = self.collate.as_ref() else {
+            return a == b;
+        };
+        let key = |c: u32| {
+            let mut buf = [0u8; 4];
+            tables.equivalence_key(char::from_u32(c)?.encode_utf8(&mut buf).as_bytes())
+        };
+        a == b || key(a).is_some_and(|ka| key(b) == Some(ka))
+    }
+
+    fn collation_seq(&self, c: u32) -> Option<u32> {
+        self.collate.as_ref()?.collation_seq(c)
+    }
+}
+
+// (BracketShape, classify_bracket, fnmatch_impl moved into
+// frankenlibc-core/src/string/fnmatch.rs by bd-fnm-1; the legacy
+// inline implementation that lived here was deleted by bd-fnm-2.)
+
+/// POSIX `glob` — expand pathname pattern.
+///
+/// Native implementation using frankenlibc-core's glob engine.
+/// glob_t layout on x86_64:
+///   offset 0: gl_pathc (size_t) — count of matched paths
+///   gl_pathv (char**) — null-terminated array of path strings
+///   gl_offs (size_t) — slots to reserve at start of gl_pathv
+///
+/// We define a minimal `#[repr(C)]` struct for the first three fields
+/// instead of using raw byte offsets.
+/// View over the caller's `glob_t`. Includes the GNU `GLOB_ALTDIRFUNC` function
+/// pointers (only read when that flag is set); the layout matches glibc's
+/// `<glob.h>` on x86_64 (`gl_flags` at offset 24, the five callbacks at 32..72).
+#[repr(C)]
+struct GlobT {
+    gl_pathc: usize,
+    gl_pathv: *mut *mut c_char,
+    gl_offs: usize,
+    gl_flags: c_int,
+    gl_closedir: Option<unsafe extern "C" fn(*mut c_void)>,
+    gl_readdir: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    gl_opendir: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
+    gl_lstat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+    gl_stat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+}
+
+const GLOB_ALTDIRFUNC: c_int = 0x200;
+
+/// A [`GlobFs`](frankenlibc_core::string::glob::GlobFs) backed by a caller's
+/// `GLOB_ALTDIRFUNC` callbacks (`gl_opendir`/`gl_readdir`/`gl_closedir`/`gl_stat`).
+struct AltDirGlobFs {
+    opendir: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
+    readdir: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    closedir: Option<unsafe extern "C" fn(*mut c_void)>,
+    stat: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+}
+
+/// Supply the passwd database home directory for bare-tilde expansion when the
+/// process has no usable `HOME`.  The core glob engine deliberately has no
+/// process-identity dependency, but glibc's public `glob` contract falls back
+/// to `getpwuid(getuid())->pw_dir` for `~` and `~/...`.
+fn glob_home_fallback_pattern(pattern: &[u8], flags: c_int) -> Option<Vec<u8>> {
+    use frankenlibc_core::string::glob::{GLOB_TILDE, GLOB_TILDE_CHECK};
+
+    if flags & (GLOB_TILDE | GLOB_TILDE_CHECK) == 0
+        || pattern.first() != Some(&b'~')
+        || !matches!(pattern.get(1), Some(b'/') | Some(0))
+        || matches!(std::env::var("HOME"), Ok(home) if !home.is_empty())
+    {
+        return None;
+    }
+
+    let uid = frankenlibc_core::syscall::sys_getuid() as libc::uid_t;
+    // SAFETY: getpwuid returns either null or a valid libc::passwd pointer
+    // whose fields remain valid until the next passwd lookup in this thread.
+    let passwd = unsafe { crate::pwd_abi::getpwuid(uid) };
+    if passwd.is_null() {
+        return None;
+    }
+    // SAFETY: `passwd` was checked above and `pw_dir` is a NUL-terminated
+    // pathname owned by the passwd entry. Copy it before another lookup.
+    let home = unsafe { read_c_string_bytes((*passwd).pw_dir) }?;
+    if home.is_empty() {
+        return None;
+    }
+
+    let mut expanded = home;
+    expanded.extend_from_slice(&pattern[1..]);
+    Some(expanded)
+}
+
+impl frankenlibc_core::string::glob::GlobFs for AltDirGlobFs {
+    fn read_dir(&self, dir_path: &[u8]) -> Result<Vec<Vec<u8>>, c_int> {
+        let bytes = if dir_path.is_empty() {
+            b".".to_vec()
+        } else {
+            dir_path.to_vec()
+        };
+        let Ok(cpath) = std::ffi::CString::new(bytes) else {
+            return Err(frankenlibc_core::errno::ENOENT);
+        };
+        let (Some(opendir), Some(readdir)) = (self.opendir, self.readdir) else {
+            return Err(frankenlibc_core::errno::ENOSYS);
+        };
+        // SAFETY: caller-supplied GLOB_ALTDIRFUNC callbacks; `cpath` is a valid
+        // NUL-terminated C string and outlives the call.
+        let dir = unsafe { opendir(cpath.as_ptr()) };
+        if dir.is_null() {
+            #[cfg(feature = "standalone")]
+            let e = unsafe { *crate::errno_abi::__errno_location() };
+            #[cfg(not(feature = "standalone"))]
+            let e = crate::host_resolve::host_errno(frankenlibc_core::errno::ENOENT);
+            return Err(if e != 0 {
+                e
+            } else {
+                frankenlibc_core::errno::ENOENT
+            });
+        }
+        let mut names = Vec::new();
+        loop {
+            // SAFETY: `dir` is a live handle from the caller's gl_opendir.
+            let ent = unsafe { readdir(dir) };
+            if ent.is_null() {
+                break;
+            }
+            let d = ent as *const libc::dirent;
+            // SAFETY: gl_readdir returns a `struct dirent *`; read its
+            // NUL-terminated `d_name` (bounded by NAME_MAX + 1).
+            let name_ptr = unsafe { (*d).d_name.as_ptr() };
+            let mut name = Vec::new();
+            let mut i = 0isize;
+            loop {
+                let c = unsafe { *name_ptr.offset(i) } as u8;
+                if c == 0 || i > 4096 {
+                    break;
+                }
+                name.push(c);
+                i += 1;
+            }
+            // The engine re-introduces "." / ".." itself; exclude them here so
+            // the GlobFs contract matches StdGlobFs (Rust read_dir omits them).
+            if name != b"." && name != b".." {
+                names.push(name);
+            }
+        }
+        if let Some(closedir) = self.closedir {
+            // SAFETY: `dir` is the live handle; closed exactly once.
+            unsafe { closedir(dir) };
+        }
+        Ok(names)
+    }
+
+    fn stat_is_dir(&self, path: &[u8]) -> Option<bool> {
+        let Ok(cpath) = std::ffi::CString::new(path.to_vec()) else {
+            return None;
+        };
+        let stat_fn = self.stat?;
+        // SAFETY: zero-initialized `libc::stat` is a valid output buffer; the
+        // callback fills it. `cpath` outlives the call.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let r = unsafe { stat_fn(cpath.as_ptr(), &mut st as *mut libc::stat as *mut c_void) };
+        if r != 0 {
+            return None;
+        }
+        Some(st.st_mode & libc::S_IFMT == libc::S_IFDIR)
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn glob(
+    pattern: *const c_char,
+    flags: c_int,
+    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+    pglob: *mut c_void,
+) -> c_int {
+    use frankenlibc_core::string::glob as glob_core;
+    use std::ffi::CString;
+
+    if pattern.is_null() || pglob.is_null() {
+        return glob_core::GLOB_NOMATCH;
+    }
+
+    let Some(pat_bytes) = (unsafe { read_c_string_bytes_with_nul(pattern) }) else {
+        return glob_core::GLOB_NOMATCH;
+    };
+    let home_fallback_pattern = glob_home_fallback_pattern(&pat_bytes, flags);
+    let effective_pattern = home_fallback_pattern.as_deref().unwrap_or(&pat_bytes);
+
+    let append = flags & glob_core::GLOB_APPEND != 0;
+
+    let gt = pglob as *mut GlobT;
+
+    // Reset the result first, as glibc does: every return -- GLOB_NOMATCH
+    // and the errors included -- leaves a glob_t that globfree accepts.
+    // make's parse_file_seq globs into an uninitialized stack glob_t and
+    // calls globfree unconditionally; the stale pathv aborted make with
+    // "free(): invalid pointer".
+    if !append {
+        unsafe {
+            if flags & glob_core::GLOB_DOOFFS == 0 {
+                (*gt).gl_offs = 0;
+            }
+            (*gt).gl_pathc = 0;
+            (*gt).gl_pathv = std::ptr::null_mut();
+            let offs = (*gt).gl_offs;
+            if offs > 0 {
+                // An unrepresentable vector is GLOB_NOSPACE, without a
+                // malloc attempt or errno change. A representable request
+                // above PTRDIFF_MAX has malloc's ENOMEM contract instead.
+                let Some(slot_count) = offs.checked_add(1) else {
+                    return glob_core::GLOB_NOSPACE;
+                };
+                let Some(bytes) = slot_count.checked_mul(std::mem::size_of::<*mut c_char>()) else {
+                    return glob_core::GLOB_NOSPACE;
+                };
+                if bytes > isize::MAX as usize {
+                    crate::errno_abi::set_abi_errno(frankenlibc_core::errno::ENOMEM);
+                    return glob_core::GLOB_NOSPACE;
+                }
+                let slots = crate::malloc_abi::raw_alloc(bytes) as *mut *mut c_char;
+                if slots.is_null() {
+                    return glob_core::GLOB_NOSPACE;
+                }
+                std::ptr::write_bytes(slots, 0, slot_count);
+                (*gt).gl_pathv = slots;
+            }
+        }
+    }
+
+    // Keep the old vector live until every new string has been allocated.
+    // gl_pathc excludes the reserved gl_offs entries; no temporary pathname
+    // list is needed to transfer ownership of these unchanged allocations.
+    let existing_count = if append { unsafe { (*gt).gl_pathc } } else { 0 };
+
+    // Error handler shared by both filesystem backends: marshal the path to a
+    // CString and call the caller's errfunc (a NULL errfunc never aborts).
+    let mut errfn = |path: &[u8], errno: i32| -> bool {
+        match errfunc {
+            Some(callback) => match CString::new(path) {
+                // SAFETY: `epath` is a null-terminated CString alive for the call.
+                Ok(epath) => unsafe { callback(epath.as_ptr(), errno as c_int) != 0 },
+                Err(_) => true,
+            },
+            None => false,
+        }
+    };
+
+    // GLOB_ALTDIRFUNC routes every directory/stat operation through the caller's
+    // gl_opendir/gl_readdir/gl_closedir/gl_stat callbacks; otherwise use std::fs.
+    let result = if flags & GLOB_ALTDIRFUNC != 0 {
+        let alt = AltDirGlobFs {
+            opendir: unsafe { (*gt).gl_opendir },
+            readdir: unsafe { (*gt).gl_readdir },
+            closedir: unsafe { (*gt).gl_closedir },
+            stat: unsafe { (*gt).gl_stat },
+        };
+        glob_core::glob_expand_with_fs(effective_pattern, flags, &mut errfn, &alt)
+    } else {
+        glob_core::glob_expand_with_fs(effective_pattern, flags, &mut errfn, &glob_core::StdGlobFs)
+    };
+
+    match result {
+        Ok(res) => {
+            let dooffs = flags & glob_core::GLOB_DOOFFS != 0;
+            let offs = if dooffs { unsafe { (*gt).gl_offs } } else { 0 };
+
+            let new_count = res.paths.len();
+            let Some(total) = existing_count.checked_add(new_count) else {
+                return glob_core::GLOB_NOSPACE;
+            };
+
+            // Allocate pathv: offs + total + 1 (null terminator)
+            let Some(alloc_count) = offs.checked_add(total).and_then(|n| n.checked_add(1)) else {
+                return glob_core::GLOB_NOSPACE;
+            };
+            let Some(bytes) = alloc_count.checked_mul(std::mem::size_of::<*mut c_char>()) else {
+                return glob_core::GLOB_NOSPACE;
+            };
+            if bytes > isize::MAX as usize {
+                unsafe { crate::errno_abi::set_abi_errno(frankenlibc_core::errno::ENOMEM) };
+                return glob_core::GLOB_NOSPACE;
+            }
+            let pathv = unsafe { crate::malloc_abi::raw_alloc(bytes) } as *mut *mut c_char;
+            if pathv.is_null() {
+                return glob_core::GLOB_NOSPACE;
+            }
+
+            let old_pathv = unsafe { (*gt).gl_pathv };
+            if append && !old_pathv.is_null() {
+                // SAFETY: a preceding glob call owns offs + existing_count
+                // entries before its terminator. Preserve that entire prefix,
+                // including reserved slots, instead of mistaking those slots
+                // for pathnames and leaving counted entries uninitialized.
+                // The checked allocation above includes this prefix.
+                unsafe { std::ptr::copy_nonoverlapping(old_pathv, pathv, offs + existing_count) };
+            } else {
+                // SAFETY: the checked allocation includes all reserved slots.
+                unsafe { std::ptr::write_bytes(pathv, 0, offs) };
+            }
+
+            // Copy new paths as strdup'd C strings.
+            for (i, path) in res.paths.iter().enumerate() {
+                let len = path.len();
+                let s = unsafe { crate::malloc_abi::raw_alloc(len + 1) } as *mut c_char;
+                if s.is_null() {
+                    // Free everything allocated so far.
+                    for j in 0..i {
+                        unsafe {
+                            crate::malloc_abi::raw_free(
+                                *pathv.add(offs + existing_count + j) as *mut c_void
+                            )
+                        };
+                    }
+                    unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
+                    return glob_core::GLOB_NOSPACE;
+                }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr() as *const c_char, s, len);
+                    *s.add(len) = 0; // null terminate
+                    *pathv.add(offs + existing_count + i) = s;
+                }
+            }
+
+            // Null-terminate.
+            unsafe { *pathv.add(offs + total) = std::ptr::null_mut() };
+
+            // Free old pathv array (not the strings -- those were moved; a
+            // fresh call's array holds only the GLOB_DOOFFS null slots).
+            if !old_pathv.is_null() {
+                unsafe { crate::malloc_abi::raw_free(old_pathv.cast()) };
+            }
+
+            // Write glob_t fields.
+            unsafe {
+                (*gt).gl_pathc = total;
+                (*gt).gl_pathv = pathv;
+            }
+
+            0
+        }
+        Err(code) => code,
+    }
+}
+
+/// POSIX `globfree` — free glob result.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
+    use frankenlibc_core::string::glob as glob_core;
+    let _ = glob_core::GLOB_NOSPACE; // suppress unused import
+
+    if pglob.is_null() {
+        return;
+    }
+
+    let gt = pglob as *mut GlobT;
+    let pathc = unsafe { (*gt).gl_pathc };
+    let pathv = unsafe { (*gt).gl_pathv };
+
+    if pathv.is_null() {
+        return;
+    }
+
+    // gl_offs: number of reserved null slots at start
+    let offs = unsafe { (*gt).gl_offs };
+
+    // Free each path string (skip null offset slots).
+    for i in offs..offs + pathc {
+        let p = unsafe { *pathv.add(i) };
+        if !p.is_null() {
+            unsafe { crate::malloc_abi::raw_free(p as *mut c_void) };
+        }
+    }
+
+    // Free the pathv array.
+    unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
+
+    // Zero out the glob_t.
+    unsafe {
+        (*gt).gl_pathc = 0;
+        (*gt).gl_pathv = std::ptr::null_mut();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signal/error description functions — native implementation
+// ---------------------------------------------------------------------------
+
+/// Signal name table (POSIX standard signals, Linux numbering).
+fn signal_name(sig: c_int) -> &'static [u8] {
+    match sig {
+        1 => b"Hangup",
+        2 => b"Interrupt",
+        3 => b"Quit",
+        4 => b"Illegal instruction",
+        5 => b"Trace/breakpoint trap",
+        6 => b"Aborted",
+        7 => b"Bus error",
+        8 => b"Floating point exception",
+        9 => b"Killed",
+        10 => b"User defined signal 1",
+        11 => b"Segmentation fault",
+        12 => b"User defined signal 2",
+        13 => b"Broken pipe",
+        14 => b"Alarm clock",
+        15 => b"Terminated",
+        16 => b"Stack fault",
+        17 => b"Child exited",
+        18 => b"Continued",
+        19 => b"Stopped (signal)",
+        20 => b"Stopped",
+        21 => b"Stopped (tty input)",
+        22 => b"Stopped (tty output)",
+        23 => b"Urgent I/O condition",
+        24 => b"CPU time limit exceeded",
+        25 => b"File size limit exceeded",
+        26 => b"Virtual timer expired",
+        27 => b"Profiling timer expired",
+        28 => b"Window changed",
+        29 => b"I/O possible",
+        30 => b"Power failure",
+        31 => b"Bad system call",
+        _ => b"Unknown signal",
+    }
+}
+
+const GLIBC_SIGRTMIN: c_int = 34;
+const GLIBC_SIGRTMAX: c_int = 64;
+
+/// Render the strsignal/psignal description for `sig` into `dst`.
+///
+/// Single source of truth so `strsignal` and `psignal` always agree —
+/// glibc backs both off a single description table; diverging here
+/// means a tool that compares `strsignal(N)` to a captured psignal(N)
+/// stderr line sees inconsistent text on real-time and unknown signals.
+///
+/// Exposed for integration tests so the strsignal/psignal description
+/// contract can be asserted without capturing stderr.
+pub fn signal_description_into(sig: c_int, dst: &mut Vec<u8>) {
+    if (1..=31).contains(&sig) {
+        dst.extend_from_slice(signal_name(sig));
+        return;
+    }
+    let mut formatted = String::new();
+    if (GLIBC_SIGRTMIN..=GLIBC_SIGRTMAX).contains(&sig) {
+        let _ = write!(&mut formatted, "Real-time signal {}", sig - GLIBC_SIGRTMIN);
+    } else {
+        let _ = write!(&mut formatted, "Unknown signal {sig}");
+    }
+    dst.extend_from_slice(formatted.as_bytes());
+}
+
+/// POSIX `strsignal` — returns a string describing a signal number.
+///
+/// Returns a thread-local buffer with the signal description.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
+    with_strsignal_buffer(|buf| {
+        let mut name = Vec::with_capacity(buf.len());
+        signal_description_into(sig, &mut name);
+        let len = name.len().min(buf.len() - 1);
+        buf[..len].copy_from_slice(&name[..len]);
+        buf[len] = 0;
+        buf.as_mut_ptr() as *mut c_char
+    })
+}
+
+/// Number of signal slots in `sys_siglist`. Matches Linux `NSIG`
+/// on x86_64 (signals 0..64 inclusive). Indices 0 and 32..63 are
+/// reserved or realtime-signal slots and point to a dedicated
+/// placeholder string.
+const SYS_SIGLIST_LEN: usize = 65;
+
+// Per-signal description bytes, NUL-terminated so they can be
+// served as `*const c_char` directly. The textual content matches
+// the existing `signal_name()` table to avoid divergence between
+// `strsignal(sig)` and `sys_siglist[sig]`.
+const SIG_DESC_EMPTY: &[u8] = b"\0";
+const SIG_DESC_HUP: &[u8] = b"Hangup\0";
+const SIG_DESC_INT: &[u8] = b"Interrupt\0";
+const SIG_DESC_QUIT: &[u8] = b"Quit\0";
+const SIG_DESC_ILL: &[u8] = b"Illegal instruction\0";
+const SIG_DESC_TRAP: &[u8] = b"Trace/breakpoint trap\0";
+const SIG_DESC_ABRT: &[u8] = b"Aborted\0";
+const SIG_DESC_BUS: &[u8] = b"Bus error\0";
+const SIG_DESC_FPE: &[u8] = b"Floating point exception\0";
+const SIG_DESC_KILL: &[u8] = b"Killed\0";
+const SIG_DESC_USR1: &[u8] = b"User defined signal 1\0";
+const SIG_DESC_SEGV: &[u8] = b"Segmentation fault\0";
+const SIG_DESC_USR2: &[u8] = b"User defined signal 2\0";
+const SIG_DESC_PIPE: &[u8] = b"Broken pipe\0";
+const SIG_DESC_ALRM: &[u8] = b"Alarm clock\0";
+const SIG_DESC_TERM: &[u8] = b"Terminated\0";
+const SIG_DESC_STKFLT: &[u8] = b"Stack fault\0";
+const SIG_DESC_CHLD: &[u8] = b"Child exited\0";
+const SIG_DESC_CONT: &[u8] = b"Continued\0";
+const SIG_DESC_STOP: &[u8] = b"Stopped (signal)\0";
+const SIG_DESC_TSTP: &[u8] = b"Stopped\0";
+const SIG_DESC_TTIN: &[u8] = b"Stopped (tty input)\0";
+const SIG_DESC_TTOU: &[u8] = b"Stopped (tty output)\0";
+const SIG_DESC_URG: &[u8] = b"Urgent I/O condition\0";
+const SIG_DESC_XCPU: &[u8] = b"CPU time limit exceeded\0";
+const SIG_DESC_XFSZ: &[u8] = b"File size limit exceeded\0";
+const SIG_DESC_VTALRM: &[u8] = b"Virtual timer expired\0";
+const SIG_DESC_PROF: &[u8] = b"Profiling timer expired\0";
+const SIG_DESC_WINCH: &[u8] = b"Window changed\0";
+const SIG_DESC_IO: &[u8] = b"I/O possible\0";
+const SIG_DESC_PWR: &[u8] = b"Power failure\0";
+const SIG_DESC_SYS: &[u8] = b"Bad system call\0";
+const SIG_DESC_RT: &[u8] = b"Real-time signal\0";
+
+/// `repr(transparent)` wrapper that lets us declare a `static`
+/// holding raw pointers (which are not `Sync` on their own).
+/// The Sync impl is sound because the wrapped array is initialized
+/// once at program load and the contents — pointers to immutable
+/// `&'static [u8]` literals — are never mutated.
+#[repr(transparent)]
+pub struct SysSigList(pub [*const c_char; SYS_SIGLIST_LEN]);
+// SAFETY: see SysSigList docs above.
+unsafe impl Sync for SysSigList {}
+
+const SYS_SIGLIST_ENTRIES: [*const c_char; SYS_SIGLIST_LEN] = [
+    SIG_DESC_EMPTY.as_ptr() as *const c_char,  // 0
+    SIG_DESC_HUP.as_ptr() as *const c_char,    // 1 SIGHUP
+    SIG_DESC_INT.as_ptr() as *const c_char,    // 2 SIGINT
+    SIG_DESC_QUIT.as_ptr() as *const c_char,   // 3 SIGQUIT
+    SIG_DESC_ILL.as_ptr() as *const c_char,    // 4 SIGILL
+    SIG_DESC_TRAP.as_ptr() as *const c_char,   // 5 SIGTRAP
+    SIG_DESC_ABRT.as_ptr() as *const c_char,   // 6 SIGABRT
+    SIG_DESC_BUS.as_ptr() as *const c_char,    // 7 SIGBUS
+    SIG_DESC_FPE.as_ptr() as *const c_char,    // 8 SIGFPE
+    SIG_DESC_KILL.as_ptr() as *const c_char,   // 9 SIGKILL
+    SIG_DESC_USR1.as_ptr() as *const c_char,   // 10 SIGUSR1
+    SIG_DESC_SEGV.as_ptr() as *const c_char,   // 11 SIGSEGV
+    SIG_DESC_USR2.as_ptr() as *const c_char,   // 12 SIGUSR2
+    SIG_DESC_PIPE.as_ptr() as *const c_char,   // 13 SIGPIPE
+    SIG_DESC_ALRM.as_ptr() as *const c_char,   // 14 SIGALRM
+    SIG_DESC_TERM.as_ptr() as *const c_char,   // 15 SIGTERM
+    SIG_DESC_STKFLT.as_ptr() as *const c_char, // 16 SIGSTKFLT
+    SIG_DESC_CHLD.as_ptr() as *const c_char,   // 17 SIGCHLD
+    SIG_DESC_CONT.as_ptr() as *const c_char,   // 18 SIGCONT
+    SIG_DESC_STOP.as_ptr() as *const c_char,   // 19 SIGSTOP
+    SIG_DESC_TSTP.as_ptr() as *const c_char,   // 20 SIGTSTP
+    SIG_DESC_TTIN.as_ptr() as *const c_char,   // 21 SIGTTIN
+    SIG_DESC_TTOU.as_ptr() as *const c_char,   // 22 SIGTTOU
+    SIG_DESC_URG.as_ptr() as *const c_char,    // 23 SIGURG
+    SIG_DESC_XCPU.as_ptr() as *const c_char,   // 24 SIGXCPU
+    SIG_DESC_XFSZ.as_ptr() as *const c_char,   // 25 SIGXFSZ
+    SIG_DESC_VTALRM.as_ptr() as *const c_char, // 26 SIGVTALRM
+    SIG_DESC_PROF.as_ptr() as *const c_char,   // 27 SIGPROF
+    SIG_DESC_WINCH.as_ptr() as *const c_char,  // 28 SIGWINCH
+    SIG_DESC_IO.as_ptr() as *const c_char,     // 29 SIGIO
+    SIG_DESC_PWR.as_ptr() as *const c_char,    // 30 SIGPWR
+    SIG_DESC_SYS.as_ptr() as *const c_char,    // 31 SIGSYS
+    // 32..=64: realtime signals — share a placeholder description.
+    SIG_DESC_RT.as_ptr() as *const c_char, // 32
+    SIG_DESC_RT.as_ptr() as *const c_char, // 33
+    SIG_DESC_RT.as_ptr() as *const c_char, // 34
+    SIG_DESC_RT.as_ptr() as *const c_char, // 35
+    SIG_DESC_RT.as_ptr() as *const c_char, // 36
+    SIG_DESC_RT.as_ptr() as *const c_char, // 37
+    SIG_DESC_RT.as_ptr() as *const c_char, // 38
+    SIG_DESC_RT.as_ptr() as *const c_char, // 39
+    SIG_DESC_RT.as_ptr() as *const c_char, // 40
+    SIG_DESC_RT.as_ptr() as *const c_char, // 41
+    SIG_DESC_RT.as_ptr() as *const c_char, // 42
+    SIG_DESC_RT.as_ptr() as *const c_char, // 43
+    SIG_DESC_RT.as_ptr() as *const c_char, // 44
+    SIG_DESC_RT.as_ptr() as *const c_char, // 45
+    SIG_DESC_RT.as_ptr() as *const c_char, // 46
+    SIG_DESC_RT.as_ptr() as *const c_char, // 47
+    SIG_DESC_RT.as_ptr() as *const c_char, // 48
+    SIG_DESC_RT.as_ptr() as *const c_char, // 49
+    SIG_DESC_RT.as_ptr() as *const c_char, // 50
+    SIG_DESC_RT.as_ptr() as *const c_char, // 51
+    SIG_DESC_RT.as_ptr() as *const c_char, // 52
+    SIG_DESC_RT.as_ptr() as *const c_char, // 53
+    SIG_DESC_RT.as_ptr() as *const c_char, // 54
+    SIG_DESC_RT.as_ptr() as *const c_char, // 55
+    SIG_DESC_RT.as_ptr() as *const c_char, // 56
+    SIG_DESC_RT.as_ptr() as *const c_char, // 57
+    SIG_DESC_RT.as_ptr() as *const c_char, // 58
+    SIG_DESC_RT.as_ptr() as *const c_char, // 59
+    SIG_DESC_RT.as_ptr() as *const c_char, // 60
+    SIG_DESC_RT.as_ptr() as *const c_char, // 61
+    SIG_DESC_RT.as_ptr() as *const c_char, // 62
+    SIG_DESC_RT.as_ptr() as *const c_char, // 63
+    SIG_DESC_RT.as_ptr() as *const c_char, // 64
+];
+
+/// glibc `sys_siglist[NSIG]` — array of human-readable signal
+/// descriptions indexed by signal number. Deprecated in favor of
+/// [`strsignal`] / `sigdescr_np`, but many older programs still
+/// reference this symbol directly. Each entry is a NUL-terminated
+/// C string with the same wording as [`strsignal(n)`].
+///
+/// `sys_siglist[0]` is empty (no signal 0 description). Indices
+/// 32..=64 cover the realtime-signal range and share a generic
+/// placeholder description.
+///
+/// The wrapper around the inner `[*const c_char; 65]` is
+/// `repr(transparent)`, so the symbol's ABI is identical to a
+/// bare C `const char *sys_siglist[NSIG]`.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static sys_siglist: SysSigList = SysSigList(SYS_SIGLIST_ENTRIES);
+
+/// glibc deprecated `_sys_siglist[NSIG]` alias. It must contain the
+/// same populated signal-description table as `sys_siglist`, not a
+/// null placeholder, because old C programs index this symbol directly.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static _sys_siglist: SysSigList = SysSigList(SYS_SIGLIST_ENTRIES);
+
+// Per-signal short name bytes used by `sys_signame` — uppercase
+// without the "SIG" prefix, matching the BSD convention used by
+// killall(1), kill(1), and other signal-name tools.
+const SIG_NAME_EMPTY: &[u8] = b"\0";
+const SIG_NAME_HUP: &[u8] = b"HUP\0";
+const SIG_NAME_INT: &[u8] = b"INT\0";
+const SIG_NAME_QUIT: &[u8] = b"QUIT\0";
+const SIG_NAME_ILL: &[u8] = b"ILL\0";
+const SIG_NAME_TRAP: &[u8] = b"TRAP\0";
+const SIG_NAME_ABRT: &[u8] = b"ABRT\0";
+const SIG_NAME_BUS: &[u8] = b"BUS\0";
+const SIG_NAME_FPE: &[u8] = b"FPE\0";
+const SIG_NAME_KILL: &[u8] = b"KILL\0";
+const SIG_NAME_USR1: &[u8] = b"USR1\0";
+const SIG_NAME_SEGV: &[u8] = b"SEGV\0";
+const SIG_NAME_USR2: &[u8] = b"USR2\0";
+const SIG_NAME_PIPE: &[u8] = b"PIPE\0";
+const SIG_NAME_ALRM: &[u8] = b"ALRM\0";
+const SIG_NAME_TERM: &[u8] = b"TERM\0";
+const SIG_NAME_STKFLT: &[u8] = b"STKFLT\0";
+const SIG_NAME_CHLD: &[u8] = b"CHLD\0";
+const SIG_NAME_CONT: &[u8] = b"CONT\0";
+const SIG_NAME_STOP: &[u8] = b"STOP\0";
+const SIG_NAME_TSTP: &[u8] = b"TSTP\0";
+const SIG_NAME_TTIN: &[u8] = b"TTIN\0";
+const SIG_NAME_TTOU: &[u8] = b"TTOU\0";
+const SIG_NAME_URG: &[u8] = b"URG\0";
+const SIG_NAME_XCPU: &[u8] = b"XCPU\0";
+const SIG_NAME_XFSZ: &[u8] = b"XFSZ\0";
+const SIG_NAME_VTALRM: &[u8] = b"VTALRM\0";
+const SIG_NAME_PROF: &[u8] = b"PROF\0";
+const SIG_NAME_WINCH: &[u8] = b"WINCH\0";
+const SIG_NAME_IO: &[u8] = b"IO\0";
+const SIG_NAME_PWR: &[u8] = b"PWR\0";
+const SIG_NAME_SYS: &[u8] = b"SYS\0";
+const SIG_NAME_RT: &[u8] = b"RT\0";
+
+/// BSD `sys_signame[NSIG]` — array of short uppercase signal
+/// names (no `"SIG"` prefix), indexed by signal number. Used by
+/// killall(1), kill(1), and other signal-name tools that prefer
+/// the abbreviated form ("HUP" rather than "Hangup"). Some BSD-
+/// derived ports of Linux libraries (libbsd) provide this for
+/// compatibility.
+///
+/// `sys_signame[0]` is empty. Indices 32..=64 share a generic
+/// `"RT"` placeholder; callers wanting the full short form (e.g.
+/// `"RTMIN+3"`) should call `sigabbrev_np` instead.
+///
+/// The wrapper around the inner `[*const c_char; 65]` is
+/// `repr(transparent)`, so the symbol's ABI is identical to a
+/// bare C `const char *sys_signame[NSIG]`.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static sys_signame: SysSigList = SysSigList([
+    SIG_NAME_EMPTY.as_ptr() as *const c_char,  // 0
+    SIG_NAME_HUP.as_ptr() as *const c_char,    // 1 SIGHUP
+    SIG_NAME_INT.as_ptr() as *const c_char,    // 2 SIGINT
+    SIG_NAME_QUIT.as_ptr() as *const c_char,   // 3 SIGQUIT
+    SIG_NAME_ILL.as_ptr() as *const c_char,    // 4 SIGILL
+    SIG_NAME_TRAP.as_ptr() as *const c_char,   // 5 SIGTRAP
+    SIG_NAME_ABRT.as_ptr() as *const c_char,   // 6 SIGABRT
+    SIG_NAME_BUS.as_ptr() as *const c_char,    // 7 SIGBUS
+    SIG_NAME_FPE.as_ptr() as *const c_char,    // 8 SIGFPE
+    SIG_NAME_KILL.as_ptr() as *const c_char,   // 9 SIGKILL
+    SIG_NAME_USR1.as_ptr() as *const c_char,   // 10 SIGUSR1
+    SIG_NAME_SEGV.as_ptr() as *const c_char,   // 11 SIGSEGV
+    SIG_NAME_USR2.as_ptr() as *const c_char,   // 12 SIGUSR2
+    SIG_NAME_PIPE.as_ptr() as *const c_char,   // 13 SIGPIPE
+    SIG_NAME_ALRM.as_ptr() as *const c_char,   // 14 SIGALRM
+    SIG_NAME_TERM.as_ptr() as *const c_char,   // 15 SIGTERM
+    SIG_NAME_STKFLT.as_ptr() as *const c_char, // 16 SIGSTKFLT
+    SIG_NAME_CHLD.as_ptr() as *const c_char,   // 17 SIGCHLD
+    SIG_NAME_CONT.as_ptr() as *const c_char,   // 18 SIGCONT
+    SIG_NAME_STOP.as_ptr() as *const c_char,   // 19 SIGSTOP
+    SIG_NAME_TSTP.as_ptr() as *const c_char,   // 20 SIGTSTP
+    SIG_NAME_TTIN.as_ptr() as *const c_char,   // 21 SIGTTIN
+    SIG_NAME_TTOU.as_ptr() as *const c_char,   // 22 SIGTTOU
+    SIG_NAME_URG.as_ptr() as *const c_char,    // 23 SIGURG
+    SIG_NAME_XCPU.as_ptr() as *const c_char,   // 24 SIGXCPU
+    SIG_NAME_XFSZ.as_ptr() as *const c_char,   // 25 SIGXFSZ
+    SIG_NAME_VTALRM.as_ptr() as *const c_char, // 26 SIGVTALRM
+    SIG_NAME_PROF.as_ptr() as *const c_char,   // 27 SIGPROF
+    SIG_NAME_WINCH.as_ptr() as *const c_char,  // 28 SIGWINCH
+    SIG_NAME_IO.as_ptr() as *const c_char,     // 29 SIGIO
+    SIG_NAME_PWR.as_ptr() as *const c_char,    // 30 SIGPWR
+    SIG_NAME_SYS.as_ptr() as *const c_char,    // 31 SIGSYS
+    // 32..=64: realtime signals — share a placeholder name.
+    SIG_NAME_RT.as_ptr() as *const c_char, // 32
+    SIG_NAME_RT.as_ptr() as *const c_char, // 33
+    SIG_NAME_RT.as_ptr() as *const c_char, // 34
+    SIG_NAME_RT.as_ptr() as *const c_char, // 35
+    SIG_NAME_RT.as_ptr() as *const c_char, // 36
+    SIG_NAME_RT.as_ptr() as *const c_char, // 37
+    SIG_NAME_RT.as_ptr() as *const c_char, // 38
+    SIG_NAME_RT.as_ptr() as *const c_char, // 39
+    SIG_NAME_RT.as_ptr() as *const c_char, // 40
+    SIG_NAME_RT.as_ptr() as *const c_char, // 41
+    SIG_NAME_RT.as_ptr() as *const c_char, // 42
+    SIG_NAME_RT.as_ptr() as *const c_char, // 43
+    SIG_NAME_RT.as_ptr() as *const c_char, // 44
+    SIG_NAME_RT.as_ptr() as *const c_char, // 45
+    SIG_NAME_RT.as_ptr() as *const c_char, // 46
+    SIG_NAME_RT.as_ptr() as *const c_char, // 47
+    SIG_NAME_RT.as_ptr() as *const c_char, // 48
+    SIG_NAME_RT.as_ptr() as *const c_char, // 49
+    SIG_NAME_RT.as_ptr() as *const c_char, // 50
+    SIG_NAME_RT.as_ptr() as *const c_char, // 51
+    SIG_NAME_RT.as_ptr() as *const c_char, // 52
+    SIG_NAME_RT.as_ptr() as *const c_char, // 53
+    SIG_NAME_RT.as_ptr() as *const c_char, // 54
+    SIG_NAME_RT.as_ptr() as *const c_char, // 55
+    SIG_NAME_RT.as_ptr() as *const c_char, // 56
+    SIG_NAME_RT.as_ptr() as *const c_char, // 57
+    SIG_NAME_RT.as_ptr() as *const c_char, // 58
+    SIG_NAME_RT.as_ptr() as *const c_char, // 59
+    SIG_NAME_RT.as_ptr() as *const c_char, // 60
+    SIG_NAME_RT.as_ptr() as *const c_char, // 61
+    SIG_NAME_RT.as_ptr() as *const c_char, // 62
+    SIG_NAME_RT.as_ptr() as *const c_char, // 63
+    SIG_NAME_RT.as_ptr() as *const c_char, // 64
+]);
+
+/// Description used by `psignal`, which is deliberately NOT
+/// [`signal_description_into`].
+///
+/// glibc's `psignal` and `strsignal` disagree on real-time signals, and the
+/// difference is observable. `strsignal` has a dedicated RT branch; `psignal`
+/// only consults the classic `sys_siglist` table, whose RT slots are NULL, so
+/// it falls through to "Unknown signal N". Measured on the host, one process,
+/// both calls per row:
+///
+/// ```text
+///   sig 31  psignal="Bad system call"     strsignal="Bad system call"
+///   sig 32  psignal="Unknown signal 32"   strsignal="Unknown signal 32"
+///   sig 34  psignal="Unknown signal 34"   strsignal="Real-time signal 0"
+///   sig 40  psignal="Unknown signal 40"   strsignal="Real-time signal 6"
+///   sig 64  psignal="Unknown signal 64"   strsignal="Real-time signal 30"
+///   sig 65  psignal="Unknown signal 65"   strsignal="Unknown signal 65"
+/// ```
+///
+/// fl routed `psignal` through `strsignal`'s description under a comment
+/// claiming "glibc backs both off a single description table". It does not,
+/// and conformance_diff_psignal was red on exactly that: fl printed
+/// "myprog: Real-time signal 0" where glibc prints "myprog: Unknown signal 34".
+/// bd-3k2orn.
+fn psignal_description_into(sig: c_int, dst: &mut Vec<u8>) {
+    if (1..=31).contains(&sig) {
+        dst.extend_from_slice(signal_name(sig));
+        return;
+    }
+    let mut formatted = String::new();
+    let _ = write!(&mut formatted, "Unknown signal {sig}");
+    dst.extend_from_slice(formatted.as_bytes());
+}
+
+/// POSIX `psignal` — print a signal description to stderr.
+///
+/// Uses [`psignal_description_into`], NOT `strsignal`'s: see the note there
+/// for the measured divergence on real-time signals.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
+    // Build message: "s: signal_name\n" or "signal_name\n"
+    let mut msg = Vec::with_capacity(256);
+    let prefix = if s.is_null() {
+        None
+    } else {
+        unsafe { read_c_string_bytes(s) }
+    };
+    if let Some(prefix) = prefix.filter(|prefix| !prefix.is_empty()) {
+        msg.extend_from_slice(&prefix);
+        msg.extend_from_slice(b": ");
+    }
+    psignal_description_into(sig, &mut msg);
+    msg.push(b'\n');
+
+    // Write to stderr via native raw syscall (bd-h5x)
+    let _ = unsafe { raw_syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+}
+
+// ---------------------------------------------------------------------------
+// GNU extensions: strverscmp, rawmemchr
+// ---------------------------------------------------------------------------
+
+/// GNU `strverscmp` — version-aware string comparison.
+///
+/// Compares two strings treating embedded digit sequences as numbers.
+/// For example, "file10" > "file9" (unlike strcmp which gives "file10" < "file9").
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() && s2.is_null() {
+        return 0;
+    }
+    if s1.is_null() {
+        return -1;
+    }
+    if s2.is_null() {
+        return 1;
+    }
+
+    // Borrow both C strings (strlen + slice) instead of `read_c_string_bytes`, which
+    // allocated a fresh Vec copy of EACH on every call — strverscmp runs in tight
+    // version-sort comparison loops, and the two copies made it 6-22x glibc regardless of
+    // content (~110 ns fixed). `strverscmp_bytes` only reads the slices.
+    // SAFETY: s1/s2 are non-null (checked above) and NUL-terminated (C contract).
+    let s1_bytes = unsafe { core::ffi::CStr::from_ptr(s1) }.to_bytes();
+    let s2_bytes = unsafe { core::ffi::CStr::from_ptr(s2) }.to_bytes();
+    strverscmp_bytes(s1_bytes, s2_bytes)
+}
+
+fn strvers_byte(bytes: &[u8], index: usize) -> u8 {
+    bytes.get(index).copied().unwrap_or(0)
+}
+
+fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> c_int {
+    let mut i = 0usize;
+    loop {
+        let c1 = strvers_byte(s1, i);
+        let c2 = strvers_byte(s2, i);
+
+        // Both hit NUL: equal.
+        if c1 == 0 && c2 == 0 {
+            return 0;
+        }
+
+        // If both are digits, compare numerically.
+        if c1.is_ascii_digit() && c2.is_ascii_digit() {
+            // Check for leading zeros — strings with leading zeros compare
+            // as if left-aligned (fractional comparison).
+            let leading_zero = c1 == b'0' || c2 == b'0';
+            if leading_zero {
+                // Left-aligned comparison (treat as fraction after decimal point).
+                let mut seen_nonzero = false;
+                loop {
+                    let d1 = strvers_byte(s1, i);
+                    let d2 = strvers_byte(s2, i);
+                    let is_d1 = d1.is_ascii_digit();
+                    let is_d2 = d2.is_ascii_digit();
+                    if !is_d1 && !is_d2 {
+                        break;
+                    }
+                    if !is_d1 {
+                        return if seen_nonzero {
+                            (d1 as c_int) - (d2 as c_int)
+                        } else {
+                            1
+                        };
+                    }
+                    if !is_d2 {
+                        return if seen_nonzero {
+                            (d1 as c_int) - (d2 as c_int)
+                        } else {
+                            -1
+                        };
+                    }
+                    if d1 != d2 {
+                        return (d1 as c_int) - (d2 as c_int);
+                    }
+                    if d1 != b'0' {
+                        seen_nonzero = true;
+                    }
+                    i += 1;
+                }
+            } else {
+                // Numeric comparison: longer digit sequence = larger number.
+                let start = i;
+                let mut len1 = 0usize;
+                let mut len2 = 0usize;
+                let mut diff = 0i32;
+
+                // Walk both digit sequences simultaneously.
+                loop {
+                    let d1 = strvers_byte(s1, start + len1);
+                    let d2 = strvers_byte(s2, start + len2);
+                    let is_d1 = d1.is_ascii_digit();
+                    let is_d2 = d2.is_ascii_digit();
+
+                    if is_d1 {
+                        len1 += 1;
+                    }
+                    if is_d2 {
+                        len2 += 1;
+                    }
+                    if !is_d1 && !is_d2 {
+                        break;
+                    }
+                    // Record first digit difference for equal-length sequences.
+                    if is_d1 && is_d2 && diff == 0 {
+                        diff = (d1 as i32) - (d2 as i32);
+                    }
+                    if !is_d1 || !is_d2 {
+                        break;
+                    }
+                }
+
+                // Longer digit sequence wins.
+                if len1 != len2 {
+                    return if len1 > len2 { 1 } else { -1 };
+                }
+                // Same length: first different digit wins.
+                if diff != 0 {
+                    return diff;
+                }
+                i = start + len1;
+            }
+            continue;
+        }
+
+        // Otherwise compare as bytes.
+        if c1 != c2 {
+            return (c1 as c_int) - (c2 as c_int);
+        }
+        i += 1;
+    }
+}
+
+/// GNU `rawmemchr` — scan memory for a byte without a length limit.
+///
+/// Like `memchr` but assumes the byte WILL be found. If the byte is not
+/// present, behavior is undefined (same as glibc). This implementation
+/// scans until found.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    const LANES: usize = 32;
+
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+    let needle = c as u8;
+    let mut ptr = s as *const u8;
+
+    // Scalar until 32-byte aligned, so every SIMD load below stays within one
+    // page (a 32-byte-aligned 32-byte block never crosses a 4096-byte boundary)
+    // — was a pure scalar byte loop, ~38x slower than glibc's AVX2 (bd-2g7oyh).
+    while (ptr as usize) & (LANES - 1) != 0 {
+        // SAFETY: the caller guarantees `needle` is present, so `ptr` stays within
+        // the mapped buffer until it is found.
+        if unsafe { *ptr } == needle {
+            return ptr as *mut c_void;
+        }
+        ptr = unsafe { ptr.add(1) };
+    }
+
+    // Aligned 32-byte SIMD scan. The caller guarantees `needle` is present, so all
+    // pages up to it are mapped, and each aligned 32-byte load is page-safe.
+    let nv = Simd::<u8, LANES>::splat(needle);
+    loop {
+        // SAFETY: `ptr` is 32-byte aligned (load within one mapped page) and
+        // `needle` is guaranteed present at or after `ptr`.
+        let v = Simd::<u8, LANES>::from_slice(unsafe { core::slice::from_raw_parts(ptr, LANES) });
+        let bits = v.simd_eq(nv).to_bitmask();
+        if bits != 0 {
+            return unsafe { ptr.add(bits.trailing_zeros() as usize) } as *mut c_void;
+        }
+        ptr = unsafe { ptr.add(LANES) };
+    }
+}
+
+// ===========================================================================
+// Batch: GNU error name extensions — Implemented
+// ===========================================================================
+
+/// GNU `strerrordesc_np` — return description for errno value (non-POSIX).
+///
+/// Returns a static string or null if errno is unknown.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn strerrordesc_np(errnum: c_int) -> *const c_char {
+    let desc: &[u8] = match errnum {
+        // glibc treats errno=0 as a valid input with description "Success",
+        // returning a non-NULL pointer. Without this branch fl returned NULL.
+        0 => b"Success\0",
+        libc::EPERM => b"Operation not permitted\0",
+        libc::ENOENT => b"No such file or directory\0",
+        libc::ESRCH => b"No such process\0",
+        libc::EINTR => b"Interrupted system call\0",
+        libc::EIO => b"Input/output error\0",
+        libc::ENXIO => b"No such device or address\0",
+        libc::E2BIG => b"Argument list too long\0",
+        libc::ENOEXEC => b"Exec format error\0",
+        libc::EBADF => b"Bad file descriptor\0",
+        libc::ECHILD => b"No child processes\0",
+        libc::EAGAIN => b"Resource temporarily unavailable\0",
+        libc::ENOMEM => b"Cannot allocate memory\0",
+        libc::EACCES => b"Permission denied\0",
+        libc::EFAULT => b"Bad address\0",
+        libc::ENOTBLK => b"Block device required\0",
+        libc::EBUSY => b"Device or resource busy\0",
+        libc::EEXIST => b"File exists\0",
+        libc::EXDEV => b"Invalid cross-device link\0",
+        libc::ENODEV => b"No such device\0",
+        libc::ENOTDIR => b"Not a directory\0",
+        libc::EISDIR => b"Is a directory\0",
+        libc::EINVAL => b"Invalid argument\0",
+        libc::ENFILE => b"Too many open files in system\0",
+        libc::EMFILE => b"Too many open files\0",
+        libc::ENOTTY => b"Inappropriate ioctl for device\0",
+        libc::ETXTBSY => b"Text file busy\0",
+        libc::EFBIG => b"File too large\0",
+        libc::ENOSPC => b"No space left on device\0",
+        libc::ESPIPE => b"Illegal seek\0",
+        libc::EROFS => b"Read-only file system\0",
+        libc::EMLINK => b"Too many links\0",
+        libc::EPIPE => b"Broken pipe\0",
+        libc::EDOM => b"Numerical argument out of domain\0",
+        libc::ERANGE => b"Numerical result out of range\0",
+        libc::EDEADLK => b"Resource deadlock avoided\0",
+        libc::ENAMETOOLONG => b"File name too long\0",
+        libc::ENOLCK => b"No locks available\0",
+        libc::ENOSYS => b"Function not implemented\0",
+        libc::ENOTEMPTY => b"Directory not empty\0",
+        libc::ELOOP => b"Too many levels of symbolic links\0",
+        libc::ENOMSG => b"No message of desired type\0",
+        libc::EIDRM => b"Identifier removed\0",
+        libc::ECHRNG => b"Channel number out of range\0",
+        libc::EL2NSYNC => b"Level 2 not synchronized\0",
+        libc::EL3HLT => b"Level 3 halted\0",
+        libc::EL3RST => b"Level 3 reset\0",
+        libc::ELNRNG => b"Link number out of range\0",
+        libc::EUNATCH => b"Protocol driver not attached\0",
+        libc::ENOCSI => b"No CSI structure available\0",
+        libc::EL2HLT => b"Level 2 halted\0",
+        libc::EBADE => b"Invalid exchange\0",
+        libc::EBADR => b"Invalid request descriptor\0",
+        libc::EXFULL => b"Exchange full\0",
+        libc::ENOANO => b"No anode\0",
+        libc::EBADRQC => b"Invalid request code\0",
+        libc::EBADSLT => b"Invalid slot\0",
+        libc::EBFONT => b"Bad font file format\0",
+        libc::ENOSTR => b"Device not a stream\0",
+        libc::ENODATA => b"No data available\0",
+        libc::ETIME => b"Timer expired\0",
+        libc::ENOSR => b"Out of streams resources\0",
+        libc::ENONET => b"Machine is not on the network\0",
+        libc::ENOPKG => b"Package not installed\0",
+        libc::EREMOTE => b"Object is remote\0",
+        libc::ENOLINK => b"Link has been severed\0",
+        libc::EADV => b"Advertise error\0",
+        libc::ESRMNT => b"Srmount error\0",
+        libc::ECOMM => b"Communication error on send\0",
+        libc::EPROTO => b"Protocol error\0",
+        libc::EMULTIHOP => b"Multihop attempted\0",
+        libc::EDOTDOT => b"RFS specific error\0",
+        libc::EBADMSG => b"Bad message\0",
+        libc::EOVERFLOW => b"Value too large for defined data type\0",
+        libc::ENOTUNIQ => b"Name not unique on network\0",
+        libc::EBADFD => b"File descriptor in bad state\0",
+        libc::EREMCHG => b"Remote address changed\0",
+        libc::ELIBACC => b"Can not access a needed shared library\0",
+        libc::ELIBBAD => b"Accessing a corrupted shared library\0",
+        libc::ELIBSCN => b".lib section in a.out corrupted\0",
+        libc::ELIBMAX => b"Attempting to link in too many shared libraries\0",
+        libc::ELIBEXEC => b"Cannot exec a shared library directly\0",
+        libc::EILSEQ => b"Invalid or incomplete multibyte or wide character\0",
+        libc::ERESTART => b"Interrupted system call should be restarted\0",
+        libc::ESTRPIPE => b"Streams pipe error\0",
+        libc::EUSERS => b"Too many users\0",
+        libc::ENOTSOCK => b"Socket operation on non-socket\0",
+        libc::EDESTADDRREQ => b"Destination address required\0",
+        libc::EMSGSIZE => b"Message too long\0",
+        libc::EPROTOTYPE => b"Protocol wrong type for socket\0",
+        libc::ENOPROTOOPT => b"Protocol not available\0",
+        libc::EPROTONOSUPPORT => b"Protocol not supported\0",
+        libc::ESOCKTNOSUPPORT => b"Socket type not supported\0",
+        libc::EOPNOTSUPP => b"Operation not supported\0",
+        libc::EPFNOSUPPORT => b"Protocol family not supported\0",
+        libc::EAFNOSUPPORT => b"Address family not supported by protocol\0",
+        libc::EADDRINUSE => b"Address already in use\0",
+        libc::EADDRNOTAVAIL => b"Cannot assign requested address\0",
+        libc::ENETDOWN => b"Network is down\0",
+        libc::ENETUNREACH => b"Network is unreachable\0",
+        libc::ENETRESET => b"Network dropped connection on reset\0",
+        libc::ECONNABORTED => b"Software caused connection abort\0",
+        libc::ECONNRESET => b"Connection reset by peer\0",
+        libc::ENOBUFS => b"No buffer space available\0",
+        libc::EISCONN => b"Transport endpoint is already connected\0",
+        libc::ENOTCONN => b"Transport endpoint is not connected\0",
+        libc::ESHUTDOWN => b"Cannot send after transport endpoint shutdown\0",
+        libc::ETOOMANYREFS => b"Too many references: cannot splice\0",
+        libc::ETIMEDOUT => b"Connection timed out\0",
+        libc::ECONNREFUSED => b"Connection refused\0",
+        libc::EHOSTDOWN => b"Host is down\0",
+        libc::EHOSTUNREACH => b"No route to host\0",
+        libc::EALREADY => b"Operation already in progress\0",
+        libc::EINPROGRESS => b"Operation now in progress\0",
+        libc::ESTALE => b"Stale file handle\0",
+        libc::EUCLEAN => b"Structure needs cleaning\0",
+        libc::ENOTNAM => b"Not a XENIX named type file\0",
+        libc::ENAVAIL => b"No XENIX semaphores available\0",
+        libc::EISNAM => b"Is a named type file\0",
+        libc::EREMOTEIO => b"Remote I/O error\0",
+        libc::EDQUOT => b"Disk quota exceeded\0",
+        libc::ENOMEDIUM => b"No medium found\0",
+        libc::EMEDIUMTYPE => b"Wrong medium type\0",
+        libc::ECANCELED => b"Operation canceled\0",
+        libc::ENOKEY => b"Required key not available\0",
+        libc::EKEYEXPIRED => b"Key has expired\0",
+        libc::EKEYREVOKED => b"Key has been revoked\0",
+        libc::EKEYREJECTED => b"Key was rejected by service\0",
+        libc::EOWNERDEAD => b"Owner died\0",
+        libc::ENOTRECOVERABLE => b"State not recoverable\0",
+        libc::ERFKILL => b"Operation not possible due to RF-kill\0",
+        libc::EHWPOISON => b"Memory page has hardware error\0",
+        _ => return std::ptr::null(),
+    };
+    desc.as_ptr() as *const c_char
+}
+
+/// GNU `strerrorname_np` — return symbolic errno name (non-POSIX).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn strerrorname_np(errnum: c_int) -> *const c_char {
+    let name: &[u8] = match errnum {
+        0 => b"0\0",
+        libc::EPERM => b"EPERM\0",
+        libc::ENOENT => b"ENOENT\0",
+        libc::ESRCH => b"ESRCH\0",
+        libc::EINTR => b"EINTR\0",
+        libc::EIO => b"EIO\0",
+        libc::ENXIO => b"ENXIO\0",
+        libc::E2BIG => b"E2BIG\0",
+        libc::ENOEXEC => b"ENOEXEC\0",
+        libc::EBADF => b"EBADF\0",
+        libc::ECHILD => b"ECHILD\0",
+        libc::EAGAIN => b"EAGAIN\0",
+        libc::ENOMEM => b"ENOMEM\0",
+        libc::EACCES => b"EACCES\0",
+        libc::EFAULT => b"EFAULT\0",
+        libc::ENOTBLK => b"ENOTBLK\0",
+        libc::EBUSY => b"EBUSY\0",
+        libc::EEXIST => b"EEXIST\0",
+        libc::EXDEV => b"EXDEV\0",
+        libc::ENODEV => b"ENODEV\0",
+        libc::ENOTDIR => b"ENOTDIR\0",
+        libc::EISDIR => b"EISDIR\0",
+        libc::EINVAL => b"EINVAL\0",
+        libc::ENFILE => b"ENFILE\0",
+        libc::EMFILE => b"EMFILE\0",
+        libc::ENOTTY => b"ENOTTY\0",
+        libc::ETXTBSY => b"ETXTBSY\0",
+        libc::EFBIG => b"EFBIG\0",
+        libc::ENOSPC => b"ENOSPC\0",
+        libc::ESPIPE => b"ESPIPE\0",
+        libc::EROFS => b"EROFS\0",
+        libc::EMLINK => b"EMLINK\0",
+        libc::EPIPE => b"EPIPE\0",
+        libc::EDOM => b"EDOM\0",
+        libc::ERANGE => b"ERANGE\0",
+        libc::EDEADLK => b"EDEADLK\0",
+        libc::ENAMETOOLONG => b"ENAMETOOLONG\0",
+        libc::ENOLCK => b"ENOLCK\0",
+        libc::ENOSYS => b"ENOSYS\0",
+        libc::ENOTEMPTY => b"ENOTEMPTY\0",
+        libc::ELOOP => b"ELOOP\0",
+        libc::ENOMSG => b"ENOMSG\0",
+        libc::EIDRM => b"EIDRM\0",
+        libc::ECHRNG => b"ECHRNG\0",
+        libc::EL2NSYNC => b"EL2NSYNC\0",
+        libc::EL3HLT => b"EL3HLT\0",
+        libc::EL3RST => b"EL3RST\0",
+        libc::ELNRNG => b"ELNRNG\0",
+        libc::EUNATCH => b"EUNATCH\0",
+        libc::ENOCSI => b"ENOCSI\0",
+        libc::EL2HLT => b"EL2HLT\0",
+        libc::EBADE => b"EBADE\0",
+        libc::EBADR => b"EBADR\0",
+        libc::EXFULL => b"EXFULL\0",
+        libc::ENOANO => b"ENOANO\0",
+        libc::EBADRQC => b"EBADRQC\0",
+        libc::EBADSLT => b"EBADSLT\0",
+        libc::EBFONT => b"EBFONT\0",
+        libc::ENOSTR => b"ENOSTR\0",
+        libc::ENODATA => b"ENODATA\0",
+        libc::ETIME => b"ETIME\0",
+        libc::ENOSR => b"ENOSR\0",
+        libc::ENONET => b"ENONET\0",
+        libc::ENOPKG => b"ENOPKG\0",
+        libc::EREMOTE => b"EREMOTE\0",
+        libc::ENOLINK => b"ENOLINK\0",
+        libc::EADV => b"EADV\0",
+        libc::ESRMNT => b"ESRMNT\0",
+        libc::ECOMM => b"ECOMM\0",
+        libc::EPROTO => b"EPROTO\0",
+        libc::EMULTIHOP => b"EMULTIHOP\0",
+        libc::EDOTDOT => b"EDOTDOT\0",
+        libc::EBADMSG => b"EBADMSG\0",
+        libc::EOVERFLOW => b"EOVERFLOW\0",
+        libc::ENOTUNIQ => b"ENOTUNIQ\0",
+        libc::EBADFD => b"EBADFD\0",
+        libc::EREMCHG => b"EREMCHG\0",
+        libc::ELIBACC => b"ELIBACC\0",
+        libc::ELIBBAD => b"ELIBBAD\0",
+        libc::ELIBSCN => b"ELIBSCN\0",
+        libc::ELIBMAX => b"ELIBMAX\0",
+        libc::ELIBEXEC => b"ELIBEXEC\0",
+        libc::EILSEQ => b"EILSEQ\0",
+        libc::ERESTART => b"ERESTART\0",
+        libc::ESTRPIPE => b"ESTRPIPE\0",
+        libc::EUSERS => b"EUSERS\0",
+        libc::ENOTSOCK => b"ENOTSOCK\0",
+        libc::EDESTADDRREQ => b"EDESTADDRREQ\0",
+        libc::EMSGSIZE => b"EMSGSIZE\0",
+        libc::EPROTOTYPE => b"EPROTOTYPE\0",
+        libc::ENOPROTOOPT => b"ENOPROTOOPT\0",
+        libc::EPROTONOSUPPORT => b"EPROTONOSUPPORT\0",
+        libc::ESOCKTNOSUPPORT => b"ESOCKTNOSUPPORT\0",
+        libc::EOPNOTSUPP => b"EOPNOTSUPP\0",
+        libc::EPFNOSUPPORT => b"EPFNOSUPPORT\0",
+        libc::EAFNOSUPPORT => b"EAFNOSUPPORT\0",
+        libc::EADDRINUSE => b"EADDRINUSE\0",
+        libc::EADDRNOTAVAIL => b"EADDRNOTAVAIL\0",
+        libc::ENETDOWN => b"ENETDOWN\0",
+        libc::ENETUNREACH => b"ENETUNREACH\0",
+        libc::ENETRESET => b"ENETRESET\0",
+        libc::ECONNABORTED => b"ECONNABORTED\0",
+        libc::ECONNREFUSED => b"ECONNREFUSED\0",
+        libc::ECONNRESET => b"ECONNRESET\0",
+        libc::ENOBUFS => b"ENOBUFS\0",
+        libc::EISCONN => b"EISCONN\0",
+        libc::ENOTCONN => b"ENOTCONN\0",
+        libc::ESHUTDOWN => b"ESHUTDOWN\0",
+        libc::ETOOMANYREFS => b"ETOOMANYREFS\0",
+        libc::ETIMEDOUT => b"ETIMEDOUT\0",
+        libc::EHOSTDOWN => b"EHOSTDOWN\0",
+        libc::EHOSTUNREACH => b"EHOSTUNREACH\0",
+        libc::EALREADY => b"EALREADY\0",
+        libc::EINPROGRESS => b"EINPROGRESS\0",
+        libc::ESTALE => b"ESTALE\0",
+        libc::EUCLEAN => b"EUCLEAN\0",
+        libc::ENOTNAM => b"ENOTNAM\0",
+        libc::ENAVAIL => b"ENAVAIL\0",
+        libc::EISNAM => b"EISNAM\0",
+        libc::EREMOTEIO => b"EREMOTEIO\0",
+        libc::EDQUOT => b"EDQUOT\0",
+        libc::ENOMEDIUM => b"ENOMEDIUM\0",
+        libc::EMEDIUMTYPE => b"EMEDIUMTYPE\0",
+        libc::ECANCELED => b"ECANCELED\0",
+        libc::ENOKEY => b"ENOKEY\0",
+        libc::EKEYEXPIRED => b"EKEYEXPIRED\0",
+        libc::EKEYREVOKED => b"EKEYREVOKED\0",
+        libc::EKEYREJECTED => b"EKEYREJECTED\0",
+        libc::EOWNERDEAD => b"EOWNERDEAD\0",
+        libc::ENOTRECOVERABLE => b"ENOTRECOVERABLE\0",
+        libc::ERFKILL => b"ERFKILL\0",
+        libc::EHWPOISON => b"EHWPOISON\0",
+        _ => return std::ptr::null(),
+    };
+    name.as_ptr() as *const c_char
+}
+
+// ===========================================================================
+// Batch: C23 float-to-string — Implemented
+// ===========================================================================
+
+const MAX_STRFROM_PRECISION: usize = 512;
+
+/// C23 `strfromd` — convert double to string with format.
+///
+/// Writes at most `n` bytes (including null) to `s`.
+/// Returns the number of bytes that would have been written (excluding null).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfromd(
+    s: *mut c_char,
+    n: usize,
+    format: *const c_char,
+    value: f64,
+) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    // Borrow the format string instead of a per-call Vec copy (read_c_string_bytes) — the
+    // same alloc antipattern fixed in fnmatch/regexec/strverscmp; the format is only read.
+    // SAFETY: format non-null (checked) and NUL-terminated (C contract).
+    let fmt_bytes = unsafe { core::ffi::CStr::from_ptr(format) }.to_bytes();
+    // Parse format: must be "%[.<precision>]{f,e,g,a}" (C23 subset)
+    let fmt_str = match std::str::from_utf8(fmt_bytes) {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+
+    let rendered = render_strfrom(fmt_str, value);
+    let bytes = rendered.as_bytes();
+    let len = bytes.len();
+
+    if !s.is_null() && n > 0 {
+        let copy_len = std::cmp::min(len, n - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
+            *s.add(copy_len) = 0;
+        }
+    }
+    len as c_int
+}
+
+/// C23 `strfromf` — convert float to string with format.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfromf(
+    s: *mut c_char,
+    n: usize,
+    format: *const c_char,
+    value: f32,
+) -> c_int {
+    unsafe { strfromd(s, n, format, value as f64) }
+}
+
+/// C23 `strfroml` — convert long double to string with format.
+///
+/// The x86_64 export is the x87 entry point in `math_abi::x87_math_entry`;
+/// this f64 form serves the other targets.
+#[cfg_attr(
+    all(not(debug_assertions), not(target_arch = "x86_64")),
+    unsafe(no_mangle)
+)]
+pub unsafe extern "C" fn strfroml(
+    s: *mut c_char,
+    n: usize,
+    format: *const c_char,
+    value: f64, // long double approximated as f64
+) -> c_int {
+    unsafe { strfromd(s, n, format, value) }
+}
+
+fn render_strfrom(fmt: &str, value: f64) -> String {
+    // Parse "%[.<prec>]{f|e|g|a}". The default precision per C99 is 6
+    // for f/e/g; printf doesn't accept a missing default precision for
+    // %a (hexadecimal) so we use 6 as a sensible fallback there too.
+    if !fmt.starts_with('%') {
+        return format!("{value}");
+    }
+    let rest = &fmt[1..];
+    let (precision, spec) = if let Some(after_dot) = rest.strip_prefix('.') {
+        let num_end = after_dot
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(after_dot.len());
+        let prec = if num_end == 0 {
+            0
+        } else {
+            after_dot[..num_end]
+                .parse::<usize>()
+                .map(|precision| precision.min(MAX_STRFROM_PRECISION))
+                .unwrap_or(6)
+        };
+        (Some(prec), &after_dot[num_end..])
+    } else {
+        (None, rest)
+    };
+    let decimal_precision = precision.unwrap_or(6);
+
+    // Non-finite values render as glibc spells them (NOT Rust's "NaN"/"inf"):
+    // lowercase "nan"/"inf" for a/e/f/g, uppercase "NAN"/"INF" for A/E/F/G, with
+    // a leading '-' when the sign bit is set; precision is ignored. Found by
+    // strfromd_differential_fuzz.
+    if matches!(spec, "a" | "A" | "e" | "E" | "f" | "F" | "g" | "G") && !value.is_finite() {
+        let sign = if value.is_sign_negative() { "-" } else { "" };
+        let body = if value.is_nan() { "nan" } else { "inf" };
+        let out = format!("{sign}{body}");
+        return if matches!(spec, "A" | "E" | "F" | "G") {
+            out.to_ascii_uppercase()
+        } else {
+            out
+        };
+    }
+
+    match spec {
+        // %f / %F — fixed-point with `precision` fractional digits.
+        // Rust's `{:.N$}` is bit-compatible with printf %f for f64.
+        // `%f` of a FINITE value has no alphabetic chars, so `%F` == `%f`
+        // (non-finite is handled above); the former `.to_ascii_uppercase()` was a
+        // pure no-op extra allocation.
+        "f" | "F" => format!("{value:.decimal_precision$}"),
+
+        // %e — scientific with C-style `e+02` exponent (Rust's default
+        // gives `e2` without sign or leading zeros, which doesn't match
+        // glibc strfromd). Delegate to the shared helper that handles
+        // the reshape.
+        "e" => frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision),
+        "E" => {
+            // %E is identical to %e but with uppercase `E`. The only lowercase
+            // char render_pct_e emits is the 'e', so an in-place
+            // `make_ascii_uppercase` does exactly that — no `.replace()` +
+            // `.to_ascii_uppercase()` (two extra allocations).
+            let mut s = frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision);
+            s.make_ascii_uppercase();
+            s
+        }
+
+        // %g — uses *significant* digits (not fractional) and switches
+        // between fixed and scientific based on the exponent. Trailing
+        // zeros after the decimal point are stripped. The previous
+        // length-based shorter-of-two heuristic was structurally
+        // wrong: for value=0 with precision=6 it picked "0.000000"
+        // instead of glibc's "0".
+        "g" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision),
+        "G" => {
+            // As %E: the only lowercase char is the optional 'e'; upper-case in
+            // place instead of `.replace()` + `.to_ascii_uppercase()`.
+            let mut s = frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision);
+            s.make_ascii_uppercase();
+            s
+        }
+
+        "a" => render_hex_float(value, precision, false),
+        "A" => render_hex_float(value, precision, true),
+
+        _ => format!("{value}"),
+    }
+}
+
+fn render_hex_float(value: f64, precision: Option<usize>, uppercase: bool) -> String {
+    if value.is_nan() {
+        return if uppercase {
+            String::from("NAN")
+        } else {
+            String::from("nan")
+        };
+    }
+    if value.is_infinite() {
+        let inf = if uppercase { "INF" } else { "inf" };
+        return if value.is_sign_negative() {
+            format!("-{inf}")
+        } else {
+            inf.to_string()
+        };
+    }
+
+    let prefix = if uppercase { "0X" } else { "0x" };
+    let exponent_marker = if uppercase { 'P' } else { 'p' };
+    let hex_digits = if uppercase {
+        b"0123456789ABCDEF"
+    } else {
+        b"0123456789abcdef"
+    };
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let bits = value.abs().to_bits();
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1_u64 << 52) - 1);
+
+    if exponent_bits == 0 && fraction == 0 {
+        let mut out = format!("{sign}{prefix}0");
+        if let Some(precision) = precision
+            && precision != 0
+        {
+            out.push('.');
+            out.extend(std::iter::repeat_n('0', precision));
+        }
+        out.push(exponent_marker);
+        out.push_str("+0");
+        return out;
+    }
+
+    let exponent = if exponent_bits == 0 {
+        -1022
+    } else {
+        exponent_bits - 1023
+    };
+    let mantissa_units = if exponent_bits == 0 {
+        fraction as u128
+    } else {
+        (1_u128 << 52) | fraction as u128
+    };
+
+    let mut out = String::new();
+    out.push_str(sign);
+    out.push_str(prefix);
+    match precision {
+        Some(precision) => {
+            let (integer, fraction) = if precision >= 13 {
+                (mantissa_units >> 52, mantissa_units & ((1_u128 << 52) - 1))
+            } else {
+                let rounded = round_hex_mantissa(mantissa_units, precision);
+                let scale = if precision == 0 {
+                    1
+                } else {
+                    1_u128 << (4 * precision)
+                };
+                (rounded / scale, rounded % scale)
+            };
+            let _ = write!(out, "{integer:x}");
+            if precision != 0 {
+                out.push('.');
+                if precision >= 13 {
+                    let _ = write!(out, "{fraction:013x}");
+                    out.extend(std::iter::repeat_n('0', precision - 13));
+                } else {
+                    let _ = write!(out, "{fraction:0precision$x}");
+                }
+            }
+        }
+        None => {
+            let integer = mantissa_units >> 52;
+            let fraction = mantissa_units & ((1_u128 << 52) - 1);
+            let _ = write!(out, "{integer:x}");
+            let mut digits = String::with_capacity(13);
+            for idx in (0..13).rev() {
+                let nibble = ((fraction >> (idx * 4)) & 0xf) as usize;
+                digits.push(hex_digits[nibble] as char);
+            }
+            let trimmed = digits.trim_end_matches('0');
+            if !trimmed.is_empty() {
+                out.push('.');
+                out.push_str(trimmed);
+            }
+        }
+    }
+    if uppercase {
+        out = out.to_ascii_uppercase();
+    }
+    out.push(exponent_marker);
+    if exponent >= 0 {
+        let _ = write!(out, "+{exponent}");
+    } else {
+        let _ = write!(out, "{exponent}");
+    }
+    out
+}
+
+fn round_hex_mantissa(mantissa_units: u128, precision: usize) -> u128 {
+    if precision >= 13 {
+        return mantissa_units << (4 * (precision - 13));
+    }
+    let shift = 52 - (4 * precision);
+    if shift == 0 {
+        return mantissa_units;
+    }
+    let quotient = mantissa_units >> shift;
+    let remainder = mantissa_units & ((1_u128 << shift) - 1);
+    let half = 1_u128 << (shift - 1);
+    if remainder > half || (remainder == half && quotient & 1 == 1) {
+        quotient + 1
+    } else {
+        quotient
+    }
+}
+
+// ===========================================================================
+// Batch: argz family (GNU extensions) — Implemented
+// ===========================================================================
+
+/// `argz_create` — create an argz vector from argv.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_create(
+    argv: *const *const c_char,
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if argv.is_null() {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let mut total_len = 0usize;
+    let mut entries = Vec::new();
+    let mut i = 0;
+    loop {
+        let p = unsafe { *argv.add(i) };
+        if p.is_null() {
+            break;
+        }
+        let Some(bytes) = (unsafe { read_c_string_bytes(p) }) else {
+            return libc::EINVAL;
+        };
+        let Some(entry_len) = bytes.len().checked_add(1) else {
+            return libc::ENOMEM;
+        };
+        let Some(next_total_len) = total_len.checked_add(entry_len) else {
+            return libc::ENOMEM;
+        };
+        total_len = next_total_len;
+        entries.push(bytes);
+        i += 1;
+    }
+
+    if total_len == 0 {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    // GNU argz contract: caller frees argz buffer via libc::free
+    // (bd-zgifl); use libc::malloc for the alloc/free pair to match
+    // in test (non-LD_PRELOAD) builds.
+    let buf = unsafe { crate::malloc_abi::malloc(total_len) as *mut c_char };
+    if buf.is_null() {
+        return libc::ENOMEM;
+    }
+
+    let mut offset = 0;
+    for bytes in entries {
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.add(offset) as *mut u8, bytes.len());
+            *buf.add(offset + bytes.len()) = 0;
+        }
+        offset += bytes.len() + 1;
+    }
+
+    unsafe {
+        *argz = buf;
+        *argz_len = total_len;
+    }
+    0
+}
+
+/// `argz_create_sep` — create argz from string with separator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_create_sep(
+    string: *const c_char,
+    sep: c_int,
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if string.is_null() {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let Some(s_bytes) = (unsafe { read_c_string_bytes(string) }) else {
+        return libc::EINVAL;
+    };
+    let sep_byte = sep as u8;
+    let entries = argz_sep_entries(&s_bytes, sep_byte);
+
+    if entries.is_empty() {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let len: usize = entries.iter().map(|entry| entry.len() + 1).sum();
+    // GNU argz: caller frees via libc::free (bd-zgifl).
+    let ptr = unsafe { crate::malloc_abi::malloc(len) as *mut c_char };
+    if ptr.is_null() {
+        return libc::ENOMEM;
+    }
+    let mut offset = 0usize;
+    for entry in entries {
+        unsafe {
+            std::ptr::copy_nonoverlapping(entry.as_ptr(), ptr.add(offset) as *mut u8, entry.len());
+            *ptr.add(offset + entry.len()) = 0;
+        }
+        offset += entry.len() + 1;
+    }
+    unsafe {
+        *argz = ptr;
+        *argz_len = len;
+    }
+    0
+}
+
+/// `argz_count` — count entries in an argz vector.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_count(argz: *const c_char, argz_len: usize) -> usize {
+    if argz.is_null() || argz_len == 0 {
+        return 0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) };
+    slice.iter().filter(|&&b| b == 0).count()
+}
+
+/// `argz_next` — iterate to next entry in argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_next(
+    argz: *const c_char,
+    argz_len: usize,
+    entry: *const c_char,
+) -> *mut c_char {
+    if argz.is_null() || argz_len == 0 {
+        return std::ptr::null_mut();
+    }
+    if entry.is_null() {
+        return argz as *mut c_char;
+    }
+    // Find end of current entry (next NUL) then advance past it
+    let base = argz as usize;
+    let ptr = entry as usize;
+    let end = match base.checked_add(argz_len) {
+        Some(end) => end,
+        None => return std::ptr::null_mut(),
+    };
+    if ptr < base || ptr >= end {
+        return std::ptr::null_mut();
+    }
+    let entry_offset = ptr - base;
+    let remaining =
+        &unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) }[entry_offset..];
+    if let Some(nul_pos) = remaining.iter().position(|&b| b == 0) {
+        let next_offset = entry_offset + nul_pos + 1;
+        if next_offset < argz_len {
+            return unsafe { argz.add(next_offset) as *mut c_char };
+        }
+    }
+    std::ptr::null_mut()
+}
+
+fn argz_sep_entries(bytes: &[u8], sep: u8) -> Vec<&[u8]> {
+    let mut entries = Vec::new();
+    let mut pos = 0usize;
+
+    while pos < bytes.len() {
+        while pos < bytes.len() && bytes[pos] == sep {
+            pos += 1;
+        }
+        if pos == bytes.len() {
+            break;
+        }
+
+        let mut end = pos;
+        while end < bytes.len() && bytes[end] != sep {
+            end += 1;
+        }
+        entries.push(&bytes[pos..end]);
+        pos = end;
+    }
+
+    if !bytes.is_empty() && bytes[bytes.len() - 1] == sep {
+        entries.push(&[]);
+    }
+
+    entries
+}
+
+unsafe fn replace_owned_argz_buffer(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    new_buf: *mut c_char,
+    new_len: usize,
+) {
+    let old_buf = unsafe { *argz };
+    let old_len = unsafe { *argz_len };
+    if !old_buf.is_null() && old_len > 0 {
+        // Pair with libc::malloc used by argz_create / argz_add /
+        // argz_append / argz_insert / argz_replace. (bd-zgifl)
+        unsafe { crate::malloc_abi::free(old_buf.cast()) };
+    }
+    unsafe {
+        *argz = if new_len == 0 {
+            std::ptr::null_mut()
+        } else {
+            new_buf
+        };
+        *argz_len = new_len;
+    }
+}
+
+unsafe fn argz_add_bytes(argz: *mut *mut c_char, argz_len: *mut usize, bytes: &[u8]) -> c_int {
+    let old_buf = unsafe { *argz };
+    let old_len = if old_buf.is_null() {
+        0
+    } else {
+        unsafe { *argz_len }
+    };
+    let Some(entry_len) = bytes.len().checked_add(1) else {
+        return libc::ENOMEM;
+    };
+    let Some(new_len) = old_len.checked_add(entry_len) else {
+        return libc::ENOMEM;
+    };
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+    unsafe {
+        if old_len > 0 {
+            std::ptr::copy_nonoverlapping(old_buf as *const u8, new_buf as *mut u8, old_len);
+        }
+        if !bytes.is_empty() {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                new_buf.add(old_len) as *mut u8,
+                bytes.len(),
+            );
+        }
+        *new_buf.add(old_len + bytes.len()) = 0;
+        replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
+    }
+    0
+}
+
+unsafe fn argz_entry_len_at(argz: *const c_char, argz_len: usize, pos: usize) -> Option<usize> {
+    if argz.is_null() || pos >= argz_len {
+        return None;
+    }
+    let (entry_len, terminated) = unsafe { scan_c_string(argz.add(pos), Some(argz_len - pos)) };
+    if !terminated {
+        return None;
+    }
+    Some(entry_len)
+}
+
+unsafe fn argz_entry_offset(
+    argz: *const c_char,
+    argz_len: usize,
+    entry: *const c_char,
+) -> Option<usize> {
+    if argz.is_null() || entry.is_null() || argz_len == 0 {
+        return None;
+    }
+    let base = argz as usize;
+    let ptr = entry as usize;
+    let end = base.checked_add(argz_len)?;
+    if ptr < base || ptr >= end {
+        return None;
+    }
+    let offset = ptr - base;
+    if offset > 0 {
+        let previous = unsafe { *(argz as *const u8).add(offset - 1) };
+        if previous != 0 {
+            return None;
+        }
+    }
+    Some(offset)
+}
+
+/// `argz_add` — append a string to an argz vector.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_add(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    str_: *const c_char,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || str_.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(bytes) = (unsafe { read_c_string_bytes(str_) }) else {
+        return libc::EINVAL;
+    };
+    unsafe { argz_add_bytes(argz, argz_len, &bytes) }
+}
+
+/// `argz_add_sep` — split string by separator and append to argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_add_sep(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    string: *const c_char,
+    sep: c_int,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || string.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(s_bytes) = (unsafe { read_c_string_bytes(string) }) else {
+        return libc::EINVAL;
+    };
+    let sep_byte = sep as u8;
+    for part in argz_sep_entries(&s_bytes, sep_byte) {
+        let rc = unsafe { argz_add_bytes(argz, argz_len, part) };
+        if rc != 0 {
+            return rc;
+        }
+    }
+    0
+}
+
+/// `argz_append` — append argz2 to argz1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_append(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    buf: *const c_char,
+    buf_len: usize,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if buf.is_null() || buf_len == 0 {
+        return 0;
+    }
+    let old_buf = unsafe { *argz };
+    let old_len = if old_buf.is_null() {
+        0
+    } else {
+        unsafe { *argz_len }
+    };
+    let Some(new_len) = old_len.checked_add(buf_len) else {
+        return libc::ENOMEM;
+    };
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+    unsafe {
+        if old_len > 0 {
+            std::ptr::copy_nonoverlapping(old_buf as *const u8, new_buf as *mut u8, old_len);
+        }
+        std::ptr::copy_nonoverlapping(buf as *const u8, new_buf.add(old_len) as *mut u8, buf_len);
+        replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
+    }
+    0
+}
+
+/// `argz_delete` — remove an entry from argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_delete(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    entry: *mut c_char,
+) {
+    if argz.is_null() || argz_len.is_null() || entry.is_null() {
+        return;
+    }
+    let az = unsafe { *argz };
+    let len = unsafe { *argz_len };
+    let Some(entry_offset) = (unsafe { argz_entry_offset(az, len, entry) }) else {
+        return;
+    };
+    let (entry_len, terminated) = unsafe { scan_c_string(entry, Some(len - entry_offset)) };
+    if !terminated {
+        return;
+    }
+    let entry_len = entry_len + 1; // include NUL
+    let remaining = len - entry_offset - entry_len;
+    if remaining > 0 {
+        unsafe {
+            std::ptr::copy(
+                az.add(entry_offset + entry_len) as *const u8,
+                az.add(entry_offset) as *mut u8,
+                remaining,
+            );
+        }
+    }
+    let new_len = len - entry_len;
+    if new_len == 0 {
+        unsafe {
+            // Pair with libc::malloc used by argz_create. (bd-zgifl)
+            crate::malloc_abi::free(az.cast());
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+    } else {
+        unsafe { *argz_len = new_len };
+    }
+}
+
+/// `argz_extract` — extract argz entries into an argv array.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_extract(
+    argz: *const c_char,
+    argz_len: usize,
+    argv: *mut *mut c_char,
+) {
+    if argz.is_null() || argv.is_null() || argz_len == 0 {
+        return;
+    }
+    let mut idx = 0usize;
+    let mut pos = 0usize;
+    while pos < argz_len {
+        let Some(entry_len) = (unsafe { argz_entry_len_at(argz, argz_len, pos) }) else {
+            unsafe { *argv.add(idx) = std::ptr::null_mut() };
+            return;
+        };
+        unsafe { *argv.add(idx) = argz.add(pos) as *mut c_char };
+        idx += 1;
+        pos += entry_len + 1;
+    }
+    unsafe { *argv.add(idx) = std::ptr::null_mut() };
+}
+
+/// `argz_insert` — insert string before entry in argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_insert(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    before: *mut c_char,
+    entry: *const c_char,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || entry.is_null() {
+        return libc::EINVAL;
+    }
+    if before.is_null() {
+        // Append at end
+        return unsafe { argz_add(argz, argz_len, entry) };
+    }
+    let Some(entry_bytes) = (unsafe { read_c_string_bytes(entry) }) else {
+        return libc::EINVAL;
+    };
+    let Some(slen) = entry_bytes.len().checked_add(1) else {
+        return libc::ENOMEM;
+    };
+    let old_len = unsafe { *argz_len };
+    let az = unsafe { *argz };
+    let Some(before_offset) = (unsafe { argz_entry_offset(az, old_len, before) }) else {
+        return libc::EINVAL;
+    };
+    let Some(new_len) = old_len.checked_add(slen) else {
+        return libc::ENOMEM;
+    };
+
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+
+    let tail_len = old_len - before_offset;
+    unsafe {
+        if before_offset > 0 {
+            std::ptr::copy_nonoverlapping(az as *const u8, new_buf as *mut u8, before_offset);
+        }
+        std::ptr::copy_nonoverlapping(
+            entry_bytes.as_ptr(),
+            new_buf.add(before_offset) as *mut u8,
+            entry_bytes.len(),
+        );
+        *new_buf.add(before_offset + entry_bytes.len()) = 0;
+        if tail_len > 0 {
+            std::ptr::copy_nonoverlapping(
+                az.add(before_offset) as *const u8,
+                new_buf.add(before_offset + slen) as *mut u8,
+                tail_len,
+            );
+        }
+        replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
+    }
+    0
+}
+
+/// `argz_replace` — replace all occurrences of str with with in argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_replace(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    str_: *const c_char,
+    with: *const c_char,
+    replace_count: *mut libc::c_uint,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || str_.is_null() || with.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(find_bytes) = (unsafe { read_c_string_bytes(str_) }) else {
+        return libc::EINVAL;
+    };
+    let Some(replace_bytes) = (unsafe { read_c_string_bytes(with) }) else {
+        return libc::EINVAL;
+    };
+
+    // Rebuild the argz with replacements
+    let az = unsafe { *argz };
+    let len = unsafe { *argz_len };
+    if az.is_null() || len == 0 {
+        return 0;
+    }
+    let mut entries: Vec<Vec<u8>> = Vec::new();
+    let mut replacements = 0_u32;
+    let mut pos = 0usize;
+    while pos < len {
+        let (entry_len, entry_terminated) = unsafe { scan_c_string(az.add(pos), Some(len - pos)) };
+        if !entry_terminated {
+            return libc::EINVAL;
+        }
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(az.add(pos).cast::<u8>(), entry_len) };
+        // glibc argz_replace replaces every SUBSTRING occurrence of `str`
+        // within each entry (not whole-entry matches), counting each one — e.g.
+        // replace("c"->"aac") turns the entry "ac" into "aaac". The old
+        // whole-entry comparison missed all in-entry matches. Found by
+        // argz_mutation_differential_fuzz (bd-2g7oyh.212).
+        if find_bytes.is_empty() {
+            entries.push(entry_bytes.to_vec());
+        } else {
+            let mut rebuilt = Vec::with_capacity(entry_bytes.len());
+            let mut matched = false;
+            let mut i = 0usize;
+            while i < entry_bytes.len() {
+                if entry_bytes[i..].starts_with(find_bytes.as_slice()) {
+                    rebuilt.extend_from_slice(&replace_bytes);
+                    i += find_bytes.len();
+                    matched = true;
+                } else {
+                    rebuilt.push(entry_bytes[i]);
+                    i += 1;
+                }
+            }
+            // glibc increments replace_count ONCE per matching entry, even when
+            // the entry contained several occurrences (all of which are
+            // replaced in the bytes).
+            if matched {
+                replacements = replacements.wrapping_add(1);
+            }
+            entries.push(rebuilt);
+        }
+        pos += entry_bytes.len() + 1;
+    }
+    if !replace_count.is_null() {
+        unsafe {
+            *replace_count = (*replace_count).wrapping_add(replacements);
+        }
+    }
+    if replacements == 0 {
+        return 0;
+    }
+
+    // Compute new length
+    let new_len: usize = entries.iter().map(|e| e.len() + 1).sum();
+
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+    let mut offset = 0;
+    for e in &entries {
+        unsafe {
+            std::ptr::copy_nonoverlapping(e.as_ptr(), new_buf.add(offset) as *mut u8, e.len());
+            *new_buf.add(offset + e.len()) = 0;
+        }
+        offset += e.len() + 1;
+    }
+    unsafe { replace_owned_argz_buffer(argz, argz_len, new_buf, new_len) };
+    0
+}
+
+/// `argz_stringify` — convert argz to regular string (replace NULs with sep).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_stringify(argz: *mut c_char, argz_len: usize, sep: c_int) {
+    if argz.is_null() || argz_len < 2 {
+        return;
+    }
+    // Replace all interior NULs with sep, keep last NUL
+    let slice = unsafe { std::slice::from_raw_parts_mut(argz as *mut u8, argz_len) };
+    for b in &mut slice[..argz_len - 1] {
+        if *b == 0 {
+            *b = sep as u8;
+        }
+    }
+}
+
+// ===========================================================================
+// Batch: envz family (GNU extensions) — Implemented
+// ===========================================================================
+
+/// `envz_entry` — find entry with given name in envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_entry(
+    envz: *const c_char,
+    envz_len: usize,
+    name: *const c_char,
+) -> *mut c_char {
+    if envz.is_null() || envz_len == 0 || name.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        return std::ptr::null_mut();
+    };
+
+    let mut pos = 0usize;
+    while pos < envz_len {
+        let Some(entry_len) = (unsafe { argz_entry_len_at(envz, envz_len, pos) }) else {
+            return std::ptr::null_mut();
+        };
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(envz.add(pos).cast::<u8>(), entry_len) };
+        // Check if entry starts with name and is followed by '=' or NUL
+        if entry_bytes.len() >= name_bytes.len()
+            && entry_bytes.starts_with(&name_bytes)
+            && (entry_bytes.len() == name_bytes.len() || entry_bytes[name_bytes.len()] == b'=')
+        {
+            return unsafe { envz.add(pos) as *mut c_char };
+        }
+        pos += entry_len + 1;
+    }
+    std::ptr::null_mut()
+}
+
+/// `envz_get` — get value for name in envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_get(
+    envz: *const c_char,
+    envz_len: usize,
+    name: *const c_char,
+) -> *const c_char {
+    let entry = unsafe { envz_entry(envz, envz_len, name) };
+    if entry.is_null() {
+        return std::ptr::null();
+    }
+    let Some(entry_offset) = (unsafe { argz_entry_offset(envz, envz_len, entry) }) else {
+        return std::ptr::null();
+    };
+    let Some(entry_len) = (unsafe { argz_entry_len_at(envz, envz_len, entry_offset) }) else {
+        return std::ptr::null();
+    };
+    let entry_bytes = unsafe { std::slice::from_raw_parts(entry.cast::<u8>(), entry_len) };
+    if let Some(eq_pos) = entry_bytes.iter().position(|&b| b == b'=') {
+        unsafe { entry.add(eq_pos + 1) as *const c_char }
+    } else {
+        std::ptr::null() // name without value
+    }
+}
+
+/// `envz_add` — add/replace name=value in envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_add(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    name: *const c_char,
+    value: *const c_char,
+) -> c_int {
+    if envz.is_null() || envz_len.is_null() || name.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
+    let value_bytes = if value.is_null() {
+        None
+    } else {
+        let Some(bytes) = (unsafe { read_c_string_bytes(value) }) else {
+            return libc::EINVAL;
+        };
+        Some(bytes)
+    };
+
+    unsafe { envz_add_bytes(envz, envz_len, &name_bytes, value_bytes.as_deref()) }
+}
+
+unsafe fn envz_add_bytes(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    name: &[u8],
+    value: Option<&[u8]>,
+) -> c_int {
+    let Some(mut capacity) = name.len().checked_add(value.map_or(0, |v| v.len())) else {
+        return libc::ENOMEM;
+    };
+    if value.is_some() {
+        let Some(next) = capacity.checked_add(1) else {
+            return libc::ENOMEM;
+        };
+        capacity = next;
+    }
+
+    let mut name_cstr = Vec::with_capacity(name.len() + 1);
+    name_cstr.extend_from_slice(name);
+    name_cstr.push(0);
+    unsafe { envz_remove(envz, envz_len, name_cstr.as_ptr().cast()) };
+
+    let mut entry = Vec::with_capacity(capacity);
+    entry.extend_from_slice(name);
+    if let Some(value) = value {
+        entry.push(b'=');
+        entry.extend_from_slice(value);
+    }
+    unsafe { argz_add_bytes(envz, envz_len, &entry) }
+}
+
+/// `envz_merge` — merge envz2 into envz1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_merge(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    envz2: *const c_char,
+    envz2_len: usize,
+    override_: c_int,
+) -> c_int {
+    if envz.is_null() || envz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if envz2.is_null() || envz2_len == 0 {
+        return 0;
+    }
+
+    let mut pos = 0usize;
+    while pos < envz2_len {
+        let Some(entry_len) = (unsafe { argz_entry_len_at(envz2, envz2_len, pos) }) else {
+            return libc::EINVAL;
+        };
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(envz2.add(pos).cast::<u8>(), entry_len) };
+
+        // Parse name from entry
+        let eq_pos = entry_bytes.iter().position(|&b| b == b'=');
+        let name_end = eq_pos.unwrap_or(entry_bytes.len());
+        let name_bytes = &entry_bytes[..name_end];
+
+        let mut name_cstr = Vec::with_capacity(name_bytes.len() + 1);
+        name_cstr.extend_from_slice(name_bytes);
+        name_cstr.push(0);
+        let existing = unsafe { envz_entry(*envz, *envz_len, name_cstr.as_ptr().cast()) };
+        if existing.is_null() || override_ != 0 {
+            let value = eq_pos.map(|p| &entry_bytes[p + 1..]);
+            let rc = unsafe { envz_add_bytes(envz, envz_len, name_bytes, value) };
+            if rc != 0 {
+                return rc;
+            }
+        }
+
+        pos += entry_len + 1;
+    }
+    0
+}
+
+/// `envz_remove` — remove name from envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_remove(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    name: *const c_char,
+) {
+    if envz.is_null() || envz_len.is_null() || name.is_null() {
+        return;
+    }
+    let entry = unsafe { envz_entry(*envz, *envz_len, name) };
+    if !entry.is_null() {
+        unsafe { argz_delete(envz, envz_len, entry) };
+    }
+}
+
+/// `envz_strip` — remove entries without values from envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize) {
+    if envz.is_null() || envz_len.is_null() {
+        return;
+    }
+    // Rebuild keeping only entries with '='
+    let az = unsafe { *envz };
+    let len = unsafe { *envz_len };
+    if az.is_null() || len == 0 {
+        return;
+    }
+    let mut entries_to_remove: Vec<usize> = Vec::new();
+
+    let mut pos = 0usize;
+    while pos < len {
+        let Some(entry_len) = (unsafe { argz_entry_len_at(az, len, pos) }) else {
+            return;
+        };
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(az.add(pos).cast::<u8>(), entry_len) };
+        if !entry_bytes.contains(&b'=') {
+            entries_to_remove.push(pos);
+        }
+        pos += entry_len + 1;
+    }
+
+    // Remove from end to start to keep offsets valid
+    for &offset in entries_to_remove.iter().rev() {
+        let entry_ptr = unsafe { az.add(offset) };
+        unsafe { argz_delete(envz, envz_len, entry_ptr) };
+    }
+}
+
+// ── GNU old regex API ───────────────────────────────────────────────────────
+//
+// The old POSIX.2 GNU regex interface (re_compile_pattern, re_search, re_match).
+// Many legacy programs and GNU utilities use this API instead of the newer
+// POSIX regcomp/regexec interface. We implement using our existing regex core.
+
+/// The live `re_syntax_options`. As in glibc, that variable IS the syntax
+/// state: programs assign it directly (coreutils expr), `re_set_syntax`
+/// writes it and `re_compile_pattern` reads it. fl kept a private copy that
+/// only `re_set_syntax` updated, so expr compiled with syntax 0 (no
+/// intervals: `a\{1\}` matched nothing). An executable that references the
+/// variable owns a COPY-relocated instance, so resolve the one in use through
+/// the dynamic linker instead of assuming fl's own definition.
+fn re_syntax_options_ptr() -> *mut libc::c_ulong {
+    static PTR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PTR.get_or_init(|| {
+        // SAFETY: RTLD_DEFAULT lookup of a NUL-terminated symbol name.
+        let sym =
+            unsafe { crate::dlfcn_abi::dlsym(std::ptr::null_mut(), c"re_syntax_options".as_ptr()) };
+        if sym.is_null() {
+            std::ptr::addr_of_mut!(crate::glibc_internal_abi::re_syntax_options) as usize
+        } else {
+            sym as usize
+        }
+    }) as *mut libc::c_ulong
+}
+
+fn current_re_syntax() -> u64 {
+    // SAFETY: the pointer names the process's `re_syntax_options` word.
+    unsafe { std::ptr::read_volatile(re_syntax_options_ptr()) as u64 }
+}
+
+/// `re_set_syntax` — set default syntax options for regex compilation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_set_syntax(syntax: u64) -> u64 {
+    let ptr = re_syntax_options_ptr();
+    // SAFETY: as `current_re_syntax`; glibc's update is equally unsynchronized.
+    unsafe {
+        let old = std::ptr::read_volatile(ptr);
+        std::ptr::write_volatile(ptr, syntax as libc::c_ulong);
+        old as u64
+    }
+}
+
+/// `re_compile_pattern` — compile a regex pattern (GNU old API).
+/// Returns NULL on success, or a C string error message on failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_compile_pattern(
+    pattern: *const c_char,
+    length: usize,
+    buffer: *mut c_void,
+) -> *const c_char {
+    use frankenlibc_core::string::regex;
+
+    if pattern.is_null() || buffer.is_null() {
+        return c"Invalid argument".as_ptr();
+    }
+    let Some(layout) = (unsafe { regex_buffer_layout(buffer) }) else {
+        return c"Invalid argument".as_ptr();
+    };
+    unsafe { regex_release_buffer(layout) };
+
+    let pat_slice = unsafe { core::slice::from_raw_parts(pattern as *const u8, length) };
+    let syntax = current_re_syntax();
+    // glibc's re_compile_pattern always sets `newline_anchor`; callers (sed) may
+    // clear it before searching, which regex_compiled_for_search honours.
+    let cflags =
+        legacy_regex_syntax_to_cflags(syntax) | regex::REG_NEWLINE_ANCHOR | regex_locale_cflags();
+
+    match regex::regex_compile_bytes_collated(pat_slice, cflags, regex_collation_for(pat_slice)) {
+        Ok(compiled) => {
+            let re_nsub = compiled.num_regs().saturating_sub(1);
+            let raw_ptr = Box::into_raw(compiled);
+            let handle = Box::new(RegexHandle {
+                magic: FRANKEN_REGEX_MAGIC,
+                compiled: raw_ptr,
+                pattern: pat_slice.to_vec(),
+                cflags,
+                toggled: std::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            });
+
+            layout.buffer = Box::into_raw(handle).cast();
+            layout.allocated = core::mem::size_of::<RegexHandle>() as libc::c_long;
+            layout.used = layout.allocated;
+            layout.syntax = syntax;
+            layout.fastmap = core::ptr::null_mut();
+            layout.translate = core::ptr::null_mut();
+            layout.re_nsub = re_nsub;
+            layout.flags = REGEX_FLAG_NEWLINE_ANCHOR;
+            if cflags & regex::REG_NOSUB != 0 {
+                layout.flags |= REGEX_FLAG_NO_SUB;
+            }
+            regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
+            core::ptr::null()
+        }
+        Err(code) => regex_error_cstr(code).as_ptr(),
+    }
+}
+
+/// `re_compile_fastmap` — compute fastmap for compiled pattern.
+/// Returns 0 on success, -2 on error. We no-op since our engine doesn't use fastmaps.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_compile_fastmap(buffer: *mut c_void) -> c_int {
+    let Some(layout) = (unsafe { regex_buffer_layout(buffer) }) else {
+        return -2;
+    };
+    if unsafe { regex_compiled_from_buffer(buffer) }.is_none() {
+        return -2;
+    }
+    layout.flags |= REGEX_FLAG_FASTMAP_ACCURATE;
+    0 // success — our engine doesn't need a fastmap
+}
+
+/// `re_search` — search for pattern in string (GNU old API).
+/// Returns byte offset of match start, or -1 if no match, or -2 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_search(
+    buffer: *const c_void,
+    string: *const c_char,
+    length: c_int,
+    start: c_int,
+    range: c_int,
+    regs: *mut c_void,
+) -> c_int {
+    unsafe {
+        re_search_2(
+            buffer,
+            core::ptr::null(),
+            0,
+            string,
+            length,
+            start,
+            range,
+            regs,
+            length,
+        )
+    }
+}
+
+/// `re_search_2` — search for pattern in split string (GNU old API).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_search_2(
+    buffer: *const c_void,
+    string1: *const c_char,
+    size1: c_int,
+    string2: *const c_char,
+    size2: c_int,
+    startpos: c_int,
+    range: c_int,
+    regs: *mut c_void,
+    stop: c_int,
+) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    if buffer.is_null() {
+        return -2;
+    }
+    let Some((compiled, eflags)) = (unsafe { regex_compiled_for_search(buffer) }) else {
+        return -2;
+    };
+
+    let haystack = match legacy_regex_concat(string1, size1, string2, size2) {
+        Ok(haystack) => haystack,
+        Err(code) => return code,
+    };
+
+    let search_start = startpos.max(0) as usize;
+    if search_start > haystack.len() {
+        return -1;
+    }
+    let stop_bound = (stop.max(0) as usize).min(haystack.len());
+    let nosub = compiled.nosub();
+    // Registers live on the stack for up to nine groups (no per-call allocation).
+    let reg_count = compiled.num_regs().max(2);
+    let mut stack_slots = [regex::RegMatch::default(); 10];
+    let mut heap_slots;
+    let match_slots: &mut [regex::RegMatch] = if reg_count <= stack_slots.len() {
+        &mut stack_slots[..reg_count]
+    } else {
+        heap_slots = vec![regex::RegMatch::default(); reg_count];
+        &mut heap_slots
+    };
+
+    // Leftmost match starting at or after `from` over the WHOLE haystack, so the
+    // bytes before `from` stay context for `^`/`\<`/`\b` exactly as in glibc
+    // (slicing the haystack at `from` would make every restart a line start).
+    // Returns (start, end) with `match_slots` filled when registers are wanted.
+    let search_from = |from: usize, slots: &mut [regex::RegMatch]| -> Option<(usize, usize)> {
+        if nosub {
+            let (so, eo) = regex::regex_match_bounds_bytes_from(compiled, &haystack, from, eflags)?;
+            Some((so as usize, eo as usize))
+        } else if regex::regex_exec_bytes_from(compiled, &haystack, from, slots, eflags) == 0 {
+            Some((slots[0].rm_so as usize, slots[0].rm_eo as usize))
+        } else {
+            None
+        }
+    };
+
+    if range >= 0 {
+        let search_end = search_start
+            .saturating_add(range as usize)
+            .min(haystack.len());
+        let mut from = search_start;
+        while from <= search_end {
+            let (so, eo) = match search_from(from, &mut *match_slots) {
+                Some(bounds) if bounds.0 <= search_end => bounds,
+                _ => return -1,
+            };
+            if eo > stop_bound {
+                // The leftmost-longest match here runs past `stop`; a later
+                // start may still fit.
+                from = so + 1;
+                continue;
+            }
+            if !nosub {
+                unsafe { legacy_regex_write_regs(buffer, regs, match_slots) };
+            }
+            return so as c_int;
+        }
+    } else {
+        // Backward search: the first start (scanning down from `startpos`) at
+        // which a match begins.
+        let search_end = search_start.saturating_sub(range.unsigned_abs() as usize);
+        for pos in (search_end..=search_start).rev() {
+            let Some((so, eo)) = search_from(pos, &mut *match_slots) else {
+                continue;
+            };
+            if so != pos || eo > stop_bound {
+                continue;
+            }
+            if !nosub {
+                unsafe { legacy_regex_write_regs(buffer, regs, match_slots) };
+            }
+            return pos as c_int;
+        }
+    }
+    -1
+}
+
+/// `re_match` — match pattern at exact position (GNU old API).
+/// Returns length of match, -1 if no match, -2 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_match(
+    buffer: *const c_void,
+    string: *const c_char,
+    length: c_int,
+    start: c_int,
+    regs: *mut c_void,
+) -> c_int {
+    unsafe {
+        re_match_2(
+            buffer,
+            core::ptr::null(),
+            0,
+            string,
+            length,
+            start,
+            regs,
+            length,
+        )
+    }
+}
+
+/// `re_match_2` — match pattern at exact position in split string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_match_2(
+    buffer: *const c_void,
+    string1: *const c_char,
+    size1: c_int,
+    string2: *const c_char,
+    size2: c_int,
+    start: c_int,
+    regs: *mut c_void,
+    stop: c_int,
+) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    if buffer.is_null() {
+        return -2;
+    }
+    let Some((compiled, eflags)) = (unsafe { regex_compiled_for_search(buffer) }) else {
+        return -2;
+    };
+
+    let haystack = match legacy_regex_concat(string1, size1, string2, size2) {
+        Ok(haystack) => haystack,
+        Err(code) => return code,
+    };
+    let start_pos = start.max(0) as usize;
+    if start_pos > haystack.len() {
+        return -1;
+    }
+    let stop_bound = (stop.max(0) as usize).min(haystack.len());
+    let nosub = compiled.nosub();
+
+    // Search the whole haystack from `start_pos` so the preceding bytes stay
+    // context for `^`/`\<`/`\b`; a match exists AT `start_pos` iff the leftmost
+    // one from there starts there. The return value is the match LENGTH.
+    if nosub {
+        let Some((rm_so, rm_eo)) =
+            regex::regex_match_bounds_bytes_from(compiled, &haystack, start_pos, eflags)
+        else {
+            return -1;
+        };
+        if rm_so as usize != start_pos || rm_eo as usize > stop_bound {
+            return -1;
+        }
+        return rm_eo - rm_so;
+    }
+
+    let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
+    if regex::regex_exec_bytes_from(compiled, &haystack, start_pos, &mut match_slots, eflags) != 0 {
+        return -1;
+    }
+    let (rm_so, rm_eo) = (match_slots[0].rm_so, match_slots[0].rm_eo);
+    if rm_so as usize != start_pos || rm_eo as usize > stop_bound {
+        return -1;
+    }
+    unsafe { legacy_regex_write_regs(buffer, regs, &match_slots) };
+    rm_eo - rm_so
+}
+
+/// `re_set_registers` — attach caller-managed register storage to a compiled pattern.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_set_registers(
+    buffer: *mut c_void,
+    regs: *mut c_void,
+    num_regs: u32,
+    starts: *mut c_int,
+    ends: *mut c_int,
+) {
+    if regs.is_null() {
+        return;
+    }
+    // glibc: a non-empty array is REALLOCATE (re_search may grow it), an empty
+    // one resets to UNALLOCATED.
+    let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
+    let state = if num_regs != 0 {
+        regs.num_regs = num_regs as usize;
+        regs.start = starts;
+        regs.end = ends;
+        REGS_REALLOCATE
+    } else {
+        regs.num_regs = 0;
+        regs.start = core::ptr::null_mut();
+        regs.end = core::ptr::null_mut();
+        REGS_UNALLOCATED
+    };
+    if let Some(layout) = unsafe { regex_buffer_layout(buffer) } {
+        regex_set_regs_allocated(&mut layout.flags, state);
+    }
+}
+
+// ===========================================================================
+// glibc __str* / __stp* / __mem* internal aliases
+// ===========================================================================
+
+// ── Simple forwarding aliases ───────────────────────────────────────────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    unsafe { stpcpy(dst, src) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    unsafe { stpncpy(dst, src, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    unsafe { strcasecmp(s1, s2) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcasestr(
+    haystack: *const c_char,
+    needle: *const c_char,
+) -> *mut c_char {
+    unsafe { strcasestr(haystack, needle) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strdup(s: *const c_char) -> *mut c_char {
+    unsafe { strdup(s) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strndup(s: *const c_char, n: usize) -> *mut c_char {
+    unsafe { strndup(s, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtok_r(
+    s: *mut c_char,
+    delim: *const c_char,
+    saveptr: *mut *mut c_char,
+) -> *mut c_char {
+    unsafe { strtok_r(s, delim, saveptr) }
+}
+
+/// glibc-internal `__strerror_r` — the GNU `char *`-returning alias of
+/// `strerror_r` (NOT the XSI int variant, which is `__xpg_strerror_r`).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strerror_r(
+    errnum: c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *mut c_char {
+    unsafe { strerror_r(errnum, buf, buflen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strverscmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    unsafe { strverscmp(s1, s2) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
+    unsafe { rawmemchr(s, c) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    unsafe { mempcpy(dst, src, n) }
+}
+
+/// `__memcmpeq` — glibc internal: returns 0 if equal, non-zero otherwise.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __memcmpeq(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    unsafe { memcmp(s1, s2, n) }
+}
+
+// ── Locale aliases (ignore locale, forward to base) ─────────────────────────
+
+/// `strcasecmp_l` — locale-aware case-insensitive string compare.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcasecmp_l(
+    s1: *const c_char,
+    s2: *const c_char,
+    _locale: *mut c_void,
+) -> c_int {
+    unsafe { strcasecmp(s1, s2) }
+}
+
+/// `strncasecmp_l` — locale-aware case-insensitive string compare with length.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncasecmp_l(
+    s1: *const c_char,
+    s2: *const c_char,
+    n: usize,
+    _locale: *mut c_void,
+) -> c_int {
+    unsafe { strncasecmp(s1, s2, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcasecmp_l(
+    s1: *const c_char,
+    s2: *const c_char,
+    l: *mut c_void,
+) -> c_int {
+    unsafe { strcasecmp_l(s1, s2, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strncasecmp_l(
+    s1: *const c_char,
+    s2: *const c_char,
+    n: usize,
+    l: *mut c_void,
+) -> c_int {
+    unsafe { strncasecmp_l(s1, s2, n, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcoll_l(
+    s1: *const c_char,
+    s2: *const c_char,
+    l: *mut c_void,
+) -> c_int {
+    // libstdc++'s std::collate calls this with its locale object: compare
+    // in that locale, not bytewise.
+    unsafe { crate::unistd_abi::strcoll_l(s1, s2, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strxfrm_l(
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+    l: *mut c_void,
+) -> usize {
+    unsafe { crate::unistd_abi::strxfrm_l(dst, src, n, l) }
+}
+
+// ── GCC constant-optimized string function variants ─────────────────────────
+
+/// `__strsep_g` — generic strsep (same as strsep).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_g(
+    stringp: *mut *mut c_char,
+    delim: *const c_char,
+) -> *mut c_char {
+    unsafe { strsep(stringp, delim) }
+}
+
+/// `__strsep_1c` — strsep optimized for single-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_1c(stringp: *mut *mut c_char, delim: c_char) -> *mut c_char {
+    let buf: [c_char; 2] = [delim, 0];
+    unsafe { strsep(stringp, buf.as_ptr()) }
+}
+
+/// `__strsep_2c` — strsep optimized for two-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_2c(
+    stringp: *mut *mut c_char,
+    d1: c_char,
+    d2: c_char,
+) -> *mut c_char {
+    let buf: [c_char; 3] = [d1, d2, 0];
+    unsafe { strsep(stringp, buf.as_ptr()) }
+}
+
+/// `__strsep_3c` — strsep optimized for three-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_3c(
+    stringp: *mut *mut c_char,
+    d1: c_char,
+    d2: c_char,
+    d3: c_char,
+) -> *mut c_char {
+    let buf: [c_char; 4] = [d1, d2, d3, 0];
+    unsafe { strsep(stringp, buf.as_ptr()) }
+}
+
+#[derive(Clone, Copy)]
+enum ConstSetScanMode {
+    SpanAccepted,
+    SpanRejected,
+    FindMember,
+}
+
+#[inline]
+fn const_set_from_args(args: &[c_int]) -> ([u8; 3], usize) {
+    let mut set = [0u8; 3];
+    let mut len = 0usize;
+    for &arg in args {
+        let byte = (arg as c_char) as u8;
+        if byte == 0 {
+            break;
+        }
+        set[len] = byte;
+        len += 1;
+    }
+    (set, len)
+}
+
+#[inline]
+fn const_set_contains(set: &[u8], byte: u8) -> bool {
+    set.contains(&byte)
+}
+
+#[inline]
+unsafe fn scan_const_set(
+    s: *const c_char,
+    set: &[u8],
+    mode: ConstSetScanMode,
+    bound: Option<usize>,
+) -> (usize, bool) {
+    let mut index = 0usize;
+    loop {
+        if bound.is_some_and(|limit| index >= limit) {
+            return (index, false);
+        }
+
+        // SAFETY: the caller supplied a C string pointer; when the allocation
+        // is tracked, `bound` prevents reads beyond the known allocation.
+        let byte = unsafe { *s.add(index) as u8 };
+        if byte == 0 {
+            return (index, false);
+        }
+
+        let member = const_set_contains(set, byte);
+        match mode {
+            ConstSetScanMode::SpanAccepted if !member => return (index, false),
+            ConstSetScanMode::SpanRejected if member => return (index, true),
+            ConstSetScanMode::FindMember if member => return (index, true),
+            _ => {}
+        }
+
+        index += 1;
+    }
+}
+
+#[inline]
+unsafe fn const_set_span(s: *const c_char, set: &[u8], mode: ConstSetScanMode) -> usize {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    if matches!(mode, ConstSetScanMode::SpanAccepted) && set.is_empty() {
+        return 0;
+    }
+
+    let known_bound = known_remaining(s as usize);
+    let (mode_config, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_bound.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode_config.heals_enabled(), decision.action);
+    let (result, _) = unsafe { scan_const_set(s, set, mode, known_bound) };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, result),
+        repair && known_bound.is_some(),
+    );
+    result
+}
+
+#[inline]
+unsafe fn const_set_pbrk(s: *const c_char, set: &[u8]) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() || set.is_empty() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let known_bound = known_remaining(s as usize);
+    let (mode_config, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_bound.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode_config.heals_enabled(), decision.action);
+    let (index, found) =
+        unsafe { scan_const_set(s, set, ConstSetScanMode::FindMember, known_bound) };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, index),
+        repair && known_bound.is_some(),
+    );
+
+    if found {
+        // SAFETY: `scan_const_set` only returns `found` for an index it read
+        // from the caller-provided C string.
+        unsafe { s.add(index) as *mut c_char }
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// `__strpbrk_c2` — strpbrk optimized for 2-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strpbrk_c2(s: *const c_char, a1: c_int, a2: c_int) -> *mut c_char {
+    let (set, len) = const_set_from_args(&[a1, a2]);
+    unsafe { const_set_pbrk(s, &set[..len]) }
+}
+
+/// `__strpbrk_c3` — strpbrk optimized for 3-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strpbrk_c3(
+    s: *const c_char,
+    a1: c_int,
+    a2: c_int,
+    a3: c_int,
+) -> *mut c_char {
+    let (set, len) = const_set_from_args(&[a1, a2, a3]);
+    unsafe { const_set_pbrk(s, &set[..len]) }
+}
+
+/// `__strcspn_c1` — strcspn optimized for 1-char reject set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcspn_c1(s: *const c_char, r: c_int) -> usize {
+    let (set, len) = const_set_from_args(&[r]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanRejected) }
+}
+
+/// `__strcspn_c2` — strcspn optimized for 2-char reject set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcspn_c2(s: *const c_char, r1: c_int, r2: c_int) -> usize {
+    let (set, len) = const_set_from_args(&[r1, r2]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanRejected) }
+}
+
+/// `__strcspn_c3` — strcspn optimized for 3-char reject set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcspn_c3(s: *const c_char, r1: c_int, r2: c_int, r3: c_int) -> usize {
+    let (set, len) = const_set_from_args(&[r1, r2, r3]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanRejected) }
+}
+
+/// `__strspn_c1` — strspn optimized for 1-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strspn_c1(s: *const c_char, a: c_int) -> usize {
+    let (set, len) = const_set_from_args(&[a]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanAccepted) }
+}
+
+/// `__strspn_c2` — strspn optimized for 2-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strspn_c2(s: *const c_char, a1: c_int, a2: c_int) -> usize {
+    let (set, len) = const_set_from_args(&[a1, a2]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanAccepted) }
+}
+
+/// `__strspn_c3` — strspn optimized for 3-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strspn_c3(s: *const c_char, a1: c_int, a2: c_int, a3: c_int) -> usize {
+    let (set, len) = const_set_from_args(&[a1, a2, a3]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanAccepted) }
+}
+
+/// `__strtok_r_1c` — strtok_r optimized for single-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtok_r_1c(
+    s: *mut c_char,
+    delim: c_char,
+    saveptr: *mut *mut c_char,
+) -> *mut c_char {
+    let buf: [c_char; 2] = [delim, 0];
+    unsafe { strtok_r(s, buf.as_ptr(), saveptr) }
+}
+
+/// `__strcpy_small` — glibc internal memcpy-based strcpy for small strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcpy_small(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    unsafe { strcpy(dst, src) }
+}
+
+/// `__stpcpy_small` — glibc internal stpcpy for small strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stpcpy_small(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    unsafe { stpcpy(dst, src) }
+}
+
+// ── __strto*_internal — glibc internal conversion with group flag ───────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtol_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _group: c_int,
+) -> c_long {
+    unsafe { crate::stdlib_abi::strtol(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoul_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _group: c_int,
+) -> c_ulong {
+    unsafe { crate::stdlib_abi::strtoul(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoll_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _group: c_int,
+) -> c_longlong {
+    unsafe { crate::stdlib_abi::strtoll(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoull_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _group: c_int,
+) -> c_ulonglong {
+    unsafe { crate::stdlib_abi::strtoull(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtod_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _group: c_int,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _group: c_int,
+) -> f32 {
+    unsafe { crate::stdlib_abi::strtof(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __strtold_internal(
+    _nptr: *const c_char,
+    _endptr: *mut *mut c_char,
+    _group: c_int,
+) {
+    // The third argument (group) arrives in RDX and is discarded, which
+    // is what lets the out-buffer pointer take its place. Every previous body
+    // ignored it too.
+    core::arch::naked_asm!(
+        "sub rsp, 24",
+        "mov rdx, rsp",
+        "call {into}",
+        "fld tbyte ptr [rsp]",
+        "add rsp, 24",
+        "ret",
+        into = sym crate::stdlib_abi::strtold_into,
+    )
+}
+
+/// See [`crate::stdlib_abi::strtold`] for why non-x86-64 keeps the old shape.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe extern "C" fn __strtold_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _group: c_int,
+) -> f64 {
+    // long double -> f64 on Rust (no f80 support)
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
+
+// ── __strto*_l — locale variants forwarding to existing _l functions ────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtol_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    l: *mut c_void,
+) -> c_long {
+    unsafe { crate::stdlib_abi::strtol_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoul_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    l: *mut c_void,
+) -> c_ulong {
+    unsafe { crate::stdlib_abi::strtoul_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoll_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    l: *mut c_void,
+) -> c_longlong {
+    unsafe { crate::stdlib_abi::strtoll_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoull_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    l: *mut c_void,
+) -> c_ulonglong {
+    unsafe { crate::stdlib_abi::strtoull_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtod_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    l: *mut c_void,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtod_l(nptr, endptr, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    l: *mut c_void,
+) -> f32 {
+    unsafe { crate::stdlib_abi::strtof_l(nptr, endptr, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __strtold_l(
+    _nptr: *const c_char,
+    _endptr: *mut *mut c_char,
+    _l: *mut c_void,
+) {
+    // Preserve all arguments and the x87 return convention of the public
+    // locale-aware entrypoint. A Rust f64 forwarding body would lose both.
+    core::arch::naked_asm!(
+        "jmp {target}",
+        target = sym crate::stdlib_abi::strtold_l,
+    )
+}
+
+/// See [`crate::stdlib_abi::strtold`] for why non-x86-64 keeps the old shape.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe extern "C" fn __strtold_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    l: *mut c_void,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtold_l(nptr, endptr, l) }
+}
+
+/// `__strftime_l` — locale-aware strftime forwarding.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strftime_l(
+    s: *mut c_char,
+    max: usize,
+    format: *const c_char,
+    tm: *const c_void,
+    _l: *mut c_void,
+) -> usize {
+    unsafe { crate::unistd_abi::strftime_l(s, max, format, tm, _l) }
+}
+
+/// `__strfmon_l` — locale-aware strfmon forwarding.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strfmon_l(
+    s: *mut c_char,
+    maxsize: usize,
+    _l: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> isize {
+    unsafe { crate::unistd_abi::strfmon_emit(s, maxsize, format, || args.next_arg::<f64>()) }
+}
+
+// ---------------------------------------------------------------------------
+// timingsafe_bcmp / timingsafe_memcmp
+// ---------------------------------------------------------------------------
+//
+// OpenBSD-origin constant-time byte comparators (also exposed by glibc 2.39+).
+// Both delegate the byte-level fold to `frankenlibc_core::string::timingsafe`,
+// which is `#![deny(unsafe_code)]` and CT-by-construction.
+
+/// OpenBSD `timingsafe_bcmp` — constant-time byte equality test.
+///
+/// Returns `0` iff the first `n` bytes of `b1` and `b2` are equal,
+/// non-zero (specifically `1`) otherwise. Always touches every byte
+/// regardless of where the inputs differ.
+///
+/// # Safety
+///
+/// Caller must ensure `b1` and `b2` are valid for `n` bytes each.
+/// `n == 0` is always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timingsafe_bcmp(b1: *const c_void, b2: *const c_void, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+    if b1.is_null() || b2.is_null() {
+        return if b1 == b2 { 0 } else { 1 };
+    }
+    // SAFETY: caller contract requires both pointers valid for `n` bytes.
+    unsafe {
+        let a = std::slice::from_raw_parts(b1.cast::<u8>(), n);
+        let b = std::slice::from_raw_parts(b2.cast::<u8>(), n);
+        frankenlibc_core::string::timingsafe::bcmp(a, b, n)
+    }
+}
+
+/// OpenBSD `timingsafe_memcmp` — constant-time, sign-preserving compare.
+///
+/// Returns `0` iff equal, negative if the first differing byte in `b1`
+/// is less than the corresponding byte in `b2`, positive otherwise —
+/// matching `memcmp` semantics, but with branch-free execution.
+///
+/// # Safety
+///
+/// Caller must ensure `b1` and `b2` are valid for `n` bytes each.
+/// `n == 0` is always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timingsafe_memcmp(
+    b1: *const c_void,
+    b2: *const c_void,
+    n: usize,
+) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+    if b1.is_null() || b2.is_null() {
+        if b1 == b2 {
+            return 0;
+        }
+        return if b1.is_null() { -1 } else { 1 };
+    }
+    // SAFETY: caller contract requires both pointers valid for `n` bytes.
+    unsafe {
+        let a = std::slice::from_raw_parts(b1.cast::<u8>(), n);
+        let b = std::slice::from_raw_parts(b2.cast::<u8>(), n);
+        frankenlibc_core::string::timingsafe::memcmp(a, b, n)
+    }
+}
+
+/// NetBSD `consttime_memequal(b1, b2, len)` — constant-time byte
+/// equality test. Returns `1` if the first `len` bytes of `b1` and
+/// `b2` are byte-equal, `0` otherwise. Always touches every byte
+/// regardless of where the inputs differ; used by crypto code (TLS
+/// / SSH MAC verification) to compare hashes without timing leaks.
+///
+/// `len == 0` always returns `1` (NetBSD convention: empty buffers
+/// trivially equal).
+///
+/// # Safety
+///
+/// Caller must ensure `b1` and `b2` are valid for `len` bytes
+/// each. `len == 0` is always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn consttime_memequal(
+    b1: *const c_void,
+    b2: *const c_void,
+    len: usize,
+) -> c_int {
+    // Delegate to the established constant-time bcmp helper and
+    // invert: bcmp returns 0 for equal / non-zero for not-equal;
+    // consttime_memequal flips that to 1 for equal / 0 for not.
+    let bcmp_res = unsafe { timingsafe_bcmp(b1, b2, len) };
+    if bcmp_res == 0 { 1 } else { 0 }
+}
+
+/// NetBSD `consttime_bcmp(s1, s2, n) -> int` — constant-time byte
+/// comparison returning 0 if equal, 1 if not. Convention matches
+/// the shape of `bcmp` rather than the inverted-equality of
+/// `consttime_memequal`.
+///
+/// # Safety
+///
+/// `s1` and `s2` must be valid for `n` bytes each. `n == 0` is
+/// always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn consttime_bcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    let bcmp_res = unsafe { timingsafe_bcmp(s1, s2, n) };
+    if bcmp_res == 0 { 0 } else { 1 }
+}
+
+// ---------------------------------------------------------------------------
+// strmode (BSD mode-bit-to-`ls -l`-style-string)
+// ---------------------------------------------------------------------------
+
+/// BSD `strmode(mode, p)` — write the 11-character `ls -l`-style
+/// representation of `mode` into `p`, plus a trailing NUL (12 bytes
+/// total). The byte-level work happens in
+/// `frankenlibc_core::stat::strmode_bytes`; this shim only owns the
+/// raw-pointer copy + NUL termination.
+///
+/// # Safety
+///
+/// Caller must ensure `p` is non-NULL and points to writable storage
+/// of at least 12 bytes — the length BSD's strmode prototype implies.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strmode(mode: libc::mode_t, p: *mut c_char) {
+    if p.is_null() {
+        return;
+    }
+    let bytes = frankenlibc_core::stat::strmode_bytes(mode);
+    // SAFETY: caller contract requires 12 writable bytes at `p`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, 11);
+        *p.add(11) = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strnstr (BSD bounded substring search)
+// ---------------------------------------------------------------------------
+
+/// BSD `strnstr(haystack, needle, n)` — like `strstr` but searches at
+/// most `n` bytes of `haystack`. Returns a pointer to the first
+/// occurrence of `needle` (still NUL-terminated) within
+/// `haystack[..min(n, strlen(haystack))]`, or NULL if not found.
+///
+/// An empty `needle` returns `haystack` (same as `strstr` semantics).
+/// `n == 0` with a non-empty needle returns NULL.
+///
+/// # Safety
+///
+/// Caller must ensure `haystack` and `needle` are valid NUL-terminated
+/// C strings (or NULL — both NULL pointers and a NULL haystack with a
+/// non-empty needle yield NULL).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnstr(
+    haystack: *const c_char,
+    needle: *const c_char,
+    n: usize,
+) -> *mut c_char {
+    if needle.is_null() {
+        // Match strstr's well-trodden glibc/BSD behavior: NULL needle
+        // is treated as the empty string and returns haystack.
+        return haystack as *mut c_char;
+    }
+    if haystack.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: per BSD strnstr contract, the caller guarantees haystack
+    // either contains a NUL within the first n bytes OR is valid for n
+    // bytes of read; the bound applies whichever happens first. The
+    // core `strnstr` walks a single pass that short-circuits on NUL and
+    // is itself bounded by `min(n, slice.len())`, so giving it a slice
+    // of length `n` lets the inner loop do the strnlen and the search
+    // together — what the bd-ef934 perf slice was about.
+    let hay_slice = unsafe { std::slice::from_raw_parts(haystack as *const u8, n) };
+    let needle_len = unsafe { strlen(needle) };
+    // SAFETY: needle_len is the strlen we just measured.
+    let needle_slice = unsafe { std::slice::from_raw_parts(needle as *const u8, needle_len) };
+
+    match frankenlibc_core::string::strnstr(hay_slice, needle_slice, n) {
+        Some(off) => unsafe { haystack.add(off) as *mut c_char },
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Bench-only A/B for the deployed-strlen gate reorder: the OLD prologue gate
+/// (`string_raw_passthrough_active()` 5-check fan-out, then strict) vs the NEW gate
+/// (cheap `bootstrap_passthrough_active()`, then strict). Same-process ratio isolates
+/// the four TLS/reentry probes the reorder removes from the hot path. Both return the
+/// same bool in deployed strict mode (false-fanout || true-strict).
+#[doc(hidden)]
+#[inline(never)]
+pub fn strlen_gate_old_for_bench() -> bool {
+    string_raw_passthrough_active() || runtime_policy::strict_passthrough_active()
+}
+
+#[doc(hidden)]
+#[inline(never)]
+pub fn strlen_gate_new_for_bench() -> bool {
+    runtime_policy::bootstrap_passthrough_active() || runtime_policy::strict_passthrough_active()
+}

@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.33",
+  "contract": {
+    "behavior": "Separate legacy and C23 wide integer prefixes and continue potentially incomplete 512-wchar scan windows",
+    "acceptance_sha256": "5cbe0de35d8752c8a01825b1ef9355de62399ef395fc4e3cb0734d32b1965ef4",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-core/src/stdlib/conversion.rs",
+      "crates/frankenlibc-abi/src/wchar_abi.rs",
+      "crates/frankenlibc-abi/src/isoc_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs",
+      "crates/frankenlibc-core/tests/wcstol_differential_fuzz.rs",
+      "crates/frankenlibc-abi/tests/isoc_abi_test.rs",
+      "crates/frankenlibc-abi/tests/conformance_strtol_family.rs",
+      "crates/frankenlibc-abi/tests/strtol_family_differential_fuzz.rs",
+      "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/isoc_abi.rs": "d55dcf5fdbf1a7fc22230d82aaab5bd1996bd92c6dc80789e529d217e9fcb4c6",
+        "crates/frankenlibc-abi/src/wchar_abi.rs": "239385b6ed576334c0f543abab0ec6ba143819cda03b90d26ff7ebd2e6f82757",
+        "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
+        "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs": "8d40939e0f2881c32608535a880a2b98a9d2ca7e97531d3cad8c236a10032603",
+        "crates/frankenlibc-abi/tests/conformance_strtol_family.rs": "06891e185f7904e94d2459150798b1e9996e1f11fa4fbf3553c1fb8711955800",
+        "crates/frankenlibc-abi/tests/isoc_abi_test.rs": "75f5880ff1ecdaaadfd5ce07b9206089d1d0c66f36023bd4b46e993d266e80c8",
+        "crates/frankenlibc-abi/tests/strtol_family_differential_fuzz.rs": "357f9966b26e1f5304a96d9c4ac36d6c0723ef5632149c5be448f3f3fa5bc6df",
+        "crates/frankenlibc-core/src/stdlib/conversion.rs": "00e0a9c24ecfa0cd42b1110a0d91149a99724164c7073354f4f71ae9001428a8",
+        "crates/frankenlibc-core/tests/wcstol_differential_fuzz.rs": "e9c93f5fe87cc775aa90b6ee18d3d1ac3e7a514d1136ad86364e89104ea905bd",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-05T20:19:21.136863923Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/3873f7ac8e0b817e/out/conformance_diff_wcstoimax-3873f7ac8e0b817e",
+        "wide_",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_diff_wcstoimax",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/3873f7ac8e0b817e/out/conformance_diff_wcstoimax-3873f7ac8e0b817e"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "wide_signed_integer_contract",
+        "wide_unsigned_integer_contract",
+        "wide_signed_scan_window_contract",
+        "wide_unsigned_scan_window_contract"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_diff_wcstoimax",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:17.490177+00:00",
+    "finished_at": "2026-11-12T04:59:17.713958+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "8d36461b67f4bdf3664645f387cb25ecc744fb413788104ec962e2301ce06077",
+    "stderr_sha256": "e4580ebd08475887f63c8d9984d90eb6e268450484eb308137e198736418134e",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/3873f7ac8e0b817e/out/conformance_diff_wcstoimax-3873f7ac8e0b817e",
+      "wide_",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:17.726825+00:00",
+    "finished_at": "2026-11-12T04:59:17.792429+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "96ac194fad62e36f252eb7f1e7e2305ed33778e2e597f04e4cf6763fc44e1f9f",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 4
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/3873f7ac8e0b817e/out/conformance_diff_wcstoimax-3873f7ac8e0b817e": "4273fed1f553d5f58b020317857415ff8e94dff1d536c62e3ab4dbca0783699e"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/3873f7ac8e0b817e/out/conformance_diff_wcstoimax-3873f7ac8e0b817e": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/isoc_abi.rs": "d55dcf5fdbf1a7fc22230d82aaab5bd1996bd92c6dc80789e529d217e9fcb4c6",
+    "crates/frankenlibc-abi/src/wchar_abi.rs": "239385b6ed576334c0f543abab0ec6ba143819cda03b90d26ff7ebd2e6f82757",
+    "crates/frankenlibc-abi/tests/conformance_diff_ctype.rs": "94b89f1ffa7bbfcc5a44e86e91a5b0045912a6f9d407cd475c0dbf87e29a0da2",
+    "crates/frankenlibc-abi/tests/conformance_diff_wcstoimax.rs": "8d40939e0f2881c32608535a880a2b98a9d2ca7e97531d3cad8c236a10032603",
+    "crates/frankenlibc-abi/tests/conformance_strtol_family.rs": "06891e185f7904e94d2459150798b1e9996e1f11fa4fbf3553c1fb8711955800",
+    "crates/frankenlibc-abi/tests/isoc_abi_test.rs": "75f5880ff1ecdaaadfd5ce07b9206089d1d0c66f36023bd4b46e993d266e80c8",
+    "crates/frankenlibc-abi/tests/strtol_family_differential_fuzz.rs": "357f9966b26e1f5304a96d9c4ac36d6c0723ef5632149c5be448f3f3fa5bc6df",
+    "crates/frankenlibc-core/src/stdlib/conversion.rs": "00e0a9c24ecfa0cd42b1110a0d91149a99724164c7073354f4f71ae9001428a8",
+    "crates/frankenlibc-core/tests/wcstol_differential_fuzz.rs": "e9c93f5fe87cc775aa90b6ee18d3d1ac3e7a514d1136ad86364e89104ea905bd",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "4273fed1f553d5f58b020317857415ff8e94dff1d536c62e3ab4dbca0783699e"
+}

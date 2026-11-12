@@ -1,0 +1,9761 @@
+//! ABI layer for selected resolver functions (`<netdb.h>`).
+//!
+//! Bootstrap scope:
+//! - `getaddrinfo` (numeric host/service support with strict/hardened runtime policy)
+//! - `freeaddrinfo`
+//! - `getnameinfo` (numeric formatting)
+//! - `gai_strerror`
+
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::int_plus_one)]
+
+// Unconditional: the `getnameinfo` render paths below borrow-or-own their host
+// and service text in both feature configurations.
+use std::borrow::Cow;
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::RefCell;
+use std::ffi::{CStr, OsStr, c_char, c_int, c_ulong, c_void};
+use std::mem::{align_of, size_of};
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::ptr;
+use std::time::UNIX_EPOCH;
+
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+
+use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
+use crate::runtime_policy;
+
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+const HOST_NOT_FOUND_ERRNO: c_int = 1;
+const NO_RECOVERY_ERRNO: c_int = 3;
+const EAI_ADDRFAMILY: c_int = -9;
+const HOSTS_PATH: &str = "/etc/hosts";
+const SERVICES_PATH: &str = "/etc/services";
+const PROTOCOLS_PATH: &str = "/etc/protocols";
+const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
+const PROC_NET_IF_INET6_PATH: &str = "/proc/net/if_inet6";
+
+// ---------------------------------------------------------------------------
+// DNS Evidence Metrics (bd-1y7)
+// ---------------------------------------------------------------------------
+
+/// Counters for DNS stub resolver evidence logging.
+/// Tracks query outcomes for timeout/fallback/parse failure analysis.
+pub struct DnsMetrics {
+    /// Total UDP DNS queries attempted.
+    pub queries_attempted: AtomicU64,
+    /// Queries that succeeded with valid response.
+    pub queries_success: AtomicU64,
+    /// Queries that timed out (recvfrom returned <= 0).
+    pub queries_timeout: AtomicU64,
+    /// Queries that failed to send (socket or sendto error).
+    pub queries_send_error: AtomicU64,
+    /// Queries where response parsing failed.
+    pub queries_parse_error: AtomicU64,
+    /// Queries that returned NXDOMAIN.
+    pub queries_nxdomain: AtomicU64,
+    /// Queries that returned other DNS errors (SERVFAIL, etc).
+    pub queries_dns_error: AtomicU64,
+    /// Non-native NSS `hosts:` sources (`myhostname`, `resolve`, `mdns*`, ...)
+    /// encountered in `nsswitch.conf` and treated as `UNAVAIL` without dlopen.
+    pub nss_unavailable_sources: AtomicU64,
+}
+
+impl DnsMetrics {
+    const fn new() -> Self {
+        Self {
+            queries_attempted: AtomicU64::new(0),
+            queries_success: AtomicU64::new(0),
+            queries_timeout: AtomicU64::new(0),
+            queries_send_error: AtomicU64::new(0),
+            queries_parse_error: AtomicU64::new(0),
+            queries_nxdomain: AtomicU64::new(0),
+            queries_dns_error: AtomicU64::new(0),
+            nss_unavailable_sources: AtomicU64::new(0),
+        }
+    }
+
+    /// Snapshot all counters as a tuple for testing/evidence.
+    pub fn snapshot(&self) -> DnsMetricsSnapshot {
+        DnsMetricsSnapshot {
+            queries_attempted: self.queries_attempted.load(AtomicOrdering::Relaxed),
+            queries_success: self.queries_success.load(AtomicOrdering::Relaxed),
+            queries_timeout: self.queries_timeout.load(AtomicOrdering::Relaxed),
+            queries_send_error: self.queries_send_error.load(AtomicOrdering::Relaxed),
+            queries_parse_error: self.queries_parse_error.load(AtomicOrdering::Relaxed),
+            queries_nxdomain: self.queries_nxdomain.load(AtomicOrdering::Relaxed),
+            queries_dns_error: self.queries_dns_error.load(AtomicOrdering::Relaxed),
+            nss_unavailable_sources: self.nss_unavailable_sources.load(AtomicOrdering::Relaxed),
+        }
+    }
+}
+
+/// Snapshot of DNS metrics at a point in time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DnsMetricsSnapshot {
+    pub queries_attempted: u64,
+    pub queries_success: u64,
+    pub queries_timeout: u64,
+    pub queries_send_error: u64,
+    pub queries_parse_error: u64,
+    pub queries_nxdomain: u64,
+    pub queries_dns_error: u64,
+    pub nss_unavailable_sources: u64,
+}
+
+/// Global DNS metrics instance.
+static DNS_METRICS: DnsMetrics = DnsMetrics::new();
+
+/// Get a snapshot of the current DNS metrics.
+pub fn dns_metrics_snapshot() -> DnsMetricsSnapshot {
+    DNS_METRICS.snapshot()
+}
+const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
+const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+const PROTOCOLS_PATH_ENV: &str = "FRANKENLIBC_PROTOCOLS_PATH";
+const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
+const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
+
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+fn tracked_addr_region_fits(addr: usize, len: usize) -> bool {
+    known_remaining(addr).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && (ptr as usize).is_multiple_of(align_of::<T>())
+        && tracked_addr_region_fits(ptr as usize, size_of::<T>())
+}
+
+#[inline]
+fn dns_span_len_allow_empty(start: *const u8, eom: *const u8) -> Option<usize> {
+    let start_addr = start as usize;
+    let eom_addr = eom as usize;
+    if eom_addr < start_addr {
+        return None;
+    }
+    let span_len = eom_addr.checked_sub(start_addr)?;
+    if span_len > isize::MAX as usize || !tracked_addr_region_fits(start_addr, span_len) {
+        return None;
+    }
+    Some(span_len)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileFingerprint {
+    len: u64,
+    modified_ns: u128,
+    inode: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct BackendCacheMetrics {
+    hits: u64,
+    misses: u64,
+    reloads: u64,
+    invalidations: u64,
+}
+
+struct BackendFileCache {
+    default_path: &'static str,
+    env_key: &'static str,
+    source_path: PathBuf,
+    file_cache: Option<Vec<u8>>,
+    cache_fingerprint: Option<FileFingerprint>,
+    cache_generation: u64,
+    cache_metrics: BackendCacheMetrics,
+    last_io_error: Option<c_int>,
+}
+
+impl BackendFileCache {
+    fn new(default_path: &'static str, env_key: &'static str) -> Self {
+        Self {
+            default_path,
+            env_key,
+            source_path: configured_backend_path(default_path, env_key),
+            file_cache: None,
+            cache_fingerprint: None,
+            cache_generation: 0,
+            cache_metrics: BackendCacheMetrics::default(),
+            last_io_error: None,
+        }
+    }
+
+    fn configured_source_path(&self) -> PathBuf {
+        configured_backend_path(self.default_path, self.env_key)
+    }
+
+    /// Does the currently-configured backend path already equal `source_path`?
+    ///
+    /// Allocation-free on the steady-state path. The old `refresh_source_path_from_env`
+    /// called `configured_source_path()` unconditionally, which materialises a `PathBuf`
+    /// (a heap allocation) on EVERY resolver lookup — even when the env var is unset and
+    /// the answer is the `&'static str` default — only to compare and drop it. Under the
+    /// interposed allocator that malloc/free pair is expensive: a `perf` frame table of
+    /// `getprotobyname_r` showed ~92% of self time in allocator bookkeeping
+    /// (`record_free_stats` 29.3%, `record_alloc_stats` 27.2%,
+    /// `fallback_insert_sized_index` 16.7%, `free` 13.8%), while `getenv` did not appear
+    /// at >=0.1% and the `stat` syscall was ~1.5%.
+    ///
+    /// Semantics are unchanged: the environment is still consulted on every call, so a
+    /// `setenv`/`putenv` between two lookups is observed exactly as before. No environment
+    /// snapshot or generation fence is introduced.
+    fn source_path_matches_env(&self) -> bool {
+        match std::env::var_os(self.env_key) {
+            Some(value) if !value.is_empty() => self.source_path.as_os_str() == value,
+            _ => self.source_path.as_os_str() == OsStr::new(self.default_path),
+        }
+    }
+
+    fn refresh_source_path_from_env(&mut self) {
+        if self.source_path_matches_env() {
+            return;
+        }
+        let configured = self.configured_source_path();
+        if configured == self.source_path {
+            return;
+        }
+
+        self.source_path = configured;
+        if self.file_cache.is_some() {
+            self.cache_metrics.invalidations += 1;
+        }
+        self.file_cache = None;
+        self.cache_fingerprint = None;
+        self.last_io_error = None;
+    }
+
+    fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let modified_ns = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_nanos());
+
+        Some(FileFingerprint {
+            len: metadata.len(),
+            modified_ns,
+            inode: metadata.ino(),
+        })
+    }
+
+    fn refresh_cache(&mut self) {
+        self.refresh_source_path_from_env();
+        let current_fp = Self::file_fingerprint(&self.source_path);
+
+        if let (Some(_), Some(cached_fp), Some(now_fp)) =
+            (&self.file_cache, self.cache_fingerprint, current_fp)
+            && cached_fp == now_fp
+        {
+            self.cache_metrics.hits += 1;
+            self.last_io_error = None;
+            return;
+        }
+
+        self.cache_metrics.misses += 1;
+
+        match std::fs::read(&self.source_path) {
+            Ok(bytes) => {
+                let next_fp = Self::file_fingerprint(&self.source_path)
+                    .or(current_fp)
+                    .unwrap_or(FileFingerprint {
+                        len: bytes.len() as u64,
+                        modified_ns: 0,
+                        inode: 0,
+                    });
+                let had_cache = self.file_cache.is_some();
+
+                self.file_cache = Some(bytes);
+                self.cache_fingerprint = Some(next_fp);
+                self.cache_generation = self.cache_generation.wrapping_add(1);
+                self.cache_metrics.reloads += 1;
+                self.last_io_error = None;
+
+                if had_cache {
+                    self.cache_metrics.invalidations += 1;
+                }
+            }
+            Err(err) => {
+                if self.file_cache.is_some() {
+                    self.cache_metrics.invalidations += 1;
+                }
+                self.file_cache = None;
+                self.cache_fingerprint = None;
+                self.last_io_error =
+                    Some(err.raw_os_error().unwrap_or(frankenlibc_core::errno::EIO));
+            }
+        }
+    }
+
+    fn read_snapshot(&mut self) -> std::io::Result<Vec<u8>> {
+        self.refresh_cache();
+        match &self.file_cache {
+            Some(bytes) => Ok(bytes.clone()),
+            None => Err(std::io::Error::from_raw_os_error(
+                self.last_io_error
+                    .unwrap_or(frankenlibc_core::errno::ENOENT),
+            )),
+        }
+    }
+
+    fn with_snapshot<R>(&mut self, callback: impl FnOnce(&[u8], u64) -> R) -> std::io::Result<R> {
+        self.refresh_cache();
+        match &self.file_cache {
+            Some(bytes) => Ok(callback(bytes, self.cache_generation)),
+            None => Err(std::io::Error::from_raw_os_error(
+                self.last_io_error
+                    .unwrap_or(frankenlibc_core::errno::ENOENT),
+            )),
+        }
+    }
+}
+
+struct ServiceNameLookupKey {
+    name_hash: u64,
+    protocol_hash: u64,
+    entry_index: usize,
+    name: Vec<u8>,
+}
+
+struct ServicePortLookupKey {
+    port: u16,
+    entry_index: usize,
+}
+
+struct ServiceLookupCache {
+    generation: Option<u64>,
+    entries: Vec<frankenlibc_core::resolv::ServiceEntry>,
+    name_keys: Vec<ServiceNameLookupKey>,
+    port_keys: Vec<ServicePortLookupKey>,
+}
+
+impl ServiceLookupCache {
+    fn new() -> Self {
+        Self {
+            generation: None,
+            entries: Vec::new(),
+            name_keys: Vec::new(),
+            port_keys: Vec::new(),
+        }
+    }
+
+    fn rebuild_if_needed(&mut self, generation: u64, content: &[u8]) {
+        if self.generation == Some(generation) {
+            return;
+        }
+
+        self.entries.clear();
+        self.name_keys.clear();
+        self.port_keys.clear();
+
+        for entry in content
+            .split(|&b| b == b'\n')
+            .filter_map(frankenlibc_core::resolv::parse_services_line)
+        {
+            let entry_index = self.entries.len();
+            let protocol_hash = ascii_casefold_hash(&entry.protocol);
+            self.name_keys.push(ServiceNameLookupKey {
+                name_hash: ascii_casefold_hash(&entry.name),
+                protocol_hash,
+                entry_index,
+                name: entry.name.clone(),
+            });
+            self.name_keys
+                .extend(entry.aliases.iter().map(|alias| ServiceNameLookupKey {
+                    name_hash: ascii_casefold_hash(alias),
+                    protocol_hash,
+                    entry_index,
+                    name: alias.clone(),
+                }));
+            // Port keys index the RECORD, not its aliases: `getservbyport` matches on the
+            // numeric port plus an optional protocol filter, never on a name.
+            self.port_keys.push(ServicePortLookupKey {
+                port: entry.port,
+                entry_index,
+            });
+            self.entries.push(entry);
+        }
+
+        self.name_keys.sort_by_key(|key| key.name_hash);
+        // (port, entry_index) so equal ports stay in original file order, preserving the
+        // first-match-wins tie-break of the line scan this index replaces.
+        self.port_keys
+            .sort_by_key(|key| (key.port, key.entry_index));
+        self.generation = Some(generation);
+    }
+
+    fn lookup_by_name(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        name: &[u8],
+        proto_filter: Option<&[u8]>,
+    ) -> Option<&frankenlibc_core::resolv::ServiceEntry> {
+        self.rebuild_if_needed(generation, content);
+
+        let name_hash = ascii_casefold_hash(name);
+        let start = self
+            .name_keys
+            .partition_point(|key| key.name_hash < name_hash);
+        let end = self
+            .name_keys
+            .partition_point(|key| key.name_hash <= name_hash);
+        let proto_hash = proto_filter.map(ascii_casefold_hash);
+        let mut best_entry_index = None;
+
+        for key in &self.name_keys[start..end] {
+            if proto_hash.is_some_and(|hash| key.protocol_hash != hash)
+                || !key.name.eq_ignore_ascii_case(name)
+            {
+                continue;
+            }
+
+            let entry = &self.entries[key.entry_index];
+            if let Some(filter) = proto_filter
+                && !entry.protocol.eq_ignore_ascii_case(filter)
+            {
+                continue;
+            }
+
+            if best_entry_index.is_none_or(|current| key.entry_index < current) {
+                best_entry_index = Some(key.entry_index);
+            }
+        }
+
+        best_entry_index.map(|index| &self.entries[index])
+    }
+
+    /// Visit every record whose canonical name or alias equals `name`, in the
+    /// original backend order. A record is visited once even if both its
+    /// canonical name and one of its aliases match.
+    fn visit_by_name<E>(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        name: &[u8],
+        mut visit: impl FnMut(&frankenlibc_core::resolv::ServiceEntry) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.rebuild_if_needed(generation, content);
+
+        let name_hash = ascii_casefold_hash(name);
+        let start = self
+            .name_keys
+            .partition_point(|key| key.name_hash < name_hash);
+        let end = self
+            .name_keys
+            .partition_point(|key| key.name_hash <= name_hash);
+        let mut last_entry_index = None;
+
+        // `sort_by_key` is stable, and keys are appended in record order, so
+        // this hash bucket retains the backend's first-to-last ordering.
+        for key in &self.name_keys[start..end] {
+            // Hash equality only narrows the search; exact comparison is the
+            // collision guard and remains ASCII case-insensitive.
+            if !key.name.eq_ignore_ascii_case(name) || last_entry_index == Some(key.entry_index) {
+                continue;
+            }
+
+            debug_assert!(last_entry_index.is_none_or(|last| last < key.entry_index));
+            last_entry_index = Some(key.entry_index);
+            visit(&self.entries[key.entry_index])?;
+        }
+
+        Ok(())
+    }
+
+    /// Port lookup for `getservbyport`. `port` is in HOST order. Returns the
+    /// lowest-`entry_index` record whose port matches and whose protocol satisfies
+    /// `proto_filter` (ASCII case-insensitive) — i.e. the first matching line in file
+    /// order, exactly what the replaced `split('\n').find_map(..)` scan returned.
+    fn lookup_by_port(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        port: u16,
+        proto_filter: Option<&[u8]>,
+    ) -> Option<&frankenlibc_core::resolv::ServiceEntry> {
+        self.rebuild_if_needed(generation, content);
+
+        let start = self.port_keys.partition_point(|key| key.port < port);
+        let end = self.port_keys.partition_point(|key| key.port <= port);
+
+        self.port_keys[start..end]
+            .iter()
+            .filter(|key| match proto_filter {
+                Some(filter) => self.entries[key.entry_index]
+                    .protocol
+                    .eq_ignore_ascii_case(filter),
+                None => true,
+            })
+            .map(|key| key.entry_index)
+            .min()
+            .map(|index| &self.entries[index])
+    }
+}
+
+struct ProtocolNameLookupKey {
+    name_hash: u64,
+    entry_index: usize,
+    name: Vec<u8>,
+}
+
+struct ProtocolNumberLookupKey {
+    number: i32,
+    entry_index: usize,
+}
+
+struct ProtocolLookupCache {
+    generation: Option<u64>,
+    entries: Vec<frankenlibc_core::resolv::ProtocolEntry>,
+    name_keys: Vec<ProtocolNameLookupKey>,
+    number_keys: Vec<ProtocolNumberLookupKey>,
+}
+
+impl ProtocolLookupCache {
+    fn new() -> Self {
+        Self {
+            generation: None,
+            entries: Vec::new(),
+            name_keys: Vec::new(),
+            number_keys: Vec::new(),
+        }
+    }
+
+    fn rebuild_if_needed(&mut self, generation: u64, content: &[u8]) {
+        if self.generation == Some(generation) {
+            return;
+        }
+
+        self.entries.clear();
+        self.name_keys.clear();
+        self.number_keys.clear();
+
+        for entry in content
+            .split(|&b| b == b'\n')
+            .filter_map(frankenlibc_core::resolv::parse_protocols_line)
+        {
+            let entry_index = self.entries.len();
+            self.name_keys.push(ProtocolNameLookupKey {
+                name_hash: ascii_casefold_hash(&entry.name),
+                entry_index,
+                name: entry.name.clone(),
+            });
+            self.name_keys
+                .extend(entry.aliases.iter().map(|alias| ProtocolNameLookupKey {
+                    name_hash: ascii_casefold_hash(alias),
+                    entry_index,
+                    name: alias.clone(),
+                }));
+            self.number_keys.push(ProtocolNumberLookupKey {
+                number: entry.number,
+                entry_index,
+            });
+            self.entries.push(entry);
+        }
+
+        self.name_keys
+            .sort_by_key(|key| (key.name_hash, key.entry_index));
+        self.number_keys
+            .sort_by_key(|key| (key.number, key.entry_index));
+        self.generation = Some(generation);
+    }
+
+    fn lookup_by_name(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        name: &[u8],
+    ) -> Option<&frankenlibc_core::resolv::ProtocolEntry> {
+        self.rebuild_if_needed(generation, content);
+
+        let name_hash = ascii_casefold_hash(name);
+        let start = self
+            .name_keys
+            .partition_point(|key| key.name_hash < name_hash);
+        let end = self
+            .name_keys
+            .partition_point(|key| key.name_hash <= name_hash);
+        let mut best_entry_index = None;
+
+        for key in &self.name_keys[start..end] {
+            if !key.name.eq_ignore_ascii_case(name) {
+                continue;
+            }
+            if best_entry_index.is_none_or(|current| key.entry_index < current) {
+                best_entry_index = Some(key.entry_index);
+            }
+        }
+
+        best_entry_index.map(|index| &self.entries[index])
+    }
+
+    fn lookup_by_number(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        number: i32,
+    ) -> Option<&frankenlibc_core::resolv::ProtocolEntry> {
+        self.rebuild_if_needed(generation, content);
+
+        let start = self.number_keys.partition_point(|key| key.number < number);
+        let end = self.number_keys.partition_point(|key| key.number <= number);
+
+        self.number_keys[start..end]
+            .iter()
+            .map(|key| key.entry_index)
+            .min()
+            .map(|index| &self.entries[index])
+    }
+}
+
+#[inline]
+fn ascii_casefold_hash(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for &byte in bytes {
+        let folded = if byte.is_ascii_uppercase() {
+            byte + 32
+        } else {
+            byte
+        };
+        hash ^= u64::from(folded);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash ^ (bytes.len() as u64)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_hosts_backend_cache() -> BackendFileCache {
+    BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_services_backend_cache() -> BackendFileCache {
+    BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_protocols_backend_cache() -> BackendFileCache {
+    BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_proc_net_route_cache() -> BackendFileCache {
+    BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_proc_net_if_inet6_cache() -> BackendFileCache {
+    BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_service_lookup_cache() -> ServiceLookupCache {
+    ServiceLookupCache::new()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_protocol_lookup_cache() -> ProtocolLookupCache {
+    ProtocolLookupCache::new()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static HOSTS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_hosts_backend_cache);
+#[cfg(feature = "owned-tls-cache")]
+static SERVICES_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_services_backend_cache);
+#[cfg(feature = "owned-tls-cache")]
+static PROTOCOLS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_protocols_backend_cache);
+#[cfg(feature = "owned-tls-cache")]
+static PROC_NET_ROUTE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_route_cache);
+#[cfg(feature = "owned-tls-cache")]
+static PROC_NET_IF_INET6_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_if_inet6_cache);
+#[cfg(feature = "owned-tls-cache")]
+static SERVICE_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServiceLookupCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_service_lookup_cache);
+#[cfg(feature = "owned-tls-cache")]
+static PROTOCOL_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtocolLookupCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_protocol_lookup_cache);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static HOSTS_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)));
+    static SERVICES_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)));
+    static PROTOCOLS_BACKEND_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)));
+    static PROC_NET_ROUTE_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)));
+    static PROC_NET_IF_INET6_TLS: Box<RefCell<BackendFileCache>> =
+        Box::new(RefCell::new(BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)));
+    static SERVICE_LOOKUP_TLS: Box<RefCell<ServiceLookupCache>> =
+        Box::new(RefCell::new(ServiceLookupCache::new()));
+    static PROTOCOL_LOOKUP_TLS: Box<RefCell<ProtocolLookupCache>> =
+        Box::new(RefCell::new(ProtocolLookupCache::new()));
+}
+
+fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
+    std::env::var_os(env_key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default_path))
+}
+
+pub(crate) fn hosts_backend_path() -> PathBuf {
+    configured_backend_path(HOSTS_PATH, HOSTS_PATH_ENV)
+}
+
+#[inline]
+fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    }
+}
+
+/// Borrowing sibling of [`read_hosts_backend`], mirroring `with_services_backend_snapshot` /
+/// `with_protocols_backend_snapshot`. `read_hosts_backend` hands back an OWNED clone of the whole
+/// `/etc/hosts`; every hot hosts lookup paid that clone per call.
+pub(crate) fn with_hosts_backend_snapshot<R>(
+    callback: impl FnOnce(&[u8], u64) -> R,
+) -> std::io::Result<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+    }
+}
+
+/// Bench-only: reconstruct the pre-lever per-call hosts work — an owned clone of the whole
+/// `/etc/hosts` plus `lookup_hosts`, which runs `parse_hosts_line` (an address `Vec` + a
+/// `Vec<Vec<u8>>` of hostnames) on EVERY line and clones each matched address into a result
+/// `Vec<Vec<u8>>`. Lets the `frankenlibc_legacy_orig` arm price this lever in the SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_hosts_scan(name: &[u8]) {
+    let Ok(content) = read_hosts_backend() else {
+        return;
+    };
+    let candidates = frankenlibc_core::resolv::lookup_hosts(&content, name);
+    std::hint::black_box(&candidates);
+}
+
+/// Format `ip` as `a.b.c.d` into `buf`, returning the written bytes. Byte-identical to
+/// `Ipv4Addr::to_string()` (decimal octets, no leading zeros, `.` separators) but without the
+/// per-call `String` heap allocation — which, through the interposed allocator, costs a
+/// malloc/free pair plus `core::fmt` machinery on every reverse hosts lookup. 15 bytes is the
+/// maximum (`255.255.255.255`).
+fn write_ipv4_text(ip: Ipv4Addr, buf: &mut [u8; 15]) -> &[u8] {
+    let mut n = 0usize;
+    for (i, &octet) in ip.octets().iter().enumerate() {
+        if i > 0 {
+            buf[n] = b'.';
+            n += 1;
+        }
+        if octet >= 100 {
+            buf[n] = b'0' + octet / 100;
+            n += 1;
+        }
+        if octet >= 10 {
+            buf[n] = b'0' + (octet / 10) % 10;
+            n += 1;
+        }
+        buf[n] = b'0' + octet % 10;
+        n += 1;
+    }
+    &buf[..n]
+}
+
+/// Format `v` in decimal into `buf`, returning the written ASCII bytes as `&str`. Byte-identical
+/// to `u16::to_string()` (no leading zeros, `"0"` for zero) but without the per-call `String` heap
+/// allocation — which, through the interposed allocator, costs a malloc/free pair on every
+/// `getnameinfo` port render. 5 bytes is the maximum (`65535`).
+fn write_u16_dec(v: u16, buf: &mut [u8; 5]) -> &str {
+    let mut i = buf.len();
+    let mut n = v;
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    // SAFETY-free: only ASCII digits were written; from_utf8 on `[b'0'..=b'9']` never fails.
+    core::str::from_utf8(&buf[i..]).expect("ascii digits")
+}
+
+/// Bench-only: reconstruct the per-call `Ipv4Addr::to_string()` heap allocation that
+/// `write_ipv4_text` replaced, so the `frankenlibc_legacy_orig` arm can price this lever in the
+/// SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_ip_to_string(octets: [u8; 4]) {
+    let text = Ipv4Addr::from(octets).to_string();
+    std::hint::black_box(&text);
+}
+
+/// Bench-only: reconstruct the two per-call `String` allocations (`ip.to_string()` +
+/// `port.to_string()`) that the `getnameinfo` AF_INET numeric path performed before the stack
+/// formatters landed, so the `orig` arm can price this lever in the SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_getnameinfo_numeric_alloc(octets: [u8; 4], port: u16) {
+    let host = Ipv4Addr::from(octets).to_string();
+    let serv = port.to_string();
+    std::hint::black_box((&host, &serv));
+}
+
+/// Bench-only: the deployed allocation-free numeric render (both stack formatters), so the paired
+/// sampler can price the CAND kernel in the SAME binary.
+#[doc(hidden)]
+pub fn bench_getnameinfo_numeric_stack(octets: [u8; 4], port: u16) -> usize {
+    let mut ipv4_buf = [0u8; 15];
+    let mut port_buf = [0u8; 5];
+    let ip_bytes = write_ipv4_text(Ipv4Addr::from(octets), &mut ipv4_buf);
+    let serv = write_u16_dec(port, &mut port_buf);
+    std::hint::black_box(ip_bytes).len() + std::hint::black_box(serv).len()
+}
+
+/// Bench-only: the deployed allocation-free formatter, exposed so the paired sampler can measure
+/// the primitive itself (a 3-5% end-to-end effect is below the sampler's ratio resolution).
+#[doc(hidden)]
+pub fn bench_write_ipv4_text(octets: [u8; 4]) -> usize {
+    let mut buf = [0u8; 15];
+    let bytes = write_ipv4_text(Ipv4Addr::from(octets), &mut buf);
+    std::hint::black_box(bytes).len()
+}
+
+/// Verify-only: the deployed formatter's output, so a harness can assert byte-identity with
+/// `Ipv4Addr::to_string()` before timing. Allocates (that is the point of the comparison).
+#[doc(hidden)]
+pub fn bench_ipv4_text_owned(octets: [u8; 4]) -> Vec<u8> {
+    let mut buf = [0u8; 15];
+    write_ipv4_text(Ipv4Addr::from(octets), &mut buf).to_vec()
+}
+
+/// Bench-only: reconstruct the pre-lever per-call whole-file clone that `_gethtent` performed on
+/// EVERY iteration step (`read_hosts_backend()`), which made draining N entries O(N^2).
+#[doc(hidden)]
+pub fn bench_legacy_hosts_clone() {
+    let Ok(content) = read_hosts_backend() else {
+        return;
+    };
+    std::hint::black_box(&content);
+}
+
+/// Bench-only: reconstruct the pre-lever per-call REVERSE hosts work — an owned clone of the whole
+/// `/etc/hosts` plus `reverse_lookup_hosts`, which `parse_hosts_line`-allocates every line and then
+/// builds an owned `Vec<Vec<u8>>` of the matching line's hostnames.
+#[doc(hidden)]
+pub fn bench_legacy_reverse_hosts_scan(addr_text: &[u8]) {
+    let Ok(content) = read_hosts_backend() else {
+        return;
+    };
+    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, addr_text);
+    std::hint::black_box(&hostnames);
+}
+
+fn read_services_backend() -> std::io::Result<Vec<u8>> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    }
+}
+
+fn with_services_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> std::io::Result<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+    }
+}
+
+fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVICE_LOOKUP_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVICE_LOOKUP_TLS.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            callback(&mut cache)
+        })
+    }
+}
+
+/// The files source retains its borrowed, generation-stamped name/port index.
+/// No NSS callback executes while either files-cache borrow is held.
+fn with_files_service_entry<R>(
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    use crate::nss_module::ServiceKey;
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            let found = match key {
+                ServiceKey::Name(name) => {
+                    cache.lookup_by_name(generation, content, name, proto_filter)
+                }
+                ServiceKey::Port(port) => u16::try_from(port).ok().and_then(|port| {
+                    cache.lookup_by_port(generation, content, u16::from_be(port), proto_filter)
+                }),
+            };
+            // A successful files scan clears an earlier source's errno,
+            // including a definitive miss. Let `f` report its own failures.
+            unsafe { set_abi_errno(0) };
+            found.map(f)
+        })
+    })
+}
+
+fn service_lookup(
+    sources: &[frankenlibc_core::nss::Service],
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+) -> frankenlibc_core::nss::Answer<frankenlibc_core::resolv::ServiceEntry> {
+    use frankenlibc_core::nss::Answer;
+    frankenlibc_core::nss::lookup(
+        sources,
+        |source| match source.name() {
+            b"files" => match with_files_service_entry(key, proto_filter, Clone::clone) {
+                Ok(Some(entry)) => Answer::Found(entry),
+                Ok(None) => Answer::NotFound,
+                Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
+            },
+            _ => crate::nss_module::service_entry(source.name(), key, proto_filter),
+        },
+        None,
+    )
+}
+
+fn service_sources_are_files(sources: &[frankenlibc_core::nss::Service]) -> bool {
+    // `compat` is an account-database convention, not a services files alias.
+    matches!(sources, [only] if only.name() == b"files")
+}
+
+/// All named service consumers share NSS order/actions. The usual files-only
+/// configuration still invokes `f` on a borrowed entry without cloning it.
+fn with_service_entry<R>(
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    use frankenlibc_core::nss::{Answer, Database};
+    let sources = crate::nss_module::services(Database::Services);
+    if service_sources_are_files(&sources) {
+        return with_files_service_entry(key, proto_filter, f);
+    }
+    match service_lookup(&sources, key, proto_filter) {
+        Answer::Found(entry) => Ok(Some(f(&entry))),
+        Answer::NotFound => {
+            // SAFETY: GNU's service wrappers clear errno for a definitive miss.
+            unsafe { set_abi_errno(0) };
+            Ok(None)
+        }
+        Answer::Unavailable(error) | Answer::TryAgain(error) => {
+            Err(std::io::Error::from_raw_os_error(error))
+        }
+        Answer::BufferTooSmall => Err(std::io::Error::from_raw_os_error(libc::ERANGE)),
+    }
+}
+
+pub(crate) fn with_service_entry_by_name<R>(
+    name: &[u8],
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    with_service_entry(crate::nss_module::ServiceKey::Name(name), proto_filter, f)
+}
+
+/// Internal reverse lookups take a host-order port, unlike the public C ABI.
+pub(crate) fn with_service_entry_by_port<R>(
+    port: u16,
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    with_service_entry(
+        crate::nss_module::ServiceKey::Port(c_int::from(port.to_be())),
+        proto_filter,
+        f,
+    )
+}
+
+/// # Safety
+/// The ABI caller validated `out` and the writable `buf[..len]`. A module
+/// writes directly into that buffer, retaining its exact ERANGE/alignment
+/// contract; the files source packs its borrowed entry without extra copies.
+pub(crate) unsafe fn service_lookup_r(
+    key: crate::nss_module::ServiceKey<'_>,
+    proto_filter: Option<&[u8]>,
+    out: *mut libc::servent,
+    buf: *mut c_char,
+    len: usize,
+) -> frankenlibc_core::nss::Answer<()> {
+    use frankenlibc_core::nss::{Answer, Database};
+    let sources = crate::nss_module::services(Database::Services);
+    frankenlibc_core::nss::lookup(
+        &sources,
+        |source| match source.name() {
+            b"files" => {
+                match with_files_service_entry(key, proto_filter, |entry| {
+                    // SAFETY: the ABI caller owns the supplied output region.
+                    unsafe { crate::inet_abi::pack_service_entry(entry, out, buf, len) }
+                }) {
+                    Ok(Some(0)) => Answer::Found(()),
+                    Ok(Some(_)) => Answer::BufferTooSmall,
+                    Ok(None) => Answer::NotFound,
+                    Err(error) => Answer::Unavailable(error.raw_os_error().unwrap_or(libc::EIO)),
+                }
+            }
+            // SAFETY: as above; no cache borrow or configuration lock survives
+            // into user module code, so module callbacks can reenter NSS.
+            _ => unsafe {
+                crate::nss_module::service_entry_r(source.name(), key, proto_filter, out, buf, len)
+            },
+        },
+        None,
+    )
+}
+
+/// Visit every parsed `/etc/services` record matching `name`, borrowed from the
+/// generation-stamped name index and in original backend order.
+fn with_service_entries_by_name<E>(
+    name: &[u8],
+    f: impl FnMut(&frankenlibc_core::resolv::ServiceEntry) -> Result<(), E>,
+) -> std::io::Result<Result<(), E>> {
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| cache.visit_by_name(generation, content, name, f))
+    })
+}
+
+/// Bench-only: reconstruct the pre-lever per-call work that `lookup_service_profiles` used to
+/// do — an owned clone of the whole `/etc/services` backend plus a `parse_services_line`
+/// allocation for EVERY line — so the `frankenlibc_legacy_orig` arm can price this lever in
+/// the SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_service_profile_scan(service: &[u8]) {
+    let Ok(content) = read_services_backend() else {
+        return;
+    };
+    let mut matches = 0usize;
+    for line in content.split(|&b| b == b'\n') {
+        let Some(entry) = frankenlibc_core::resolv::parse_services_line(line) else {
+            continue;
+        };
+        if service_entry_matches(&entry, service) {
+            matches += 1;
+        }
+    }
+    std::hint::black_box(matches);
+}
+
+/// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
+#[allow(dead_code)]
+pub(crate) fn lookup_service_entry_by_name(
+    name: &[u8],
+    proto_filter: Option<&[u8]>,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
+    with_service_entry_by_name(name, proto_filter, Clone::clone)
+}
+
+/// Shared `/etc/services` lookup by HOST-order port, through the cached backend bytes and
+/// the generation-stamped parsed port index. Sibling of [`lookup_service_entry_by_name`],
+/// shared with the reentrant `getservbyport_r` in `inet_abi`.
+pub(crate) fn lookup_service_entry_by_port(
+    port: u16,
+    proto_filter: Option<&[u8]>,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
+    with_service_entry_by_port(port, proto_filter, Clone::clone)
+}
+
+fn with_protocols_backend_snapshot<R>(
+    callback: impl FnOnce(&[u8], u64) -> R,
+) -> std::io::Result<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PROTOCOLS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PROTOCOLS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+    }
+}
+
+/// Shared `/etc/protocols` lookup by canonical name or alias, through the cached backend
+/// bytes and the generation-stamped parsed index. Runs `f` on the BORROWED cache entry, so
+/// no `ProtocolEntry` (its name `Vec<u8>` plus its `Vec<Vec<u8>>` of aliases — 3+ heap
+/// allocations and a `realloc`) is cloned per call. `Ok(None)` means "no such protocol";
+/// `Err` means the backend could not be read.
+///
+/// Exposed to the crate so the reentrant `getprotobyname_r` (which lives in `unistd_abi`)
+/// can share this cache instead of re-reading and re-parsing the file on every call.
+pub(crate) fn with_protocol_entry_by_name<R>(
+    name: &[u8],
+    f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| cache.lookup_by_name(generation, content, name).map(f))
+    })
+}
+
+/// Shared `/etc/protocols` lookup by protocol number. Sibling of
+/// [`with_protocol_entry_by_name`], shared with the reentrant `getprotobynumber_r`.
+pub(crate) fn with_protocol_entry_by_number<R>(
+    number: c_int,
+    f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            cache.lookup_by_number(generation, content, number).map(f)
+        })
+    })
+}
+
+/// Bench-only: reproduce the per-call `PathBuf` that `refresh_source_path_from_env` used to
+/// build (and immediately drop) on every protocols lookup. Lets the `frankenlibc_legacy_orig`
+/// bench arm reconstruct the exact pre-lever allocation traffic in the SAME binary, so the
+/// A/B measures the whole allocation-elision lever rather than only the entry-clone half.
+#[doc(hidden)]
+pub fn bench_protocols_pathbuf_refresh_alloc() {
+    let path = configured_backend_path(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV);
+    std::hint::black_box(&path);
+}
+
+/// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
+#[allow(dead_code)]
+pub(crate) fn lookup_protocol_entry_by_name(
+    name: &[u8],
+) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
+    with_protocol_entry_by_name(name, Clone::clone)
+}
+
+#[allow(dead_code)]
+pub(crate) fn lookup_protocol_entry_by_number(
+    number: c_int,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
+    with_protocol_entry_by_number(number, Clone::clone)
+}
+
+fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PROTOCOL_LOOKUP_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PROTOCOL_LOOKUP_TLS.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            callback(&mut cache)
+        })
+    }
+}
+
+fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
+    // Keep the explicit procfs fixture inputs, but query configured addresses
+    // on real systems: IPv4 does not require a route, and procfs can be absent
+    // or describe a different network namespace. An unavailable/partial
+    // netlink snapshot leaves results unfiltered, as glibc does.
+    let procfs_override = [PROC_NET_ROUTE_PATH_ENV, PROC_NET_IF_INET6_PATH_ENV]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+    if !procfs_override {
+        return crate::unistd_abi::addrconfig_state_snapshot();
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let route = PROC_NET_ROUTE_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+
+    #[cfg(feature = "owned-tls-cache")]
+    let if_inet6 = PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let if_inet6 = PROC_NET_IF_INET6_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+
+    Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
+        &route, &if_inet6,
+    ))
+}
+
+#[inline]
+fn repair_enabled(mode_heals: bool, action: MembraneAction) -> bool {
+    mode_heals || matches!(action, MembraneAction::Repair(_))
+}
+
+#[inline]
+fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
+    ordering.iter().position(|s| *s == stage).unwrap_or(0)
+}
+
+#[inline]
+fn resolver_stage_context(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = ((addr1 | addr2) & 0x7) == 0;
+    let recent_page = (addr1 != 0 && known_remaining(addr1).is_some())
+        || (addr2 != 0 && known_remaining(addr2).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::Resolver, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn record_resolver_stage_outcome(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    runtime_policy::note_check_order_outcome(
+        ApiFamily::Resolver,
+        aligned,
+        recent_page,
+        ordering,
+        exit_stage,
+    );
+}
+
+/// Bench-only: the `resolver_stage_context` + `record_resolver_stage_outcome` helper pair (the
+/// adaptive check-ordering computation + learning update) in isolation.
+#[doc(hidden)]
+pub fn bench_resolver_stage_bookkeeping() {
+    let (aligned, recent_page, ordering) =
+        resolver_stage_context(std::hint::black_box(0x1000), std::hint::black_box(0x2000));
+    record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
+    std::hint::black_box((aligned, recent_page));
+}
+
+/// Bench-only: `decide` for `Resolver` (now strict-fast-pathed) in isolation.
+#[doc(hidden)]
+pub fn bench_resolver_decide_only() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    std::hint::black_box(decision.action);
+}
+
+/// Bench-only: reconstruct the PRE-lever slow `decide` via a family NOT in the strict fast-path
+/// list (`Socket`), which routes through `decide_strict_observation` — the ORIG arm for the decide
+/// fast-path A/B. `decide_strict_observation` forces `action=Allow` for every family, so this is the
+/// same slow path Resolver took before it was added to the list.
+#[doc(hidden)]
+pub fn bench_resolver_decide_only_slow() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Socket,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    std::hint::black_box(decision.action);
+}
+
+/// Bench-only: reconstruct the PRE-lever `decide` + non-adverse `observe` cost. `adverse=true`
+/// bypasses the observe() fast-path family list (which gates on `!adverse`), so this runs the same
+/// slow observe path Resolver took before it was added to the list — the ORIG arm for the A/B.
+#[doc(hidden)]
+pub fn bench_resolver_decide_observe_slow() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+}
+
+/// Bench-only: the `decide` + `observe` membrane pair for `Resolver` in isolation.
+#[doc(hidden)]
+pub fn bench_resolver_decide_observe() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
+}
+
+unsafe fn opt_cstr<'a>(ptr: *const c_char) -> Result<Option<&'a CStr>, ()> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: caller supplies a C-string pointer; known allocator bounds stop
+    // the scan before the end of tracked malloc-backed objects.
+    let (len, terminated) =
+        unsafe { crate::util::scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return Err(());
+    }
+    let Some(slice_len) = len.checked_add(1) else {
+        return Err(());
+    };
+    // SAFETY: scan_c_string found a NUL at len, so len + 1 bytes are readable
+    // under the same C-string precondition and include exactly the terminator.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), slice_len) };
+    // SAFETY: the slice ends at the first observed NUL, so it has a single
+    // trailing terminator and no interior NUL bytes.
+    Ok(Some(unsafe { CStr::from_bytes_with_nul_unchecked(bytes) }))
+}
+
+unsafe fn required_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    unsafe { opt_cstr(ptr) }.ok().flatten().map(CStr::to_bytes)
+}
+
+#[allow(dead_code)]
+enum HostsAddress {
+    V4(Ipv4Addr),
+    #[allow(dead_code)]
+    V6(Ipv6Addr),
+}
+
+#[allow(dead_code)]
+fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
+    // Scope boundary: only deterministic files-backend lookup (`/etc/hosts`).
+    // Network DNS/NSS backends are intentionally out-of-scope here.
+    // Borrow the cached backend and walk it allocation-free. `read_hosts_backend()` cloned the
+    // whole `/etc/hosts` per call, and `lookup_hosts` then ran `parse_hosts_line` (an address
+    // `Vec` + a `Vec<Vec<u8>>` of hostnames) on EVERY line and cloned each match into a result
+    // `Vec<Vec<u8>>`. Visit order, the match test, the address validation and the first-parseable
+    // -wins selection are unchanged.
+    with_hosts_backend_snapshot(|content, _generation| {
+        let mut found = None;
+        frankenlibc_core::resolv::for_each_hosts_match(content, node.as_bytes(), |addr| {
+            let Ok(text) = core::str::from_utf8(addr) else {
+                return false;
+            };
+            if (family == libc::AF_UNSPEC || family == libc::AF_INET)
+                && let Ok(v4) = text.parse::<Ipv4Addr>()
+            {
+                found = Some(HostsAddress::V4(v4));
+                return true;
+            }
+            if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
+                && let Ok(v6) = text.parse::<Ipv6Addr>()
+            {
+                found = Some(HostsAddress::V6(v6));
+                return true;
+            }
+            false
+        });
+        found
+    })
+    .ok()
+    .flatten()
+}
+
+fn lookup_hosts_ipv4_by_name(name: &[u8]) -> Option<Ipv4Addr> {
+    // Borrowed, allocation-free hosts walk; see `resolve_hosts_subset`.
+    with_hosts_backend_snapshot(|content, _generation| {
+        let mut found = None;
+        frankenlibc_core::resolv::for_each_hosts_match(content, name, |addr| {
+            let Ok(text) = core::str::from_utf8(addr) else {
+                return false;
+            };
+            if let Ok(v4) = text.parse::<Ipv4Addr>() {
+                found = Some(v4);
+                return true;
+            }
+            false
+        });
+        found
+    })
+    .ok()
+    .flatten()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumericService {
+    Port(u16),
+    InvalidNumeric,
+    NotNumeric,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AddrinfoProfile {
+    port: u16,
+    socktype: c_int,
+    protocol: c_int,
+}
+
+/// At most 3 distinct `(socktype, protocol)` profiles ever result from a getaddrinfo service
+/// resolution: the socktype/protocol values come from the fixed set {SOCK_STREAM/IPPROTO_TCP,
+/// SOCK_DGRAM/IPPROTO_UDP, SOCK_RAW}, and the list is deduped. So the profile list fits inline on the
+/// stack — eliminating the per-call `Vec<AddrinfoProfile>` heap allocation (one interposed
+/// malloc/free pair) on every `getaddrinfo` call. Behaviour-identical to the Vec it replaces.
+#[derive(Clone, Copy)]
+struct Profiles {
+    buf: [AddrinfoProfile; 3],
+    len: usize,
+}
+
+impl Profiles {
+    const fn new() -> Self {
+        Self {
+            buf: [AddrinfoProfile {
+                port: 0,
+                socktype: 0,
+                protocol: 0,
+            }; 3],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, p: AddrinfoProfile) {
+        debug_assert!(
+            self.len < self.buf.len(),
+            "getaddrinfo profile list exceeded 3"
+        );
+        if self.len < self.buf.len() {
+            self.buf[self.len] = p;
+            self.len += 1;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl std::ops::Deref for Profiles {
+    type Target = [AddrinfoProfile];
+    fn deref(&self) -> &[AddrinfoProfile] {
+        &self.buf[..self.len]
+    }
+}
+
+fn parse_numeric_service_port(text: &str) -> NumericService {
+    // glibc parses numeric services through a signed-long path, then
+    // rejects values whose 32-bit signed result is negative. The final
+    // sockaddr port still uses the low 16 bits.
+    let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let bytes = text.as_bytes();
+    let Some(first) = bytes.first().copied() else {
+        return NumericService::NotNumeric;
+    };
+    let digits_start = if first == b'+' || first == b'-' { 1 } else { 0 };
+    if bytes.get(digits_start).is_none_or(|b| !b.is_ascii_digit()) {
+        return NumericService::NotNumeric;
+    }
+    if !bytes[digits_start..].iter().all(u8::is_ascii_digit) {
+        return NumericService::NotNumeric;
+    }
+
+    let Ok(value) = text.parse::<i64>() else {
+        return NumericService::InvalidNumeric;
+    };
+    let narrowed = value as i32;
+    if narrowed < 0 {
+        return NumericService::InvalidNumeric;
+    }
+    NumericService::Port(narrowed as u16)
+}
+
+fn profiles_for_port(
+    port: u16,
+    hints: Option<&libc::addrinfo>,
+    service_present: bool,
+) -> Result<Profiles, c_int> {
+    let (socktype, protocol) = hints
+        .map(|h| (h.ai_socktype, h.ai_protocol))
+        .unwrap_or((0, 0));
+
+    let mut profiles = Profiles::new();
+    match socktype {
+        0 => match protocol {
+            0 => {
+                profiles.push(AddrinfoProfile {
+                    port,
+                    socktype: libc::SOCK_STREAM,
+                    protocol: libc::IPPROTO_TCP,
+                });
+                profiles.push(AddrinfoProfile {
+                    port,
+                    socktype: libc::SOCK_DGRAM,
+                    protocol: libc::IPPROTO_UDP,
+                });
+                profiles.push(AddrinfoProfile {
+                    port,
+                    socktype: libc::SOCK_RAW,
+                    protocol: 0,
+                });
+            }
+            libc::IPPROTO_TCP => profiles.push(AddrinfoProfile {
+                port,
+                socktype: libc::SOCK_STREAM,
+                protocol,
+            }),
+            libc::IPPROTO_UDP => profiles.push(AddrinfoProfile {
+                port,
+                socktype: libc::SOCK_DGRAM,
+                protocol,
+            }),
+            _ if !service_present => profiles.push(AddrinfoProfile {
+                port,
+                socktype: libc::SOCK_RAW,
+                protocol,
+            }),
+            _ => return Err(libc::EAI_SERVICE),
+        },
+        libc::SOCK_STREAM => match protocol {
+            0 | libc::IPPROTO_TCP => profiles.push(AddrinfoProfile {
+                port,
+                socktype,
+                protocol: libc::IPPROTO_TCP,
+            }),
+            _ => return Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_DGRAM => match protocol {
+            0 | libc::IPPROTO_UDP => profiles.push(AddrinfoProfile {
+                port,
+                socktype,
+                protocol: libc::IPPROTO_UDP,
+            }),
+            _ => return Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_RAW => {
+            if service_present {
+                return Err(libc::EAI_SERVICE);
+            }
+            profiles.push(AddrinfoProfile {
+                port,
+                socktype,
+                protocol,
+            });
+        }
+        _ => return Err(libc::EAI_SOCKTYPE),
+    }
+
+    Ok(profiles)
+}
+
+fn service_entry_profile(
+    entry: &frankenlibc_core::resolv::ServiceEntry,
+    hints: Option<&libc::addrinfo>,
+) -> Result<Option<AddrinfoProfile>, c_int> {
+    let (socktype, protocol) = hints
+        .map(|h| (h.ai_socktype, h.ai_protocol))
+        .unwrap_or((0, 0));
+    let is_tcp = entry.protocol.eq_ignore_ascii_case(b"tcp");
+    let is_udp = entry.protocol.eq_ignore_ascii_case(b"udp");
+
+    match socktype {
+        0 => match protocol {
+            0 => {
+                if is_tcp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype: libc::SOCK_STREAM,
+                        protocol: libc::IPPROTO_TCP,
+                    }))
+                } else if is_udp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype: libc::SOCK_DGRAM,
+                        protocol: libc::IPPROTO_UDP,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            libc::IPPROTO_TCP if is_tcp => Ok(Some(AddrinfoProfile {
+                port: entry.port,
+                socktype: libc::SOCK_STREAM,
+                protocol,
+            })),
+            libc::IPPROTO_UDP if is_udp => Ok(Some(AddrinfoProfile {
+                port: entry.port,
+                socktype: libc::SOCK_DGRAM,
+                protocol,
+            })),
+            libc::IPPROTO_TCP | libc::IPPROTO_UDP => Ok(None),
+            _ => Err(libc::EAI_SERVICE),
+        },
+        libc::SOCK_STREAM => match protocol {
+            0 | libc::IPPROTO_TCP => {
+                if is_tcp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype,
+                        protocol: libc::IPPROTO_TCP,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_DGRAM => match protocol {
+            0 | libc::IPPROTO_UDP => {
+                if is_udp {
+                    Ok(Some(AddrinfoProfile {
+                        port: entry.port,
+                        socktype,
+                        protocol: libc::IPPROTO_UDP,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Err(libc::EAI_SOCKTYPE),
+        },
+        libc::SOCK_RAW => Err(libc::EAI_SERVICE),
+        _ => Err(libc::EAI_SOCKTYPE),
+    }
+}
+
+fn service_entry_matches(entry: &frankenlibc_core::resolv::ServiceEntry, service: &[u8]) -> bool {
+    entry.name.eq_ignore_ascii_case(service)
+        || entry
+            .aliases
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(service))
+}
+
+fn lookup_service_entry_in_content(
+    content: &[u8],
+    service: &[u8],
+    proto_filter: Option<&[u8]>,
+) -> Option<frankenlibc_core::resolv::ServiceEntry> {
+    content.split(|&b| b == b'\n').find_map(|line| {
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        if !service_entry_matches(&entry, service) {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !entry.protocol.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some(entry)
+    })
+}
+
+fn lookup_service_profiles(
+    service: &[u8],
+    hints: Option<&libc::addrinfo>,
+) -> Result<Option<Profiles>, c_int> {
+    use frankenlibc_core::nss::{Answer, Database};
+    // Invalid transport combinations fail even when no service record exists.
+    let candidates = profiles_for_port(0, hints, true)?;
+    let sources = crate::nss_module::services(Database::Services);
+    if !service_sources_are_files(&sources) {
+        // GNU resolves each transport separately: TCP can come from an early
+        // source while UDP falls through to a later one. Numeric services and
+        // AI_NUMERICSERV have already returned before entering this function.
+        let mut profiles = Profiles::new();
+        for candidate in &*candidates {
+            let protocol: &[u8] = match candidate.protocol {
+                libc::IPPROTO_TCP => b"tcp",
+                libc::IPPROTO_UDP => b"udp",
+                _ => continue,
+            };
+            if let Answer::Found(entry) = service_lookup(
+                &sources,
+                crate::nss_module::ServiceKey::Name(service),
+                Some(protocol),
+            ) {
+                profiles.push(AddrinfoProfile {
+                    port: entry.port,
+                    ..*candidate
+                });
+            }
+        }
+        return Ok((!profiles.is_empty()).then_some(profiles));
+    }
+    // Narrow the generation-stamped name index before visiting records. This preserves the
+    // old file-order profile collection while reducing the hot per-call walk from O(records)
+    // to O(log indexed names + matching records).
+    let mut profiles = Profiles::new();
+    let scanned = with_service_entries_by_name(service, |entry| {
+        if let Some(profile) = service_entry_profile(entry, hints)?
+            && !profiles.contains(&profile)
+        {
+            profiles.push(profile);
+        }
+        Ok::<(), c_int>(())
+    });
+
+    // A backend read error still reports "no such service" rather than an error, exactly as
+    // the previous `read_services_backend()` / `Err(_) => return Ok(None)` did.
+    match scanned {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => return Err(err),
+        Err(_) => return Ok(None),
+    }
+
+    if profiles.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(profiles))
+    }
+}
+
+fn resolve_addrinfo_profiles(
+    service: Option<&CStr>,
+    hints: Option<&libc::addrinfo>,
+) -> Result<Profiles, c_int> {
+    let Some(service) = service else {
+        return profiles_for_port(0, hints, false);
+    };
+
+    if let Ok(text) = service.to_str() {
+        match parse_numeric_service_port(text) {
+            NumericService::Port(port) => return profiles_for_port(port, hints, true),
+            NumericService::InvalidNumeric => return Err(libc::EAI_SERVICE),
+            NumericService::NotNumeric => {}
+        }
+    } else if hints.is_some_and(|h| h.ai_flags & libc::AI_NUMERICSERV != 0) {
+        return Err(libc::EAI_NONAME);
+    }
+
+    if hints.is_some_and(|h| h.ai_flags & libc::AI_NUMERICSERV != 0) {
+        return Err(libc::EAI_NONAME);
+    }
+
+    if let Some(profiles) = lookup_service_profiles(service.to_bytes(), hints)? {
+        return Ok(profiles);
+    }
+
+    // An unknown service name is EAI_SERVICE in both modes. Hardened used to
+    // "heal" it to port 0, so getaddrinfo("127.0.0.1", "nonsense") succeeded
+    // with an address nothing listens on (CPython's asyncio test expects the
+    // error); a failed name lookup carries no memory-safety risk.
+    Err(libc::EAI_SERVICE)
+}
+
+struct GethostbynameTarget {
+    name: Vec<u8>,
+    aliases: Vec<Vec<u8>>,
+    addresses: Vec<Ipv4Addr>,
+}
+
+impl GethostbynameTarget {
+    fn numeric(name: &[u8], address: Ipv4Addr) -> Self {
+        Self {
+            name: name.to_vec(),
+            aliases: Vec::new(),
+            addresses: vec![address],
+        }
+    }
+
+    fn seeded<'a, I>(canonical_name: &[u8], aliases: I, address: Ipv4Addr) -> Self
+    where
+        I: Iterator<Item = &'a [u8]>,
+    {
+        Self {
+            name: canonical_name.to_vec(),
+            aliases: aliases.map(ToOwned::to_owned).collect(),
+            addresses: vec![address],
+        }
+    }
+
+    fn append_row<'a, I>(&mut self, canonical_name: &[u8], aliases: I, address: Ipv4Addr)
+    where
+        I: Iterator<Item = &'a [u8]>,
+    {
+        self.aliases.extend(aliases.map(ToOwned::to_owned));
+        if canonical_name != self.name {
+            self.aliases.push(canonical_name.to_vec());
+        }
+        self.addresses.push(address);
+    }
+}
+
+fn gethostbyname_ipv4_address(address: &[u8]) -> Option<Ipv4Addr> {
+    let address = core::str::from_utf8(address).ok()?;
+    if let Ok(v4) = address.parse::<Ipv4Addr>() {
+        return Some(v4);
+    }
+    let v6 = address.parse::<Ipv6Addr>().ok()?;
+    v6.to_ipv4_mapped()
+        .or_else(|| v6.is_loopback().then_some(Ipv4Addr::LOCALHOST))
+}
+
+/// An AF_INET6 host answer: canonical name, aliases, addresses.
+type Host6Target = (Vec<u8>, Vec<Vec<u8>>, Vec<Ipv6Addr>);
+
+/// `gethostbyname2(name, AF_INET6)`: an IPv6 literal, else the IPv6
+/// `/etc/hosts` lines naming `name` (aliases merged across lines, as for
+/// IPv4), else native DNS AAAA.
+fn resolve_gethostbyname6_target(
+    name: Option<&CStr>,
+    files_only: bool,
+) -> Result<Host6Target, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+    let name_cstr = name
+        .filter(|name| !name.to_bytes().is_empty())
+        .ok_or(libc::EAI_NONAME)?;
+    // Numeric names are the front end's job; the files module only matches
+    // /etc/hosts rows.
+    if !files_only
+        && let Ok(node) = name_cstr.to_str()
+        && let Ok(v6) = node.parse::<Ipv6Addr>()
+    {
+        return Ok((name_cstr.to_bytes().to_vec(), Vec::new(), vec![v6]));
+    }
+    let files_lookup = || -> BackendResult<Host6Target, c_int> {
+        let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+            let mut target: Option<Host6Target> = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(
+                content,
+                name_cstr.to_bytes(),
+                |entry| {
+                    let Some(address) = core::str::from_utf8(entry.address())
+                        .ok()
+                        .and_then(|a| a.parse::<Ipv6Addr>().ok())
+                    else {
+                        return false;
+                    };
+                    match &mut target {
+                        Some((canonical, aliases, addresses)) => {
+                            aliases.extend(entry.aliases().map(ToOwned::to_owned));
+                            if entry.canonical_name() != canonical.as_slice() {
+                                aliases.push(entry.canonical_name().to_vec());
+                            }
+                            addresses.push(address);
+                        }
+                        None => {
+                            target = Some((
+                                entry.canonical_name().to_vec(),
+                                entry.aliases().map(ToOwned::to_owned).collect(),
+                                vec![address],
+                            ));
+                        }
+                    }
+                    false
+                },
+            );
+            target
+        });
+        match snapshot {
+            Ok(Some(target)) => BackendResult::Success(target),
+            Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+            Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+        }
+    };
+    // The backend snapshot borrow ends before network I/O.
+    let dns_lookup = || -> BackendResult<Host6Target, c_int> {
+        let (addresses, canonical_name) = match dns_backend_result(native_dns_resolve(
+            name_cstr.to_bytes(),
+            AddressPolicy::new(Family::Inet6, false, false),
+        )) {
+            BackendResult::Success(found) => found,
+            BackendResult::NotFound(code) => return BackendResult::NotFound(code),
+            BackendResult::Unavailable(code) => return BackendResult::Unavailable(code),
+            BackendResult::TryAgain(code) => return BackendResult::TryAgain(code),
+        };
+        if addresses.ipv6.is_empty() {
+            return BackendResult::NotFound(libc::EAI_NONAME);
+        }
+        let query_name = name_cstr.to_bytes();
+        let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+        let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+        let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+            Vec::new()
+        } else {
+            vec![query_name.to_vec()]
+        };
+        BackendResult::Success((canonical_name, aliases, addresses.ipv6))
+    };
+    // The same nsswitch `hosts:` policy as the IPv4 and getaddrinfo paths;
+    // this path used to hard-code files-then-DNS (bd-smc8xs).
+    hosts_policy_for(files_only)
+        .lookup(|backend| match backend {
+            Backend::Files => files_lookup(),
+            Backend::Dns => dns_lookup(),
+            Backend::Module(service) => observe_module_hosts_result(
+                crate::nss_module::gethostbyname(service, name_cstr.to_bytes(), libc::AF_INET6)
+                    .map(|entry| {
+                        (
+                            entry.name,
+                            entry.aliases,
+                            entry
+                                .addresses
+                                .into_iter()
+                                .filter_map(|address| match address {
+                                    std::net::IpAddr::V6(ip) => Some(ip),
+                                    _ => None,
+                                })
+                                .collect(),
+                        )
+                    }),
+            ),
+        })
+        .map_err(hosts_lookup_error_code)
+}
+
+/// Reentrant `gethostbyname2_r`: AF_INET is `gethostbyname_r`; AF_INET6
+/// uses [`resolve_gethostbyname6_target`] with the same error contract.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn gethostbyname2_r_impl(
+    name: *const c_char,
+    af: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+    files_only: bool,
+) -> c_int {
+    if af == libc::AF_INET {
+        return unsafe {
+            gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop, files_only)
+        };
+    }
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(value) => value,
+        Err(()) => {
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            return libc::EINVAL;
+        }
+    };
+    let (canonical, aliases, addresses) = match resolve_gethostbyname6_target(name_cstr, files_only)
+    {
+        Ok(found) => found,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(h_errnop, host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            return code;
+        }
+    };
+    let octets: Vec<[u8; 16]> = addresses.iter().map(Ipv6Addr::octets).collect();
+    let addrs: Vec<&[u8]> = octets.iter().map(|o| &o[..]).collect();
+    match unsafe {
+        write_reentrant_hostent_family(
+            &canonical,
+            &aliases,
+            &addrs,
+            libc::AF_INET6,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    } {
+        Ok(()) => {
+            unsafe { set_h_errnop(h_errnop, 0) };
+            0
+        }
+        Err(code) => {
+            if code != libc::ERANGE {
+                unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            }
+            code
+        }
+    }
+}
+
+/// Resolve legacy IPv4 hosts: numeric, else the nsswitch `hosts:` sources.
+/// Release the backend borrow before performing network I/O.
+fn resolve_gethostbyname_target(
+    name: Option<&CStr>,
+    files_only: bool,
+) -> Result<GethostbynameTarget, c_int> {
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+    let name_cstr = name
+        .filter(|name| !name.to_bytes().is_empty())
+        .ok_or(libc::EAI_NONAME)?;
+    // Numeric names are the gethostbyname front end's job; the files module
+    // only matches /etc/hosts rows.
+    if !files_only
+        && let Ok(node) = name_cstr.to_str()
+        && let Ok(v4) = node.parse::<Ipv4Addr>()
+    {
+        return Ok(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
+    }
+    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+    let files_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
+        let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+            let mut target: Option<GethostbynameTarget> = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(
+                content,
+                name_cstr.to_bytes(),
+                |entry| {
+                    let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
+                        return false;
+                    };
+                    if let Some(target) = &mut target {
+                        target.append_row(entry.canonical_name(), entry.aliases(), address);
+                    } else {
+                        target = Some(GethostbynameTarget::seeded(
+                            entry.canonical_name(),
+                            entry.aliases(),
+                            address,
+                        ));
+                    }
+                    false
+                },
+            );
+            target
+        });
+        match snapshot {
+            Ok(Some(target)) => BackendResult::Success(target),
+            Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+            Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+        }
+    };
+    let dns_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
+        // Ordinary lookup failure is not memory corruption. Neither mode
+        // may silently redirect a missing DNS name to localhost.
+        let (addresses, canonical_name) = match dns_backend_result(native_dns_resolve(
+            name_cstr.to_bytes(),
+            AddressPolicy::new(Family::Inet, false, false),
+        )) {
+            BackendResult::Success(found) => found,
+            BackendResult::NotFound(code) => return BackendResult::NotFound(code),
+            BackendResult::Unavailable(code) => return BackendResult::Unavailable(code),
+            BackendResult::TryAgain(code) => return BackendResult::TryAgain(code),
+        };
+        if addresses.ipv4.is_empty() {
+            return BackendResult::NotFound(libc::EAI_NONAME);
+        }
+        let query_name = name_cstr.to_bytes();
+        let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+        let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+        let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+            Vec::new()
+        } else {
+            vec![query_name.to_vec()]
+        };
+        BackendResult::Success(GethostbynameTarget {
+            name: canonical_name,
+            aliases,
+            addresses: addresses.ipv4,
+        })
+    };
+    // The same nsswitch `hosts:` policy as getaddrinfo, so both APIs agree
+    // within one process (bd-rc0923-epic-eeuy4f.19).
+    hosts_policy_for(files_only)
+        .lookup(|backend| match backend {
+            Backend::Files => files_lookup(),
+            Backend::Dns => dns_lookup(),
+            Backend::Module(service) => observe_module_hosts_result(
+                crate::nss_module::gethostbyname(service, name_cstr.to_bytes(), libc::AF_INET).map(
+                    |entry| GethostbynameTarget {
+                        name: entry.name,
+                        aliases: entry.aliases,
+                        addresses: entry
+                            .addresses
+                            .into_iter()
+                            .filter_map(|address| match address {
+                                std::net::IpAddr::V4(ip) => Some(ip),
+                                _ => None,
+                            })
+                            .collect(),
+                    },
+                ),
+            ),
+        })
+        .map_err(hosts_lookup_error_code)
+}
+
+/// Definitive negatives complete a lookup (zero return, null result);
+/// transient DNS failures remain retryable in both legacy entry points.
+fn legacy_host_lookup_error(error: c_int) -> (c_int, c_int) {
+    match error {
+        libc::EAI_AGAIN => (libc::EAGAIN, 2), // TRY_AGAIN
+        libc::EAI_NONAME => (0, HOST_NOT_FOUND_ERRNO),
+        libc::EAI_NODATA => (0, 4), // NO_DATA
+        _ => (0, NO_RECOVERY_ERRNO),
+    }
+}
+
+/// Bench-only: reconstruct the per-call `to_vec()` needle allocation that
+/// `resolve_gethostbyname_target` no longer performs.
+///
+/// # Safety
+/// `name` must be a NUL-terminated C string.
+#[doc(hidden)]
+pub unsafe fn bench_legacy_gethostbyname_needle_alloc(name: *const c_char) {
+    let owned = unsafe { CStr::from_ptr(name) }.to_bytes().to_vec();
+    std::hint::black_box(&owned);
+}
+
+#[inline]
+fn is_aligned_for<T>(ptr: *const c_void) -> bool {
+    (ptr as usize).is_multiple_of(align_of::<T>())
+}
+
+fn aligned_buffer_offset(base: *const c_char, min_offset: usize, align: usize) -> Option<usize> {
+    if align <= 1 {
+        return Some(min_offset);
+    }
+    let addr = (base as usize).checked_add(min_offset)?;
+    let rem = addr % align;
+    let padding = if rem == 0 { 0 } else { align - rem };
+    min_offset.checked_add(padding)
+}
+
+#[inline]
+unsafe fn set_h_errnop(h_errnop: *mut c_int, value: c_int) {
+    set_h_errno_tls(value);
+    if !h_errnop.is_null() {
+        // SAFETY: caller-provided out-parameter pointer.
+        unsafe { *h_errnop = value };
+    }
+}
+
+struct HostentTlsStorage {
+    name: Vec<c_char>,
+    alias_names: Vec<Vec<c_char>>,
+    aliases: Vec<*mut c_char>,
+    addr_list: Vec<*mut c_char>,
+    addresses: Vec<[u8; 4]>,
+    module_ipv6_addresses: Vec<[u8; 16]>,
+    // Built-in reverse lookups return one address. Keep its IPv6 bytes in the same
+    // stable per-thread allocation as the IPv4 hostent and pointer tables.
+    reverse_ipv6_address: libc::in6_addr,
+    hostent: libc::hostent,
+}
+
+impl HostentTlsStorage {
+    fn new() -> Self {
+        Self {
+            name: Vec::new(),
+            alias_names: Vec::new(),
+            aliases: Vec::new(),
+            addr_list: Vec::new(),
+            addresses: Vec::new(),
+            module_ipv6_addresses: Vec::new(),
+            reverse_ipv6_address: libc::in6_addr { s6_addr: [0; 16] },
+            hostent: libc::hostent {
+                h_name: ptr::null_mut(),
+                h_aliases: ptr::null_mut(),
+                h_addrtype: 0,
+                h_length: 0,
+                h_addr_list: ptr::null_mut(),
+            },
+        }
+    }
+}
+
+// SAFETY: the owned-TLS experiment stores one boxed hostent result per thread
+// id. `hostent` and its alias/address lists only point into the same boxed
+// storage, so moving the box while the cache mutex is held does not transfer
+// ownership of pointees across threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for HostentTlsStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static GETHOSTBYNAME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostentTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(HostentTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static GETHOSTBYNAME_TLS: Box<RefCell<HostentTlsStorage>> =
+        Box::new(RefCell::new(HostentTlsStorage::new()));
+}
+
+fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        GETHOSTBYNAME_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        GETHOSTBYNAME_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
+}
+
+unsafe fn populate_tls_hostent(name_bytes: &[u8], ip: Ipv4Addr) -> *mut c_void {
+    let aliases: &[Vec<u8>] = &[];
+    unsafe { populate_tls_hostent_with_aliases(name_bytes, aliases, ip) }
+}
+
+unsafe fn populate_tls_hostent_with_aliases(
+    name_bytes: &[u8],
+    aliases: &[Vec<u8>],
+    ip: Ipv4Addr,
+) -> *mut c_void {
+    with_tls_hostent(|storage| {
+        storage.name = cchar_string(name_bytes);
+        storage.alias_names = aliases.iter().map(|alias| cchar_string(alias)).collect();
+        storage.aliases = storage
+            .alias_names
+            .iter_mut()
+            .map(|alias| alias.as_mut_ptr())
+            .collect();
+        storage.aliases.push(ptr::null_mut());
+
+        storage.addresses.clear();
+        storage.addresses.push(ip.octets());
+        storage.addr_list = storage
+            .addresses
+            .iter_mut()
+            .map(|address| address.as_mut_ptr().cast::<c_char>())
+            .collect();
+        storage.addr_list.push(ptr::null_mut());
+        storage.hostent = libc::hostent {
+            h_name: storage.name.as_mut_ptr(),
+            h_aliases: storage.aliases.as_mut_ptr(),
+            h_addrtype: libc::AF_INET,
+            h_length: 4,
+            h_addr_list: storage.addr_list.as_mut_ptr(),
+        };
+        (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+    })
+}
+
+unsafe fn populate_tls_gethostbyname(target: &GethostbynameTarget) -> *mut c_void {
+    with_tls_hostent(|storage| {
+        storage.name = cchar_string(&target.name);
+        storage.alias_names = target
+            .aliases
+            .iter()
+            .map(|alias| cchar_string(alias))
+            .collect();
+        storage.aliases = storage
+            .alias_names
+            .iter_mut()
+            .map(|alias| alias.as_mut_ptr())
+            .collect();
+        storage.aliases.push(ptr::null_mut());
+
+        storage.addresses = target.addresses.iter().map(Ipv4Addr::octets).collect();
+        storage.addr_list = storage
+            .addresses
+            .iter_mut()
+            .map(|address| address.as_mut_ptr().cast::<c_char>())
+            .collect();
+        storage.addr_list.push(ptr::null_mut());
+        storage.hostent = libc::hostent {
+            h_name: storage.name.as_mut_ptr(),
+            h_aliases: storage.aliases.as_mut_ptr(),
+            h_addrtype: libc::AF_INET,
+            h_length: 4,
+            h_addr_list: storage.addr_list.as_mut_ptr(),
+        };
+        (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+    })
+}
+
+unsafe fn write_reentrant_hostent(
+    name_bytes: &[u8],
+    ip: Ipv4Addr,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    if result_buf.is_null() || buf.is_null() {
+        return Err(libc::EINVAL);
+    }
+    if result.is_null() {
+        return Err(libc::EINVAL);
+    }
+    if !is_aligned_for::<libc::hostent>(result_buf) {
+        return Err(libc::EINVAL);
+    }
+    let buf_limit = known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
+
+    let name_len = name_bytes.len().checked_add(1).ok_or(libc::ERANGE)?;
+    if name_len > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above against the effective writable buffer limit.
+    unsafe {
+        ptr::copy_nonoverlapping(name_bytes.as_ptr().cast::<c_char>(), buf, name_bytes.len());
+        *buf.add(name_bytes.len()) = 0;
+    }
+    let name_ptr = buf;
+    let mut offset = name_len;
+
+    // Addresses at pointer alignment, as glibc's hostent_data: callers read
+    // h_addr_list[0] as `struct in_addr *` / `struct in6_addr *`, and at
+    // byte alignment the address followed the name at an odd offset.
+    offset = aligned_buffer_offset(buf, offset, HOSTENT_ADDR_ALIGN).ok_or(libc::ERANGE)?;
+    let addr_end = offset.checked_add(4).ok_or(libc::ERANGE)?;
+    if addr_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above.
+    let addr_ptr = unsafe { buf.add(offset).cast::<u8>() };
+    let addr = ip.octets();
+    // SAFETY: addr_ptr points to at least 4 writable bytes.
+    unsafe { ptr::copy_nonoverlapping(addr.as_ptr(), addr_ptr, addr.len()) };
+    offset = addr_end;
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
+    let aliases_bytes = size_of::<*mut c_char>();
+    let aliases_end = offset.checked_add(aliases_bytes).ok_or(libc::ERANGE)?;
+    if aliases_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above and alignment enforced.
+    let aliases_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    // SAFETY: aliases_ptr points to one pointer-sized slot.
+    unsafe { *aliases_ptr = ptr::null_mut() };
+    offset = aliases_end;
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
+    let addr_list_bytes = size_of::<*mut c_char>() * 2;
+    let addr_list_end = offset.checked_add(addr_list_bytes).ok_or(libc::ERANGE)?;
+    if addr_list_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above and alignment enforced.
+    let addr_list_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    // SAFETY: addr_list_ptr points to two pointer-sized slots.
+    unsafe {
+        *addr_list_ptr = addr_ptr.cast::<c_char>();
+        *addr_list_ptr.add(1) = ptr::null_mut();
+    }
+
+    // SAFETY: result_buf points to caller-owned hostent storage.
+    let hostent = unsafe { &mut *result_buf.cast::<libc::hostent>() };
+    hostent.h_name = name_ptr;
+    hostent.h_aliases = aliases_ptr;
+    hostent.h_addrtype = libc::AF_INET;
+    hostent.h_length = 4;
+    hostent.h_addr_list = addr_list_ptr;
+
+    // SAFETY: result pointer is valid and writable by caller contract.
+    unsafe { *result = result_buf };
+    Ok(())
+}
+
+unsafe fn write_reentrant_gethostbyname(
+    target: &GethostbynameTarget,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    let octets: Vec<[u8; 4]> = target.addresses.iter().map(Ipv4Addr::octets).collect();
+    let addresses: Vec<&[u8]> = octets.iter().map(|o| &o[..]).collect();
+    unsafe {
+        write_reentrant_hostent_family(
+            &target.name,
+            &target.aliases,
+            &addresses,
+            libc::AF_INET,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }
+}
+
+/// Pack a hostent (name, aliases, `addresses` of `af`'s width) into the
+/// caller's buffer, glibc layout order: strings, addresses, alias table,
+/// address table. `ERANGE` when `buflen` is too small.
+/// Alignment of the address block in a reentrant `hostent` buffer.
+const HOSTENT_ADDR_ALIGN: usize = align_of::<*mut c_char>();
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn write_reentrant_hostent_family(
+    name: &[u8],
+    aliases: &[Vec<u8>],
+    addresses: &[&[u8]],
+    af: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    let addr_len = if af == libc::AF_INET6 { 16 } else { 4 };
+    if result_buf.is_null() || buf.is_null() || result.is_null() {
+        return Err(libc::EINVAL);
+    }
+    if !is_aligned_for::<libc::hostent>(result_buf) {
+        return Err(libc::EINVAL);
+    }
+    let buf_limit = known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
+    let mut offset = 0usize;
+
+    let copy_string = |bytes: &[u8], offset: &mut usize| -> Result<*mut c_char, c_int> {
+        let length = bytes.len().checked_add(1).ok_or(libc::ERANGE)?;
+        let end = offset.checked_add(length).ok_or(libc::ERANGE)?;
+        if end > buf_limit {
+            return Err(libc::ERANGE);
+        }
+        // SAFETY: the bounds check above reserves the full NUL-terminated string.
+        unsafe {
+            let destination = buf.add(*offset);
+            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), destination, bytes.len());
+            *destination.add(bytes.len()) = 0;
+            *offset = end;
+            Ok(destination)
+        }
+    };
+
+    let name_ptr = copy_string(name, &mut offset)?;
+    let mut alias_values = Vec::with_capacity(aliases.len());
+    for alias in aliases {
+        alias_values.push(copy_string(alias, &mut offset)?);
+    }
+
+    // Addresses at pointer alignment, as glibc's hostent_data: callers read
+    // h_addr_list[0] as `struct in_addr *` / `struct in6_addr *`, and at
+    // byte alignment the address followed the name at an odd offset.
+    offset = aligned_buffer_offset(buf, offset, HOSTENT_ADDR_ALIGN).ok_or(libc::ERANGE)?;
+    let addresses_bytes = addresses.len().checked_mul(addr_len).ok_or(libc::ERANGE)?;
+    let addresses_end = offset.checked_add(addresses_bytes).ok_or(libc::ERANGE)?;
+    if addresses_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    let mut address_values = Vec::with_capacity(addresses.len());
+    for (index, address) in addresses.iter().enumerate() {
+        // SAFETY: the bounds check above reserves every address of this width.
+        let destination = unsafe { buf.add(offset + index * addr_len).cast::<u8>() };
+        // SAFETY: destination points to addr_len writable bytes for this address.
+        unsafe { ptr::copy_nonoverlapping(address.as_ptr(), destination, addr_len) };
+        address_values.push(destination.cast::<c_char>());
+    }
+    offset = addresses_end;
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
+    let aliases_bytes = (aliases.len() + 1)
+        .checked_mul(size_of::<*mut c_char>())
+        .ok_or(libc::ERANGE)?;
+    let aliases_end = offset.checked_add(aliases_bytes).ok_or(libc::ERANGE)?;
+    if aliases_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: the bounds check and alignment calculation reserve the aliases table.
+    let aliases_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    for (index, alias) in alias_values.iter().enumerate() {
+        // SAFETY: aliases_ptr has one slot for every alias plus a terminator.
+        unsafe { *aliases_ptr.add(index) = *alias };
+    }
+    // SAFETY: the final aliases-table slot is within the reserved terminator slot.
+    unsafe { *aliases_ptr.add(aliases.len()) = ptr::null_mut() };
+    offset = aliases_end;
+
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
+    let address_list_bytes = (addresses.len() + 1)
+        .checked_mul(size_of::<*mut c_char>())
+        .ok_or(libc::ERANGE)?;
+    let address_list_end = offset.checked_add(address_list_bytes).ok_or(libc::ERANGE)?;
+    if address_list_end > buf_limit {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: the bounds check and alignment calculation reserve the address list.
+    let address_list_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    for (index, address) in address_values.iter().enumerate() {
+        // SAFETY: address_list_ptr has one slot for every address plus a terminator.
+        unsafe { *address_list_ptr.add(index) = *address };
+    }
+    // SAFETY: the final address-list slot is within the reserved terminator slot.
+    unsafe { *address_list_ptr.add(addresses.len()) = ptr::null_mut() };
+
+    // SAFETY: result_buf passed the alignment and null checks above. A C caller
+    // may provide uninitialized output storage, so publish without first
+    // constructing a reference to the old, potentially uninitialized value.
+    unsafe {
+        ptr::write(
+            result_buf.cast::<libc::hostent>(),
+            libc::hostent {
+                h_name: name_ptr,
+                h_aliases: aliases_ptr,
+                h_addrtype: af,
+                h_length: addr_len as c_int,
+                h_addr_list: address_list_ptr,
+            },
+        );
+    }
+    // SAFETY: result is a caller-provided writable out pointer.
+    unsafe { *result = result_buf };
+    Ok(())
+}
+
+/// Contiguous addrinfo + sockaddr_in allocation.
+///
+/// Uses a single allocation for both the addrinfo and the sockaddr_in, so that
+/// freeaddrinfo can use a single free() call. This matches glibc's behavior.
+#[repr(C)]
+struct ContiguousAddrinfoV4 {
+    ai: libc::addrinfo,
+    sockaddr: libc::sockaddr_in,
+}
+
+unsafe fn build_addrinfo_v4(
+    ip: Ipv4Addr,
+    profile: AddrinfoProfile,
+    hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
+) -> *mut libc::addrinfo {
+    let flags = hints.map(|h| h.ai_flags).unwrap_or(0);
+    let canonname_bytes = canonname.map(CStr::to_bytes_with_nul);
+    let Some(layout_size) =
+        size_of::<ContiguousAddrinfoV4>().checked_add(canonname_bytes.map_or(0, <[u8]>::len))
+    else {
+        return ptr::null_mut();
+    };
+    let Ok(layout) =
+        std::alloc::Layout::from_size_align(layout_size, align_of::<ContiguousAddrinfoV4>())
+    else {
+        return ptr::null_mut();
+    };
+
+    // Allocate contiguously so freeaddrinfo can use a single free().
+    // SAFETY: malloc_abi::malloc accepts a byte count and returns owned storage
+    // suitable for libc-compatible layout initialization below.
+    let ptr = unsafe { crate::malloc_abi::malloc(layout.size()) };
+    if ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let block = ptr.cast::<ContiguousAddrinfoV4>();
+    let canonname_ptr = canonname_bytes.map(|bytes| {
+        // SAFETY: the allocation size is struct size plus bytes.len(), so the
+        // byte range immediately after the struct is within the owned block.
+        let dst =
+            unsafe { ptr.cast::<u8>().add(size_of::<ContiguousAddrinfoV4>()) }.cast::<c_char>();
+        // SAFETY: source is a valid CStr byte slice including NUL, destination
+        // points to a non-overlapping tail region in the just-allocated block.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst, bytes.len()) };
+        dst
+    });
+
+    // Initialize sockaddr_in.
+    let sockaddr_ptr = unsafe { ptr::addr_of_mut!((*block).sockaddr) };
+    unsafe {
+        ptr::write(
+            sockaddr_ptr,
+            libc::sockaddr_in {
+                sin_family: libc::AF_INET as u16,
+                sin_port: profile.port.to_be(),
+                sin_addr: libc::in_addr {
+                    // s_addr must be in network byte order (big-endian bytes in memory).
+                    // ip.octets() = [127,0,0,1]. We need memory bytes [0x7f,0x00,0x00,0x01].
+                    // On LE x86_64, u32 0x0100007f stores as bytes [7f,00,00,01]. Use from_ne_bytes.
+                    s_addr: u32::from_ne_bytes(ip.octets()),
+                },
+                sin_zero: [0; 8],
+            },
+        );
+    }
+
+    // Initialize addrinfo, pointing to the embedded sockaddr.
+    let ai_ptr = unsafe { ptr::addr_of_mut!((*block).ai) };
+    unsafe {
+        ptr::write(
+            ai_ptr,
+            libc::addrinfo {
+                ai_flags: flags,
+                ai_family: libc::AF_INET,
+                ai_socktype: profile.socktype,
+                ai_protocol: profile.protocol,
+                ai_addrlen: size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
+                ai_canonname: canonname_ptr.unwrap_or_default(),
+                ai_next: ptr::null_mut(),
+            },
+        );
+    }
+    ai_ptr
+}
+
+/// Contiguous addrinfo + sockaddr_in6 allocation.
+///
+/// Uses a single allocation for both the addrinfo and the sockaddr_in6, so that
+/// freeaddrinfo can use a single free() call. This matches glibc's behavior.
+#[repr(C)]
+struct ContiguousAddrinfoV6 {
+    ai: libc::addrinfo,
+    sockaddr: libc::sockaddr_in6,
+}
+
+unsafe fn build_addrinfo_v6(
+    ip: Ipv6Addr,
+    scope_id: u32,
+    profile: AddrinfoProfile,
+    hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
+) -> *mut libc::addrinfo {
+    let flags = hints.map(|h| h.ai_flags).unwrap_or(0);
+    let canonname_bytes = canonname.map(CStr::to_bytes_with_nul);
+    let Some(layout_size) =
+        size_of::<ContiguousAddrinfoV6>().checked_add(canonname_bytes.map_or(0, <[u8]>::len))
+    else {
+        return ptr::null_mut();
+    };
+    let Ok(layout) =
+        std::alloc::Layout::from_size_align(layout_size, align_of::<ContiguousAddrinfoV6>())
+    else {
+        return ptr::null_mut();
+    };
+
+    // Allocate contiguously so freeaddrinfo can use a single free().
+    // SAFETY: malloc_abi::malloc accepts a byte count and returns owned storage
+    // suitable for libc-compatible layout initialization below.
+    let ptr = unsafe { crate::malloc_abi::malloc(layout.size()) };
+    if ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let block = ptr.cast::<ContiguousAddrinfoV6>();
+    let canonname_ptr = canonname_bytes.map(|bytes| {
+        // SAFETY: the allocation size is struct size plus bytes.len(), so the
+        // byte range immediately after the struct is within the owned block.
+        let dst =
+            unsafe { ptr.cast::<u8>().add(size_of::<ContiguousAddrinfoV6>()) }.cast::<c_char>();
+        // SAFETY: source is a valid CStr byte slice including NUL, destination
+        // points to a non-overlapping tail region in the just-allocated block.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst, bytes.len()) };
+        dst
+    });
+
+    // Initialize sockaddr_in6.
+    let sockaddr_ptr = unsafe { ptr::addr_of_mut!((*block).sockaddr) };
+    unsafe {
+        ptr::write(
+            sockaddr_ptr,
+            libc::sockaddr_in6 {
+                sin6_family: libc::AF_INET6 as u16,
+                sin6_port: profile.port.to_be(),
+                sin6_flowinfo: 0,
+                sin6_addr: libc::in6_addr {
+                    s6_addr: ip.octets(),
+                },
+                sin6_scope_id: scope_id,
+            },
+        );
+    }
+
+    // Initialize addrinfo, pointing to the embedded sockaddr.
+    let ai_ptr = unsafe { ptr::addr_of_mut!((*block).ai) };
+    unsafe {
+        ptr::write(
+            ai_ptr,
+            libc::addrinfo {
+                ai_flags: flags,
+                ai_family: libc::AF_INET6,
+                ai_socktype: profile.socktype,
+                ai_protocol: profile.protocol,
+                ai_addrlen: size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
+                ai_canonname: canonname_ptr.unwrap_or_default(),
+                ai_next: ptr::null_mut(),
+            },
+        );
+    }
+    ai_ptr
+}
+
+fn push_addrinfo_v4_nodes(
+    nodes: &mut Vec<*mut libc::addrinfo>,
+    ip: Ipv4Addr,
+    profiles: &[AddrinfoProfile],
+    hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
+) {
+    for &profile in profiles {
+        nodes.push(unsafe { build_addrinfo_v4(ip, profile, hints, canonname) });
+    }
+}
+
+fn push_addrinfo_v6_nodes(
+    nodes: &mut Vec<*mut libc::addrinfo>,
+    ip: Ipv6Addr,
+    profiles: &[AddrinfoProfile],
+    hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
+) {
+    for &profile in profiles {
+        nodes.push(unsafe { build_addrinfo_v6(ip, 0, profile, hints, canonname) });
+    }
+}
+
+fn push_addrinfo_address_nodes(
+    nodes: &mut Vec<*mut libc::addrinfo>,
+    address: std::net::IpAddr,
+    scope_id: u32,
+    profiles: &[AddrinfoProfile],
+    hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
+) {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            push_addrinfo_v4_nodes(nodes, ip, profiles, hints, canonname);
+        }
+        std::net::IpAddr::V6(ip) => {
+            for &profile in profiles {
+                // SAFETY: the builder owns each contiguous ABI allocation.
+                nodes.push(unsafe { build_addrinfo_v6(ip, scope_id, profile, hints, canonname) });
+            }
+        }
+    }
+}
+
+unsafe fn free_addrinfo_node(node: *mut libc::addrinfo) {
+    if !node.is_null() {
+        // SAFETY: node is a single addrinfo allocation owned by this resolver path.
+        unsafe { crate::malloc_abi::free(node.cast::<c_void>()) };
+    }
+}
+
+unsafe fn write_c_buffer(
+    symbol: &'static str,
+    out: *mut c_char,
+    out_len: libc::socklen_t,
+    text: &str,
+    repair: bool,
+) -> Result<bool, c_int> {
+    // SAFETY: the byte writer enforces the same advertised and tracked bounds.
+    unsafe { write_c_buffer_bytes(symbol, out, out_len, text.as_bytes(), repair) }
+}
+
+unsafe fn write_c_buffer_bytes(
+    symbol: &'static str,
+    out: *mut c_char,
+    out_len: libc::socklen_t,
+    bytes: &[u8],
+    repair: bool,
+) -> Result<bool, c_int> {
+    if out.is_null() || out_len == 0 {
+        return Ok(false);
+    }
+    let advertised = out_len as usize;
+    let capacity =
+        known_remaining(out as usize).map_or(advertised, |remaining| remaining.min(advertised));
+    if capacity == 0 {
+        return Err(libc::EAI_OVERFLOW);
+    }
+
+    if bytes.len() + 1 <= capacity {
+        // SAFETY: output buffer capacity is validated above.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, bytes.len());
+            *out.add(bytes.len()) = 0;
+        }
+        return Ok(false);
+    }
+
+    if !repair {
+        return Err(libc::EAI_OVERFLOW);
+    }
+
+    let copy_len = capacity.saturating_sub(1);
+    if copy_len > 0 {
+        // SAFETY: output buffer capacity is validated above.
+        unsafe { ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, copy_len) };
+    }
+    // SAFETY: output buffer has at least one byte because out_len > 0.
+    unsafe { *out.add(copy_len) = 0 };
+    global_healing_policy().record(
+        "resolver",
+        symbol,
+        &HealingAction::TruncateWithNull {
+            requested: bytes.len() + 1,
+            truncated: copy_len,
+        },
+        RepairLogContext::new(0, Some(out as usize)),
+    );
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// Native DNS transport and resolver policy
+// ---------------------------------------------------------------------------
+
+/// Keep ABI evidence accounting at the boundary; wire protocol, peer binding,
+/// TCP fallback, deadlines, and retry policy belong to the safe core engine.
+fn native_dns_query(
+    hostname: &[u8],
+    qtype_val: u16,
+    server: std::net::SocketAddr,
+    timeout: std::time::Duration,
+    trust_ad: bool,
+    use_vc: bool,
+    no_aaaa: bool,
+) -> Result<frankenlibc_core::dns_transport::QueryReply, frankenlibc_core::dns_transport::QueryError>
+{
+    use frankenlibc_core::dns_transport::QueryError;
+    use frankenlibc_core::resolv::dns::rcode;
+
+    DNS_METRICS
+        .queries_attempted
+        .fetch_add(1, AtomicOrdering::Relaxed);
+
+    let server = match std::env::var_os("FRANKENLIBC_DNS_PORT")
+        .and_then(|port| port.to_str()?.parse::<u16>().ok())
+        .filter(|&port| port != 0)
+    {
+        Some(port) => std::net::SocketAddr::new(server.ip(), port),
+        None => server,
+    };
+
+    let result = frankenlibc_core::dns_transport::query(
+        hostname, qtype_val, server, timeout, trust_ad, use_vc, no_aaaa,
+    );
+    let counter = match &result {
+        Ok(reply) if reply.rcode == rcode::NXDOMAIN => &DNS_METRICS.queries_nxdomain,
+        Ok(_) => &DNS_METRICS.queries_success,
+        Err(QueryError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
+            &DNS_METRICS.queries_timeout
+        }
+        Err(QueryError::Io(_)) => &DNS_METRICS.queries_send_error,
+        Err(QueryError::ResponseCode(_) | QueryError::RetryableResponse(_)) => {
+            &DNS_METRICS.queries_dns_error
+        }
+        Err(_) => &DNS_METRICS.queries_parse_error,
+    };
+    counter.fetch_add(1, AtomicOrdering::Relaxed);
+    result
+}
+
+/// Record an unavailable NSS `hosts:` module outcome in [`DNS_METRICS`].
+#[inline]
+fn observe_module_hosts_result<T>(
+    result: frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int>,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int> {
+    if matches!(
+        result,
+        frankenlibc_core::addrinfo::hosts_policy::BackendResult::Unavailable(_)
+    ) {
+        DNS_METRICS
+            .nss_unavailable_sources
+            .fetch_add(1, AtomicOrdering::Relaxed);
+    }
+    result
+}
+
+/// The `hosts:` policy from nsswitch.conf (`FRANKENLIBC_NSSWITCH_CONF`
+/// overrides the path, like `FRANKENLIBC_RESOLV_CONF`). A missing or
+/// unparseable file means glibc's default, files then dns
+/// (bd-rc0923-epic-eeuy4f.19).
+fn nsswitch_hosts_policy() -> frankenlibc_core::addrinfo::hosts_policy::HostsPolicy {
+    crate::nss_module::hosts_policy().as_ref().clone()
+}
+
+/// The `hosts:` sources a lookup consults: nsswitch.conf's policy, or the
+/// files source alone for the `_nss_files_*` module entry points.
+fn hosts_policy_for(files_only: bool) -> frankenlibc_core::addrinfo::hosts_policy::HostsPolicy {
+    if files_only {
+        frankenlibc_core::addrinfo::hosts_policy::HostsPolicy::files_only()
+    } else {
+        nsswitch_hosts_policy()
+    }
+}
+
+/// The NSS status of a native DNS lookup: EAI_AGAIN is TRYAGAIN, a missing
+/// name NOTFOUND, anything else (no server, malformed reply) UNAVAIL.
+fn dns_backend_result<T>(
+    result: Result<T, c_int>,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    match result {
+        Ok(value) => BackendResult::Success(value),
+        Err(code) if code == libc::EAI_AGAIN => BackendResult::TryAgain(code),
+        Err(code) if code == libc::EAI_NONAME || code == libc::EAI_NODATA => {
+            BackendResult::NotFound(code)
+        }
+        Err(code) => BackendResult::Unavailable(code),
+    }
+}
+
+/// The EAI_* code for a failed policy lookup.
+fn hosts_lookup_error_code(
+    error: frankenlibc_core::addrinfo::hosts_policy::LookupError<c_int>,
+) -> c_int {
+    use frankenlibc_core::addrinfo::hosts_policy::LookupError;
+    match error {
+        LookupError::Backend(code) => code,
+        LookupError::NoServices => libc::EAI_NONAME,
+        LookupError::UnsupportedMerge => libc::EAI_FAIL,
+    }
+}
+
+/// Use the normal resolver configuration unless an explicit backend override
+/// is selected, following the hosts/services backend convention.
+fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
+    let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
+    let mut config = match std::fs::read(path) {
+        Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
+        Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
+    };
+    // Address and reverse lookups honor the same process overrides as
+    // res_ninit, including an explicitly empty LOCALDOMAIN. Snapshot each
+    // value once so search order and transport options share one config.
+    let localdomain = std::env::var_os("LOCALDOMAIN");
+    let options = std::env::var_os("RES_OPTIONS");
+    config.apply_overrides(
+        localdomain.as_ref().map(|value| value.as_bytes()),
+        options.as_ref().map(|value| value.as_bytes()),
+    );
+    config
+}
+
+/// Preserve the difference between a missing name and a temporary DNS failure.
+fn native_dns_resolve(
+    hostname: &[u8],
+    policy: frankenlibc_core::addrinfo::AddressPolicy,
+) -> Result<
+    (
+        frankenlibc_core::resolv::dns::DnsResolution,
+        Option<Vec<u8>>,
+    ),
+    c_int,
+> {
+    use frankenlibc_core::dns_transport::ResolveError;
+
+    // HOSTALIASES belongs to the DNS source, after any preceding NSS source.
+    // A replacement is queried directly, without suffixes or alias recursion.
+    let alias = if hostname.contains(&b'.') {
+        None
+    } else {
+        global_hostalias(hostname)
+    };
+    let mut config = native_dns_config();
+    if alias.is_some() {
+        config.search.clear();
+        config.ndots = 0;
+    }
+    let hostname = alias.as_deref().unwrap_or(hostname);
+    let mut canonical_name = None;
+    policy
+        .resolve_dns_with(|want_v4, want_v6| {
+            let result = frankenlibc_core::dns_transport::resolve_with_canonical(
+                hostname,
+                want_v4,
+                want_v6,
+                &config,
+                |name, kind, server, timeout, trust_ad, use_vc| {
+                    native_dns_query(
+                        name,
+                        kind,
+                        server,
+                        timeout,
+                        trust_ad,
+                        use_vc,
+                        config.no_aaaa,
+                    )
+                },
+            )?;
+            // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
+            // canonical owner when both families succeed, as glibc does.
+            if canonical_name.is_none() {
+                canonical_name = Some(result.canonical_name);
+            }
+            Ok(result.addresses)
+        })
+        .map(|addresses| (addresses, canonical_name))
+        .map_err(|error| match error {
+            ResolveError::NotFound => libc::EAI_NONAME,
+            ResolveError::Temporary => libc::EAI_AGAIN,
+            ResolveError::Failure => libc::EAI_FAIL,
+        })
+}
+
+enum ReverseHostAnswer<'a> {
+    Name(&'a [u8]),
+    Module(&'a crate::nss_module::HostEntry),
+}
+
+impl ReverseHostAnswer<'_> {
+    fn name(&self) -> &[u8] {
+        match self {
+            Self::Name(name) => name,
+            Self::Module(entry) => &entry.name,
+        }
+    }
+}
+
+/// Reverse lookup through the nsswitch `hosts:` sources
+/// (bd-rc0923-epic-eeuy4f.19). `write` stores the found hostname; the files
+/// source calls it inside the hosts-file borrow, so a hit stays
+/// allocation-free.
+fn reverse_hosts_lookup<T>(
+    address: std::net::IpAddr,
+    ip_str: &[u8],
+    files_only: bool,
+    write: impl Fn(ReverseHostAnswer<'_>) -> T,
+) -> Result<T, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+    hosts_policy_for(files_only)
+        .lookup(|backend| match backend {
+            Backend::Files => match with_hosts_backend_snapshot(|content, _generation| {
+                frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)
+                    .map(|name| write(ReverseHostAnswer::Name(name)))
+            }) {
+                Ok(Some(written)) => BackendResult::Success(written),
+                Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+                Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+            },
+            // The backend snapshot borrow ends before network I/O.
+            Backend::Dns => match dns_backend_result(native_dns_reverse_host(address)) {
+                BackendResult::Success(hostname) => {
+                    BackendResult::Success(write(ReverseHostAnswer::Name(&hostname)))
+                }
+                BackendResult::NotFound(code) => BackendResult::NotFound(code),
+                BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
+                BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
+            },
+            Backend::Module(service) => observe_module_hosts_result(
+                crate::nss_module::gethostbyaddr(service, address)
+                    .map(|entry| write(ReverseHostAnswer::Module(&entry))),
+            ),
+        })
+        .map_err(hosts_lookup_error_code)
+}
+
+/// Resolve a files-only reverse miss through the validated native PTR engine.
+fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
+    use frankenlibc_core::dns_transport::ResolveError;
+    frankenlibc_core::dns_transport::reverse_with(
+        address,
+        &native_dns_config(),
+        |name, kind, server, timeout, trust_ad, use_vc| {
+            native_dns_query(name, kind, server, timeout, trust_ad, use_vc, false)
+        },
+    )
+    .map_err(|error| match error {
+        ResolveError::NotFound => libc::EAI_NONAME,
+        ResolveError::Temporary => libc::EAI_AGAIN,
+        ResolveError::Failure => libc::EAI_FAIL,
+    })
+}
+
+/// Select the families requested by getaddrinfo using one NSS service.
+/// AF_UNSPEC first uses the combined tuple ABI. Older modules retain the
+/// family-specific fallback, with IPv6's canonical owner taking precedence.
+fn module_addrinfo_lookup(
+    service: &[u8],
+    name: &[u8],
+    family: c_int,
+    flags: c_int,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<crate::nss_module::AddrInfoEntry, c_int>
+{
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+
+    if family == libc::AF_UNSPEC
+        && let Some(answer) = crate::nss_module::gethostbyname4(service, name)
+    {
+        return answer;
+    }
+    let convert = |entry: crate::nss_module::HostEntry| crate::nss_module::AddrInfoEntry {
+        canonical_name: Some(entry.canonical_name.unwrap_or(entry.name)),
+        addresses: entry
+            .addresses
+            .into_iter()
+            .map(|address| (address, 0))
+            .collect(),
+    };
+    if family == libc::AF_INET {
+        return crate::nss_module::gethostbyname(service, name, libc::AF_INET).map(convert);
+    }
+    let ipv6 = crate::nss_module::gethostbyname(service, name, libc::AF_INET6);
+    if family == libc::AF_INET6
+        && (flags & libc::AI_V4MAPPED == 0
+            || (flags & libc::AI_ALL == 0 && matches!(ipv6, BackendResult::Success(_))))
+    {
+        return ipv6.map(convert);
+    }
+    let ipv4 = crate::nss_module::gethostbyname(service, name, libc::AF_INET);
+    match (ipv6, ipv4) {
+        (BackendResult::Success(mut ipv6), BackendResult::Success(ipv4)) => {
+            ipv6.addresses.extend(ipv4.addresses);
+            BackendResult::Success(ipv6)
+        }
+        (BackendResult::Success(entry), _) | (_, BackendResult::Success(entry)) => {
+            BackendResult::Success(entry)
+        }
+        (BackendResult::NotFound(error), _) | (_, BackendResult::NotFound(error)) => {
+            BackendResult::NotFound(error)
+        }
+        (BackendResult::TryAgain(error), _) | (_, BackendResult::TryAgain(error)) => {
+            BackendResult::TryAgain(error)
+        }
+        (BackendResult::Unavailable(error), BackendResult::Unavailable(_)) => {
+            BackendResult::Unavailable(error)
+        }
+    }
+    .map(convert)
+}
+
+/// POSIX `getaddrinfo`: numeric/scoped hosts and configured NSS sources.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getaddrinfo(
+    node: *const c_char,
+    service: *const c_char,
+    hints: *const libc::addrinfo,
+    res: *mut *mut libc::addrinfo,
+) -> c_int {
+    let (aligned, recent_page, ordering) = resolver_stage_context(node as usize, service as usize);
+    if res.is_null() {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return libc::EAI_FAIL;
+    }
+    if !tracked_addr_region_fits(res as usize, size_of::<*mut libc::addrinfo>()) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        return libc::EAI_FAIL;
+    }
+    // SAFETY: caller owns the output slot; tracked extent is checked above.
+    unsafe { ptr::write_unaligned(res, ptr::null_mut()) };
+
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        node as usize,
+        0,
+        true,
+        node.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_FAIL;
+    }
+    // SAFETY: getaddrinfo accepts optional C-string pointers; opt_cstr
+    // validates tracked allocation bounds before producing a CStr view.
+    let node_cstr = match unsafe { opt_cstr(node) } {
+        Ok(value) => value,
+        Err(()) => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_FAIL;
+        }
+    };
+    // SAFETY: service follows the same optional C-string contract as node.
+    let service_cstr = match unsafe { opt_cstr(service) } {
+        Ok(value) => value,
+        Err(()) => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_SERVICE;
+        }
+    };
+    let hints_value = if hints.is_null() {
+        // GNU defaults differ from an explicitly zeroed hints structure.
+        // The effective flags also belong in every returned addrinfo record.
+        Some(libc::addrinfo {
+            ai_flags: libc::AI_V4MAPPED | libc::AI_ADDRCONFIG,
+            ai_family: libc::AF_UNSPEC,
+            ai_socktype: 0,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_addr: ptr::null_mut(),
+            ai_canonname: ptr::null_mut(),
+            ai_next: ptr::null_mut(),
+        })
+    } else {
+        if !tracked_addr_region_fits(hints as usize, size_of::<libc::addrinfo>()) {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_FAIL;
+        }
+        // SAFETY: validate the tracked extent and copy, rather than forming an
+        // aligned reference to potentially unaligned caller-owned storage.
+        Some(unsafe { ptr::read_unaligned(hints) })
+    };
+    let hints_ref = hints_value.as_ref();
+
+    if node_cstr.is_none() && service_cstr.is_none() {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_NONAME;
+    }
+
+    // glibc accepts only the flag bits it defines (AI_PASSIVE .. AI_NUMERICSERV,
+    // mask 0x7ff, measured against glibc 2.43 bit by bit) and rejects any other
+    // with EAI_BADFLAGS -- after the NULL/NULL EAI_NONAME check, before the
+    // family, socktype and service checks.
+    const GLIBC_AI_FLAGS_MASK: c_int = 0x7ff;
+    if hints_ref.is_some_and(|h| h.ai_flags & !GLIBC_AI_FLAGS_MASK != 0) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_BADFLAGS;
+    }
+
+    let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
+    let mut family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family, NumericError};
+    if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_BADFLAGS;
+    }
+    if !matches!(family, libc::AF_UNSPEC | libc::AF_INET | libc::AF_INET6) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_FAMILY;
+    }
+
+    // GNU applies AI_ADDRCONFIG before numeric parsing, service lookup and
+    // NSS dispatch. Selecting the effective family here both rejects numeric
+    // addresses of unavailable families and avoids querying them through DNS
+    // or modules. Filtering completed results loses those semantics and can
+    // turn an unavailable family into a needless network timeout.
+    if flags & libc::AI_ADDRCONFIG != 0
+        && let Some(state) = read_addrconfig_state_snapshot()
+    {
+        if family == libc::AF_UNSPEC && state.has_ipv4 != state.has_ipv6 {
+            family = if state.has_ipv4 {
+                libc::AF_INET
+            } else {
+                libc::AF_INET6
+            };
+        } else if (family == libc::AF_INET && !state.has_ipv4)
+            || (family == libc::AF_INET6 && !state.has_ipv6)
+        {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_NONAME;
+        }
+        // With neither family configured, keep AF_UNSPEC usable for local
+        // lookups, matching GNU. An unknown snapshot also leaves it unchanged.
+    }
+    let address_family = match family {
+        libc::AF_INET => Family::Inet,
+        libc::AF_INET6 => Family::Inet6,
+        _ => Family::Unspecified,
+    };
+    let profiles = match resolve_addrinfo_profiles(service_cstr, hints_ref) {
+        Ok(profiles) => profiles,
+        Err(err) => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return err;
+        }
+    };
+    let address_policy = AddressPolicy::new(
+        address_family,
+        flags & libc::AI_V4MAPPED != 0,
+        flags & libc::AI_ALL != 0,
+    );
+    let host_text = match node_cstr.map(CStr::to_str).transpose() {
+        Ok(text) => text,
+        Err(_) => {
+            // A supplied but unrepresentable host is not a NULL node. Never
+            // turn it into wildcard/loopback success, in either runtime mode.
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_NONAME;
+        }
+    };
+    let canonname = if (flags & libc::AI_CANONNAME) != 0 {
+        node_cstr
+    } else {
+        None
+    };
+
+    let mut nodes = Vec::new();
+
+    match host_text {
+        Some(text) => {
+            let numeric = match address_policy.numeric(text, |zone| {
+                let Ok(name) = std::ffi::CString::new(zone) else {
+                    return 0;
+                };
+                // SAFETY: CString supplies a terminated interface name. The
+                // native interface lookup returns zero for unknown names.
+                unsafe { crate::inet_abi::if_nametoindex(name.as_ptr()) }
+            }) {
+                Ok(address) => address,
+                Err(error) => {
+                    record_resolver_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return match error {
+                        NumericError::AddressFamily => EAI_ADDRFAMILY,
+                        NumericError::InvalidScope => libc::EAI_NONAME,
+                    };
+                }
+            };
+            if let Some(address) = numeric {
+                push_addrinfo_address_nodes(
+                    &mut nodes,
+                    address.address,
+                    address.scope_id,
+                    &profiles,
+                    hints_ref,
+                    canonname,
+                );
+            } else {
+                if (flags & libc::AI_NUMERICHOST) != 0 {
+                    record_resolver_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return libc::EAI_NONAME;
+                }
+
+                // `hosts:` in nsswitch.conf orders the sources and decides,
+                // per status, whether to return or try the next one
+                // (bd-rc0923-epic-eeuy4f.19). Files and DNS are native; other
+                // services use the existing host-loader NSS module bridge.
+                // Standalone builds report those module services unavailable.
+                use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+                enum HostAnswer {
+                    Module(crate::nss_module::AddrInfoEntry),
+                    Files {
+                        addresses: Vec<std::net::IpAddr>,
+                        name: Option<std::ffi::CString>,
+                    },
+                    Dns {
+                        resolution: frankenlibc_core::resolv::dns::DnsResolution,
+                        name: Option<std::ffi::CString>,
+                    },
+                }
+                let hosts_policy = nsswitch_hosts_policy();
+
+                let files_lookup = || -> BackendResult<HostAnswer, c_int> {
+                    // Borrow the cached hosts snapshot. Select from the complete
+                    // result before IPv4 mapping: a native IPv6 row may occur AFTER
+                    // an IPv4 row. Only matching address/name data is copied; never
+                    // clone the whole file or hold its borrow across DNS I/O.
+                    let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+                        let mut addresses = Vec::new();
+                        let mut first_name = None;
+                        let mut ipv6_name = None;
+                        frankenlibc_core::resolv::for_each_hosts_match_entry(
+                            content,
+                            text.as_bytes(),
+                            |entry| {
+                                let address = if address_family == Family::Inet {
+                                    gethostbyname_ipv4_address(entry.address())
+                                        .map(std::net::IpAddr::V4)
+                                } else {
+                                    core::str::from_utf8(entry.address())
+                                        .ok()
+                                        .and_then(|text| text.parse::<std::net::IpAddr>().ok())
+                                };
+                                if let Some(address) = address {
+                                    if canonname.is_some() {
+                                        if first_name.is_none() {
+                                            first_name =
+                                                std::ffi::CString::new(entry.canonical_name()).ok();
+                                        }
+                                        if address.is_ipv6() && ipv6_name.is_none() {
+                                            ipv6_name =
+                                                std::ffi::CString::new(entry.canonical_name()).ok();
+                                        }
+                                    }
+                                    addresses.push(address);
+                                    // The AF_INET files view folds IPv6 loopback
+                                    // and mapped rows. AI_ALL also requests that
+                                    // view, in addition to the native IPv6 view.
+                                    if address_family == Family::Inet6
+                                        && flags & (libc::AI_V4MAPPED | libc::AI_ALL)
+                                            == (libc::AI_V4MAPPED | libc::AI_ALL)
+                                        && address.is_ipv6()
+                                        && let Some(v4) =
+                                            gethostbyname_ipv4_address(entry.address())
+                                    {
+                                        addresses.push(std::net::IpAddr::V4(v4));
+                                    }
+                                }
+                                false
+                            },
+                        );
+                        let selected = address_policy.select(&addresses);
+                        // IPv6 is searched first for mapped AF_INET6 requests,
+                        // including AI_ALL. The first node alone exposes its name.
+                        let name = if address_family == Family::Inet6 {
+                            ipv6_name.or(first_name)
+                        } else {
+                            first_name
+                        };
+                        (selected.into_iter().collect::<Vec<_>>(), name)
+                    });
+                    match snapshot {
+                        Ok((addresses, _)) if addresses.is_empty() => {
+                            BackendResult::NotFound(libc::EAI_NONAME)
+                        }
+                        Ok((addresses, name)) => {
+                            BackendResult::Success(HostAnswer::Files { addresses, name })
+                        }
+                        Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+                    }
+                };
+                let dns_lookup = || -> BackendResult<HostAnswer, c_int> {
+                    // A missing name or an unavailable DNS server is a defined
+                    // lookup failure, not memory corruption. Even hardened mode
+                    // must not redirect it to localhost.
+                    match dns_backend_result(native_dns_resolve(text.as_bytes(), address_policy)) {
+                        BackendResult::Success((resolution, _))
+                            if resolution.ipv4.is_empty() && resolution.ipv6.is_empty() =>
+                        {
+                            BackendResult::NotFound(libc::EAI_NONAME)
+                        }
+                        BackendResult::Success((resolution, name)) => {
+                            BackendResult::Success(HostAnswer::Dns {
+                                resolution,
+                                name: if canonname.is_some() {
+                                    name.and_then(|name| std::ffi::CString::new(name).ok())
+                                } else {
+                                    None
+                                },
+                            })
+                        }
+                        BackendResult::NotFound(code) => BackendResult::NotFound(code),
+                        BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
+                        BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
+                    }
+                };
+
+                let answer = hosts_policy.lookup_forward(|backend| match backend {
+                    Backend::Files => files_lookup(),
+                    Backend::Dns => dns_lookup(),
+                    Backend::Module(service) => observe_module_hosts_result(
+                        module_addrinfo_lookup(service, text.as_bytes(), family, flags)
+                            .map(HostAnswer::Module),
+                    ),
+                });
+                match answer {
+                    Ok(HostAnswer::Module(entry)) => {
+                        let name = if canonname.is_some() {
+                            entry
+                                .canonical_name
+                                .and_then(|name| std::ffi::CString::new(name).ok())
+                        } else {
+                            None
+                        };
+                        let addresses = if family == libc::AF_UNSPEC {
+                            // The tuple ABI can distinguish identical IPv6
+                            // address bytes on different interfaces.
+                            entry.addresses
+                        } else {
+                            // Family-specific hostent results have no scope.
+                            // Retain the existing IPv4-mapped selection policy.
+                            let plain: Vec<_> = entry
+                                .addresses
+                                .into_iter()
+                                .map(|(address, _)| address)
+                                .collect();
+                            address_policy
+                                .select(&plain)
+                                .into_iter()
+                                .map(|address| (address, 0))
+                                .collect()
+                        };
+                        for (address, scope_id) in addresses {
+                            push_addrinfo_address_nodes(
+                                &mut nodes,
+                                address,
+                                scope_id,
+                                &profiles,
+                                hints_ref,
+                                name.as_deref().or(canonname),
+                            );
+                        }
+                    }
+                    Ok(HostAnswer::Files { addresses, name }) => {
+                        for address in addresses {
+                            push_addrinfo_address_nodes(
+                                &mut nodes,
+                                address,
+                                0,
+                                &profiles,
+                                hints_ref,
+                                name.as_deref().or(canonname),
+                            );
+                        }
+                    }
+                    Ok(HostAnswer::Dns { resolution, name }) => {
+                        let resolved_name = name.as_deref().or(canonname);
+                        for v4 in &resolution.ipv4 {
+                            if family == libc::AF_UNSPEC || family == libc::AF_INET {
+                                push_addrinfo_v4_nodes(
+                                    &mut nodes,
+                                    *v4,
+                                    &profiles,
+                                    hints_ref,
+                                    resolved_name,
+                                );
+                            }
+                        }
+                        for v6 in &resolution.ipv6 {
+                            if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
+                                push_addrinfo_v6_nodes(
+                                    &mut nodes,
+                                    *v6,
+                                    &profiles,
+                                    hints_ref,
+                                    resolved_name,
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return hosts_lookup_error_code(error);
+                    }
+                }
+            }
+
+            if nodes.is_empty() {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                return libc::EAI_NONAME;
+            }
+        }
+        None => match family {
+            libc::AF_INET6 => {
+                let addr = if (flags & libc::AI_PASSIVE) != 0 {
+                    Ipv6Addr::UNSPECIFIED
+                } else {
+                    Ipv6Addr::LOCALHOST
+                };
+                push_addrinfo_v6_nodes(&mut nodes, addr, &profiles, hints_ref, canonname);
+            }
+            libc::AF_INET => {
+                let addr = if (flags & libc::AI_PASSIVE) != 0 {
+                    Ipv4Addr::UNSPECIFIED
+                } else {
+                    Ipv4Addr::LOCALHOST
+                };
+                push_addrinfo_v4_nodes(&mut nodes, addr, &profiles, hints_ref, canonname);
+            }
+            libc::AF_UNSPEC => {
+                let passive = (flags & libc::AI_PASSIVE) != 0;
+                let v4_addr = if passive {
+                    Ipv4Addr::UNSPECIFIED
+                } else {
+                    Ipv4Addr::LOCALHOST
+                };
+                let v6_addr = if passive {
+                    Ipv6Addr::UNSPECIFIED
+                } else {
+                    Ipv6Addr::LOCALHOST
+                };
+                if passive {
+                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref, canonname);
+                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref, canonname);
+                } else {
+                    push_addrinfo_v6_nodes(&mut nodes, v6_addr, &profiles, hints_ref, canonname);
+                    push_addrinfo_v4_nodes(&mut nodes, v4_addr, &profiles, hints_ref, canonname);
+                }
+            }
+            _ => {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                return libc::EAI_FAMILY;
+            }
+        },
+    }
+
+    if nodes.iter().any(|node| node.is_null()) {
+        for node in nodes {
+            // SAFETY: non-null nodes in this local vector are not returned after
+            // the allocation failure path.
+            unsafe { free_addrinfo_node(node) };
+        }
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_MEMORY;
+    }
+
+    // glibc orders the results by destination address selection (RFC 3484)
+    // whenever there is more than one.
+    if nodes.len() > 1 {
+        unsafe { sort_addrinfo_nodes(&mut nodes) };
+    }
+
+    if canonname.is_some() {
+        for node in nodes.iter().skip(1) {
+            // SAFETY: null nodes were rejected above; these records are owned
+            // addrinfo nodes that have not yet been returned to the caller.
+            unsafe { (**node).ai_canonname = ptr::null_mut() };
+        }
+    }
+
+    // Chain the nodes together.
+    for i in 0..nodes.len().saturating_sub(1) {
+        unsafe { (*nodes[i]).ai_next = nodes[i + 1] };
+    }
+
+    // SAFETY: output pointer is non-null and writable.
+    unsafe { ptr::write_unaligned(res, nodes[0]) };
+    record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
+    0
+}
+
+/// The IP address in a result's `ai_addr`.
+unsafe fn addrinfo_ip(ai: &libc::addrinfo) -> Option<std::net::IpAddr> {
+    if ai.ai_addr.is_null() {
+        return None;
+    }
+    match ai.ai_family {
+        libc::AF_INET if ai.ai_addrlen as usize >= size_of::<libc::sockaddr_in>() => {
+            // SAFETY: family and length checked.
+            let sin = unsafe { &*ai.ai_addr.cast::<libc::sockaddr_in>() };
+            Some(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)).into())
+        }
+        libc::AF_INET6 if ai.ai_addrlen as usize >= size_of::<libc::sockaddr_in6>() => {
+            // SAFETY: family and length checked.
+            let sin6 = unsafe { &*ai.ai_addr.cast::<libc::sockaddr_in6>() };
+            Some(Ipv6Addr::from(sin6.sin6_addr.s6_addr).into())
+        }
+        _ => None,
+    }
+}
+
+/// The source address the kernel would use to reach this result, found as
+/// glibc does: connect a UDP socket to it and read back the local address.
+/// `None` when the destination is unreachable.
+unsafe fn probe_source_address(ai: &libc::addrinfo) -> Option<std::net::IpAddr> {
+    use frankenlibc_core::syscall as sys;
+    let fd = sys::sys_socket(
+        ai.ai_family,
+        libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+        libc::IPPROTO_IP,
+    )
+    .ok()?;
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut len = size_of::<libc::sockaddr_storage>() as u32;
+    // SAFETY: ai_addr/ai_addrlen describe a valid sockaddr of this family;
+    // storage is large enough for any address.
+    let ok = unsafe { sys::sys_connect(fd, ai.ai_addr.cast(), ai.ai_addrlen).is_ok() }
+        && unsafe {
+            sys::sys_getsockname(
+                fd,
+                (&mut storage as *mut libc::sockaddr_storage).cast(),
+                &mut len,
+            )
+            .is_ok()
+        };
+    let _ = sys::sys_close(fd);
+    if !ok {
+        return None;
+    }
+    match i32::from(storage.ss_family) {
+        libc::AF_INET => {
+            // SAFETY: the kernel wrote a sockaddr_in.
+            let sin = unsafe {
+                &*(&storage as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>()
+            };
+            Some(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)).into())
+        }
+        libc::AF_INET6 => {
+            // SAFETY: the kernel wrote a sockaddr_in6.
+            let sin6 = unsafe {
+                &*(&storage as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>()
+            };
+            Some(Ipv6Addr::from(sin6.sin6_addr.s6_addr).into())
+        }
+        _ => None,
+    }
+}
+
+/// IPv4 interface addresses and their prefix lengths.
+fn ipv4_interface_prefixes() -> Vec<(Ipv4Addr, u8)> {
+    let mut out = Vec::new();
+    let mut head: *mut c_void = ptr::null_mut();
+    // SAFETY: fl's getifaddrs fills `head` with a list freed below.
+    if unsafe { crate::unistd_abi::getifaddrs(&mut head) } != 0 {
+        return out;
+    }
+    let mut cur = head.cast::<libc::ifaddrs>();
+    while let Some(ifa) = unsafe { cur.as_ref() } {
+        if !ifa.ifa_addr.is_null()
+            && !ifa.ifa_netmask.is_null()
+            && i32::from(unsafe { (*ifa.ifa_addr).sa_family }) == libc::AF_INET
+        {
+            // SAFETY: AF_INET entries carry sockaddr_in address and netmask.
+            let (addr, mask) = unsafe {
+                (
+                    &*ifa.ifa_addr.cast::<libc::sockaddr_in>(),
+                    &*ifa.ifa_netmask.cast::<libc::sockaddr_in>(),
+                )
+            };
+            out.push((
+                Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)),
+                u32::from_be(mask.sin_addr.s_addr).count_ones() as u8,
+            ));
+        }
+        cur = ifa.ifa_next;
+    }
+    unsafe { crate::unistd_abi::freeifaddrs(head) };
+    out
+}
+
+/// Reorder `nodes` the way glibc's getaddrinfo does (RFC 3484 destination
+/// address selection over the connected-socket source of each result).
+unsafe fn sort_addrinfo_nodes(nodes: &mut Vec<*mut libc::addrinfo>) {
+    use frankenlibc_core::addrinfo::{DestinationCandidate, destination_order};
+    let mut v4_prefixes: Option<Vec<(Ipv4Addr, u8)>> = None;
+    let mut candidates = Vec::with_capacity(nodes.len());
+    for &node in nodes.iter() {
+        // SAFETY: non-null nodes built above.
+        let ai = unsafe { &*node };
+        let Some(dest) = (unsafe { addrinfo_ip(ai) }) else {
+            return;
+        };
+        let source = unsafe { probe_source_address(ai) };
+        let source_prefix_len = match source {
+            Some(std::net::IpAddr::V4(s)) => v4_prefixes
+                .get_or_insert_with(ipv4_interface_prefixes)
+                .iter()
+                .find(|(a, _)| *a == s)
+                .map(|(_, len)| *len),
+            _ => None,
+        };
+        candidates.push(DestinationCandidate {
+            dest,
+            source,
+            source_prefix_len,
+        });
+    }
+    let order = destination_order(&candidates);
+    let sorted: Vec<*mut libc::addrinfo> = order.iter().map(|&i| nodes[i]).collect();
+    *nodes = sorted;
+}
+
+/// POSIX `freeaddrinfo`.
+///
+/// Delegates to the host libc's freeaddrinfo when available, since
+/// getaddrinfo may return results allocated by the host (for DNS queries).
+/// Our Box-allocated addrinfos are also freeable by the host since Box
+/// uses the process allocator (which under LD_PRELOAD routes through
+/// our malloc → host malloc).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn freeaddrinfo(res: *mut libc::addrinfo) {
+    if res.is_null() {
+        return;
+    }
+    // Native free: walk the linked list and free each node.
+    // Under LD_PRELOAD, our malloc is the process allocator, so Box::from_raw
+    // works for both our allocations and any host-getaddrinfo allocations.
+    let (aligned, recent_page, ordering) = resolver_stage_context(res as usize, 0);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Resolver, res as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 12, true);
+        return;
+    }
+    let mut cur = res;
+    if cur.is_null() {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 12, false);
+        return;
+    }
+    while !cur.is_null() {
+        // SAFETY: traversing list allocated by getaddrinfo-compatible producer.
+        let next = unsafe { (*cur).ai_next };
+
+        let canon = unsafe { (*cur).ai_canonname };
+        if !canon.is_null() {
+            // Canonical names created by this resolver are embedded in the
+            // same allocation as the addrinfo node, so freeing `cur` releases
+            // the string too.
+        }
+
+        // SAFETY: node ownership belongs to caller of freeaddrinfo.
+        unsafe { free_addrinfo_node(cur) };
+        cur = next;
+    }
+    record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 12, false);
+}
+
+/// glibc `NI_NUMERICSCOPE` flag value (absent from some `libc` versions).
+const NI_NUMERICSCOPE: c_int = 64;
+
+/// Render an IPv6 scope id the way glibc `getnameinfo` does. glibc resolves the
+/// scope to an interface NAME (via `if_indextoname`) only for link-local and
+/// multicast-link-local addresses, and only when `NI_NUMERICSCOPE` is not set
+/// and the index maps to an interface; in every other case (including a global
+/// address whose index *does* name an interface) it uses the decimal index.
+fn scope_id_text(scope_id: u32, flags: c_int, addr: &[u8; 16]) -> String {
+    // fe80::/10 link-local, or ff0x::/16 with scope nibble 2 (mc link-local).
+    let link_local = (addr[0] == 0xfe && (addr[1] & 0xc0) == 0x80)
+        || (addr[0] == 0xff && (addr[1] & 0x0f) == 0x02);
+    if link_local && flags & NI_NUMERICSCOPE == 0 {
+        let mut nbuf = [0 as c_char; libc::IF_NAMESIZE];
+        // SAFETY: `nbuf` is IF_NAMESIZE bytes, the documented buffer size for
+        // if_indextoname; it NUL-terminates the name (or returns null).
+        let p = unsafe { crate::inet_abi::if_indextoname(scope_id, nbuf.as_mut_ptr()) };
+        if !p.is_null() {
+            // SAFETY: if_indextoname wrote a NUL-terminated name into nbuf.
+            let name = unsafe { CStr::from_ptr(nbuf.as_ptr()) };
+            return name.to_string_lossy().into_owned();
+        }
+    }
+    scope_id.to_string()
+}
+
+/// Strict-passthrough `getnameinfo`: the load-bearing work only (salen bounds, byte-exact numeric
+/// format, and `write_c_buffer`'s `known_remaining` output-bounds check), with the membrane's
+/// adaptive check-ordering bookkeeping skipped. Behaviourally identical to the full path in strict
+/// mode (where `decide()` always-Allows, so `repair == mode heals`), validated byte-for-byte against
+/// host glibc by `getnameinfo_differential_fuzz`.
+#[inline]
+unsafe fn getnameinfo_strict_fast(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    if sa.is_null() {
+        return libc::EAI_FAIL;
+    }
+    // Strict `decide()` never yields a `Repair` action, so `repair_enabled` reduces to the mode's
+    // heal flag — the same value the full path computes.
+    let repair = runtime_policy::mode().heals_enabled();
+
+    let mut ipv4_buf = [0u8; 15];
+    let mut port_buf = [0u8; 5];
+
+    // SAFETY: caller provides a valid sockaddr for `salen`.
+    let family = unsafe { ptr::read_unaligned(sa.cast::<libc::sa_family_t>()) } as c_int;
+    let (host_text, serv_text): (Cow<str>, Cow<str>) = match family {
+        libc::AF_INET => {
+            if (salen as usize) < size_of::<libc::sockaddr_in>() {
+                return libc::EAI_FAIL;
+            }
+            // SAFETY: size checked above.
+            let sin = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in>()) };
+            let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
+            let port = u16::from_be(sin.sin_port);
+            let ip_bytes = write_ipv4_text(ip, &mut ipv4_buf);
+            let ip_str = core::str::from_utf8(ip_bytes).expect("ascii ipv4");
+            (
+                Cow::Borrowed(ip_str),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
+        }
+        libc::AF_INET6 => {
+            if (salen as usize) < size_of::<libc::sockaddr_in6>() {
+                return libc::EAI_FAIL;
+            }
+            // SAFETY: size checked above.
+            let sin6 = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in6>()) };
+            let mut host_text =
+                match frankenlibc_core::inet::inet_ntop(libc::AF_INET6, &sin6.sin6_addr.s6_addr) {
+                    Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    None => return libc::EAI_FAIL,
+                };
+            if sin6.sin6_scope_id != 0 {
+                host_text.push('%');
+                host_text.push_str(&scope_id_text(
+                    sin6.sin6_scope_id,
+                    flags,
+                    &sin6.sin6_addr.s6_addr,
+                ));
+            }
+            let port = u16::from_be(sin6.sin6_port);
+            (
+                Cow::Owned(host_text),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
+        }
+        _ => return libc::EAI_FAMILY,
+    };
+
+    // SAFETY: caller-provided output buffers per the getnameinfo contract; `write_c_buffer` bounds
+    // each write against `known_remaining` before copying.
+    match unsafe { write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) } {
+        Ok(_) => {}
+        Err(err) => return err,
+    }
+    match unsafe { write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) } {
+        Ok(_) => {}
+        Err(err) => return err,
+    }
+    0
+}
+
+/// Files-first reverse resolution shared by the protocol-independent ABI.
+/// A failed DNS lookup never manufactures a hostname, even in hardened mode.
+fn native_reverse_name(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
+    let address = match address {
+        std::net::IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(address),
+        _ => address,
+    };
+    let numeric = address.to_string();
+    // The same nsswitch `hosts:` policy and resolver config as the other
+    // host lookups (bd-rc0923-epic-eeuy4f.19); this path had read
+    // /etc/resolv.conf directly, ignoring FRANKENLIBC_RESOLV_CONF.
+    reverse_hosts_lookup(address, numeric.as_bytes(), false, |answer| {
+        answer.name().to_vec()
+    })
+}
+
+/// NI_NOFQDN shortens a name only in this machine's domain, not every FQDN.
+/// Prefer the kernel hostname; a short kernel hostname may have its canonical
+/// domain in the files backend. Do not launch unrelated DNS lookups here.
+fn shorten_local_hostname(name: &mut String) {
+    let mut local = [0 as c_char; 256];
+    // SAFETY: local is writable for the entire advertised length.
+    if unsafe { crate::unistd_abi::gethostname(local.as_mut_ptr(), local.len()) } != 0 {
+        return;
+    }
+    let Some(length) = local.iter().position(|&byte| byte == 0) else {
+        return;
+    };
+    let local: Vec<u8> = local[..length].iter().map(|&byte| byte as u8).collect();
+    let canonical = if local.contains(&b'.') {
+        local
+    } else {
+        with_hosts_backend_snapshot(|content, _| {
+            let mut found = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(content, &local, |entry| {
+                if entry.canonical_name().contains(&b'.') {
+                    found = Some(entry.canonical_name().to_vec());
+                    true
+                } else {
+                    false
+                }
+            });
+            found
+        })
+        .ok()
+        .flatten()
+        .unwrap_or(local)
+    };
+    let Some(dot) = canonical.iter().position(|&byte| byte == b'.') else {
+        return;
+    };
+    let domain = &canonical[dot..];
+    if name.len() > domain.len() {
+        let split = name.len() - domain.len();
+        if name.as_bytes()[split..].eq_ignore_ascii_case(domain) {
+            name.truncate(split);
+        }
+    }
+}
+
+/// Named getnameinfo uses the membrane before file/network I/O. Numeric
+/// rendering stays in the existing byte-exact fast path; no host resolver is
+/// called, and no lookup is performed for an omitted or numeric-only output.
+unsafe fn getnameinfo_named(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    let (aligned, recent_page, ordering) = resolver_stage_context(sa as usize, host as usize);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        sa as usize,
+        (hostlen as usize).saturating_add(servlen as usize),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+        return libc::EAI_FAIL;
+    }
+    let result = (|| -> Result<(), c_int> {
+        let want_host = !host.is_null() && hostlen != 0;
+        let want_serv = !serv.is_null() && servlen != 0;
+        let mut numeric_host = [0 as c_char; 1025];
+        let mut numeric_serv = [0 as c_char; 32];
+        // SAFETY: the public dispatcher checked the input's family/length and
+        // tracked extent; both output arrays are private and fully writable.
+        let rc = unsafe {
+            getnameinfo_strict_fast(
+                sa,
+                salen,
+                numeric_host.as_mut_ptr(),
+                numeric_host.len() as _,
+                numeric_serv.as_mut_ptr(),
+                numeric_serv.len() as _,
+                flags | libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        // SAFETY: successful numeric rendering terminated both private arrays.
+        let host_number = unsafe { CStr::from_ptr(numeric_host.as_ptr()) }
+            .to_str()
+            .map_err(|_| libc::EAI_FAIL)?;
+        // SAFETY: same private-array invariant as above.
+        let serv_number = unsafe { CStr::from_ptr(numeric_serv.as_ptr()) }
+            .to_str()
+            .map_err(|_| libc::EAI_FAIL)?;
+        let mut host_name = None;
+        if want_host && flags & libc::NI_NUMERICHOST == 0 {
+            // A scope zone is a local interface selector, not a DNS label.
+            let address = host_number
+                .split('%')
+                .next()
+                .unwrap_or(host_number)
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| libc::EAI_FAMILY)?;
+            match native_reverse_name(address) {
+                Ok(bytes) => {
+                    let mut name = String::from_utf8(bytes).map_err(|_| libc::EAI_FAIL)?;
+                    if flags & libc::NI_NOFQDN != 0 {
+                        shorten_local_hostname(&mut name);
+                    }
+                    host_name = Some(name);
+                }
+                Err(libc::EAI_AGAIN) => return Err(libc::EAI_AGAIN),
+                Err(_) if flags & libc::NI_NAMEREQD != 0 => return Err(libc::EAI_NONAME),
+                Err(_) => {} // Definitive failure: numeric fallback is permitted.
+            }
+        }
+        let service_name = if want_serv && flags & libc::NI_NUMERICSERV == 0 {
+            let port = serv_number.parse::<u16>().map_err(|_| libc::EAI_SERVICE)?;
+            let protocol = if flags & libc::NI_DGRAM != 0 {
+                b"udp"
+            } else {
+                b"tcp"
+            };
+            with_service_entry_by_port(port, Some(protocol), |entry| {
+                String::from_utf8(entry.name.clone()).ok()
+            })
+            .ok()
+            .flatten()
+            .flatten()
+        } else {
+            None
+        };
+        // Insufficient output space is a defined EAI_OVERFLOW condition, not
+        // permission to return a silently truncated name in hardened mode.
+        // SAFETY: write_c_buffer checks advertised and tracked output bounds.
+        unsafe {
+            write_c_buffer(
+                "getnameinfo",
+                host,
+                hostlen,
+                host_name.as_deref().unwrap_or(host_number),
+                false,
+            )?;
+            write_c_buffer(
+                "getnameinfo",
+                serv,
+                servlen,
+                service_name.as_deref().unwrap_or(serv_number),
+                false,
+            )?;
+        }
+        Ok(())
+    })();
+    let code = result.err().unwrap_or(0);
+    record_resolver_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        (code == libc::EAI_OVERFLOW).then(|| stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, code != 0);
+    code
+}
+
+/// GNU local-domain address rendering. No DNS, NSS, service database or host
+/// libc is involved: the node comes from uname and the service is sun_path.
+/// Paths and UTS node names are byte strings, not necessarily UTF-8.
+unsafe fn getnameinfo_local(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    // getnameinfo reports its own EAI_* codes. Preserve the caller's errno
+    // across successful local rendering and non-system errors.
+    let saved_errno = unsafe { ptr::read_volatile(crate::errno_abi::__errno_location()) };
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        sa as usize,
+        (hostlen as usize).saturating_add(servlen as usize),
+        true,
+        false,
+        0,
+    );
+    let result = if matches!(decision.action, MembraneAction::Deny) {
+        Err(libc::EAI_FAIL)
+    } else {
+        (|| -> Result<(), c_int> {
+            if !host.is_null() && hostlen != 0 {
+                let mut uts = std::mem::MaybeUninit::<libc::utsname>::uninit();
+                let hostname = if flags & libc::NI_NUMERICHOST == 0 {
+                    // SAFETY: sys_uname initializes the caller-owned Linux
+                    // utsname on success; no field is read after a failure.
+                    if unsafe { frankenlibc_core::syscall::sys_uname(uts.as_mut_ptr().cast()) }
+                        .is_ok()
+                    {
+                        // SAFETY: the successful syscall initialized nodename.
+                        let node = unsafe { &(*uts.as_ptr()).nodename };
+                        // GNU keeps the UTS nodename intact for AF_UNIX,
+                        // including dots when NI_NOFQDN is requested. That
+                        // flag's domain-shortening rule applies to IP names.
+                        let len = node
+                            .iter()
+                            .position(|&byte| byte == 0)
+                            .unwrap_or(node.len());
+                        // SAFETY: len is bounded by the initialized field and
+                        // c_char/u8 have identical byte layout.
+                        Some(unsafe { std::slice::from_raw_parts(node.as_ptr().cast::<u8>(), len) })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let hostname = match hostname {
+                    Some(name) => name,
+                    None if flags & libc::NI_NAMEREQD != 0 => return Err(libc::EAI_NONAME),
+                    None => b"localhost",
+                };
+                // Insufficient output space is EAI_OVERFLOW in both modes.
+                // SAFETY: the shared writer checks advertised/tracked bounds.
+                unsafe { write_c_buffer_bytes("getnameinfo", host, hostlen, hostname, false) }?;
+            }
+            if !serv.is_null() && servlen != 0 {
+                const PATH_OFFSET: usize = std::mem::offset_of!(libc::sockaddr_un, sun_path);
+                let path_capacity = size_of::<libc::sockaddr_un>() - PATH_OFFSET;
+                let path_len = (salen as usize - PATH_OFFSET).min(path_capacity);
+                if !tracked_region_fits(sa.cast(), PATH_OFFSET + path_len) {
+                    return Err(libc::EAI_FAMILY);
+                }
+                // SAFETY: the public entrypoint checked the family extent,
+                // and the advertised/tracked path extent was checked above.
+                // A SUN_LEN address may omit the trailing NUL from salen;
+                // copying its bounded bytes must not scan past the address.
+                let path = unsafe {
+                    std::slice::from_raw_parts(sa.cast::<u8>().add(PATH_OFFSET), path_len)
+                };
+                let end = path
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(path.len());
+                // Abstract and unnamed sockets start with NUL and therefore
+                // have an empty service string in this GNU string interface.
+                // SAFETY: the shared writer checks advertised/tracked bounds.
+                unsafe { write_c_buffer_bytes("getnameinfo", serv, servlen, &path[..end], false) }?;
+            }
+            Ok(())
+        })()
+    };
+    let code = result.err().unwrap_or(0);
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, code != 0);
+    // SAFETY: restore this thread's canonical errno slot.
+    unsafe { set_abi_errno(saved_errno) };
+    code
+}
+
+/// POSIX/GNU getnameinfo: native IP reverse lookup and local-domain names.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnameinfo(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    // POSIX flags plus the historically accepted GNU IDN/scope option bits.
+    if flags & !0xff != 0 {
+        return libc::EAI_BADFLAGS;
+    }
+    if sa.is_null() {
+        return libc::EAI_FAIL;
+    }
+    if (salen as usize) < size_of::<libc::sa_family_t>()
+        || !tracked_region_fits(sa.cast(), size_of::<libc::sa_family_t>())
+    {
+        return libc::EAI_FAMILY;
+    }
+    // SAFETY: at least the family field is readable; unaligned input is safe.
+    let family = unsafe { ptr::read_unaligned(sa.cast::<libc::sa_family_t>()) } as c_int;
+    let required = match family {
+        libc::AF_INET => size_of::<libc::sockaddr_in>(),
+        libc::AF_INET6 => size_of::<libc::sockaddr_in6>(),
+        libc::AF_UNIX => std::mem::offset_of!(libc::sockaddr_un, sun_path),
+        _ => return libc::EAI_FAMILY,
+    };
+    if (salen as usize) < required || !tracked_region_fits(sa.cast(), required) {
+        return libc::EAI_FAMILY;
+    }
+    let want_host = !host.is_null() && hostlen != 0;
+    let want_serv = !serv.is_null() && servlen != 0;
+    if flags & libc::NI_NAMEREQD != 0
+        && ((want_host && flags & libc::NI_NUMERICHOST != 0) || (host.is_null() && serv.is_null()))
+    {
+        return libc::EAI_NONAME;
+    }
+    if family == libc::AF_UNIX {
+        // SAFETY: the local address header is readable; the helper checks the
+        // path extent only when a service output was requested.
+        return unsafe { getnameinfo_local(sa, salen, host, hostlen, serv, servlen, flags) };
+    }
+    if (want_host && flags & libc::NI_NUMERICHOST == 0)
+        || (want_serv && flags & libc::NI_NUMERICSERV == 0)
+    {
+        // SAFETY: the input extent was checked above; output checks are inside.
+        return unsafe { getnameinfo_named(sa, salen, host, hostlen, serv, servlen, flags) };
+    }
+    // Strict-passthrough fast path (the DEFAULT deployed mode). `Resolver` `decide()` always-Allows
+    // in strict, and this numeric render does NO DNS/file I/O, so the adaptive check-ordering
+    // bookkeeping (`resolver_stage_context` + `record_resolver_stage_outcome`, which is ~1.6µs/call
+    // of pure observability here) buys nothing. Skip straight to the load-bearing work — same lever
+    // `inet_pton`/`inet_ntop` already take. Byte-identical (gate: getnameinfo_differential_fuzz).
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe { getnameinfo_strict_fast(sa, salen, host, hostlen, serv, servlen, flags) };
+    }
+    unsafe { getnameinfo_full(sa, salen, host, hostlen, serv, servlen, flags) }
+}
+
+/// Bench/test-only: the strict fast path, exposed so an equivalence test can assert it is
+/// byte-identical to `bench_getnameinfo_full` (the existing `getnameinfo_differential_fuzz` proves
+/// the full path == host glibc, so fast == full == glibc). Callable under `cfg(test)`, where the
+/// production `getnameinfo` dispatch would otherwise route to the full path.
+#[doc(hidden)]
+pub unsafe fn bench_getnameinfo_fast(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    unsafe { getnameinfo_strict_fast(sa, salen, host, hostlen, serv, servlen, flags) }
+}
+
+/// Bench-only: the full membrane `getnameinfo` path (adaptive check-ordering bookkeeping), so the
+/// strict-fast-path A/B can price ORIG in the SAME binary.
+#[doc(hidden)]
+pub unsafe fn bench_getnameinfo_full(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    unsafe { getnameinfo_full(sa, salen, host, hostlen, serv, servlen, flags) }
+}
+
+/// The full membrane path for `getnameinfo` (hardened / non-strict mode). Runs the adaptive
+/// check-ordering bookkeeping around the same numeric render the strict fast path uses.
+unsafe fn getnameinfo_full(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    let (aligned, recent_page, ordering) = resolver_stage_context(sa as usize, host as usize);
+    if sa.is_null() {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return libc::EAI_FAIL;
+    }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        sa as usize,
+        (hostlen as usize).saturating_add(servlen as usize),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+        return libc::EAI_FAIL;
+    }
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+
+    // Stack scratch for the numeric renders, declared in function scope so the borrowed `Cow`
+    // slices below outlive the `write_c_buffer` calls. The AF_INET path and every port render
+    // borrow these buffers instead of allocating a `String` per call.
+    let mut ipv4_buf = [0u8; 15];
+    let mut port_buf = [0u8; 5];
+
+    // SAFETY: caller provides valid sockaddr for given salen.
+    let family = unsafe { ptr::read_unaligned(sa.cast::<libc::sa_family_t>()) } as c_int;
+    let (host_text, serv_text): (Cow<str>, Cow<str>) = match family {
+        libc::AF_INET => {
+            if (salen as usize) < size_of::<libc::sockaddr_in>() {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+                return libc::EAI_FAIL;
+            }
+            // SAFETY: size checked above.
+            let sin = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in>()) };
+            // s_addr is in network byte order (big-endian bytes in memory).
+            // Read raw bytes via to_ne_bytes to get [a,b,c,d] in memory order.
+            let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
+            let port = u16::from_be(sin.sin_port);
+            let ip_bytes = write_ipv4_text(ip, &mut ipv4_buf);
+            // SAFETY-free: write_ipv4_text emits only ASCII `[0-9.]`.
+            let ip_str = core::str::from_utf8(ip_bytes).expect("ascii ipv4");
+            (
+                Cow::Borrowed(ip_str),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
+        }
+        libc::AF_INET6 => {
+            if (salen as usize) < size_of::<libc::sockaddr_in6>() {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+                return libc::EAI_FAIL;
+            }
+            // SAFETY: size checked above.
+            let sin6 = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in6>()) };
+            // Format with fl's own inet_ntop (byte-exact vs glibc). std
+            // Ipv6Addr::Display does NOT emit the dotted-quad form for
+            // IPv4-compatible `::a.b.c.d`, so it diverged from glibc.
+            // Found by getnameinfo_differential_fuzz.
+            let mut host_text =
+                match frankenlibc_core::inet::inet_ntop(libc::AF_INET6, &sin6.sin6_addr.s6_addr) {
+                    Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    None => {
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+                        return libc::EAI_FAIL;
+                    }
+                };
+            // glibc appends the IPv6 scope id for a non-zero sin6_scope_id.
+            if sin6.sin6_scope_id != 0 {
+                host_text.push('%');
+                host_text.push_str(&scope_id_text(
+                    sin6.sin6_scope_id,
+                    flags,
+                    &sin6.sin6_addr.s6_addr,
+                ));
+            }
+            let port = u16::from_be(sin6.sin6_port);
+            (
+                Cow::Owned(host_text),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
+        }
+        _ => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+            return libc::EAI_FAMILY;
+        }
+    };
+
+    // SAFETY: output buffers are caller-provided according to getnameinfo contract.
+    let host_truncated = unsafe {
+        match write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) {
+            Ok(truncated) => truncated,
+            Err(err) => {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+                return err;
+            }
+        }
+    };
+    // SAFETY: output buffers are caller-provided according to getnameinfo contract.
+    let serv_truncated = unsafe {
+        match write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) {
+            Ok(truncated) => truncated,
+            Err(err) => {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+                return err;
+            }
+        }
+    };
+
+    runtime_policy::observe(
+        ApiFamily::Resolver,
+        decision.profile,
+        20,
+        host_truncated || serv_truncated,
+    );
+    record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
+    0
+}
+
+/// POSIX `gai_strerror`.
+///
+/// Thin shim over `frankenlibc_core::resolv::messages::gai_strerror_text`.
+/// The static `&str` from core is fed through a fixed CStr lookup table
+/// (each known message is a `c"..."` literal compiled into rodata) so
+/// the returned `*const c_char` is NUL-terminated and outlives the call.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
+    let text = frankenlibc_core::resolv::messages::gai_strerror_text(errcode);
+    // Map the &str back to a NUL-terminated C literal for the FFI return.
+    match text {
+        "Success" => c"Success".as_ptr(),
+        "Temporary failure in name resolution" => c"Temporary failure in name resolution".as_ptr(),
+        "Bad value for ai_flags" => c"Bad value for ai_flags".as_ptr(),
+        "Non-recoverable failure in name resolution" => {
+            c"Non-recoverable failure in name resolution".as_ptr()
+        }
+        "No address associated with hostname" => c"No address associated with hostname".as_ptr(),
+        "ai_family not supported" => c"ai_family not supported".as_ptr(),
+        "Address family for hostname not supported" => {
+            c"Address family for hostname not supported".as_ptr()
+        }
+        "Name or service not known" => c"Name or service not known".as_ptr(),
+        "Servname not supported for ai_socktype" => {
+            c"Servname not supported for ai_socktype".as_ptr()
+        }
+        "ai_socktype not supported" => c"ai_socktype not supported".as_ptr(),
+        "Memory allocation failure" => c"Memory allocation failure".as_ptr(),
+        "System error" => c"System error".as_ptr(),
+        "Result too large for supplied buffer" => c"Result too large for supplied buffer".as_ptr(),
+        // GNU extensions (getaddrinfo_a / IDN).
+        "Processing request in progress" => c"Processing request in progress".as_ptr(),
+        "Request canceled" => c"Request canceled".as_ptr(),
+        "Request not canceled" => c"Request not canceled".as_ptr(),
+        "All requests done" => c"All requests done".as_ptr(),
+        "Interrupted by a signal" => c"Interrupted by a signal".as_ptr(),
+        "Parameter string not correctly encoded" => {
+            c"Parameter string not correctly encoded".as_ptr()
+        }
+        _ => c"Unknown error".as_ptr(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy network database — native implementations
+// ---------------------------------------------------------------------------
+
+/// Maximum aliases retained for a single netdb (servent/protoent) result,
+/// plus the byte budget for their NUL-terminated strings. glibc imposes its
+/// own (larger) limits via the caller buffer; the non-reentrant getXbyY
+/// path uses fixed TLS storage, so we cap generously — real /etc/services
+/// and /etc/protocols rows carry only a handful of aliases.
+const NETDB_MAX_ALIASES: usize = 31;
+const NETDB_ALIAS_BYTES: usize = 1024;
+
+/// Copy `aliases` into the `buf`/`ptrs` storage pair, NUL-terminating each
+/// string and the pointer table. Truncates silently if either budget is
+/// exhausted (glibc likewise stops at its buffer limit). `buf` and `ptrs`
+/// are distinct slices, so the pointer writes do not alias the byte writes.
+fn fill_alias_table(buf: &mut [c_char], ptrs: &mut [*mut c_char], aliases: &[Vec<u8>]) {
+    fill_alias_table_bytes(buf, ptrs, aliases.iter().map(Vec::as_slice));
+}
+
+fn fill_alias_table_bytes<'a>(
+    buf: &mut [c_char],
+    ptrs: &mut [*mut c_char],
+    aliases: impl IntoIterator<Item = &'a [u8]>,
+) {
+    let cap = ptrs.len().saturating_sub(1);
+    let mut off = 0usize;
+    let mut n = 0usize;
+    for alias in aliases {
+        if n >= cap || off + alias.len() + 1 > buf.len() {
+            break;
+        }
+        for (i, &b) in alias.iter().enumerate() {
+            buf[off + i] = b as c_char;
+        }
+        buf[off + alias.len()] = 0;
+        ptrs[n] = buf[off..].as_mut_ptr();
+        off += alias.len() + 1;
+        n += 1;
+    }
+    ptrs[n] = ptr::null_mut();
+}
+
+/// Thread-local storage for servent results.
+struct ServentTlsStorage {
+    name: [c_char; 256],
+    proto: [c_char; 32],
+    alias_buf: [c_char; NETDB_ALIAS_BYTES],
+    aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
+    overflow: Option<ServentOverflow>,
+    servent: libc::servent,
+}
+
+/// Reusable storage for service records that exceed the common inline case.
+/// Its two allocations grow only as needed, and no result is silently cut to
+/// the inline name, protocol, alias-count or alias-byte limits.
+struct ServentOverflow {
+    bytes: Vec<u8>,
+    aliases: Vec<*mut c_char>,
+}
+
+impl ServentTlsStorage {
+    fn new() -> Self {
+        Self {
+            name: [0; 256],
+            proto: [0; 32],
+            alias_buf: [0; NETDB_ALIAS_BYTES],
+            aliases: [ptr::null_mut(); NETDB_MAX_ALIASES + 1],
+            overflow: None,
+            servent: libc::servent {
+                s_name: ptr::null_mut(),
+                s_aliases: ptr::null_mut(),
+                s_port: 0,
+                s_proto: ptr::null_mut(),
+            },
+        }
+    }
+}
+
+// SAFETY: the owned-TLS experiment stores one boxed service result per thread
+// id. `servent` only points into the same boxed storage, so moving the box while
+// the cache mutex is held does not transfer ownership of pointees across
+// threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for ServentTlsStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static SERVENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServentTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ServentTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static SERVENT_TLS: Box<RefCell<ServentTlsStorage>> =
+        Box::new(RefCell::new(ServentTlsStorage::new()));
+}
+
+fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVENT_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVENT_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
+}
+
+fn fill_servent_storage(
+    storage: &mut ServentTlsStorage,
+    entry: &frankenlibc_core::resolv::ServiceEntry,
+    port_net: c_int,
+) -> *mut c_void {
+    let alias_bytes = entry.aliases.iter().try_fold(0usize, |size, alias| {
+        size.checked_add(alias.len())?.checked_add(1)
+    });
+    if entry.name.len() >= storage.name.len()
+        || entry.protocol.len() >= storage.proto.len()
+        || entry.aliases.len() >= storage.aliases.len()
+        || alias_bytes.is_none_or(|size| size > storage.alias_buf.len())
+    {
+        let Some(size) = alias_bytes
+            .and_then(|size| size.checked_add(entry.name.len()))
+            .and_then(|size| size.checked_add(entry.protocol.len()))
+            .and_then(|size| size.checked_add(2))
+        else {
+            // SAFETY: the only observable effect is the caller's errno.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        };
+        let overflow = storage.overflow.get_or_insert_with(|| ServentOverflow {
+            bytes: Vec::new(),
+            aliases: Vec::new(),
+        });
+        overflow.bytes.clear();
+        overflow.aliases.clear();
+        if overflow.bytes.try_reserve(size).is_err()
+            || overflow
+                .aliases
+                .try_reserve(entry.aliases.len() + 1)
+                .is_err()
+        {
+            // SAFETY: allocation failure publishes no truncated result.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        }
+        overflow.bytes.extend_from_slice(&entry.name);
+        overflow.bytes.push(0);
+        let protocol_offset = overflow.bytes.len();
+        overflow.bytes.extend_from_slice(&entry.protocol);
+        overflow.bytes.push(0);
+        let base = overflow.bytes.as_mut_ptr();
+        for alias in &entry.aliases {
+            // SAFETY: the full byte capacity was reserved before taking base;
+            // none of these bounded appends can reallocate it.
+            overflow
+                .aliases
+                .push(unsafe { base.add(overflow.bytes.len()).cast() });
+            overflow.bytes.extend_from_slice(alias);
+            overflow.bytes.push(0);
+        }
+        overflow.aliases.push(ptr::null_mut());
+        storage.servent = libc::servent {
+            s_name: base.cast(),
+            s_aliases: overflow.aliases.as_mut_ptr(),
+            s_port: port_net,
+            // SAFETY: protocol_offset was captured within the reserved bytes.
+            s_proto: unsafe { base.add(protocol_offset).cast() },
+        };
+        return (&mut storage.servent as *mut libc::servent).cast();
+    }
+    copy_to_cchar_buf(&mut storage.name, &entry.name);
+    copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
+    fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
+    storage.servent = libc::servent {
+        s_name: storage.name.as_mut_ptr(),
+        s_aliases: storage.aliases.as_mut_ptr(),
+        s_port: port_net,
+        s_proto: storage.proto.as_mut_ptr(),
+    };
+    (&mut storage.servent as *mut libc::servent).cast::<c_void>()
+}
+
+/// Thread-local storage for protoent results.
+struct ProtoentTlsStorage {
+    name: [c_char; 256],
+    alias_buf: [c_char; NETDB_ALIAS_BYTES],
+    aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
+    protoent: libc::protoent,
+}
+
+impl ProtoentTlsStorage {
+    fn new() -> Self {
+        Self {
+            name: [0; 256],
+            alias_buf: [0; NETDB_ALIAS_BYTES],
+            aliases: [ptr::null_mut(); NETDB_MAX_ALIASES + 1],
+            protoent: libc::protoent {
+                p_name: ptr::null_mut(),
+                p_aliases: ptr::null_mut(),
+                p_proto: 0,
+            },
+        }
+    }
+}
+
+// SAFETY: the owned-TLS experiment stores one boxed protocol result per thread
+// id. `protoent` only points into the same boxed storage, so moving the box
+// while the cache mutex is held does not transfer ownership of pointees across
+// threads.
+#[cfg(feature = "owned-tls-cache")]
+unsafe impl Send for ProtoentTlsStorage {}
+
+#[cfg(feature = "owned-tls-cache")]
+static PROTOENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoentTlsStorage> =
+    crate::owned_tls_cache::OwnedTlsCache::new(ProtoentTlsStorage::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static PROTOENT_TLS: Box<RefCell<ProtoentTlsStorage>> =
+        Box::new(RefCell::new(ProtoentTlsStorage::new()));
+}
+
+fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PROTOENT_OWNED_TLS.with(callback)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PROTOENT_TLS.with(|cell| {
+            let mut storage = cell.borrow_mut();
+            callback(&mut storage)
+        })
+    }
+}
+
+fn fill_protoent_storage(
+    storage: &mut ProtoentTlsStorage,
+    entry: &frankenlibc_core::resolv::ProtocolEntry,
+) -> *mut c_void {
+    copy_to_cchar_buf(&mut storage.name, &entry.name);
+    fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
+    storage.protoent = libc::protoent {
+        p_name: storage.name.as_mut_ptr(),
+        p_aliases: storage.aliases.as_mut_ptr(),
+        p_proto: entry.number,
+    };
+    (&mut storage.protoent as *mut libc::protoent).cast::<c_void>()
+}
+
+// Parse a single line from /etc/protocols.
+//
+// Format: `<protocol-name> <number> [<alias>...]`
+// parse_protocols_line moved to frankenlibc_core::resolv. Local callers
+// use frankenlibc_core::resolv::parse_protocols_line directly.
+
+fn cchar_string(bytes: &[u8]) -> Vec<c_char> {
+    let mut value = Vec::with_capacity(bytes.len() + 1);
+    value.extend(bytes.iter().copied().map(|byte| byte as c_char));
+    value.push(0);
+    value
+}
+
+/// Copy a byte slice into a c_char buffer with NUL termination.
+fn copy_to_cchar_buf(dst: &mut [c_char], src: &[u8]) {
+    let copy_len = src.len().min(dst.len().saturating_sub(1));
+    for (i, &b) in src[..copy_len].iter().enumerate() {
+        dst[i] = b as c_char;
+    }
+    if copy_len < dst.len() {
+        dst[copy_len] = 0;
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
+        unsafe { set_abi_errno(frankenlibc_core::errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: gethostbyname requires a C-string name; opt_cstr rejects known
+    // malloc-backed unterminated inputs before creating the view.
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(value) => value,
+        Err(()) => {
+            // SAFETY: null h_errnop means only thread-local h_errno is updated.
+            unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
+            // SAFETY: updates ABI errno TLS for the current thread.
+            unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
+    };
+    let target = match resolve_gethostbyname_target(name_cstr, false) {
+        Ok(target) => target,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // SAFETY: pointer returned references thread-local hostent storage.
+    let hostent_ptr = unsafe { populate_tls_gethostbyname(&target) };
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
+    hostent_ptr
+}
+
+pub(crate) unsafe fn gethostbyname_r_impl(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+    files_only: bool,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        buflen,
+        true,
+        name.is_null(),
+        0,
+    );
+    if !result.is_null() {
+        // SAFETY: caller-provided out-parameter pointer.
+        unsafe { *result = ptr::null_mut() };
+    }
+    if matches!(decision.action, MembraneAction::Deny) {
+        // SAFETY: optional h_errno pointer from caller.
+        unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EACCES;
+    }
+
+    // SAFETY: gethostbyname_r has the same C-string name contract.
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(value) => value,
+        Err(()) => {
+            // SAFETY: h_errnop is the optional caller-provided h_errno pointer.
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EINVAL;
+        }
+    };
+    let target = match resolve_gethostbyname_target(name_cstr, files_only) {
+        Ok(target) => target,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            // SAFETY: optional caller-provided h_errno pointer.
+            unsafe { set_h_errnop(h_errnop, host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return code;
+        }
+    };
+
+    // SAFETY: all pointers/length validated within helper.
+    match unsafe { write_reentrant_gethostbyname(&target, result_buf, buf, buflen, result) } {
+        Ok(()) => {
+            // SAFETY: optional h_errno pointer from caller.
+            unsafe { set_h_errnop(h_errnop, 0) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
+            0
+        }
+        Err(code) => {
+            // glibc parity: ERANGE ("buffer too small, try again with a
+            // bigger one") must not clobber *h_errnop. Callers rely on
+            // that invariant to distinguish a retry-with-bigger-buffer
+            // condition from a real resolution failure.
+            if code != libc::ERANGE {
+                // SAFETY: optional h_errno pointer from caller.
+                unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            code
+        }
+    }
+}
+
+/// Copy a legacy reverse-lookup address without imposing alignment on the
+/// caller's byte buffer. Errors are h_errno values, not errno values.
+unsafe fn read_reverse_host_address(
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+) -> Result<std::net::IpAddr, c_int> {
+    if addr.is_null() {
+        return Err(NO_RECOVERY_ERRNO);
+    }
+    let width = match af {
+        libc::AF_INET => 4,
+        libc::AF_INET6 => 16,
+        _ => return Err(HOST_NOT_FOUND_ERRNO),
+    };
+    if (len as usize) < width {
+        return Err(HOST_NOT_FOUND_ERRNO);
+    }
+    if !tracked_region_fits(addr, width) {
+        return Err(NO_RECOVERY_ERRNO);
+    }
+    let mut octets = [0u8; 16];
+    // SAFETY: the caller supplies len readable bytes; the null, family, length,
+    // and tracked-allocation checks above establish the required byte range.
+    // Copy before touching output storage, and do not require address alignment.
+    unsafe { ptr::copy_nonoverlapping(addr.cast::<u8>(), octets.as_mut_ptr(), width) };
+    Ok(match af {
+        libc::AF_INET => {
+            std::net::IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+        }
+        _ => std::net::IpAddr::V6(Ipv6Addr::from(octets)),
+    })
+}
+
+/// Use the existing NSS/files/native-DNS pipeline for both address families.
+/// A mapped IPv6 address is looked up as IPv4, but the caller still returns the
+/// original AF_INET6 address and its sixteen bytes in the hostent.
+fn lookup_reverse_host<T>(
+    address: std::net::IpAddr,
+    files_only: bool,
+    write: impl Fn(ReverseHostAnswer<'_>) -> T,
+) -> Result<T, c_int> {
+    let lookup_address = match address {
+        std::net::IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(address),
+        _ => address,
+    };
+    match lookup_address {
+        std::net::IpAddr::V4(ip) => {
+            // Preserve the allocation-free formatting of the IPv4 fast path.
+            let mut text = [0u8; 15];
+            let text = write_ipv4_text(ip, &mut text);
+            reverse_hosts_lookup(lookup_address, text, files_only, write)
+        }
+        std::net::IpAddr::V6(ip) => {
+            let text = ip.to_string();
+            reverse_hosts_lookup(lookup_address, text.as_bytes(), files_only, write)
+        }
+    }
+}
+
+unsafe fn populate_tls_reverse_hostent(name: &[u8], address: std::net::IpAddr) -> *mut c_void {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            // SAFETY: the existing IPv4 writer copies into stable TLS storage.
+            unsafe { populate_tls_hostent(name, ip) }
+        }
+        std::net::IpAddr::V6(ip) => with_tls_hostent(|storage| {
+            storage.name = cchar_string(name);
+            storage.alias_names.clear();
+            storage.aliases.clear();
+            storage.aliases.push(ptr::null_mut());
+            storage.reverse_ipv6_address.s6_addr = ip.octets();
+            storage.addr_list.clear();
+            storage.addr_list.push(
+                storage
+                    .reverse_ipv6_address
+                    .s6_addr
+                    .as_mut_ptr()
+                    .cast::<c_char>(),
+            );
+            storage.addr_list.push(ptr::null_mut());
+            storage.hostent = libc::hostent {
+                h_name: storage.name.as_mut_ptr(),
+                h_aliases: storage.aliases.as_mut_ptr(),
+                h_addrtype: libc::AF_INET6,
+                h_length: 16,
+                h_addr_list: storage.addr_list.as_mut_ptr(),
+            };
+            (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+        }),
+    }
+}
+
+fn module_reverse_addresses(
+    entry: &crate::nss_module::HostEntry,
+    requested: std::net::IpAddr,
+) -> impl Iterator<Item = std::net::IpAddr> + '_ {
+    let mapped = matches!(requested, std::net::IpAddr::V6(ip) if ip.to_ipv4_mapped().is_some());
+    entry
+        .addresses
+        .iter()
+        .copied()
+        .map(move |address| match address {
+            std::net::IpAddr::V4(ip) if mapped => std::net::IpAddr::V6(ip.to_ipv6_mapped()),
+            address => address,
+        })
+}
+
+/// Preserve the module's complete hostent, including reverse aliases and
+/// additional addresses. Every exposed pointer belongs to this thread's TLS.
+unsafe fn populate_tls_module_hostent(
+    entry: &crate::nss_module::HostEntry,
+    requested: std::net::IpAddr,
+) -> *mut c_void {
+    with_tls_hostent(|storage| {
+        storage.name = cchar_string(&entry.name);
+        storage.alias_names = entry
+            .aliases
+            .iter()
+            .map(|alias| cchar_string(alias))
+            .collect();
+        storage.aliases = storage
+            .alias_names
+            .iter_mut()
+            .map(|alias| alias.as_mut_ptr())
+            .collect();
+        storage.aliases.push(ptr::null_mut());
+        storage.addresses.clear();
+        storage.module_ipv6_addresses.clear();
+        for address in module_reverse_addresses(entry, requested) {
+            match address {
+                std::net::IpAddr::V4(ip) => storage.addresses.push(ip.octets()),
+                std::net::IpAddr::V6(ip) => storage.module_ipv6_addresses.push(ip.octets()),
+            }
+        }
+        storage.addr_list = if requested.is_ipv6() {
+            storage
+                .module_ipv6_addresses
+                .iter_mut()
+                .map(|address| address.as_mut_ptr().cast::<c_char>())
+                .collect()
+        } else {
+            storage
+                .addresses
+                .iter_mut()
+                .map(|address| address.as_mut_ptr().cast::<c_char>())
+                .collect()
+        };
+        storage.addr_list.push(ptr::null_mut());
+        storage.hostent = libc::hostent {
+            h_name: storage.name.as_mut_ptr(),
+            h_aliases: storage.aliases.as_mut_ptr(),
+            h_addrtype: if requested.is_ipv6() {
+                libc::AF_INET6
+            } else {
+                libc::AF_INET
+            },
+            h_length: if requested.is_ipv6() { 16 } else { 4 },
+            h_addr_list: storage.addr_list.as_mut_ptr(),
+        };
+        (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+    })
+}
+
+unsafe fn write_reentrant_module_hostent(
+    entry: &crate::nss_module::HostEntry,
+    requested: std::net::IpAddr,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    let (family, width) = if requested.is_ipv6() {
+        (libc::AF_INET6, 16)
+    } else {
+        (libc::AF_INET, 4)
+    };
+    let octets: Vec<[u8; 16]> = module_reverse_addresses(entry, requested)
+        .map(|address| match address {
+            std::net::IpAddr::V6(ip) => ip.octets(),
+            std::net::IpAddr::V4(ip) => {
+                let mut bytes = [0; 16];
+                bytes[..4].copy_from_slice(&ip.octets());
+                bytes
+            }
+        })
+        .collect();
+    let addresses: Vec<&[u8]> = octets.iter().map(|bytes| &bytes[..width]).collect();
+    // SAFETY: the family and byte width agree; the shared writer validates
+    // caller bounds and alignment before copying all strings and addresses.
+    unsafe {
+        write_reentrant_hostent_family(
+            &entry.name,
+            &entry.aliases,
+            &addresses,
+            family,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }
+}
+
+unsafe fn write_reentrant_reverse_hostent(
+    name: &[u8],
+    address: std::net::IpAddr,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            // SAFETY: the existing writer validates output bounds/alignment.
+            unsafe { write_reentrant_hostent(name, ip, result_buf, buf, buflen, result) }
+        }
+        std::net::IpAddr::V6(ip) => {
+            let octets = ip.octets();
+            let addresses: [&[u8]; 1] = [&octets];
+            // SAFETY: this is an AF_INET6 address of exactly sixteen bytes;
+            // the family writer validates output bounds and pointer alignment.
+            unsafe {
+                write_reentrant_hostent_family(
+                    name,
+                    &[],
+                    &addresses,
+                    libc::AF_INET6,
+                    result_buf,
+                    buf,
+                    buflen,
+                    result,
+                )
+            }
+        }
+    }
+}
+
+/// Reentrant reverse lookup implementation for `gethostbyaddr_r`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn gethostbyaddr_r_impl(
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+    files_only: bool,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        addr as usize,
+        len as usize,
+        true,
+        addr.is_null(),
+        0,
+    );
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EACCES;
+    }
+
+    // SAFETY: the reader checks the family, byte count, and tracked extent.
+    let address = match unsafe { read_reverse_host_address(addr, len, af) } {
+        Ok(address) => address,
+        Err(_) => {
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return libc::EINVAL;
+        }
+    };
+
+    let written = match lookup_reverse_host(address, files_only, |answer| {
+        // SAFETY: caller-provided output buffers; the writer checks their bounds.
+        unsafe {
+            match answer {
+                ReverseHostAnswer::Name(name) => {
+                    write_reentrant_reverse_hostent(name, address, result_buf, buf, buflen, result)
+                }
+                ReverseHostAnswer::Module(entry) => {
+                    write_reentrant_module_hostent(entry, address, result_buf, buf, buflen, result)
+                }
+            }
+        }
+    }) {
+        Ok(written) => written,
+        Err(error) => {
+            // A SUCCESS=continue source may already have populated the output
+            // before a later source failed. Discard that earlier result too.
+            if !result.is_null() {
+                unsafe { *result = ptr::null_mut() };
+            }
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(h_errnop, host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            // GNU gethostbyaddr_r reports a temporary PTR lookup failure
+            // through the null result and h_errnop, returning zero. The
+            // forward reentrant interfaces still return EAGAIN instead.
+            return 0;
+        }
+    };
+
+    match written {
+        Ok(()) => {
+            unsafe { set_h_errnop(h_errnop, 0) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
+            0
+        }
+        Err(code) => {
+            if !result.is_null() {
+                unsafe { *result = ptr::null_mut() };
+            }
+            // glibc parity: ERANGE must leave *h_errnop untouched so
+            // callers can safely retry with a grown buffer.
+            if code != libc::ERANGE {
+                unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            code
+        }
+    }
+}
+
+/// POSIX `gethostbyaddr` — IPv4/IPv6 lookup through files, then native PTR.
+///
+/// Internal `_gethtbyaddr` remains a files-only operation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostbyaddr(
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        addr as usize,
+        len as usize,
+        true,
+        true,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: the reader checks the family, byte count, and tracked extent.
+    let address = match unsafe { read_reverse_host_address(addr, len, af) } {
+        Ok(address) => address,
+        Err(host_error) => {
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
+
+    let hostent_ptr = match lookup_reverse_host(address, false, |answer| {
+        // SAFETY: copy the name/address into TLS storage distinct from the
+        // borrowed hosts backend. No returned pointer refers to stack storage.
+        unsafe {
+            match answer {
+                ReverseHostAnswer::Name(name) => populate_tls_reverse_hostent(name, address),
+                ReverseHostAnswer::Module(entry) => populate_tls_module_hostent(entry, address),
+            }
+        }
+    }) {
+        Ok(hostent_ptr) => hostent_ptr,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
+    };
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
+    hostent_ptr
+}
+
+/// POSIX `getservbyname` — look up a service by name in /etc/services.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    if name.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: name is non-null and follows getservbyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        // SAFETY: proto is non-null in this branch and has getservbyname's
+        // optional C-string contract.
+        let (proto_len, proto_terminated) =
+            unsafe { crate::util::scan_c_string(proto, known_remaining(proto as usize)) };
+        if !proto_terminated {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+        Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
+    };
+
+    // Fill directly from the BORROWED cache entry: the `.cloned()` this replaces allocated a
+    // name `Vec`, a protocol `Vec`, and a `Vec<Vec<u8>>` of aliases on every call. Under the
+    // interposed allocator that framing dominated the lookup (bd-qds9jk frame table).
+    let filled = with_service_entry_by_name(name_bytes, proto_filter, |entry| {
+        with_tls_servent(|storage| {
+            fill_servent_storage(storage, entry, entry.port.to_be() as c_int)
+        })
+    });
+
+    match filled {
+        Ok(Some(servent)) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+            servent
+        }
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            ptr::null_mut()
+        }
+        Err(error) => {
+            // SAFETY: preserve the selected NSS source's failure for callers.
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            ptr::null_mut()
+        }
+    }
+}
+
+#[doc(hidden)]
+pub unsafe fn getservbyname_legacy_parse_per_call_for_bench(
+    name: *const c_char,
+    proto: *const c_char,
+) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    if name.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: name is non-null and follows getservbyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        // SAFETY: proto is non-null in this branch and has getservbyname's
+        // optional C-string contract.
+        let (proto_len, proto_terminated) =
+            unsafe { crate::util::scan_c_string(proto, known_remaining(proto as usize)) };
+        if !proto_terminated {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+        Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
+    };
+
+    let content = match read_services_backend() {
+        Ok(content) => content,
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    let entry = match lookup_service_entry_in_content(&content, name_bytes, proto_filter) {
+        Some(entry) => entry,
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+    };
+
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, entry.port.to_be() as c_int))
+}
+
+/// POSIX `getservbyport` — look up a service by port number in /etc/services.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        proto as usize,
+        0,
+        true,
+        proto.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: proto is optional; opt_cstr returns None for null and rejects
+    // known unterminated storage before any bytes are borrowed.
+    let proto_filter = match unsafe { opt_cstr(proto) } {
+        Ok(value) => value.map(CStr::to_bytes),
+        Err(()) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // Generation-stamped parsed index (the `getservbyport` sibling of the landed
+    // `getservbyname` name index): borrow the cached backend bytes instead of cloning
+    // them per call, and binary-search the port keys instead of re-parsing every line.
+    // `BackendFileCache` still owns file/env-path freshness; the index rebuilds only when
+    // its generation changes, so `FRANKENLIBC_SERVICES_PATH` rewrites are still observed.
+    // Fill from the BORROWED entry; see `getservbyname` above.
+    let filled = with_service_entry(
+        crate::nss_module::ServiceKey::Port(port),
+        proto_filter,
+        |entry| {
+            with_tls_servent(|storage| {
+                fill_servent_storage(storage, entry, c_int::from(entry.port.to_be()))
+            })
+        },
+    );
+
+    match filled {
+        Ok(Some(servent)) => {
+            // Success path: record service lookup completed
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+            servent
+        }
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            ptr::null_mut()
+        }
+        Err(error) => {
+            // SAFETY: preserve the selected NSS source's failure for callers.
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Bench-only: the immediately-previous `getservbyport` — indexed (no file re-read), but
+/// cloning the `ServiceEntry` out of the cache on every call. This is the ORIG arm for the
+/// services allocation-elision lever, distinct from
+/// `getservbyport_legacy_parse_per_call_for_bench`, which is the pre-index arm.
+///
+/// # Safety
+/// Same contract as `getservbyport`: `proto` is an optional NUL-terminated C string.
+#[doc(hidden)]
+pub unsafe fn getservbyport_cloning_for_bench(port: c_int, proto: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        proto as usize,
+        0,
+        true,
+        proto.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    let port_host = u16::from_be(port as u16);
+
+    // SAFETY: as `getservbyport`.
+    let proto_filter = match unsafe { opt_cstr(proto) } {
+        Ok(value) => value.map(CStr::to_bytes),
+        Err(()) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // The pre-lever body: clone the `ServiceEntry` out of the cache, then fill.
+    let entry = match lookup_service_entry_by_port(port_host, proto_filter) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))
+}
+
+/// Bench-only: the pre-index `getservbyport` (per-call `read_services_backend` clone +
+/// line-by-line `parse_services_line` scan).
+///
+/// # Safety
+/// Same contract as `getservbyport`: `proto` is an optional NUL-terminated C string.
+#[doc(hidden)]
+pub unsafe fn getservbyport_legacy_parse_per_call_for_bench(
+    port: c_int,
+    proto: *const c_char,
+) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        proto as usize,
+        0,
+        true,
+        proto.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    let port_host = u16::from_be(port as u16);
+
+    // SAFETY: proto is optional; opt_cstr returns None for null and rejects
+    // known unterminated storage before any bytes are borrowed.
+    let proto_filter = match unsafe { opt_cstr(proto) } {
+        Ok(value) => value.map(CStr::to_bytes),
+        Err(()) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
+
+    let content = match read_services_backend() {
+        Ok(c) => c,
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // Find the service entry matching this port (and proto filter).
+    let entry = match content.split(|&b| b == b'\n').find_map(|line| {
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        if entry.port != port_host {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !entry.protocol.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some(entry)
+    }) {
+        Some(entry) => entry,
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+    };
+
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))
+}
+
+/// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    if name.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: name is non-null and follows getprotobyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
+    let entry = match with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            cache
+                .lookup_by_name(generation, content, name_bytes)
+                .cloned()
+        })
+    }) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // Success path: record protocol lookup completed
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+
+    with_tls_protoent(|storage| fill_protoent_storage(storage, &entry))
+}
+
+#[doc(hidden)]
+pub unsafe fn getprotobyname_legacy_read_per_call_for_bench(name: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    if name.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: name is non-null and follows getprotobyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
+    let content = match std::fs::read(PROTOCOLS_PATH) {
+        Ok(c) => c,
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    let entry = match frankenlibc_core::resolv::lookup_protocol_by_name(&content, name_bytes) {
+        Some(e) => e,
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+    };
+
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+
+    with_tls_protoent(|storage| fill_protoent_storage(storage, &entry))
+}
+
+/// POSIX `getprotobynumber` — look up a protocol by number in /etc/protocols.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        0, // no pointer argument
+        0,
+        false, // read-only lookup
+        true,  // no pointer to validate
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    let entry = match with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            cache.lookup_by_number(generation, content, proto).cloned()
+        })
+    }) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // Success path: record protocol lookup completed
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+
+    with_tls_protoent(|storage| fill_protoent_storage(storage, &entry))
+}
+
+// ===========================================================================
+// h_errno — thread-local resolver error variable
+// ===========================================================================
+
+#[cfg(feature = "owned-tls-cache")]
+static H_ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static H_ERRNO_TLS: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
+}
+
+fn set_h_errno_tls(value: c_int) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        H_ERRNO_OWNED_TLS.with(|slot| *slot = value);
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        H_ERRNO_TLS.with(|cell| cell.set(value));
+    }
+}
+
+fn h_errno_location_ptr() -> *mut c_int {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        H_ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int)
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        H_ERRNO_TLS.with(|cell| cell.as_ptr())
+    }
+}
+
+/// `__h_errno_location` — return thread-local h_errno pointer.
+/// glibc's h_errno macro expands to `(*__h_errno_location())`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
+    h_errno_location_ptr()
+}
+
+// gai_cancel/gai_error/gai_suspend are defined in unistd_abi.rs
+
+// ===========================================================================
+// libresolv ns_* helpers — byte read/write + name comparators + canon
+// ===========================================================================
+//
+// These are the small parsing primitives BIND/libresolv expose under
+// `<arpa/nameser.h>`. Programs that link against libresolv.so.2 (or
+// LD_PRELOAD frankenlibc) can resolve them here. The high-level
+// resolver (getaddrinfo, gethostbyname, etc.) lives above; these are
+// the low-level helpers it builds on.
+
+/// libresolv `ns_get16(*src) -> u16` — read a big-endian 16-bit
+/// unsigned integer from the 2 bytes pointed to by `src`.
+///
+/// # Safety
+///
+/// `src` must point to at least 2 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_get16(src: *const u8) -> libc::c_uint {
+    if src.is_null() || !tracked_region_fits(src.cast(), 2) {
+        return 0;
+    }
+    // SAFETY: caller-supplied 2-byte buffer. Return type is c_uint (u32) to
+    // match glibc's `unsigned int ns_get16(...)` ABI exactly — the return
+    // value occupies the full 32-bit register slot, not just the low 16
+    // bits, so glibc-compiled callers don't read garbage in the upper half.
+    let b0 = unsafe { *src };
+    let b1 = unsafe { *src.add(1) };
+    (((b0 as u16) << 8) | (b1 as u16)) as libc::c_uint
+}
+
+/// libresolv `ns_get32(*src) -> u32` — read a big-endian 32-bit
+/// unsigned integer from the 4 bytes pointed to by `src`.
+///
+/// # Safety
+///
+/// `src` must point to at least 4 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_get32(src: *const u8) -> libc::c_ulong {
+    if src.is_null() || !tracked_region_fits(src.cast(), 4) {
+        return 0;
+    }
+    // SAFETY: caller-supplied 4-byte buffer. Return type is c_ulong (u64
+    // on Linux/x86_64) to match glibc's `unsigned long ns_get32(...)` ABI.
+    // The value never exceeds u32::MAX (4 bytes of data), but the SysV AMD64
+    // calling convention requires the full 64-bit register slot for u_long
+    // returns.
+    let bytes = unsafe { core::slice::from_raw_parts(src, 4) };
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as libc::c_ulong
+}
+
+/// libresolv `ns_put16(value, *dst)` — write `value` as a big-endian
+/// 16-bit unsigned integer to the 2 bytes at `dst`.
+///
+/// # Safety
+///
+/// `dst` must point to at least 2 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_put16(value: u16, dst: *mut u8) {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 2) {
+        return;
+    }
+    // SAFETY: caller-supplied 2-byte buffer.
+    unsafe {
+        *dst = (value >> 8) as u8;
+        *dst.add(1) = value as u8;
+    }
+}
+
+/// libresolv `ns_put32(value, *dst)` — write `value` as a big-endian
+/// 32-bit unsigned integer to the 4 bytes at `dst`.
+///
+/// # Safety
+///
+/// `dst` must point to at least 4 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_put32(value: u32, dst: *mut u8) {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 4) {
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    // SAFETY: caller-supplied 4-byte buffer.
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 4) };
+}
+
+// --- name helpers ---
+
+/// Strip an optional single trailing dot for comparison purposes.
+fn strip_trailing_dot(s: &[u8]) -> &[u8] {
+    if let Some(&b'.') = s.last() {
+        &s[..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Lowercase a single byte for case-insensitive ASCII compare. DNS
+/// names are case-insensitive in the ASCII range; non-ASCII bytes are
+/// compared byte-for-byte.
+#[inline]
+fn dns_lower(c: u8) -> u8 {
+    if c.is_ascii_uppercase() { c | 0x20 } else { c }
+}
+
+fn names_eq_no_case_no_dot(a: &[u8], b: &[u8]) -> bool {
+    let a = strip_trailing_dot(a);
+    let b = strip_trailing_dot(b);
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .all(|(x, y)| dns_lower(*x) == dns_lower(*y))
+}
+
+/// libresolv `ns_samename(a, b) -> int` — case-insensitively compare
+/// two DNS names. Returns 1 if same, 0 if different, -1 on error
+/// (NULL inputs).
+///
+/// Trailing dots are tolerated: `"foo.com"` and `"foo.com."` compare
+/// equal.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_samename(a: *const c_char, b: *const c_char) -> c_int {
+    let Some(abytes) = (unsafe { required_cstr_bytes(a) }) else {
+        return -1;
+    };
+    let Some(bbytes) = (unsafe { required_cstr_bytes(b) }) else {
+        return -1;
+    };
+    if names_eq_no_case_no_dot(abytes, bbytes) {
+        1
+    } else {
+        0
+    }
+}
+
+/// libresolv `ns_samedomain(a, b) -> int` — return 1 if `a` is in
+/// (or equal to) domain `b`. The empty string `""` and the root
+/// label `"."` are the root domain: every other name is in them.
+/// Otherwise, `a` is in `b` when stripping the leading
+/// `len(a) - len(b) - 1` characters of `a` (plus a separator dot)
+/// yields exactly `b`.
+///
+/// Returns 0 if `a` is not in `b`. Trailing dots are tolerated for
+/// either argument.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_samedomain(a: *const c_char, b: *const c_char) -> c_int {
+    let Some(abytes) = (unsafe { required_cstr_bytes(a) }) else {
+        return 0;
+    };
+    let Some(bbytes) = (unsafe { required_cstr_bytes(b) }) else {
+        return 0;
+    };
+    let a = strip_trailing_dot(abytes);
+    let b = strip_trailing_dot(bbytes);
+    if b.is_empty() {
+        return 1;
+    }
+    if a.len() == b.len() {
+        return if names_eq_no_case_no_dot(a, b) { 1 } else { 0 };
+    }
+    if a.len() < b.len() + 1 {
+        return 0;
+    }
+    let split = a.len() - b.len() - 1;
+    if a[split] != b'.' {
+        return 0;
+    }
+    if names_eq_no_case_no_dot(&a[split + 1..], b) {
+        1
+    } else {
+        0
+    }
+}
+
+/// libresolv `ns_subdomain(a, b) -> int` — return 1 if `a` is a
+/// PROPER subdomain of `b` (i.e., `samedomain(a, b) && !samename(a,
+/// b)`). Returns 0 otherwise.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_subdomain(a: *const c_char, b: *const c_char) -> c_int {
+    let same_dom = unsafe { ns_samedomain(a, b) };
+    if same_dom != 1 {
+        return 0;
+    }
+    let same_name = unsafe { ns_samename(a, b) };
+    if same_name == 1 { 0 } else { 1 }
+}
+
+/// libresolv `ns_makecanon(src, dst, dstsiz) -> int` — copy `src` to
+/// `dst`, ensuring the result is NUL-terminated and ends with a
+/// trailing dot (the canonical form). Returns 0 on success, or -1
+/// with errno set to `EMSGSIZE` if `dst` is too small (or `EINVAL`
+/// if either pointer is NULL). glibc conservatively requires
+/// `strlen(src) + 2` bytes even when `src` already has the trailing dot.
+///
+/// If `src` already ends with a dot it is copied verbatim; otherwise
+/// a `.` is appended.
+///
+/// # Safety
+///
+/// `src` must be a NUL-terminated C string. `dst` must point to at
+/// least `dstsiz` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_makecanon(
+    src: *const c_char,
+    dst: *mut c_char,
+    dstsiz: usize,
+) -> c_int {
+    let Some(sbytes) = (unsafe { required_cstr_bytes(src) }) else {
+        unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
+        return -1;
+    };
+    if dst.is_null() {
+        unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
+        return -1;
+    }
+    let dst_limit = known_remaining(dst as usize).map_or(dstsiz, |remaining| remaining.min(dstsiz));
+    let needs_dot = sbytes.last().copied() != Some(b'.');
+    let needed = sbytes.len().saturating_add(2);
+    if needed > dst_limit {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    }
+    // SAFETY: dst has dst_limit writable bytes; we write needed ≤ dst_limit.
+    unsafe {
+        core::ptr::copy_nonoverlapping(sbytes.as_ptr() as *const c_char, dst, sbytes.len());
+        let mut off = sbytes.len();
+        if needs_dot {
+            *dst.add(off) = b'.' as c_char;
+            off += 1;
+        }
+        *dst.add(off) = 0;
+    }
+    0
+}
+
+// ===========================================================================
+// libresolv ns_parse_ttl / ns_format_ttl / ns_datetosecs
+// ===========================================================================
+
+/// libresolv `ns_parse_ttl(src, *dst) -> int` — parse a DNS TTL
+/// string. Grammar (case-insensitive): `(number unit?)+` where
+/// `unit` is one of `W`, `D`, `H`, `M`, `S` and a missing trailing
+/// unit defaults to seconds. Multipliers: W=604800, D=86400,
+/// H=3600, M=60, S=1.
+///
+/// Returns 0 on success and writes the total seconds to `*dst`;
+/// returns -1 on syntax error or u32 overflow.
+///
+/// # Safety
+///
+/// `src` must be a NUL-terminated C string. `dst`, when non-NULL,
+/// must point to writable `u32` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_parse_ttl(src: *const c_char, dst: *mut u32) -> c_int {
+    let Some(bytes) = (unsafe { required_cstr_bytes(src) }) else {
+        return -1;
+    };
+    let mut total: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let mut tmp: u32 = 0;
+        let mut digits = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            // overflow check on the per-component accumulator
+            let next = tmp
+                .checked_mul(10)
+                .and_then(|n| n.checked_add((bytes[i] - b'0') as u32));
+            tmp = match next {
+                Some(v) => v,
+                None => return -1,
+            };
+            digits += 1;
+            if digits > 10 {
+                return -1;
+            }
+            i += 1;
+        }
+        if digits == 0 {
+            return -1;
+        }
+        let mul: u32 = if i >= bytes.len() {
+            1 // missing trailing unit = seconds
+        } else {
+            match bytes[i] {
+                b'w' | b'W' => {
+                    i += 1;
+                    604_800
+                }
+                b'd' | b'D' => {
+                    i += 1;
+                    86_400
+                }
+                b'h' | b'H' => {
+                    i += 1;
+                    3_600
+                }
+                b'm' | b'M' => {
+                    i += 1;
+                    60
+                }
+                b's' | b'S' => {
+                    i += 1;
+                    1
+                }
+                _ => return -1,
+            }
+        };
+        let component = match tmp.checked_mul(mul) {
+            Some(v) => v,
+            None => return -1,
+        };
+        total = match total.checked_add(component) {
+            Some(v) => v,
+            None => return -1,
+        };
+    }
+    if !dst.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *dst = total };
+    }
+    0
+}
+
+#[inline]
+fn ttl_emit_unit(value: u64, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool {
+    // Format value in decimal then append unit. Return false unless the complete
+    // unit and its boundary terminator fit.
+    // u64 is wide enough for any TTL value glibc accepts (u_long).
+    let mut digits = [0u8; 20];
+    let mut n = value;
+    let mut len = 0usize;
+    if n == 0 {
+        digits[0] = b'0';
+        len = 1;
+    } else {
+        while n > 0 {
+            digits[len] = b'0' + (n % 10) as u8;
+            n /= 10;
+            len += 1;
+        }
+    }
+    if *pos + len + 2 > dst.len() {
+        return false;
+    }
+    for i in 0..len {
+        dst[*pos + i] = digits[len - 1 - i];
+    }
+    dst[*pos + len] = unit;
+    *pos += len + 1;
+    true
+}
+
+#[inline]
+unsafe fn ttl_copy_partial(dst: *mut c_char, buf: &[u8], pos: usize) {
+    if pos == 0 {
+        return;
+    }
+    // SAFETY: callers only pass `pos` values produced by `ttl_emit_unit`, which
+    // reserves a terminator slot after every emitted unit.
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst, pos);
+        *dst.add(pos) = 0;
+    }
+}
+
+/// libresolv `ns_format_ttl(src, dst, dstlen) -> int` — format
+/// `src` (a TTL in seconds) as a C string at `dst` of capacity
+/// `dstlen`. Greedy decomposition into weeks (`W`), days (`D`),
+/// hours (`H`), minutes (`M`), seconds (`S`). When more than one
+/// unit is present the result is lowercase; with a single unit it
+/// is uppercase, matching BIND9's libresolv reference. The output
+/// is NUL-terminated.
+///
+/// Returns the number of characters written (excluding the
+/// terminating NUL) on success, or -1 on overflow.
+///
+/// # Safety
+///
+/// `dst`, when non-NULL, must point to at least `dstlen` writable
+/// bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_format_ttl(
+    src: libc::c_ulong,
+    dst: *mut c_char,
+    dstlen: usize,
+) -> c_int {
+    if dst.is_null() || dstlen == 0 {
+        return -1;
+    }
+    let dst_limit = known_remaining(dst as usize).map_or(dstlen, |remaining| remaining.min(dstlen));
+    if dst_limit == 0 {
+        return -1;
+    }
+    // Match glibc: u_long input, decomposed across u64 to avoid truncation
+    // for values > u32::MAX. Since `src` is unsigned, modular arithmetic is
+    // exact at every cascade level. On Linux x86_64 c_ulong is u64; the
+    // explicit widen keeps 32-bit portability.
+    #[allow(clippy::useless_conversion)]
+    let mut s: u64 = u64::try_from(src).unwrap_or(u64::MAX);
+    let secs = s % 60;
+    s /= 60;
+    let mins = s % 60;
+    s /= 60;
+    let hours = s % 24;
+    s /= 24;
+    let days = s % 7;
+    s /= 7;
+    let weeks = s;
+
+    // Need NUL-terminator slot; reserve one.
+    let mut buf = vec![0u8; dst_limit];
+    let mut pos = 0usize;
+    let mut units = 0;
+    if weeks != 0 && ttl_emit_unit(weeks, b'W', &mut buf, &mut pos) {
+        units += 1;
+    } else if weeks != 0 {
+        return -1;
+    }
+    if days != 0 && ttl_emit_unit(days, b'D', &mut buf, &mut pos) {
+        units += 1;
+    } else if days != 0 {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
+        return -1;
+    }
+    if hours != 0 && ttl_emit_unit(hours, b'H', &mut buf, &mut pos) {
+        units += 1;
+    } else if hours != 0 {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
+        return -1;
+    }
+    if mins != 0 && ttl_emit_unit(mins, b'M', &mut buf, &mut pos) {
+        units += 1;
+    } else if mins != 0 {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
+        return -1;
+    }
+    let any_higher = weeks != 0 || days != 0 || hours != 0 || mins != 0;
+    if secs != 0 || !any_higher {
+        if !ttl_emit_unit(secs, b'S', &mut buf, &mut pos) {
+            unsafe { ttl_copy_partial(dst, &buf, pos) };
+            return -1;
+        }
+        units += 1;
+    }
+
+    if pos + 1 > dst_limit {
+        unsafe { ttl_copy_partial(dst, &buf, pos) };
+        return -1;
+    }
+
+    // Multi-unit results are lowercased per the BIND reference.
+    if units > 1 {
+        for b in buf.iter_mut().take(pos) {
+            if b.is_ascii_uppercase() {
+                *b = b.to_ascii_lowercase();
+            }
+        }
+    }
+
+    // SAFETY: dst has dst_limit writable bytes; we wrote `pos` <= dst_limit - 1.
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst, pos);
+        *dst.add(pos) = 0;
+    }
+    pos as c_int
+}
+
+#[inline]
+fn ns_date_is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+#[inline]
+fn ns_date_days_in_month(year: i32, month: i32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if ns_date_is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn ns_date_to_epoch_u32(
+    year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+) -> Option<u32> {
+    if !(1970..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=ns_date_days_in_month(year, month) as i32).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    let mut days = 0u64;
+    for y in 1970..year {
+        days += if ns_date_is_leap_year(y) { 366 } else { 365 };
+    }
+    for m in 1..month {
+        days += ns_date_days_in_month(year, m) as u64;
+    }
+    days += (day - 1) as u64;
+
+    let day_seconds = (hour as u64)
+        .checked_mul(3_600)?
+        .checked_add((minute as u64).checked_mul(60)?)?
+        .checked_add(second as u64)?;
+    let total = days.checked_mul(86_400)?.checked_add(day_seconds)?;
+    u32::try_from(total).ok()
+}
+
+/// libresolv `ns_datetosecs(cp, *errp) -> u32` — parse a 14-char
+/// `"YYYYMMDDHHMMSS"` UTC date string into seconds since epoch.
+/// Sets `*errp = 1` on parse error and returns 0; otherwise sets
+/// `*errp = 0` and returns the second count.
+///
+/// # Safety
+///
+/// `cp` must be a NUL-terminated C string. `errp`, when non-NULL,
+/// must point to writable `c_int` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_datetosecs(cp: *const c_char, errp: *mut c_int) -> u32 {
+    let set_err = |val: c_int| {
+        if !errp.is_null() {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *errp = val };
+        }
+    };
+    let Some(s) = (unsafe { required_cstr_bytes(cp) }) else {
+        set_err(1);
+        return 0;
+    };
+    if s.len() != 14 || !s.iter().all(u8::is_ascii_digit) {
+        set_err(1);
+        return 0;
+    }
+    let to_n = |range: core::ops::Range<usize>| -> i32 {
+        let mut v: i32 = 0;
+        for &b in &s[range] {
+            v = v * 10 + (b - b'0') as i32;
+        }
+        v
+    };
+    let year = to_n(0..4);
+    let month = to_n(4..6);
+    let day = to_n(6..8);
+    let hour = to_n(8..10);
+    let minute = to_n(10..12);
+    let second = to_n(12..14);
+
+    match ns_date_to_epoch_u32(year, month, day, hour, minute, second) {
+        Some(secs) => {
+            set_err(0);
+            secs
+        }
+        None => {
+            set_err(1);
+            0
+        }
+    }
+}
+
+// ===========================================================================
+// Deprecated res_-prefixed front-ends + res_send hook setters + ns_name_*
+// ===========================================================================
+
+/// libresolv `res_gethostbyname(name)` — historical front-end alias
+/// for `gethostbyname`. Defined here so binaries that link against
+/// the old BIND symbol resolve cleanly.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_gethostbyname(name: *const c_char) -> *mut c_void {
+    unsafe { gethostbyname(name) }
+}
+
+/// libresolv `res_gethostbyname2(name, af)` — historical front-end
+/// alias for `gethostbyname2`.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
+    unsafe { crate::unistd_abi::gethostbyname2(name, af) }
+}
+
+/// libresolv `res_gethostbyaddr(addr, len, type)` — historical
+/// front-end alias for `gethostbyaddr`.
+///
+/// # Safety
+///
+/// `addr`, when non-NULL, must point to at least `len` readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_gethostbyaddr(
+    addr: *const c_void,
+    len: u32,
+    addr_type: c_int,
+) -> *mut c_void {
+    unsafe { gethostbyaddr(addr, len, addr_type) }
+}
+
+// ----- res_send hooks (optional pre-query / post-response callbacks) -----
+//
+// The exact pointee types in glibc are deprecated `enum res_sendhookact`
+// returning function pointers. We model them as opaque `*mut c_void` since
+// we don't invoke them internally (no pluggable resolver core), but we
+// store them per-thread for any caller that registers and re-reads them
+// (some test harnesses do exactly this).
+
+#[cfg(feature = "owned-tls-cache")]
+struct ResSendHooks {
+    qhook: *mut c_void,
+    rhook: *mut c_void,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: `ResSendHooks` stores opaque callback pointer tokens for round-trip
+// ABI compatibility. The cache never dereferences or invokes the pointers.
+unsafe impl Send for ResSendHooks {}
+
+#[cfg(feature = "owned-tls-cache")]
+const fn empty_res_send_hooks() -> ResSendHooks {
+    ResSendHooks {
+        qhook: core::ptr::null_mut(),
+        rhook: core::ptr::null_mut(),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RES_SEND_HOOKS_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ResSendHooks> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_res_send_hooks);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RES_QHOOK: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(core::ptr::null_mut()) };
+    static RES_RHOOK: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(core::ptr::null_mut()) };
+}
+
+fn current_res_send_qhook() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_QHOOK.with(|c| c.get())
+    }
+}
+
+fn current_res_send_rhook() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_RHOOK.with(|c| c.get())
+    }
+}
+
+fn set_res_send_qhook(qhook: *mut c_void) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook = qhook);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_QHOOK.with(|c| c.set(qhook));
+    }
+}
+
+fn set_res_send_rhook(rhook: *mut c_void) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook = rhook);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RES_RHOOK.with(|c| c.set(rhook));
+    }
+}
+
+/// Test/inspection accessor for the most recently installed query hook.
+#[doc(hidden)]
+pub fn res_send_qhook_for_tests() -> *mut c_void {
+    current_res_send_qhook()
+}
+
+/// Test/inspection accessor for the most recently installed response hook.
+#[doc(hidden)]
+pub fn res_send_rhook_for_tests() -> *mut c_void {
+    current_res_send_rhook()
+}
+
+/// libresolv `res_send_setqhook(qhook)` — install a pre-query
+/// callback. Stored per-thread; not invoked internally (we have no
+/// pluggable resolver core). Provided so binaries that register a
+/// hook don't fail at link time.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_send_setqhook(qhook: *mut c_void) {
+    set_res_send_qhook(qhook);
+}
+
+/// libresolv `res_send_setrhook(rhook)` — install a post-response
+/// callback. Stored per-thread; not invoked internally.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_send_setrhook(rhook: *mut c_void) {
+    set_res_send_rhook(rhook);
+}
+
+// ----- ns_name_ntol / ns_name_rollback -----
+
+/// libresolv `ns_name_ntol(src, dst, dstsiz) -> int` — convert a
+/// wire-format DNS domain name to lowercase. Wire format is a
+/// sequence of length-prefixed labels terminated by a 0-length byte.
+/// The total encoded length cannot exceed 255 bytes.
+///
+/// Returns the encoded byte length on success and writes the lowered copy to `dst`.
+/// Returns -1 if `dst` is too small or the encoded name is malformed
+/// (label too long, no terminator within 255 bytes).
+///
+/// # Safety
+///
+/// `src` must point to a wire-format name (length-prefixed labels
+/// terminated by a 0 length byte) of total length ≤ 255 bytes.
+/// `dst` must point to at least `dstsiz` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_ntol(src: *const u8, dst: *mut u8, dstsiz: usize) -> c_int {
+    if src.is_null() || dst.is_null() {
+        return -1;
+    }
+    #[inline]
+    unsafe fn ntol_emsgsize() -> c_int {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        -1
+    }
+    let src_limit = known_remaining(src as usize).map_or(256, |remaining| remaining.min(256));
+    let dst_limit = known_remaining(dst as usize).map_or(dstsiz, |remaining| remaining.min(dstsiz));
+    let mut total = 0usize;
+    loop {
+        if total >= src_limit {
+            return unsafe { ntol_emsgsize() };
+        }
+        // SAFETY: caller-supplied wire-format name; traversal is capped by
+        // DNS length and any tracked allocation size.
+        let len = unsafe { *src.add(total) };
+        if len & 0xC0 == 0xC0 {
+            return unsafe { ntol_emsgsize() };
+        }
+        if total >= dst_limit {
+            return unsafe { ntol_emsgsize() };
+        }
+        // Lowercase ASCII letters in the LABEL bytes; the length byte
+        // itself is copied verbatim.
+        // SAFETY: dst has dst_limit bytes; we verified total < dst_limit.
+        unsafe { *dst.add(total) = len };
+        total += 1;
+        if len == 0 {
+            return match c_int::try_from(total) {
+                Ok(n) => n,
+                Err(_) => unsafe { ntol_emsgsize() },
+            };
+        }
+        if len > 63 {
+            return unsafe { ntol_emsgsize() };
+        }
+        let label_end = match total.checked_add(len as usize) {
+            Some(end) => end,
+            None => return unsafe { ntol_emsgsize() },
+        };
+        if label_end >= src_limit || label_end >= dst_limit {
+            return unsafe { ntol_emsgsize() };
+        }
+        for _ in 0..len {
+            // SAFETY: bounded by label_end within source and destination.
+            let b = unsafe { *src.add(total) };
+            let lowered = if b.is_ascii_uppercase() { b | 0x20 } else { b };
+            unsafe { *dst.add(total) = lowered };
+            total += 1;
+        }
+    }
+}
+
+/// libresolv `ns_name_rollback(srcp, dnptrs, lastdnptr)` — undo
+/// partial name compression entries left in `dnptrs` by
+/// `ns_name_pack` (or its callers) when an error aborts the
+/// in-progress name. Walks `dnptrs[]` from the end backwards and
+/// clears any entry whose pointer value is at or past `srcp`.
+///
+/// `dnptrs` is a NULL-terminated array. `lastdnptr` is one past the
+/// end of the usable slots.
+///
+/// # Safety
+///
+/// `dnptrs`, when non-NULL, must point to a NULL-terminated array of
+/// `*const u8`. `lastdnptr`, when non-NULL, must be valid as a
+/// boundary pointer for that array.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_rollback(
+    srcp: *const u8,
+    dnptrs: *mut *mut u8,
+    lastdnptr: *mut *mut u8,
+) {
+    if dnptrs.is_null() {
+        return;
+    }
+    // Walk forward from dnptrs[0] until NULL terminator or lastdnptr.
+    let mut i: isize = 0;
+    loop {
+        // SAFETY: caller-supplied array.
+        let slot = unsafe { dnptrs.offset(i) };
+        if !lastdnptr.is_null() && slot >= lastdnptr {
+            break;
+        }
+        let entry = unsafe { *slot };
+        if entry.is_null() {
+            break;
+        }
+        if (entry as usize) >= (srcp as usize) {
+            // Clear this slot and shift remaining valid slots left.
+            // SAFETY: we own this slot.
+            unsafe { *slot = core::ptr::null_mut() };
+            // Stop on first removed slot — subsequent entries are by
+            // contract also at-or-past srcp because they were appended
+            // later, but to mirror BIND9 we just truncate here.
+            break;
+        }
+        i += 1;
+    }
+}
+
+// ===========================================================================
+// libresolv DNS message parser — ns_initparse / ns_parserr / ns_skiprr /
+// ns_msg_getflag
+// ===========================================================================
+//
+// Layout matches glibc's `<arpa/nameser.h>` exactly so callers can pass
+// the same `ns_msg` / `ns_rr` storage between our resolv_abi and any
+// other libresolv-shaped code.
+
+const NS_HFIXEDSZ: usize = 12;
+const NS_QFIXEDSZ: usize = 4;
+const NS_RRFIXEDSZ: usize = 10;
+const NS_MAXDNAME: usize = 1025;
+const NS_S_MAX: usize = 4;
+const NS_OPCODE_UPDATE: u16 = 5;
+
+/// C-compatible `ns_msg`. Layout (offsets in bytes):
+///   0:  _msg            8
+///   8:  _eom            8
+///   16: _id             2
+///   18: _flags          2
+///   20: _counts[4]      8
+///   28: padding         4
+///   32: _sections[4]    32
+///   64: _sect           4
+///   68: _rrnum          4
+///   72: _msg_ptr        8
+/// Total: 80 bytes.
+#[repr(C)]
+pub struct CNsMsg {
+    pub _msg: *const u8,
+    pub _eom: *const u8,
+    pub _id: u16,
+    pub _flags: u16,
+    pub _counts: [u16; NS_S_MAX],
+    pub _sections: [*const u8; NS_S_MAX],
+    pub _sect: c_int,
+    pub _rrnum: c_int,
+    pub _msg_ptr: *const u8,
+}
+
+/// C-compatible `ns_rr`. Layout (offsets in bytes):
+///   0:    name[1025]
+///   1026: type      (after 1-byte alignment pad)
+///   1028: rr_class
+///   1030: ttl
+///   1034: rdlength
+///   1040: rdata     (8-byte aligned)
+/// Total: 1048 bytes.
+#[repr(C)]
+pub struct CNsRr {
+    pub name: [c_char; NS_MAXDNAME],
+    pub _type: u16,
+    pub rr_class: u16,
+    pub ttl: u32,
+    pub rdlength: u16,
+    pub rdata: *const u8,
+}
+
+#[inline]
+fn read_be_u16_at(buf: &[u8], pos: usize) -> Option<u16> {
+    if pos + 2 > buf.len() {
+        return None;
+    }
+    Some(u16::from_be_bytes([buf[pos], buf[pos + 1]]))
+}
+
+#[inline]
+fn read_be_u32_at(buf: &[u8], pos: usize) -> Option<u32> {
+    if pos + 4 > buf.len() {
+        return None;
+    }
+    Some(u32::from_be_bytes([
+        buf[pos],
+        buf[pos + 1],
+        buf[pos + 2],
+        buf[pos + 3],
+    ]))
+}
+
+unsafe fn ns_skip_one_rr(
+    msg_buf: &[u8],
+    eom: *const u8,
+    pos: usize,
+    section: c_int,
+) -> Option<usize> {
+    // SAFETY: msg_buf is the linear msg slice; eom is its end pointer.
+    let comp = unsafe { msg_buf.as_ptr().add(pos) };
+    let n = unsafe { crate::unistd_abi::dn_skipname(comp, eom) };
+    if n < 0 {
+        return None;
+    }
+    let mut p = pos.checked_add(n as usize)?;
+    if section == 0 {
+        // Question: name + qtype(2) + qclass(2)
+        p = p.checked_add(NS_QFIXEDSZ)?;
+        if p > msg_buf.len() {
+            return None;
+        }
+    } else {
+        // Answer / Authority / Additional: name + 10 + rdlength bytes
+        let rdlen = read_be_u16_at(msg_buf, p + 8)?;
+        p = p.checked_add(NS_RRFIXEDSZ)?.checked_add(rdlen as usize)?;
+        if p > msg_buf.len() {
+            return None;
+        }
+    }
+    Some(p)
+}
+
+unsafe fn dns_message_slice<'a>(buf: *const c_void, eom: *const c_void) -> Option<&'a [u8]> {
+    if buf.is_null() || eom.is_null() {
+        return None;
+    }
+    let msg = buf.cast::<u8>();
+    let eom = eom.cast::<u8>();
+    if msg > eom {
+        return None;
+    }
+    let len = (eom as usize).checked_sub(msg as usize)?;
+    if len < NS_HFIXEDSZ || len > isize::MAX as usize {
+        return None;
+    }
+    if !tracked_region_fits(buf, len) {
+        return None;
+    }
+    Some(unsafe { core::slice::from_raw_parts(msg, len) })
+}
+
+fn dns_header_opcode(msg_buf: &[u8]) -> Option<u16> {
+    Some((read_be_u16_at(msg_buf, 2)? >> 11) & 0x0f)
+}
+
+unsafe fn read_query_question(
+    msg: *const u8,
+    eom: *const u8,
+    msg_buf: &[u8],
+    pos: usize,
+    name_buf: &mut [c_char; NS_MAXDNAME],
+) -> Option<(usize, u16, u16)> {
+    if pos >= msg_buf.len() {
+        return None;
+    }
+    let comp = unsafe { msg.add(pos) };
+    let name_len = unsafe {
+        crate::unistd_abi::dn_expand(msg, eom, comp, name_buf.as_mut_ptr(), NS_MAXDNAME as c_int)
+    };
+    if name_len < 0 {
+        return None;
+    }
+    let qtype_pos = pos.checked_add(name_len as usize)?;
+    let qtype = read_be_u16_at(msg_buf, qtype_pos)?;
+    let qclass = read_be_u16_at(msg_buf, qtype_pos + 2)?;
+    Some((qtype_pos.checked_add(NS_QFIXEDSZ)?, qtype, qclass))
+}
+
+/// libresolv `ns_initparse(msg, msglen, *handle) -> int` — parse a
+/// DNS message header and walk each of the 4 sections (qd / an / ns /
+/// ar) to find their boundaries. The result populates the
+/// caller-supplied [`CNsMsg`] handle so subsequent
+/// [`ns_parserr`] / [`ns_msg_getflag`] calls can index into it.
+///
+/// Returns 0 on success, -1 on a malformed message (header too short,
+/// section walk overruns the message, etc.).
+///
+/// # Safety
+///
+/// `msg` must point to at least `msglen` readable bytes. `handle`
+/// must point to writable [`CNsMsg`] storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mut CNsMsg) -> c_int {
+    let malformed = || {
+        // SAFETY: errno is owned by the current thread.
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        -1
+    };
+    if msg.is_null() || !tracked_object_fits(handle) || msglen < 0 {
+        return malformed();
+    }
+    let msglen = msglen as usize;
+    if msglen < NS_HFIXEDSZ || !tracked_region_fits(msg.cast(), msglen) {
+        return malformed();
+    }
+    // SAFETY: caller-supplied buffer of msglen bytes, validated above.
+    let buf = unsafe { core::slice::from_raw_parts(msg, msglen) };
+    let id = u16::from_be_bytes([buf[0], buf[1]]);
+    let flags = u16::from_be_bytes([buf[2], buf[3]]);
+    let counts: [u16; NS_S_MAX] = [
+        u16::from_be_bytes([buf[4], buf[5]]),
+        u16::from_be_bytes([buf[6], buf[7]]),
+        u16::from_be_bytes([buf[8], buf[9]]),
+        u16::from_be_bytes([buf[10], buf[11]]),
+    ];
+
+    // Empty sections have no start pointer. Each nonempty section is walked
+    // exactly once to establish record boundaries before publishing the handle.
+    let eom = unsafe { msg.add(msglen) };
+    let mut sections: [*const u8; NS_S_MAX] = [core::ptr::null(); NS_S_MAX];
+    let mut pos = NS_HFIXEDSZ;
+    for section in 0..NS_S_MAX {
+        if counts[section] == 0 {
+            continue;
+        }
+        // SAFETY: the previous section walk bounded pos by msglen.
+        sections[section] = unsafe { msg.add(pos) };
+        for _ in 0..counts[section] {
+            if pos >= msglen {
+                return malformed();
+            }
+            // SAFETY: pos is within the message and the skipper checks the RR.
+            pos = match unsafe { ns_skip_one_rr(buf, eom, pos, section as c_int) } {
+                Some(pos) => pos,
+                None => return malformed(),
+            };
+        }
+    }
+    // A DNS message is exactly its header and declared records, not a valid
+    // prefix followed by unaccounted-for bytes.
+    if pos != msglen {
+        return malformed();
+    }
+
+    // SAFETY: caller-supplied writable handle. Cursor means "next record";
+    // NS_S_MAX marks that no section has been selected yet.
+    unsafe {
+        (*handle)._msg = msg;
+        (*handle)._eom = eom;
+        (*handle)._id = id;
+        (*handle)._flags = flags;
+        (*handle)._counts = counts;
+        (*handle)._sections = sections;
+        (*handle)._sect = NS_S_MAX as c_int;
+        (*handle)._rrnum = -1;
+        (*handle)._msg_ptr = core::ptr::null();
+    }
+    0
+}
+
+/// libresolv `ns_skiprr(ptr, eom, section, count) -> int` — skip
+/// `count` resource records starting at `ptr` and return the number
+/// of bytes consumed. Returns -1 on malformed input.
+///
+/// # Safety
+///
+/// `ptr` and `eom` must bound a contiguous DNS message buffer with
+/// `ptr <= eom`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_skiprr(
+    ptr: *const u8,
+    eom: *const u8,
+    section: c_int,
+    count: c_int,
+) -> c_int {
+    if ptr.is_null() || eom.is_null() || count < 0 {
+        return -1;
+    }
+    let Some(len) = dns_span_len_allow_empty(ptr, eom) else {
+        return -1;
+    };
+    // SAFETY: ptr/eom were checked as a bounded readable u8 span above.
+    let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let mut pos = 0usize;
+    for _ in 0..count {
+        match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
+            Some(p) => pos = p,
+            None => return -1,
+        }
+    }
+    pos as c_int
+}
+
+/// libresolv `ns_parserr(*handle, section, rrnum, *rr) -> int` —
+/// fetch the `rrnum`-th resource record, or the next record when `rrnum == -1`.
+/// Selecting another section starts its iteration at record zero. An explicit
+/// backward index rewinds; forward and sequential reads reuse the next-record
+/// cursor, so iterating a section does not repeatedly rescan its prefix.
+///
+/// Returns 0 on success. Returns -1 with ENODEV for an invalid section/index or
+/// exhausted section, and EMSGSIZE for a malformed or out-of-bounds message.
+///
+/// # Safety
+///
+/// `handle` must be a [`CNsMsg`] previously initialized by
+/// [`ns_initparse`]. `rr` must point to writable [`CNsRr`] storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_parserr(
+    handle: *mut CNsMsg,
+    section: c_int,
+    rrnum: c_int,
+    rr: *mut CNsRr,
+) -> c_int {
+    let failure = |code| {
+        // SAFETY: errno is owned by the current thread.
+        unsafe { set_abi_errno(code) };
+        -1
+    };
+    if !tracked_object_fits(handle) || !tracked_object_fits(rr) {
+        return failure(libc::EMSGSIZE);
+    }
+    if !(0..NS_S_MAX as c_int).contains(&section) || rrnum < -1 {
+        return failure(libc::ENODEV);
+    }
+    // SAFETY: readable initialized handle, with the section index checked above.
+    let (msg_ptr, eom, count, section_start, current_section, next_index, next_ptr) = unsafe {
+        (
+            (*handle)._msg,
+            (*handle)._eom,
+            c_int::from((*handle)._counts[section as usize]),
+            (*handle)._sections[section as usize],
+            (*handle)._sect,
+            (*handle)._rrnum,
+            (*handle)._msg_ptr,
+        )
+    };
+    let target = if rrnum == -1 {
+        if current_section == section {
+            next_index
+        } else {
+            0
+        }
+    } else {
+        rrnum
+    };
+    // Do not narrow the index to u16: values such as 65536 must not wrap and
+    // pass the count check, then drive an unbounded record walk.
+    if target < 0 || target >= count {
+        return failure(libc::ENODEV);
+    }
+    // SAFETY: revalidate message bounds before constructing a slice.
+    let Some(buf) = (unsafe { dns_message_slice(msg_ptr.cast(), eom.cast()) }) else {
+        return failure(libc::EMSGSIZE);
+    };
+    let msg_addr = msg_ptr as usize;
+    let section_addr = section_start as usize;
+    if section_start.is_null() || section_addr < msg_addr || section_addr >= eom as usize {
+        return failure(libc::EMSGSIZE);
+    }
+
+    let (mut pos, start_index) =
+        if current_section == section && next_index >= 0 && next_index <= target {
+            let next_addr = next_ptr as usize;
+            if next_ptr.is_null() || next_addr < section_addr || next_addr >= eom as usize {
+                return failure(libc::EMSGSIZE);
+            }
+            (next_addr - msg_addr, next_index)
+        } else {
+            (section_addr - msg_addr, 0)
+        };
+    for _ in start_index..target {
+        if pos >= buf.len() {
+            return failure(libc::EMSGSIZE);
+        }
+        // SAFETY: pos is within the bounded message; the skipper checks the RR.
+        pos = match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
+            Some(pos) => pos,
+            None => return failure(libc::EMSGSIZE),
+        };
+    }
+    if pos >= buf.len() {
+        return failure(libc::EMSGSIZE);
+    }
+
+    // Parse into local storage. A malformed record does not publish a partial
+    // result or advance the next-record cursor.
+    let mut name = [0 as c_char; NS_MAXDNAME];
+    // SAFETY: pos is in the message and name is a full writable name buffer.
+    let name_len = unsafe {
+        crate::unistd_abi::dn_expand(
+            msg_ptr,
+            eom,
+            msg_ptr.add(pos),
+            name.as_mut_ptr(),
+            NS_MAXDNAME as c_int,
+        )
+    };
+    if name_len < 0 {
+        return failure(libc::EMSGSIZE);
+    }
+    let Some(fields_pos) = pos.checked_add(name_len as usize) else {
+        return failure(libc::EMSGSIZE);
+    };
+    let fields = (|| {
+        let record_type = read_be_u16_at(buf, fields_pos)?;
+        let record_class = read_be_u16_at(buf, fields_pos.checked_add(2)?)?;
+        if section == 0 {
+            let end = fields_pos.checked_add(NS_QFIXEDSZ)?;
+            (end <= buf.len()).then_some((record_type, record_class, 0, 0, None, end))
+        } else {
+            let ttl = read_be_u32_at(buf, fields_pos.checked_add(4)?)?;
+            let rdlength = read_be_u16_at(buf, fields_pos.checked_add(8)?)?;
+            let rdata_offset = fields_pos.checked_add(NS_RRFIXEDSZ)?;
+            let end = rdata_offset.checked_add(usize::from(rdlength))?;
+            (end <= buf.len()).then_some((
+                record_type,
+                record_class,
+                ttl,
+                rdlength,
+                Some(rdata_offset),
+                end,
+            ))
+        }
+    })();
+    let Some((record_type, record_class, ttl, rdlength, rdata_offset, end)) = fields else {
+        return failure(libc::EMSGSIZE);
+    };
+    // SAFETY: rr and handle are writable; all source offsets are bounded by
+    // the original message. rdata borrows the caller's message, not local data.
+    unsafe {
+        (*rr).name = name;
+        (*rr)._type = record_type;
+        (*rr).rr_class = record_class;
+        (*rr).ttl = ttl;
+        (*rr).rdlength = rdlength;
+        (*rr).rdata = match rdata_offset {
+            Some(offset) => msg_ptr.add(offset),
+            None => core::ptr::null(),
+        };
+        (*handle)._sect = section;
+        (*handle)._rrnum = target + 1;
+        (*handle)._msg_ptr = msg_ptr.add(end);
+    }
+    0
+}
+
+/// libresolv `ns_msg_getflag(handle, flag) -> int` — extract a
+/// header flag from a parsed DNS message handle.
+///
+/// `flag` is the [`ns_flag`] enum value (0 = QR, 1 = opcode, 2 = AA,
+/// 3 = TC, 4 = RD, 5 = RA, 6 = Z, 7 = AD, 8 = CD, 9 = RCODE).
+///
+/// # Safety
+///
+/// `handle` must be a [`CNsMsg`] previously initialized by
+/// [`ns_initparse`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_msg_getflag(handle: *mut CNsMsg, flag: c_int) -> c_int {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller-supplied initialized handle.
+    let f = unsafe { (*handle)._flags };
+    match flag {
+        0 => ((f >> 15) & 0x01) as c_int, // QR
+        1 => ((f >> 11) & 0x0F) as c_int, // opcode (4 bits)
+        2 => ((f >> 10) & 0x01) as c_int, // AA
+        3 => ((f >> 9) & 0x01) as c_int,  // TC
+        4 => ((f >> 8) & 0x01) as c_int,  // RD
+        5 => ((f >> 7) & 0x01) as c_int,  // RA
+        6 => ((f >> 6) & 0x01) as c_int,  // Z
+        7 => ((f >> 5) & 0x01) as c_int,  // AD
+        8 => ((f >> 4) & 0x01) as c_int,  // CD
+        9 => (f & 0x0F) as c_int,         // RCODE (4 bits)
+        _ => 0,
+    }
+}
+
+// ===========================================================================
+// libresolv inet_neta — network number to text
+// ===========================================================================
+
+/// libresolv `inet_neta(src, dst, size) -> *mut c_char` — format an
+/// `in_addr_t` as a CIDR-style network number string.
+///
+/// Algorithm: walk integer bytes from most-significant to
+/// least-significant; emit a byte unless it is zero AND there are more
+/// non-zero bytes remaining. This matches libresolv's integer
+/// contract, where `0xc0a80100` formats as `"192.168.1"`. If the
+/// address is 0 we emit `"0.0.0.0"`.
+///
+/// Examples:
+///   - 0x7f000000 -> "127"
+///   - 0xc0a80100 -> "192.168.1"
+///   - 0xc0a80105 -> "192.168.1.5"
+///
+/// Sets `errno = EMSGSIZE` and returns NULL if `dst` is too small.
+///
+/// # Safety
+///
+/// `dst`, when non-NULL, must point to at least `size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) -> *mut c_char {
+    if dst.is_null() {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return core::ptr::null_mut();
+    }
+    let odst = dst;
+    let dst_limit = known_remaining(dst as usize).map_or(size, |remaining| remaining.min(size));
+
+    let mut tmp = [0u8; 16];
+    let mut cursor = 0usize;
+    let mut required_size = 0usize;
+    if src == 0 {
+        tmp[..7].copy_from_slice(b"0.0.0.0");
+        cursor = 7;
+        required_size = cursor + 1;
+    }
+
+    while src != 0 {
+        let b = (src >> 24) as u8;
+        src <<= 8;
+        if b != 0 || src == 0 {
+            if cursor != 0 {
+                tmp[cursor] = b'.';
+                cursor += 1;
+            }
+            required_size = required_size.max(cursor + 5);
+            let mut digits = [0u8; 3];
+            let mut n = b;
+            let mut len = 0usize;
+            if n == 0 {
+                digits[0] = b'0';
+                len = 1;
+            } else {
+                while n > 0 {
+                    digits[len] = b'0' + (n % 10);
+                    n /= 10;
+                    len += 1;
+                }
+            }
+            for i in 0..len {
+                tmp[cursor + i] = digits[len - 1 - i];
+            }
+            cursor += len;
+        }
+    }
+
+    let needed = cursor + 1;
+    if dst_limit < needed || dst_limit < required_size {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return core::ptr::null_mut();
+    }
+    tmp[cursor] = 0;
+    // SAFETY: dst has at least needed bytes and tmp contains needed bytes.
+    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr() as *const c_char, dst, needed) };
+    odst
+}
+
+// ===========================================================================
+// libresolv ns_sprintrr / ns_sprintrrf — DNS RR text formatter
+// ===========================================================================
+//
+// Emits one resource record in BIND zone-file syntax:
+//
+//     name TTL class type rdata
+//
+// Per-type rdata formatting covers the common types (A, AAAA, NS,
+// CNAME, PTR, MX, TXT). Unknown types fall back to the RFC 3597
+// generic representation: `\# <rdlen> <hex bytes>`.
+
+fn write_class_into(class: u16, out: &mut String) {
+    use std::fmt::Write;
+    match class {
+        1 => out.push_str("IN"),
+        2 => out.push_str("CS"),
+        3 => out.push_str("CH"),
+        4 => out.push_str("HS"),
+        n => {
+            let _ = write!(out, "CLASS{n}");
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ResolverRdataDialect {
+    type_prefix: bool,
+    refuses_tkey: bool,
+    refuses_tsig: bool,
+    /// What separates the generic-rdata length from its `;` comment.
+    ///
+    /// The two deployed dialects disagree, and this one is invisible unless you
+    /// look at the byte before the semicolon (bd-d9et7k). Measured on live
+    /// `libresolv.so.2` (glibc 2.42) with a deliberately 3-byte A record:
+    ///
+    /// ```text
+    /// foo.com.\t\t1H IN A\t\t\# 3 ( ; RR format error\n\t01 02 03 )\t\t\t\t\t; ...
+    ///                                ^ SPACE
+    /// ```
+    ///
+    /// while the legacy dialect recorded on bd-mz6xqf emits a TAB:
+    ///
+    /// ```text
+    /// weird.example.\t\t1M IN 999\t\# 4 (\t; unknown RR type 999\n\tde ad be ef )...
+    ///                                    ^ TAB
+    /// ```
+    ///
+    /// glibc reaches both comments through the same `hexify` label in
+    /// `ns_print.c`, so one probe settles the separator for every comment this
+    /// formatter emits.
+    comment_separator: &'static str,
+}
+
+const LEGACY_RDATA_DIALECT: ResolverRdataDialect = ResolverRdataDialect {
+    type_prefix: false,
+    refuses_tkey: true,
+    refuses_tsig: true,
+    comment_separator: "\t; ",
+};
+
+/// libbind's generic-RR presentation changed between the deployed libresolv
+/// dialects: older copies print `999` and an "unknown RR type" note, while
+/// newer copies print `TYPE999` without that note. Calibrate once against the
+/// loaded host libresolv so a drop-in libc keeps its host's presentation ABI.
+fn resolver_rdata_dialect() -> ResolverRdataDialect {
+    static DIALECT: OnceLock<ResolverRdataDialect> = OnceLock::new();
+    *DIALECT.get_or_init(|| unsafe {
+        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        type SprintRrf = unsafe extern "C" fn(
+            *const u8,
+            usize,
+            *const c_char,
+            c_int,
+            c_int,
+            libc::c_ulong,
+            *const u8,
+            usize,
+            *const c_char,
+            *const c_char,
+            *mut c_char,
+            usize,
+        ) -> c_int;
+
+        let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
+            return LEGACY_RDATA_DIALECT;
+        };
+        let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
+            return LEGACY_RDATA_DIALECT;
+        };
+        // SAFETY: raw ELF resolution returns the host glibc entrypoints with
+        // their documented C signatures.
+        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
+        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
+        let handle = dlopen(
+            c"libresolv.so.2".as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL,
+        );
+        if handle.is_null() {
+            return LEGACY_RDATA_DIALECT;
+        }
+        let symbol = dlsym(handle, c"ns_sprintrrf".as_ptr());
+        if symbol.is_null() {
+            return LEGACY_RDATA_DIALECT;
+        }
+        // SAFETY: `symbol` was resolved from libresolv under its public name.
+        let sprintrrf: SprintRrf = core::mem::transmute(symbol);
+        let rdata = [0xde, 0xad, 0xbe, 0xef];
+        let mut buf = [0 as c_char; 128];
+        let written = sprintrrf(
+            ptr::null(),
+            0,
+            c"probe".as_ptr(),
+            1,
+            999,
+            60,
+            rdata.as_ptr(),
+            rdata.len(),
+            ptr::null(),
+            ptr::null(),
+            buf.as_mut_ptr(),
+            buf.len(),
+        );
+        let type_prefix = written > 0
+            && CStr::from_ptr(buf.as_ptr())
+                .to_bytes()
+                .windows(b"TYPE999".len())
+                .any(|window| window == b"TYPE999");
+
+        // SECOND PROBE, for the comment separator. The type-999 probe above
+        // cannot answer it: in the TYPE<n> dialect an unknown type carries no
+        // comment at all, so there is no separator to look at. A three-byte A
+        // record does carry one — every dialect calls it an "RR format error" —
+        // and it goes through the same `hexify` label in glibc's ns_print.c as
+        // the unknown-type note, so this one probe settles both (bd-d9et7k).
+        let short_a = [1u8, 2, 3];
+        let mut probe_buf = [0 as c_char; 128];
+        let written = sprintrrf(
+            ptr::null(),
+            0,
+            c"probe".as_ptr(),
+            1,
+            1, /* A */
+            60,
+            short_a.as_ptr(),
+            short_a.len(),
+            ptr::null(),
+            ptr::null(),
+            probe_buf.as_mut_ptr(),
+            probe_buf.len(),
+        );
+        let comment_separator = if written > 0 {
+            let rendered = CStr::from_ptr(probe_buf.as_ptr()).to_bytes();
+            let tabbed = b"\t; RR format error";
+            if rendered.windows(tabbed.len()).any(|w| w == tabbed) {
+                "\t; "
+            } else {
+                // Either the space form or a host that renders this some third
+                // way; the space form is what glibc 2.42 emits and what the
+                // legacy tab form was measured to differ from.
+                " ; "
+            }
+        } else {
+            LEGACY_RDATA_DIALECT.comment_separator
+        };
+
+        ResolverRdataDialect {
+            type_prefix,
+            comment_separator,
+            // The same two deployed dialects differ on malformed TKEY/TSIG:
+            // legacy libbind rejects them while the TYPE<n> dialect emits
+            // RFC 3597 generic rdata. This is the discriminator exercised by
+            // the live all-types corpus.
+            refuses_tkey: !type_prefix,
+            refuses_tsig: !type_prefix,
+        }
+    })
+}
+
+fn write_type_into(ty: u16, out: &mut String) {
+    use std::fmt::Write;
+    match ty {
+        1 => out.push('A'),
+        2 => out.push_str("NS"),
+        5 => out.push_str("CNAME"),
+        12 => out.push_str("PTR"),
+        15 => out.push_str("MX"),
+        16 => out.push_str("TXT"),
+        28 => out.push_str("AAAA"),
+        n => {
+            if resolver_rdata_dialect().type_prefix {
+                let _ = write!(out, "TYPE{n}");
+            } else {
+                let _ = write!(out, "{n}");
+            }
+        }
+    }
+}
+
+fn format_a_rdata(rdata: &[u8], out: &mut String) -> Result<(), usize> {
+    if rdata.len() != 4 {
+        return Err(0);
+    }
+    use std::fmt::Write;
+    let _ = write!(out, "{}.{}.{}.{}", rdata[0], rdata[1], rdata[2], rdata[3]);
+    Ok(())
+}
+
+fn format_aaaa_rdata(rdata: &[u8], out: &mut String) -> Result<(), usize> {
+    if rdata.len() != 16 {
+        return Err(0);
+    }
+    let bytes: [u8; 16] = rdata.try_into().map_err(|_| 0usize)?;
+    let v6 = std::net::Ipv6Addr::from(bytes);
+    use std::fmt::Write;
+    let _ = write!(out, "{v6}");
+    Ok(())
+}
+
+unsafe fn format_name_rdata(
+    msg: *const u8,
+    msglen: usize,
+    rdata: *const u8,
+    out: &mut String,
+) -> Result<(), ()> {
+    if msg.is_null() || rdata.is_null() {
+        return Err(());
+    }
+    let mut tmp = [0u8; NS_MAXDNAME];
+    let eom = unsafe { msg.add(msglen) };
+    let n = unsafe {
+        crate::unistd_abi::dn_expand(
+            msg,
+            eom,
+            rdata,
+            tmp.as_mut_ptr() as *mut c_char,
+            NS_MAXDNAME as c_int,
+        )
+    };
+    if n < 0 {
+        return Err(());
+    }
+    let len = tmp.iter().position(|&b| b == 0).unwrap_or(tmp.len());
+    // Names embedded in rdata are root-dot terminated exactly like the owner name, and the
+    // root itself renders as a bare ".". Verified against live libresolv (bd-mz6xqf):
+    //   MX -> mail.com  =>  "... IN MX\t10 mail.com."
+    //   MX -> root      =>  "... IN MX\t10 ."
+    //   NS -> ns.com    =>  "... IN NS\tns.com."
+    let expanded = String::from_utf8_lossy(&tmp[..len]);
+    if expanded.is_empty() {
+        out.push('.');
+    } else {
+        out.push_str(&expanded);
+        if !expanded.ends_with('.') {
+            out.push('.');
+        }
+    }
+    Ok(())
+}
+
+fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), usize> {
+    use std::fmt::Write;
+    let mut i = 0usize;
+    let mut first = true;
+    while i < rdata.len() {
+        let chunk_start = i;
+        let len = rdata[i] as usize;
+        i += 1;
+        if !first {
+            out.push(' ');
+        }
+        first = false;
+        out.push('"');
+        if i + len > rdata.len() {
+            out.push('"');
+            return Err(chunk_start);
+        }
+        for &b in &rdata[i..i + len] {
+            if b == b'"' || b == b'\\' {
+                out.push('\\');
+                out.push(b as char);
+            } else if (32..127).contains(&b) {
+                out.push(b as char);
+            } else {
+                let _ = write!(out, "\\{b:03}");
+            }
+        }
+        out.push('"');
+        i += len;
+    }
+    Ok(())
+}
+
+/// RFC 3597 generic rdata, in the BIND layout glibc actually emits.
+///
+/// fl used to write a compact uppercase run (`\# 3 010203`). The host writes a
+/// hex DUMP, measured against `libresolv.so.2` at lengths 0, 1, 3, 8, 16, 24 and
+/// 40 (bd-6z6apt):
+///
+/// ```text
+/// \# 3 (\n\t01 02 03 )\t\t\t\t\t; ...
+/// ```
+///
+/// The rules that reproduce every probed length:
+///  - the byte count, then ` (`; a malformed known type adds ` ; RR format
+///    error` before the dump, while an unknown type has no reason text. A
+///    ZERO-length rdata has no parenthesized hex dump;
+///  - 16 bytes per line, each written lowercase as `"%02x "` (with its trailing
+///    space), after a leading tab;
+///  - the closing paren goes on the final line ONLY when that line is PARTIAL.
+///    A dump whose length is an exact multiple of 16 ends without one — that is
+///    a BIND quirk, reproduced deliberately rather than corrected;
+///  - then tabs pad to column 56, then `; ` and an ASCII column with
+///    non-printables shown as `.`.
+fn format_generic_rdata(rdata: &[u8], ty: u16, diagnostic: Option<&str>, out: &mut String) {
+    use std::fmt::Write;
+    /// Column the trailing `; <ascii>` comment starts at.
+    const COMMENT_COLUMN: usize = 56;
+    /// Bytes per dump line.
+    const PER_LINE: usize = 16;
+
+    // The separator before `;` is dialect-dependent — see
+    // `ResolverRdataDialect::comment_separator` for both measurements.
+    let sep = resolver_rdata_dialect().comment_separator;
+
+    let _ = write!(out, "\\# {}", rdata.len());
+    if rdata.is_empty() {
+        if let Some(diagnostic) = diagnostic {
+            let _ = write!(out, "{sep}{diagnostic}");
+        }
+        return;
+    }
+    out.push_str(" (");
+    if let Some(diagnostic) = diagnostic {
+        let _ = write!(out, "{sep}{diagnostic}");
+    } else if !resolver_rdata_dialect().type_prefix {
+        let _ = write!(out, "{sep}unknown RR type {ty}");
+    }
+
+    let mut remaining = rdata;
+    while !remaining.is_empty() {
+        let take = remaining.len().min(PER_LINE);
+        let (chunk, rest) = remaining.split_at(take);
+        remaining = rest;
+
+        out.push('\n');
+        // One leading tab, so the hex starts at column 8.
+        out.push('\t');
+        for &byte in chunk {
+            let _ = write!(out, "{byte:02x} ");
+        }
+
+        // The BIND quirk: a line that filled all 16 slots DOES NOT get the
+        // closing paren, even if it is the final line of the dump.
+        let is_final = remaining.is_empty();
+        if is_final && chunk.len() < PER_LINE {
+            out.push(')');
+        }
+
+        // Pad to column 56 with tabs.
+        let col = 8
+            + chunk.len() * 3
+            + if is_final && chunk.len() < PER_LINE {
+                1
+            } else {
+                0
+            };
+        let tabs = COMMENT_COLUMN.saturating_sub(col).div_ceil(8);
+        for _ in 0..tabs {
+            out.push('\t');
+        }
+
+        out.push_str("; ");
+        for &byte in chunk {
+            if (32..127).contains(&byte) {
+                out.push(byte as char);
+            } else {
+                out.push('.');
+            }
+        }
+    }
+}
+
+/// If a specific formatter fails partway through (like `format_txt_rdata` hitting
+/// a truncated chunk where BIND emits `""` before discovering the payload is short),
+/// keep the partial rendering and append the RFC 3597 generic form with
+/// `; RR format error` for the remaining unparsed bytes, matching live libresolv (bd-zgka7z).
+fn specific_or_generic(
+    formatter: fn(&[u8], &mut String) -> Result<(), usize>,
+    rdata: &[u8],
+    ty: u16,
+    out: &mut String,
+) -> Result<(), ()> {
+    if let Err(offset) = formatter(rdata, out) {
+        let remaining = &rdata[offset.min(rdata.len())..];
+        format_generic_rdata(remaining, ty, Some("RR format error"), out);
+    }
+    Ok(())
+}
+
+unsafe fn format_rdata(
+    msg: *const u8,
+    msglen: usize,
+    ty: u16,
+    rdata: *const u8,
+    rdlen: usize,
+    out: &mut String,
+) -> Result<(), ()> {
+    let slice = if rdata.is_null() {
+        if rdlen != 0 {
+            return Err(());
+        }
+        &[][..]
+    } else {
+        // SAFETY: caller-supplied rdata buffer of rdlen bytes.
+        unsafe { core::slice::from_raw_parts(rdata, rdlen) }
+    };
+    match ty {
+        // A/AAAA/TXT have specific formatters that reject rdata of the wrong
+        // shape, but a rejection here is NOT a refusal: libresolv renders these
+        // generically when the rdata does not fit, because their rdata holds no
+        // domain name and there is nothing to decompress. Measured, and now
+        // gated by conformance_diff_ns_rdata_types.
+        1 => specific_or_generic(format_a_rdata, slice, ty, out),
+        28 => specific_or_generic(format_aaaa_rdata, slice, ty, out),
+        2 | 5 | 12 => unsafe { format_name_rdata(msg, msglen, rdata, out) },
+        15 => {
+            // MX: 2-byte preference + name
+            if slice.len() < 3 {
+                return Err(());
+            }
+            let pref = u16::from_be_bytes([slice[0], slice[1]]);
+            use std::fmt::Write;
+            let _ = write!(out, "{pref} ");
+            unsafe { format_name_rdata(msg, msglen, rdata.add(2), out) }
+        }
+        16 => specific_or_generic(format_txt_rdata, slice, ty, out),
+        _ if rdata_embeds_a_domain_name(ty) => {
+            // A type whose presentation format CONTAINS a domain name, but for
+            // which fl has no specific arm. Refuse rather than fall back to the
+            // generic form — see `rdata_embeds_a_domain_name` for why refusing
+            // is the measured behaviour.
+            Err(())
+        }
+        _ => {
+            format_generic_rdata(slice, ty, None, out);
+            Ok(())
+        }
+    }
+}
+
+/// Does this RR type's presentation format embed a domain name?
+///
+/// ## This is the real discriminator, and it is NOT "does glibc know the type"
+///
+/// bd-9kuafg was filed saying the fix needs "glibc's known-type set", on the
+/// theory that a known type with unparseable rdata is refused while an unknown
+/// one renders generically. Probed against live `libresolv.so.2` — feed every
+/// type 1..=299 a valid message and a deliberately malformed 3-byte rdata, and
+/// record which refuse:
+///
+/// ```text
+///   REFUSED: 2 5 6 7 8 9 12 14 15 17 18 21 26 39
+///   GENERIC: everything else, INCLUDING A(1), AAAA(28) and TXT(16)
+/// ```
+///
+/// A, AAAA and TXT are types glibc plainly knows — it has presentation
+/// formatters for all three — and it still renders them generically when the
+/// rdata does not fit. So knownness is not what decides it. Every one of the
+/// fourteen refusing types is a type whose rdata contains an EMBEDDED DOMAIN
+/// NAME: NS, CNAME, SOA, MB, MG, MR, PTR, MINFO, MX, RP, AFSDB, RT, PX, DNAME.
+/// The refusal comes from name decompression failing, which is a
+/// hard error rather than a formatting mismatch, because a truncated name may
+/// point anywhere in the message.
+///
+/// TKEY and TSIG differ across deployed libresolv releases, so their behavior
+/// is calibrated once with the rest of the presentation dialect.
+///
+/// fl already has specific arms for NS/CNAME/PTR (2/5/12) and MX (15); this
+/// covers the remaining ten, which previously fell through to the generic
+/// renderer and reported success where glibc reports failure.
+fn rdata_embeds_a_domain_name(ty: u16) -> bool {
+    matches!(
+        ty,
+        2   // NS
+        | 5   // CNAME
+        | 6   // SOA      — the case bd-9kuafg was filed on
+        | 7   // MB
+        | 8   // MG
+        | 9   // MR
+        | 12  // PTR
+        | 14  // MINFO
+        | 15  // MX
+        | 17  // RP
+        | 18  // AFSDB
+        | 21  // RT
+        | 26  // PX
+        | 39 // DNAME
+    ) || match ty {
+        249 => resolver_rdata_dialect().refuses_tkey,
+        250 => resolver_rdata_dialect().refuses_tsig,
+        _ => false,
+    }
+}
+
+/// libresolv `ns_sprintrrf(msg, msglen, name, class, type, ttl,
+/// rdata, rdlen, name_ctx, origin, buf, buflen) -> int` — format
+/// one DNS resource record in BIND zone-file syntax.
+///
+/// `name_ctx` and `origin` are accepted for ABI compatibility but
+/// not used (the BIND reference uses them for zone-relative name
+/// shortening; we always emit fully-qualified names).
+///
+/// Layout follows glibc's master-file presentation format, derived from live
+/// `libresolv.so.2` across owner names of every length from 1 to 30 and TTLs from 1s to
+/// 2^31-1 rather than fitted to one sample (bd-mz6xqf). See [`ns_addtab`].
+///
+/// Returns the number of bytes written (excluding the terminating
+/// NUL) on success, or -1 on overflow / malformed rdata.
+///
+/// # Safety
+///
+/// All pointer arguments must point to readable buffers of the
+/// declared sizes. `buf`, when non-NULL, must point to at least
+/// `buflen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ns_sprintrrf(
+    msg: *const u8,
+    msglen: usize,
+    name: *const c_char,
+    class: c_int,
+    ty: c_int,
+    ttl: libc::c_ulong,
+    rdata: *const u8,
+    rdlen: usize,
+    _name_ctx: *const c_char,
+    _origin: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if buf.is_null() || name.is_null() || buflen == 0 {
+        return -1;
+    }
+    let buf_limit = known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
+    let Some(name_bytes) = (unsafe { required_cstr_bytes(name) }) else {
+        return -1;
+    };
+    let name_str = String::from_utf8_lossy(name_bytes);
+
+    let mut out = String::new();
+    let mut spaced = false;
+
+    // Owner name is always root-dot terminated; glibc prints a bare "." for an empty name.
+    if name_str.is_empty() {
+        out.push('.');
+    } else {
+        out.push_str(&name_str);
+        if !name_str.ends_with('.') {
+            out.push('.');
+        }
+    }
+    ns_addtab(&mut out, 24, &mut spaced);
+
+    let mut ttl_buf = [0u8; 32];
+    let ttl_n = unsafe { ns_format_ttl(ttl, ttl_buf.as_mut_ptr() as *mut c_char, ttl_buf.len()) };
+    if ttl_n < 0 {
+        return -1;
+    }
+    out.push_str(&String::from_utf8_lossy(&ttl_buf[..ttl_n as usize]));
+    out.push(' ');
+
+    // `ns_class` and `ns_type` are C enums, hence `int` at this ABI
+    // boundary. DNS values themselves are 16-bit on the wire, which is the
+    // representation the formatter helpers consume.
+    let class = class as u16;
+    let ty = ty as u16;
+    write_class_into(class, &mut out);
+    out.push(' ');
+    write_type_into(ty, &mut out);
+    ns_addtab(&mut out, 40, &mut spaced);
+
+    if unsafe { format_rdata(msg, msglen, ty, rdata, rdlen, &mut out) }.is_err() {
+        return -1;
+    }
+
+    let bytes = out.as_bytes();
+    let needed = bytes.len() + 1;
+    if needed > buf_limit {
+        return -1;
+    }
+    // SAFETY: buf has buf_limit >= needed writable bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buf, bytes.len());
+        *buf.add(bytes.len()) = 0;
+    }
+    bytes.len() as c_int
+}
+
+/// Pad `out` to column `target` the way glibc's `ns_print.c` `addtab` does.
+///
+/// Tabs advance to the next 8-column stop until the target is reached, EXCEPT that once the
+/// current column is within one of the target there is no room for a tab and glibc emits two
+/// spaces instead. `spaced` is sticky: the moment one pad falls back to spaces, every later pad
+/// on the same line uses spaces too.
+///
+/// Derived from live `libresolv.so.2` (glibc 2.42), not from a single row — the sticky flag is
+/// invisible in any one sample. Rows that pin it:
+///
+/// ```text
+/// name len (incl. root dot)  1..7  -> "\t\t\t"    22 -> "\t"      23 -> "  "  (target-1 rule)
+///                            8..15 -> "\t\t"      16..22 -> "\t"
+/// ttl 2^31-1 ("3550w5d3h14m7s") with a SHORT name -> name pad stays "\t\t"
+///                                                   but the rdata pad becomes "  "  (sticky)
+/// ```
+fn ns_addtab(out: &mut String, target: usize, spaced: &mut bool) {
+    // The COLUMN, not the byte length: a tab is one byte but advances to the next 8-column
+    // stop, so byte length under-counts every pad after the first and over-tabs the next one.
+    let mut len = out.bytes().fold(
+        0usize,
+        |col, b| {
+            if b == b'\t' { (col + 8) & !7 } else { col + 1 }
+        },
+    );
+    if *spaced || len + 1 >= target {
+        out.push_str("  ");
+        *spaced = true;
+        return;
+    }
+    loop {
+        out.push('\t');
+        len = (len + 8) & !7;
+        if len >= target {
+            return;
+        }
+    }
+}
+
+/// libresolv `ns_sprintrr(handle, rr, name_ctx, origin, buf,
+/// buflen) -> int` — extract the fields from a parsed
+/// [`CNsMsg`] / [`CNsRr`] pair and forward to [`ns_sprintrrf`].
+///
+/// # Safety
+///
+/// `handle` and `rr` must be initialized (typically via
+/// [`ns_initparse`] + [`ns_parserr`]).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_sprintrr(
+    handle: *const CNsMsg,
+    rr: *const CNsRr,
+    name_ctx: *const c_char,
+    origin: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if handle.is_null() || rr.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied initialized handle/rr.
+    let msg = unsafe { (*handle)._msg };
+    let eom = unsafe { (*handle)._eom };
+    if msg.is_null() || eom.is_null() || (eom as usize) < (msg as usize) {
+        return -1;
+    }
+    let msglen = (eom as usize) - (msg as usize);
+    let rr_name = unsafe { &(*rr).name };
+    if !rr_name.contains(&0) {
+        return -1;
+    }
+    let name = unsafe { (*rr).name.as_ptr() };
+    let class = unsafe { (*rr).rr_class };
+    let ty = unsafe { (*rr)._type };
+    let ttl = unsafe { (*rr).ttl };
+    let rdata = unsafe { (*rr).rdata };
+    let rdlen = unsafe { (*rr).rdlength } as usize;
+    unsafe {
+        ns_sprintrrf(
+            msg,
+            msglen,
+            name,
+            c_int::from(class),
+            c_int::from(ty),
+            libc::c_ulong::from(ttl),
+            rdata,
+            rdlen,
+            name_ctx,
+            origin,
+            buf,
+            buflen,
+        )
+    }
+}
+
+// ===========================================================================
+// 37 libresolv last-mile helpers (bd-dcfj5)
+// ===========================================================================
+//
+// libresolv exports a long tail of GLIBC_PRIVATE byte-order helpers, DNS
+// debug-print formatters, HOSTALIASES lookup hooks, RFC 1876 LOC encoders,
+// DNS symbol-table lookups, resolver-state lifecycle helpers, and an
+// /etc/hosts iteration API. None of these are critical for normal name
+// resolution (the public ns_*, dn_*, getaddrinfo paths cover that), so we
+// ship safe defaults that match the "no extra resolver state, no debug
+// print, no LOC support, no hosts iteration" contract.
+
+// --- Byte-order primitives (network big-endian) ---
+
+/// `__ns_get16(*src) -> c_uint` — GLIBC_PRIVATE alias for `ns_get16`.
+///
+/// # Safety
+/// `src` must point to at least 2 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_get16(src: *const u8) -> libc::c_uint {
+    unsafe { ns_get16(src) }
+}
+
+/// `__ns_get32(*src) -> c_ulong` — GLIBC_PRIVATE alias for `ns_get32`.
+///
+/// # Safety
+/// `src` must point to at least 4 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_get32(src: *const u8) -> libc::c_ulong {
+    unsafe { ns_get32(src) }
+}
+
+/// `_getshort(*src) -> u16` — read 16 bits in network byte order.
+///
+/// # Safety
+/// `src` must point to at least 2 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _getshort(src: *const u8) -> u16 {
+    if src.is_null() || !tracked_region_fits(src.cast(), 2) {
+        return 0;
+    }
+    let s = unsafe { core::slice::from_raw_parts(src, 2) };
+    u16::from_be_bytes([s[0], s[1]])
+}
+
+/// `_getlong(*src) -> u32` — read 32 bits in network byte order.
+///
+/// # Safety
+/// `src` must point to at least 4 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _getlong(src: *const u8) -> u32 {
+    if src.is_null() || !tracked_region_fits(src.cast(), 4) {
+        return 0;
+    }
+    let s = unsafe { core::slice::from_raw_parts(src, 4) };
+    u32::from_be_bytes([s[0], s[1], s[2], s[3]])
+}
+
+/// `__putshort(value, *dst)` — write 16 bits in network byte order.
+///
+/// # Safety
+/// `dst` must point to at least 2 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __putshort(value: u16, dst: *mut u8) {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 2) {
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 2) };
+}
+
+/// `__putlong(value, *dst)` — write 32 bits in network byte order.
+///
+/// # Safety
+/// `dst` must point to at least 4 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __putlong(value: u32, dst: *mut u8) {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 4) {
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 4) };
+}
+
+// --- DNS debug printers ---
+// Real callers use these for `res_search` debug logging. We expose them as
+// stubs that return 0 / write nothing — programs that request DNS debug
+// output get an empty stream rather than a crash.
+
+/// `__fp_query(*msg, *file) -> ()` — debug-print a DNS query message.
+/// Stub no-op (we don't render packets to FILE* streams).
+///
+/// # Safety
+/// Both pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fp_query(_msg: *const u8, _file: *mut c_void) {}
+
+/// `__fp_nquery(*msg, len, *file) -> ()` — sized variant of `__fp_query`.
+///
+/// # Safety
+/// Both pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fp_nquery(_msg: *const u8, _len: c_int, _file: *mut c_void) {}
+
+/// `__fp_resstat(*statp, *file) -> ()` — print resolver state. Stub
+/// no-op.
+///
+/// # Safety
+/// Both pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void) {}
+
+// All `__p_*` helpers below take values and write a textual rep to a
+// FILE* or return a `*const c_char`. The look-up variants below replicate
+// glibc's static-table → fallback-decimal-buffer behavior; the FILE*
+// variants parse enough DNS wire data to return the next cursor while
+// intentionally not rendering to FILE* streams.
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_p_fallback_buf() -> [u8; 16] {
+    [0u8; 16]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static P_FALLBACK_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 16]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_p_fallback_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    /// Per-thread fallback buffer for `__p_class` / `__p_type` decimal
+    /// fallbacks (matches glibc which uses a static buffer).
+    static P_FALLBACK_BUF: core::cell::UnsafeCell<[u8; 16]> =
+        const { core::cell::UnsafeCell::new([0u8; 16]) };
+}
+
+fn with_p_fallback_buf<R>(f: impl FnOnce(&mut [u8; 16]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        P_FALLBACK_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        P_FALLBACK_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
+unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
+    with_p_fallback_buf(|buf| {
+        let s = format!("{value}");
+        let bytes = s.as_bytes();
+        let n = bytes.len().min(buf.len() - 1);
+        buf[..n].copy_from_slice(&bytes[..n]);
+        buf[n] = 0;
+        buf.as_ptr() as *const c_char
+    })
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_p_option_buf() -> [u8; 24] {
+    [0u8; 24]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static P_OPTION_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_p_option_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static P_OPTION_BUF: core::cell::UnsafeCell<[u8; 24]> =
+        const { core::cell::UnsafeCell::new([0u8; 24]) };
+}
+
+fn with_p_option_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        P_OPTION_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        P_OPTION_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_class(class: c_int) -> *const c_char {
+    // RFC 1035 / glibc class names. Uses CSNET (class 2) is unknown.
+    match class {
+        1 => c"IN".as_ptr(),
+        3 => c"CHAOS".as_ptr(),
+        4 => c"HS".as_ptr(),
+        255 => c"ANY".as_ptr(),
+        _ => unsafe { write_decimal_fallback(class) },
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_type(ty: c_int) -> *const c_char {
+    // RFC 1035 + RFC 3596 (AAAA) + RFC 2782 (SRV) + RFC 6891 (OPT) + …
+    // Mapping mirrors glibc's __p_type_syms.
+    match ty {
+        1 => c"A".as_ptr(),
+        2 => c"NS".as_ptr(),
+        3 => c"MD".as_ptr(),
+        4 => c"MF".as_ptr(),
+        5 => c"CNAME".as_ptr(),
+        6 => c"SOA".as_ptr(),
+        7 => c"MB".as_ptr(),
+        8 => c"MG".as_ptr(),
+        9 => c"MR".as_ptr(),
+        10 => c"NULL".as_ptr(),
+        11 => c"WKS".as_ptr(),
+        12 => c"PTR".as_ptr(),
+        13 => c"HINFO".as_ptr(),
+        14 => c"MINFO".as_ptr(),
+        15 => c"MX".as_ptr(),
+        16 => c"TXT".as_ptr(),
+        17 => c"RP".as_ptr(),
+        18 => c"AFSDB".as_ptr(),
+        19 => c"X25".as_ptr(),
+        20 => c"ISDN".as_ptr(),
+        21 => c"RT".as_ptr(),
+        22 => c"NSAP".as_ptr(),
+        23 => c"NSAP_PTR".as_ptr(),
+        24 => c"SIG".as_ptr(),
+        25 => c"KEY".as_ptr(),
+        28 => c"AAAA".as_ptr(),
+        29 => c"LOC".as_ptr(),
+        33 => c"SRV".as_ptr(),
+        35 => c"NAPTR".as_ptr(),
+        36 => c"KX".as_ptr(),
+        37 => c"CERT".as_ptr(),
+        39 => c"DNAME".as_ptr(),
+        41 => c"OPT".as_ptr(),
+        43 => c"DS".as_ptr(),
+        46 => c"RRSIG".as_ptr(),
+        47 => c"NSEC".as_ptr(),
+        48 => c"DNSKEY".as_ptr(),
+        50 => c"NSEC3".as_ptr(),
+        51 => c"NSEC3PARAM".as_ptr(),
+        52 => c"TLSA".as_ptr(),
+        65 => c"HTTPS".as_ptr(),
+        249 => c"TKEY".as_ptr(),
+        250 => c"TSIG".as_ptr(),
+        251 => c"IXFR".as_ptr(),
+        252 => c"AXFR".as_ptr(),
+        253 => c"MAILB".as_ptr(),
+        254 => c"MAILA".as_ptr(),
+        255 => c"ANY".as_ptr(),
+        257 => c"CAA".as_ptr(),
+        _ => unsafe { write_decimal_fallback(ty) },
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_option(option: c_int) -> *const c_char {
+    // RES_* option flags (from <resolv.h>). glibc returns the symbol
+    // name for known single-bit flags or "?0xVAL?" for unknown.
+    match option {
+        0x0001 => c"init".as_ptr(),
+        0x0002 => c"debug".as_ptr(),
+        0x0008 => c"use-vc".as_ptr(),
+        0x0020 => c"igntc".as_ptr(),
+        0x0040 => c"recurs".as_ptr(),
+        0x0080 => c"defnam".as_ptr(),
+        0x0100 => c"styopn".as_ptr(),
+        0x0200 => c"dnsrch".as_ptr(),
+        0x1000 => c"noaliases".as_ptr(),
+        0x4000 => c"rotate".as_ptr(),
+        _ => with_p_option_buf(|buf| {
+            let s = format!("?0x{:x}?", option as u32);
+            let bytes = s.as_bytes();
+            let n = bytes.len().min(buf.len() - 1);
+            buf[..n].copy_from_slice(&bytes[..n]);
+            buf[n] = 0;
+            buf.as_ptr() as *const c_char
+        }),
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_rcode(rcode: c_int) -> *const c_char {
+    // RFC 1035 + RFC 2136 + RFC 2845 + RFC 6195 (DNS RCODE registry)
+    match rcode {
+        0 => c"NOERROR".as_ptr(),
+        1 => c"FORMERR".as_ptr(),
+        2 => c"SERVFAIL".as_ptr(),
+        3 => c"NXDOMAIN".as_ptr(),
+        4 => c"NOTIMP".as_ptr(),
+        5 => c"REFUSED".as_ptr(),
+        6 => c"YXDOMAIN".as_ptr(),
+        7 => c"YXRRSET".as_ptr(),
+        8 => c"NXRRSET".as_ptr(),
+        9 => c"NOTAUTH".as_ptr(),
+        10 => c"NOTZONE".as_ptr(),
+        16 => c"BADSIG".as_ptr(),
+        17 => c"BADKEY".as_ptr(),
+        18 => c"BADTIME".as_ptr(),
+        _ => unsafe { write_decimal_fallback(rcode) },
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_secstodate_buf() -> [u8; 24] {
+    [0u8; 24]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SECSTODATE_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_secstodate_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static SECSTODATE_BUF: core::cell::UnsafeCell<[u8; 24]> =
+        const { core::cell::UnsafeCell::new([0u8; 24]) };
+}
+
+fn with_secstodate_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SECSTODATE_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SECSTODATE_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_p_time_buf() -> [u8; 32] {
+    [0u8; 32]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static P_TIME_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 32]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_p_time_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static P_TIME_BUF: core::cell::UnsafeCell<[u8; 32]> =
+        const { core::cell::UnsafeCell::new([0u8; 32]) };
+}
+
+fn with_p_time_buf<R>(f: impl FnOnce(&mut [u8; 32]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        P_TIME_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        P_TIME_BUF.with(|cell| {
+            let buf_ptr = cell.get();
+            // SAFETY: thread-local; no aliasing across threads.
+            f(unsafe { &mut *buf_ptr })
+        })
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_secstodate(secs: u32) -> *const c_char {
+    // glibc renders the SOA SERIAL / RRSIG signature time as
+    // YYYYMMDDHHMMSS in UTC. fl uses the same closed-form date
+    // conversion that powers gmtime_r (no syscalls).
+    use frankenlibc_core::time as time_core;
+    with_secstodate_buf(|buf| {
+        let bd = time_core::epoch_to_broken_down(secs as i64);
+        let year = (bd.tm_year as i64 + 1900).clamp(0, 9999) as u32;
+        let s = format!(
+            "{:04}{:02}{:02}{:02}{:02}{:02}",
+            year,
+            (bd.tm_mon + 1) as u32,
+            bd.tm_mday as u32,
+            bd.tm_hour as u32,
+            bd.tm_min as u32,
+            bd.tm_sec as u32,
+        );
+        let bytes = s.as_bytes();
+        let n = bytes.len().min(buf.len() - 1);
+        buf[..n].copy_from_slice(&bytes[..n]);
+        buf[n] = 0;
+        buf.as_ptr() as *const c_char
+    })
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_time(value: u32) -> *const c_char {
+    // __p_time renders a TTL using the same W/D/H/M/S decomposition as
+    // ns_format_ttl. We share the same thread-local buffer to avoid
+    // duplicating the formatter; the output format ("1D", "2w6h56m7s")
+    // is identical.
+    with_p_time_buf(|buf| {
+        let n = unsafe {
+            ns_format_ttl(
+                value as libc::c_ulong,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
+        if n < 0 {
+            // Fallback shouldn't happen for u32 inputs in a 32-byte buffer.
+            buf[0] = b'0';
+            buf[1] = b'S';
+            buf[2] = 0;
+        }
+        buf.as_ptr() as *const c_char
+    })
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_query(_msg: *const u8) {}
+
+unsafe fn printable_dns_name_cursor(
+    cp: *const u8,
+    msg: *const u8,
+    msglen: c_int,
+    name: *mut c_char,
+    namelen: c_int,
+) -> *const u8 {
+    if cp.is_null() || msg.is_null() || name.is_null() || msglen <= 0 || namelen <= 0 {
+        return core::ptr::null();
+    }
+    let msglen = msglen as usize;
+    let namelen = namelen as usize;
+    if !tracked_region_fits(msg.cast(), msglen) || !tracked_region_fits(name.cast(), namelen) {
+        return core::ptr::null();
+    }
+    let Some(cp_offset) = (cp as usize).checked_sub(msg as usize) else {
+        return core::ptr::null();
+    };
+    if cp_offset >= msglen {
+        return core::ptr::null();
+    }
+    let eom = unsafe { msg.add(msglen) };
+    let consumed = unsafe { crate::unistd_abi::dn_expand(msg, eom, cp, name, namelen as c_int) };
+    if consumed < 0 {
+        return core::ptr::null();
+    }
+    let consumed = consumed as usize;
+    if cp_offset
+        .checked_add(consumed)
+        .is_none_or(|end| end > msglen)
+    {
+        return core::ptr::null();
+    }
+    unsafe { cp.add(consumed) }
+}
+
+unsafe fn printable_dns_name_cursor_scratch(
+    cp: *const u8,
+    msg: *const u8,
+    msglen: c_int,
+) -> *const u8 {
+    let mut name = [0 as c_char; NS_MAXDNAME];
+    unsafe { printable_dns_name_cursor(cp, msg, msglen, name.as_mut_ptr(), name.len() as c_int) }
+}
+
+fn tracked_dns_message_len(msg: *const u8) -> Option<c_int> {
+    let len = known_remaining(msg as usize)?;
+    c_int::try_from(len).ok()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_cdname(
+    cp: *const u8,
+    msg: *const u8,
+    _file: *mut c_void,
+) -> *const u8 {
+    let Some(msglen) = tracked_dns_message_len(msg) else {
+        return core::ptr::null();
+    };
+    unsafe { printable_dns_name_cursor_scratch(cp, msg, msglen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_cdnname(
+    cp: *const u8,
+    msg: *const u8,
+    len: c_int,
+    _file: *mut c_void,
+) -> *const u8 {
+    unsafe { printable_dns_name_cursor_scratch(cp, msg, len) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_fqname(
+    cp: *const u8,
+    msg: *const u8,
+    _file: *mut c_void,
+) -> *const u8 {
+    let Some(msglen) = tracked_dns_message_len(msg) else {
+        return core::ptr::null();
+    };
+    unsafe { printable_dns_name_cursor_scratch(cp, msg, msglen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_fqnname(
+    cp: *const u8,
+    msg: *const u8,
+    msglen: c_int,
+    name: *mut c_char,
+    namelen: c_int,
+) -> *const u8 {
+    unsafe { printable_dns_name_cursor(cp, msg, msglen, name, namelen) }
+}
+
+// --- HOSTALIASES ---
+
+const HOSTALIAS_BUF_LEN: usize = 1025;
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_hostalias_buf() -> [u8; HOSTALIAS_BUF_LEN] {
+    [0u8; HOSTALIAS_BUF_LEN]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static HOSTALIAS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; HOSTALIAS_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_hostalias_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static HOSTALIAS_BUF: Box<RefCell<[u8; HOSTALIAS_BUF_LEN]>> =
+        Box::new(RefCell::new([0u8; HOSTALIAS_BUF_LEN]));
+}
+
+fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTALIAS_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTALIAS_BUF.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
+/// Snapshot the secure environment and alias file only when this resolver
+/// permits aliases. File/parser misses leave normal DNS search policy intact.
+pub(crate) fn hostalias_lookup(name: &[u8], options: c_ulong) -> Option<Vec<u8>> {
+    if options & crate::resolv_state::RES_NOALIASES != 0 {
+        return None;
+    }
+    // SAFETY: errno is owned by the calling thread.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let path = crate::stdlib_abi::with_environ_locked(|_| {
+        // SAFETY: the name is a static C string. secure_getenv suppresses the
+        // variable for AT_SECURE or an unknown security state. The reentrant
+        // environment lock covers both lookup and the owned path copy.
+        let path = unsafe { crate::stdlib_abi::secure_getenv(c"HOSTALIASES".as_ptr()) };
+        if path.is_null() {
+            return None;
+        }
+        let path = unsafe { CStr::from_ptr(path) };
+        Some(OsStr::from_bytes(path.to_bytes()).to_owned())
+    });
+    let Some(path) = path else {
+        unsafe { set_abi_errno(saved_errno) };
+        return None;
+    };
+    // No environment pointers or locks survive filesystem access. Publish
+    // failures to the native errno cell as well as interpose-thread errno.
+    let contents = match std::fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            unsafe { set_abi_errno(error.raw_os_error().unwrap_or(libc::EIO)) };
+            return None;
+        }
+    };
+    let target = frankenlibc_core::resolv::lookup_hostalias(&contents, name).map(ToOwned::to_owned);
+    unsafe { set_abi_errno(saved_errno) };
+    target
+}
+
+fn global_hostalias(name: &[u8]) -> Option<Vec<u8>> {
+    // SAFETY: __res_state returns aligned, live storage for the calling
+    // thread. Only its option snapshot is borrowed, before any file access.
+    unsafe { crate::resolv_state::hostalias(crate::glibc_internal_abi::__res_state(), name) }
+}
+
+unsafe fn hostalias_name_bytes<'a>(name: *const c_char) -> Option<&'a [u8]> {
+    let Ok(Some(name_cstr)) = (unsafe { opt_cstr(name) }) else {
+        return None;
+    };
+    Some(name_cstr.to_bytes())
+}
+
+/// `__hostalias(*name) -> *const c_char` — lookup HOSTALIASES alias.
+/// Reads `$HOSTALIASES` (a path to a file with `alias dnsname` lines),
+/// case-insensitively matches `name` against the first column, and
+/// returns a pointer to a thread-local static buffer holding the DNS
+/// name. Returns NULL if aliases are disabled in the thread's resolver state,
+/// secure execution suppresses `$HOSTALIASES`, the file is missing, or no
+/// alias matches.
+///
+/// # Safety
+/// `name` may be NULL; we return NULL in that case. Otherwise it must
+/// point to a NUL-terminated C string. The returned pointer is valid
+/// until the next call from the same thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
+    let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
+        return core::ptr::null();
+    };
+    let Some(dns) = global_hostalias(name_bytes) else {
+        return core::ptr::null();
+    };
+    // Cap to buffer size minus the NUL terminator.
+    let copy_len = dns.len().min(HOSTALIAS_BUF_LEN - 1);
+    with_hostalias_buf(|buf| {
+        buf[..copy_len].copy_from_slice(&dns[..copy_len]);
+        buf[copy_len] = 0;
+        // Return pointer to the thread-local buffer. Casting through
+        // a raw pointer here is the standard pattern for handing back
+        // a static-lifetime view of TLS storage.
+        buf.as_ptr() as *const c_char
+    })
+}
+
+/// `__res_hostalias(*statp, *name, *buf, buflen) -> *const c_char` —
+/// reentrant variant of `__hostalias`. Writes the resolved DNS name
+/// into the caller-supplied `buf` (NUL-terminated, capped at `buflen`)
+/// and returns `buf` on success. Returns NULL on miss, missing
+/// `$HOSTALIASES`, invalid arguments, or `RES_NOALIASES` in `statp`.
+///
+/// # Safety
+/// `statp` must point to a live resolver state. `name` must be NULL or
+/// NUL-terminated. `buf`, when non-NULL, must point to at least `buflen`
+/// writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_hostalias(
+    statp: *mut c_void,
+    name: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *const c_char {
+    if buf.is_null() || buflen == 0 {
+        return core::ptr::null();
+    }
+    let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
+        return core::ptr::null();
+    };
+    // SAFETY: the caller supplies a live state; the delegate checks null,
+    // alignment and known extent before reading its options.
+    let Some(dns) = (unsafe { crate::resolv_state::hostalias(statp, name_bytes) }) else {
+        return core::ptr::null();
+    };
+    let effective_buflen =
+        known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
+    if effective_buflen == 0 {
+        return core::ptr::null();
+    }
+    let copy_len = dns.len().min(effective_buflen - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(dns.as_ptr(), buf as *mut u8, copy_len);
+        *(buf.add(copy_len)) = 0;
+    }
+    buf
+}
+
+// --- RFC 1876 LOC records ---
+
+const LOC_NTOA_BUF_LEN: usize = 96;
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_loc_ntoa_buf() -> [u8; LOC_NTOA_BUF_LEN] {
+    [0u8; LOC_NTOA_BUF_LEN]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static LOC_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; LOC_NTOA_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_loc_ntoa_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static LOC_NTOA_BUF: Box<RefCell<[u8; LOC_NTOA_BUF_LEN]>> =
+        Box::new(RefCell::new([0u8; LOC_NTOA_BUF_LEN]));
+}
+
+fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        LOC_NTOA_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        LOC_NTOA_BUF.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
+const POWERS_OF_TEN: [u64; 10] = [
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
+];
+
+/// Format a precision byte (mantissa-exponent encoded centimeters) as
+/// "<meters>.<centi-meters-2dp>" — matches glibc's `precsize_ntoa`.
+fn loc_precsize_format(prec: u8) -> String {
+    let mantissa = ((prec >> 4) & 0x0f) as usize % 10;
+    let exponent = (prec & 0x0f) as usize % 10;
+    let val = (mantissa as u64) * POWERS_OF_TEN[exponent];
+    format!("{}.{:02}", val / 100, val % 100)
+}
+
+/// Parse a "<meters>[.<frac>]" string into a precision byte. Returns
+/// the byte plus the number of input bytes consumed (whitespace not
+/// included). On parse failure returns None.
+fn loc_precsize_parse(s: &[u8]) -> Option<(u8, usize)> {
+    // Match optional digits, optional '.', optional digits, optional 'm'.
+    let mut i = 0;
+    let start = i;
+    while i < s.len() && s[i].is_ascii_digit() {
+        i += 1;
+    }
+    let int_end = i;
+    let mut frac_end = i;
+    if i < s.len() && s[i] == b'.' {
+        i += 1;
+        while i < s.len() && s[i].is_ascii_digit() {
+            i += 1;
+        }
+        frac_end = i;
+    }
+    if int_end == start && frac_end == start {
+        return None;
+    }
+    if i < s.len() && s[i] == b'm' {
+        i += 1;
+    }
+    let int_str = std::str::from_utf8(&s[start..int_end]).ok()?;
+    let int_meters: u64 = if int_str.is_empty() {
+        0
+    } else {
+        int_str.parse().ok()?
+    };
+    let frac_part: u64 = if frac_end > int_end + 1 {
+        // We have a '.' + digits.
+        let frac_str = std::str::from_utf8(&s[int_end + 1..frac_end]).ok()?;
+        // Pad/truncate to 2 digits so we get centimeters.
+        let mut buf = String::from(frac_str);
+        if buf.len() < 2 {
+            while buf.len() < 2 {
+                buf.push('0');
+            }
+        } else {
+            buf.truncate(2);
+        }
+        buf.parse().ok()?
+    } else {
+        0
+    };
+    let cm = int_meters.checked_mul(100)?.checked_add(frac_part)?;
+    // Choose the smallest exponent that keeps mantissa <= 9.
+    let mut mantissa = cm;
+    let mut exponent = 0u8;
+    while mantissa > 9 && exponent < 9 {
+        mantissa /= 10;
+        exponent += 1;
+    }
+    if mantissa > 9 {
+        // Out of range.
+        return None;
+    }
+    Some((((mantissa as u8) << 4) | exponent, i))
+}
+
+/// `__loc_aton(*ascii, *binary) -> int` — parse LOC ASCII rep per
+/// RFC 1876 into 16-byte binary. Returns 1 on success, 0 on failure.
+///
+/// Format: `<lat-d> <lat-m> <lat-s>[.<frac>] <N|S> <lon-d> <lon-m>
+/// <lon-s>[.<frac>] <E|W> <alt>[m] [<size>[m] [<hp>[m] [<vp>[m]]]]`
+/// where minutes/seconds default to 0 if omitted (we still require the
+/// hemisphere letter to disambiguate end-of-coordinate).
+///
+/// # Safety
+/// Pointers may be NULL; we return 0 in that case.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __loc_aton(ascii: *const c_char, binary: *mut u8) -> c_int {
+    if ascii.is_null() || binary.is_null() {
+        return 0;
+    }
+    if !tracked_region_fits(binary.cast(), 16) {
+        return 0;
+    }
+    let Some(s) = (unsafe { required_cstr_bytes(ascii) }) else {
+        return 0;
+    };
+    let Some(out) = loc_aton_inner(s) else {
+        return 0;
+    };
+    let dst = unsafe { std::slice::from_raw_parts_mut(binary, 16) };
+    dst.copy_from_slice(&out);
+    // Match glibc: return the size of the LOC RR (16 bytes) on success.
+    16
+}
+
+fn loc_aton_inner(s: &[u8]) -> Option<[u8; 16]> {
+    if s.is_empty() || s.first().is_some_and(u8::is_ascii_whitespace) {
+        return None;
+    }
+
+    let mut tokens = LocTokens::new(s);
+
+    // Latitude: deg [min [sec[.frac]]] (N|S)
+    let lat_deg: u32 = tokens.next_u32()?;
+    if lat_deg > 90 {
+        return None;
+    }
+    let mut lat_min: u32 = 0;
+    let mut lat_sec_int: u32 = 0;
+    let mut lat_sec_frac: u32 = 0;
+    let mut tok = tokens.next_token()?;
+    if !is_hemisphere(tok) {
+        lat_min = parse_u32(tok)?;
+        if lat_min >= 60 {
+            return None;
+        }
+        tok = tokens.next_token()?;
+        if !is_hemisphere(tok) {
+            let (sec_int, sec_frac) = parse_seconds(tok)?;
+            lat_sec_int = sec_int;
+            lat_sec_frac = sec_frac;
+            if lat_sec_int >= 60 {
+                return None;
+            }
+            tok = tokens.next_token()?;
+        }
+    }
+    let north_south = match tok {
+        b"N" | b"n" => 1i64,
+        b"S" | b"s" => -1i64,
+        _ => return None,
+    };
+
+    // Longitude: deg [min [sec[.frac]]] (E|W)
+    let lon_deg: u32 = tokens.next_u32()?;
+    if lon_deg > 180 {
+        return None;
+    }
+    let mut lon_min: u32 = 0;
+    let mut lon_sec_int: u32 = 0;
+    let mut lon_sec_frac: u32 = 0;
+    let mut tok = tokens.next_token()?;
+    if !is_hemisphere(tok) {
+        lon_min = parse_u32(tok)?;
+        if lon_min >= 60 {
+            return None;
+        }
+        tok = tokens.next_token()?;
+        if !is_hemisphere(tok) {
+            let (sec_int, sec_frac) = parse_seconds(tok)?;
+            lon_sec_int = sec_int;
+            lon_sec_frac = sec_frac;
+            if lon_sec_int >= 60 {
+                return None;
+            }
+            tok = tokens.next_token()?;
+        }
+    }
+    let east_west = match tok {
+        b"E" | b"e" => 1i64,
+        b"W" | b"w" => -1i64,
+        _ => return None,
+    };
+
+    // Altitude (with optional 'm' suffix, optional fractional, optional sign)
+    let alt_tok = tokens.next_token()?;
+    let alt_meters_centi = parse_signed_meters(alt_tok)?;
+
+    // Defaults: size=1m, horiz_pre=10km, vert_pre=10m
+    let mut size_byte: u8 = 0x12;
+    let mut hp_byte: u8 = 0x16;
+    let mut vp_byte: u8 = 0x13;
+    if let Some(t) = tokens.peek_token() {
+        size_byte = loc_precsize_parse(t)?.0;
+        tokens.consume_token();
+    }
+    if let Some(t) = tokens.peek_token() {
+        hp_byte = loc_precsize_parse(t)?.0;
+        tokens.consume_token();
+    }
+    if let Some(t) = tokens.peek_token() {
+        vp_byte = loc_precsize_parse(t)?.0;
+        tokens.consume_token();
+    }
+    if tokens.peek_token().is_some() {
+        return None; // trailing garbage
+    }
+
+    // Build latitude/longitude in milli-arcseconds (signed).
+    let lat_ms: i64 = north_south
+        * (lat_deg as i64 * 3_600_000
+            + lat_min as i64 * 60_000
+            + lat_sec_int as i64 * 1_000
+            + lat_sec_frac as i64);
+    let lon_ms: i64 = east_west
+        * (lon_deg as i64 * 3_600_000
+            + lon_min as i64 * 60_000
+            + lon_sec_int as i64 * 1_000
+            + lon_sec_frac as i64);
+
+    // Latitude/longitude reference is 2^31 (equator, prime meridian).
+    let ref_pos: i64 = 1i64 << 31;
+    let lat_word = (ref_pos + lat_ms) as u32;
+    let lon_word = (ref_pos + lon_ms) as u32;
+
+    // Altitude reference is -100,000m, stored in cm.
+    let alt_word = (alt_meters_centi + 10_000_000_i64) as u32;
+
+    let mut out = [0u8; 16];
+    out[0] = 0; // version
+    out[1] = size_byte;
+    out[2] = hp_byte;
+    out[3] = vp_byte;
+    out[4..8].copy_from_slice(&lat_word.to_be_bytes());
+    out[8..12].copy_from_slice(&lon_word.to_be_bytes());
+    out[12..16].copy_from_slice(&alt_word.to_be_bytes());
+    Some(out)
+}
+
+fn is_hemisphere(tok: &[u8]) -> bool {
+    matches!(tok, b"N" | b"n" | b"S" | b"s" | b"E" | b"e" | b"W" | b"w")
+}
+
+fn parse_u32(s: &[u8]) -> Option<u32> {
+    std::str::from_utf8(s).ok()?.parse().ok()
+}
+
+fn parse_seconds(s: &[u8]) -> Option<(u32, u32)> {
+    // Accept "ss" or "ss.fff" (frac ms, up to 3 digits).
+    let dot = s.iter().position(|&b| b == b'.');
+    match dot {
+        None => Some((parse_u32(s)?, 0)),
+        Some(idx) => {
+            let int_str = std::str::from_utf8(&s[..idx]).ok()?;
+            let int_val: u32 = if int_str.is_empty() {
+                0
+            } else {
+                int_str.parse().ok()?
+            };
+            let frac_str = std::str::from_utf8(&s[idx + 1..]).ok()?;
+            // Pad/truncate to 3 digits to express milliseconds.
+            let mut buf = String::from(frac_str);
+            if buf.len() < 3 {
+                while buf.len() < 3 {
+                    buf.push('0');
+                }
+            } else {
+                buf.truncate(3);
+            }
+            let frac_val: u32 = if buf.is_empty() { 0 } else { buf.parse().ok()? };
+            Some((int_val, frac_val))
+        }
+    }
+}
+
+fn parse_signed_meters(s: &[u8]) -> Option<i64> {
+    let mut bytes = s;
+    let neg = !bytes.is_empty() && bytes[0] == b'-';
+    if neg || (!bytes.is_empty() && bytes[0] == b'+') {
+        bytes = &bytes[1..];
+    }
+    // Strip optional trailing 'm'.
+    if bytes.last().copied() == Some(b'm') {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    let dot = bytes.iter().position(|&b| b == b'.');
+    let (int_part, frac_part_cm): (i64, i64) = match dot {
+        None => {
+            let v: i64 = parse_u32(bytes)? as i64;
+            (v, 0)
+        }
+        Some(idx) => {
+            let int_str = std::str::from_utf8(&bytes[..idx]).ok()?;
+            let int_val: i64 = if int_str.is_empty() {
+                0
+            } else {
+                int_str.parse().ok()?
+            };
+            let frac_str = std::str::from_utf8(&bytes[idx + 1..]).ok()?;
+            let mut buf = String::from(frac_str);
+            if buf.len() < 2 {
+                while buf.len() < 2 {
+                    buf.push('0');
+                }
+            } else {
+                buf.truncate(2);
+            }
+            let frac_val: i64 = buf.parse().ok()?;
+            (int_val, frac_val)
+        }
+    };
+    let cm = int_part.checked_mul(100)?.checked_add(frac_part_cm)?;
+    Some(if neg { -cm } else { cm })
+}
+
+struct LocTokens<'a> {
+    src: &'a [u8],
+    pos: usize,
+}
+impl<'a> LocTokens<'a> {
+    fn new(src: &'a [u8]) -> Self {
+        Self { src, pos: 0 }
+    }
+    fn skip_ws(&mut self) {
+        while self.pos < self.src.len() && self.src[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn peek_token(&mut self) -> Option<&'a [u8]> {
+        self.skip_ws();
+        let start = self.pos;
+        let mut end = start;
+        while end < self.src.len() && !self.src[end].is_ascii_whitespace() {
+            end += 1;
+        }
+        if start == end {
+            None
+        } else {
+            Some(&self.src[start..end])
+        }
+    }
+    fn consume_token(&mut self) {
+        self.skip_ws();
+        while self.pos < self.src.len() && !self.src[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn next_token(&mut self) -> Option<&'a [u8]> {
+        let t = self.peek_token()?;
+        self.consume_token();
+        Some(t)
+    }
+    fn next_u32(&mut self) -> Option<u32> {
+        let t = self.next_token()?;
+        parse_u32(t)
+    }
+}
+
+/// `__loc_ntoa(*binary, *ascii) -> *const c_char` — render LOC binary
+/// as ASCII per RFC 1876. Writes into `ascii` if non-NULL, else into
+/// a thread-local static buffer. Returns the buffer pointer or an
+/// error string for unknown versions.
+///
+/// # Safety
+/// `binary` must point to at least 16 readable bytes when non-NULL.
+/// `ascii`, if non-NULL, must have room for ~90 bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *const c_char {
+    if binary.is_null() {
+        return core::ptr::null();
+    }
+    if !tracked_region_fits(binary.cast(), 16) {
+        return core::ptr::null();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(binary, 16) };
+    let formatted = loc_ntoa_format(bytes);
+    let formatted_bytes = formatted.as_bytes();
+
+    if ascii.is_null() {
+        // Write into thread-local static buffer.
+        return with_loc_ntoa_buf(|buf| {
+            let n = formatted_bytes.len().min(LOC_NTOA_BUF_LEN - 1);
+            buf[..n].copy_from_slice(&formatted_bytes[..n]);
+            buf[n] = 0;
+            buf.as_ptr() as *const c_char
+        });
+    }
+    let Some(needed) = formatted_bytes.len().checked_add(1) else {
+        return core::ptr::null();
+    };
+    if !tracked_region_fits(ascii.cast(), needed) {
+        return core::ptr::null();
+    }
+
+    // Write into caller-provided buffer.
+    unsafe {
+        let dst = ascii as *mut u8;
+        std::ptr::copy_nonoverlapping(formatted_bytes.as_ptr(), dst, formatted_bytes.len());
+        *dst.add(formatted_bytes.len()) = 0;
+    }
+    ascii
+}
+
+fn loc_ntoa_format(bytes: &[u8]) -> String {
+    let version = bytes[0];
+    if version != 0 {
+        return "; error: unknown LOC RR version".to_string();
+    }
+    let size_byte = bytes[1];
+    let hp_byte = bytes[2];
+    let vp_byte = bytes[3];
+    let lat_word = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let lon_word = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+    let alt_word = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+
+    let ref_pos: i64 = 1i64 << 31;
+    let mut lat_val: i64 = lat_word as i64 - ref_pos;
+    let north_south = if lat_val < 0 {
+        lat_val = -lat_val;
+        'S'
+    } else {
+        'N'
+    };
+    let lat_secfrac = (lat_val % 1000) as i32;
+    let lat_v = lat_val / 1000;
+    let lat_sec = (lat_v % 60) as i32;
+    let lat_v = lat_v / 60;
+    let lat_min = (lat_v % 60) as i32;
+    let lat_deg = (lat_v / 60) as i32;
+
+    let mut lon_val: i64 = lon_word as i64 - ref_pos;
+    let east_west = if lon_val < 0 {
+        lon_val = -lon_val;
+        'W'
+    } else {
+        'E'
+    };
+    let lon_secfrac = (lon_val % 1000) as i32;
+    let lon_v = lon_val / 1000;
+    let lon_sec = (lon_v % 60) as i32;
+    let lon_v = lon_v / 60;
+    let lon_min = (lon_v % 60) as i32;
+    let lon_deg = (lon_v / 60) as i32;
+
+    let reference_alt: i64 = 100_000 * 100;
+    let alt_signed = alt_word as i64 - reference_alt;
+    let (alt_meters, alt_centi) = if alt_signed < 0 {
+        // glibc: altmeters = (altval / 100) * altsign; altfrac = altval % 100
+        // where altval = referencealt - templ (always positive).
+        let altval = -alt_signed;
+        (-(altval / 100), altval % 100)
+    } else {
+        let altval = alt_signed;
+        (altval / 100, altval % 100)
+    };
+
+    let size_str = loc_precsize_format(size_byte);
+    let hp_str = loc_precsize_format(hp_byte);
+    let vp_str = loc_precsize_format(vp_byte);
+
+    format!(
+        "{} {:02} {:02}.{:03} {} {} {:02} {:02}.{:03} {} {}.{:02}m {}m {}m {}m",
+        lat_deg,
+        lat_min,
+        lat_sec,
+        lat_secfrac,
+        north_south,
+        lon_deg,
+        lon_min,
+        lon_sec,
+        lon_secfrac,
+        east_west,
+        alt_meters,
+        alt_centi,
+        size_str,
+        hp_str,
+        vp_str,
+    )
+}
+
+// --- DNS symbol tables ---
+
+/// glibc's `struct res_sym` from `<arpa/nameser.h>`.
+#[repr(C)]
+struct ResSym {
+    number: c_int,
+    name: *const c_char,
+    humanname: *const c_char,
+}
+
+const SYM_UNKNOWN_BUF_LEN: usize = 24;
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_sym_unknown_buf() -> [u8; SYM_UNKNOWN_BUF_LEN] {
+    [0u8; SYM_UNKNOWN_BUF_LEN]
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SYM_NTOP_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
+#[cfg(feature = "owned-tls-cache")]
+static SYM_NTOS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static SYM_NTOP_BUF: RefCell<[u8; SYM_UNKNOWN_BUF_LEN]> =
+        const { RefCell::new([0u8; SYM_UNKNOWN_BUF_LEN]) };
+    static SYM_NTOS_BUF: RefCell<[u8; SYM_UNKNOWN_BUF_LEN]> =
+        const { RefCell::new([0u8; SYM_UNKNOWN_BUF_LEN]) };
+}
+
+fn write_decimal_to_sym_buf(buf: &mut [u8; SYM_UNKNOWN_BUF_LEN], value: c_int) -> *const c_char {
+    let s = format!("{value}");
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(SYM_UNKNOWN_BUF_LEN - 1);
+    buf[..n].copy_from_slice(&bytes[..n]);
+    buf[n] = 0;
+    buf.as_ptr() as *const c_char
+}
+
+fn write_decimal_to_sym_ntop_buf(value: c_int) -> *const c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SYM_NTOP_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SYM_NTOP_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
+    }
+}
+
+fn write_decimal_to_sym_ntos_buf(value: c_int) -> *const c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SYM_NTOS_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SYM_NTOS_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
+    }
+}
+
+/// `__sym_ntop(*tab, value, *success) -> *const c_char` — find the
+/// `humanname` entry for `value` in a NULL-terminated `struct res_sym`
+/// table. On success sets `*success = 1` and returns the humanname.
+/// On failure sets `*success = 0` and returns a thread-local string
+/// containing the decimal representation of `value`.
+///
+/// # Safety
+/// `tab` must be NULL or point to a NULL-terminated `struct res_sym`
+/// array. `success` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sym_ntop(
+    tab: *const c_void,
+    value: c_int,
+    success: *mut c_int,
+) -> *const c_char {
+    if !tab.is_null() {
+        let mut p = tab as *const ResSym;
+        loop {
+            // SAFETY: caller asserts `tab` is a NULL-terminated table.
+            let entry = unsafe { &*p };
+            if entry.name.is_null() {
+                break;
+            }
+            if entry.number == value {
+                if !success.is_null() {
+                    unsafe { *success = 1 };
+                }
+                return entry.humanname;
+            }
+            p = unsafe { p.add(1) };
+        }
+    }
+    if !success.is_null() {
+        unsafe { *success = 0 };
+    }
+    write_decimal_to_sym_ntop_buf(value)
+}
+
+/// `__sym_ntos(*tab, value, *success) -> *const c_char` — like
+/// `__sym_ntop` but returns the symbol's short `name` rather than the
+/// human-readable description.
+///
+/// # Safety
+/// `tab` must be NULL or point to a NULL-terminated `struct res_sym`
+/// array. `success` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sym_ntos(
+    tab: *const c_void,
+    value: c_int,
+    success: *mut c_int,
+) -> *const c_char {
+    if !tab.is_null() {
+        let mut p = tab as *const ResSym;
+        loop {
+            let entry = unsafe { &*p };
+            if entry.name.is_null() {
+                break;
+            }
+            if entry.number == value {
+                if !success.is_null() {
+                    unsafe { *success = 1 };
+                }
+                return entry.name;
+            }
+            p = unsafe { p.add(1) };
+        }
+    }
+    if !success.is_null() {
+        unsafe { *success = 0 };
+    }
+    write_decimal_to_sym_ntos_buf(value)
+}
+
+/// `__sym_ston(*tab, *str, *success) -> int` — case-insensitive text
+/// lookup against the `name` column of a NULL-terminated
+/// `struct res_sym` array. On match sets `*success = 1` and returns
+/// the matching `number`. On miss sets `*success = 0` and returns
+/// the `number` field of the sentinel (unknown) entry.
+///
+/// # Safety
+/// `tab` must be NULL or point to a NULL-terminated `struct res_sym`
+/// array. `str` and `success` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sym_ston(
+    tab: *const c_void,
+    str: *const c_char,
+    success: *mut c_int,
+) -> c_int {
+    if !tab.is_null() && !str.is_null() {
+        let Some(needle) = (unsafe { required_cstr_bytes(str) }) else {
+            if !success.is_null() {
+                unsafe { *success = 0 };
+            }
+            return 0;
+        };
+        let mut p = tab as *const ResSym;
+        loop {
+            let entry = unsafe { &*p };
+            if entry.name.is_null() {
+                // Sentinel entry: report failure but return its number,
+                // matching libresolv's "unknown" semantics.
+                if !success.is_null() {
+                    unsafe { *success = 0 };
+                }
+                return entry.number;
+            }
+            let Some(name_bytes) = (unsafe { required_cstr_bytes(entry.name) }) else {
+                if !success.is_null() {
+                    unsafe { *success = 0 };
+                }
+                return 0;
+            };
+            if name_bytes.eq_ignore_ascii_case(needle) {
+                if !success.is_null() {
+                    unsafe { *success = 1 };
+                }
+                return entry.number;
+            }
+            p = unsafe { p.add(1) };
+        }
+    }
+    if !success.is_null() {
+        unsafe { *success = 0 };
+    }
+    0
+}
+
+// --- Resolver lifecycle / queries ---
+
+/// `__res_close(*statp) -> ()` — close resolver state sockets. Stub
+/// no-op since we don't manage sockets per-state.
+///
+/// # Safety
+/// `statp` may be NULL; we don't dereference it.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_close(_statp: *mut c_void) {}
+
+/// `__res_isourserver(*statp, *addr) -> int` — check if `*addr`
+/// matches a configured IPv4 nameserver.
+///
+/// # Safety
+/// `addr` may be NULL. Non-NULL pointers must point to a `sockaddr_in`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, addr: *const c_void) -> c_int {
+    if !tracked_object_fits(addr.cast::<libc::sockaddr_in>()) {
+        return 0;
+    }
+    let sin = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
+    if sin.sin_family != libc::AF_INET as libc::sa_family_t {
+        return 0;
+    }
+
+    let needle = sin.sin_addr.s_addr;
+    for nameserver in &crate::unistd_abi::RESOLV_CONFIG.nameservers {
+        if let std::net::IpAddr::V4(ip) = nameserver
+            && u32::from_ne_bytes(ip.octets()) == needle
+        {
+            return 1;
+        }
+    }
+    0
+}
+
+/// `__res_nameinquery(name, type, class, *buf, eom) -> int` — return
+/// 1 if the DNS message's question section contains exactly
+/// `(name, type, class)`, 0 if not present, and -1 on malformed input.
+///
+/// # Safety
+/// `name` must be a NUL-terminated C string. `buf` and `eom` must
+/// bound a readable DNS message.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nameinquery(
+    name: *const c_char,
+    query_type: c_int,
+    query_class: c_int,
+    buf: *const c_void,
+    eom: *const c_void,
+) -> c_int {
+    let Some(_) = (unsafe { required_cstr_bytes(name) }) else {
+        return -1;
+    };
+    let Some(msg_buf) = (unsafe { dns_message_slice(buf, eom) }) else {
+        return -1;
+    };
+    let qdcount = match read_be_u16_at(msg_buf, 4) {
+        Some(count) => count as usize,
+        None => return -1,
+    };
+    let msg = buf.cast::<u8>();
+    let eom = eom.cast::<u8>();
+    let mut pos = NS_HFIXEDSZ;
+    for _ in 0..qdcount {
+        let mut tname = [0 as c_char; NS_MAXDNAME];
+        let Some((next, qtype, qclass)) =
+            (unsafe { read_query_question(msg, eom, msg_buf, pos, &mut tname) })
+        else {
+            return -1;
+        };
+        if qtype as c_int == query_type
+            && qclass as c_int == query_class
+            && unsafe { ns_samename(tname.as_ptr(), name) } == 1
+        {
+            return 1;
+        }
+        pos = next;
+    }
+    0
+}
+
+/// `__res_queriesmatch(buf1, eom1, buf2, eom2) -> int` — public alias
+/// of `__libc_res_queriesmatch`. Returns 1 when both DNS messages carry
+/// the same question set, 0 when they differ, and -1 on malformed input.
+///
+/// # Safety
+/// Each `(buf, eom)` pair must bound a readable DNS message.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_queriesmatch(
+    buf1: *const c_void,
+    eom1: *const c_void,
+    buf2: *const c_void,
+    eom2: *const c_void,
+) -> c_int {
+    let Some(msg1) = (unsafe { dns_message_slice(buf1, eom1) }) else {
+        return -1;
+    };
+    let Some(msg2) = (unsafe { dns_message_slice(buf2, eom2) }) else {
+        return -1;
+    };
+    if dns_header_opcode(msg1) == Some(NS_OPCODE_UPDATE)
+        && dns_header_opcode(msg2) == Some(NS_OPCODE_UPDATE)
+    {
+        return 1;
+    }
+    let qdcount1 = match read_be_u16_at(msg1, 4) {
+        Some(count) => count,
+        None => return -1,
+    };
+    let qdcount2 = match read_be_u16_at(msg2, 4) {
+        Some(count) => count,
+        None => return -1,
+    };
+    if qdcount1 != qdcount2 {
+        return 0;
+    }
+
+    let msg = buf1.cast::<u8>();
+    let eom = eom1.cast::<u8>();
+    let mut pos = NS_HFIXEDSZ;
+    for _ in 0..qdcount1 as usize {
+        let mut tname = [0 as c_char; NS_MAXDNAME];
+        let Some((next, qtype, qclass)) =
+            (unsafe { read_query_question(msg, eom, msg1, pos, &mut tname) })
+        else {
+            return -1;
+        };
+        if unsafe { __res_nameinquery(tname.as_ptr(), qtype as c_int, qclass as c_int, buf2, eom2) }
+            == 0
+        {
+            return 0;
+        }
+        pos = next;
+    }
+    1
+}
+
+/// `__dn_count_labels(*name) -> int` — count labels in an encoded DNS
+/// name (counts the dots in a decoded name; on encoded format counts
+/// the length-prefixed segments). Returns -1 on bad input.
+///
+/// # Safety
+/// `name` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
+    let Some(s) = (unsafe { required_cstr_bytes(name) }) else {
+        return -1;
+    };
+    if s.is_empty() {
+        return 0;
+    }
+    let mut labels = 1i32;
+    for &b in s {
+        if b == b'.' {
+            labels += 1;
+        }
+    }
+    // A trailing dot (FQDN) counts as the root label, not an extra
+    // separator — so subtract 1 if the name ended with `.`.
+    if s.ends_with(b".") {
+        labels -= 1;
+    }
+    labels
+}
+
+// --- /etc/hosts iteration ---
+//
+// These are the historical libresolv hooks for iterating /etc/hosts. They
+// reuse the same files-backend parser as the non-iterator lookup hooks and
+// expose IPv4 entries through the shared thread-local hostent storage.
+
+#[cfg(feature = "owned-tls-cache")]
+static HOSTS_ITER_LINE_OFFSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static HOSTS_ITER_LINE_OFFSET: RefCell<usize> = const { RefCell::new(0) };
+}
+
+fn reset_hosts_iterator() {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(|offset| *offset = 0);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_ITER_LINE_OFFSET.with(|cell| *cell.borrow_mut() = 0);
+    }
+}
+
+fn with_hosts_iterator_offset<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_ITER_LINE_OFFSET.with(|cell| {
+            let mut offset = cell.borrow_mut();
+            callback(&mut offset)
+        })
+    }
+}
+
+struct HostsIterEntry {
+    addr: Ipv4Addr,
+    hostname: Vec<u8>,
+    aliases: Vec<Vec<u8>>,
+}
+
+fn next_hosts_ipv4_entry(content: &[u8], offset: &mut usize) -> Option<HostsIterEntry> {
+    while *offset < content.len() {
+        let start = *offset;
+        let rel_end = content[start..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .unwrap_or(content.len() - start);
+        let end = start + rel_end;
+        *offset = if end < content.len() { end + 1 } else { end };
+
+        let Some((addr, hostnames)) =
+            frankenlibc_core::resolv::parse_hosts_line(&content[start..end])
+        else {
+            continue;
+        };
+        let mut hostnames = hostnames.into_iter();
+        let Some(hostname) = hostnames.next() else {
+            continue;
+        };
+        let Ok(addr_text) = core::str::from_utf8(&addr) else {
+            continue;
+        };
+        let addr = if let Ok(addr) = addr_text.parse::<Ipv4Addr>() {
+            addr
+        } else if let Ok(v6) = addr_text.parse::<Ipv6Addr>() {
+            // glibc's AF_INET view of /etc/hosts does not simply skip every IPv6
+            // line: nss_files folds the two IPv6 forms that HAVE an IPv4 meaning
+            // into AF_INET entries, and drops the rest. Skipping all of them made
+            // `_gethtent` yield 2 entries on a stock Ubuntu /etc/hosts where glibc
+            // yields 3, because the `::1 ip6-localhost` line was dropped instead of
+            // being reported as 127.0.0.1 (bd-79p18u).
+            //
+            // Measured against live glibc `gethostent` over a bind-mounted hosts
+            // file (bwrap), which is the oracle for this contract:
+            //   ::1, 0:0:0:0:0:0:0:1  -> 127.0.0.1     (IN6_IS_ADDR_LOOPBACK)
+            //   ::ffff:1.2.3.4        -> 1.2.3.4       (IN6_IS_ADDR_V4MAPPED)
+            //   ::ffff:0102:0304      -> 1.2.3.4       (same, hex spelling)
+            //   ::1.2.3.4             -> SKIPPED       (v4-COMPATIBLE is not mapped)
+            //   ::0, ::ffff:0:a.b.c.d, 64:ff9b::a.b.c.d, fe80::1, 2001:db8::5 -> SKIPPED
+            // so the rule is exactly V4MAPPED or LOOPBACK, and `to_ipv4_mapped`
+            // (unlike `to_ipv4`) is the one that excludes the v4-compatible form.
+            if v6.is_loopback() {
+                Ipv4Addr::LOCALHOST
+            } else if let Some(mapped) = v6.to_ipv4_mapped() {
+                mapped
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+        return Some(HostsIterEntry {
+            addr,
+            hostname,
+            aliases: hostnames.collect(),
+        });
+    }
+    None
+}
+
+/// `_sethtent(stayopen) -> ()` — open or rewind /etc/hosts iteration.
+/// The `stayopen` hint is accepted for ABI compatibility but ignored
+/// because this implementation uses cached file snapshots rather than
+/// holding an open file descriptor.
+///
+/// # Safety
+/// Trivially safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _sethtent(_stayopen: c_int) {
+    reset_hosts_iterator();
+}
+
+/// `_gethtent() -> *struct hostent` — next IPv4 /etc/hosts entry.
+///
+/// # Safety
+/// Trivially safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtent() -> *mut c_void {
+    // Borrow the cached backend. `read_hosts_backend()` cloned the WHOLE `/etc/hosts` on every
+    // call, so draining the iterator over N entries was O(N^2) in file size. The iterator offset
+    // lives in a different thread-local, so the two borrows do not conflict. Backend-read error
+    // and iterator exhaustion both remain HOST_NOT_FOUND, as before.
+    let next = with_hosts_backend_snapshot(|content, _generation| {
+        with_hosts_iterator_offset(|offset| next_hosts_ipv4_entry(content, offset))
+    });
+    let Ok(Some(entry)) = next else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    unsafe { populate_tls_hostent_with_aliases(&entry.hostname, &entry.aliases, entry.addr) }
+}
+
+/// `_gethtbyname(*name) -> *struct hostent` — lookup name in
+/// /etc/hosts.
+///
+/// # Safety
+/// `name` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtbyname(name: *const c_char) -> *mut c_void {
+    unsafe { _gethtbyname2(name, libc::AF_INET) }
+}
+
+/// `_gethtbyname2(*name, af) -> *struct hostent` — address-family-
+/// constrained variant.
+///
+/// # Safety
+/// `name` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtbyname2(name: *const c_char, af: c_int) -> *mut c_void {
+    if af != libc::AF_UNSPEC && af != libc::AF_INET {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    }
+
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+            return core::ptr::null_mut();
+        }
+        Err(()) => {
+            unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
+            return core::ptr::null_mut();
+        }
+    };
+    let name_bytes = name_cstr.to_bytes();
+    if name_bytes.is_empty() {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    }
+
+    let Some(addr) = lookup_hosts_ipv4_by_name(name_bytes) else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    unsafe { populate_tls_hostent(name_bytes, addr) }
+}
+
+/// `_gethtbyaddr(*addr, len, af) -> *struct hostent` — reverse
+/// lookup in /etc/hosts.
+///
+/// # Safety
+/// `addr` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtbyaddr(addr: *const c_void, len: c_int, af: c_int) -> *mut c_void {
+    if addr.is_null()
+        || af != libc::AF_INET
+        || len < 4
+        || !tracked_region_fits(addr, size_of::<libc::in_addr>())
+    {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    }
+
+    let octets = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), 4) };
+    let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+    let mut ip_buf = [0u8; 15];
+    let ip_text = write_ipv4_text(ip, &mut ip_buf);
+    // Borrowed + allocation-free reverse walk; see `gethostbyaddr` above.
+    let filled = with_hosts_backend_snapshot(|content, _generation| {
+        let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_text)?;
+        // SAFETY: as the previous `populate_tls_hostent` call.
+        Some(unsafe { populate_tls_hostent(hostname, ip) })
+    });
+
+    let Ok(Some(hostent_ptr)) = filled else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    hostent_ptr
+}

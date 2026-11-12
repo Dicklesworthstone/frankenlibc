@@ -1,0 +1,13 @@
+
+running 8 tests
+test cookie_flush_short_write_does_not_retry_or_replay_output ... ok
+test cookie_line_input_uses_callbacks_and_preserves_stop_state ... ok
+test cookie_line_null_buffer_ignores_uninitialized_capacity ... ok
+test cookie_read_eintr_is_reported_without_retry ... ok
+test nonnull_write_hook_buffering_matches_glibc ... ok
+test null_hooks_never_set_ebadf ... ok
+test null_read_hook_matches_glibc ... ok
+test null_write_hook_matches_glibc ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

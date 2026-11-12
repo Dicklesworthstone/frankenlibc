@@ -1,0 +1,44 @@
+
+running 39 tests
+test acos_known_values ... ok
+test asin_known_values ... ok
+test atan2_known_values ... ok
+test atan_known_values ... ok
+test cbrt_known_values ... ok
+test ceil_known_values ... ok
+test copysign_known_values ... ok
+test cos_known_values ... ok
+test erf_known_values ... ok
+test erfc_known_values ... ok
+test exp2_known_values ... ok
+test exp_known_values ... ok
+test fabs_known_values ... ok
+test fdim_known_values ... ok
+test floor_known_values ... ok
+test fma_known_values ... ok
+test fmin_fmax_known_values ... ok
+test fmod_known_values ... ok
+test hypot_known_values ... ok
+test ilogb_known_values ... ok
+test lgamma_known_values ... ok
+test log10_known_values ... ok
+test log1p_known_values ... ok
+test log2_known_values ... ok
+test log_known_values ... ok
+test logb_known_values ... ok
+test nearbyint_known_values ... ok
+test pow_known_values ... ok
+test remainder_known_values ... ok
+test remquo_known_values ... ok
+test rint_known_values ... ok
+test round_known_values ... ok
+test scalbln_known_values ... ok
+test scalbn_known_values ... ok
+test sin_known_values ... ok
+test sqrt_known_values ... ok
+test tan_known_values ... ok
+test tgamma_known_values ... ok
+test trunc_known_values ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.02s
+

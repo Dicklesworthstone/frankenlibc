@@ -1,0 +1,9 @@
+
+running 4 tests
+test native_integer_extended_got_protocol ... ok
+test native_integer_extended_plt_protocol ... ok
+test native_integer_got_protocol ... ok
+test native_integer_plt_protocol ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.58s
+

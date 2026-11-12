@@ -1,0 +1,8 @@
+
+running 3 tests
+test mutex_prioceiling_prio_protect_mutex_matches_host_libc ... ok
+test mutex_prioceiling_regular_mutex_matches_host_libc_error ... ok
+test mutexattr_prioceiling_roundtrip_matches_host_libc ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 216 filtered out; finished in 0.00s
+

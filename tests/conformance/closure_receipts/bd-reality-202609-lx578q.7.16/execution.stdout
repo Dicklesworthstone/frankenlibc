@@ -1,0 +1,12 @@
+
+running 7 tests
+test bounded_scans_never_read_into_guard_page ... ok
+test capped_parsers_never_read_into_guard_page ... ok
+test fixture_can_observe_an_over_read ... ok
+test multibyte_string_write_limits_stop_before_guard ... ok
+test published_progname_scan_never_reads_into_guard_page ... ok
+test saturating_bound_is_still_page_clamped ... ok
+test wide_string_write_limits_stop_before_guard ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.56s
+

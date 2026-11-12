@@ -1,0 +1,24 @@
+
+running 19 tests
+test e2e_branch_diversity_healthy_with_balanced_family_mix ... ok
+test e2e_branch_diversity_near_violation_at_boundary ... ok
+test e2e_branch_diversity_violation_with_single_family_dominance ... ok
+test e2e_deterministic_replay_emits_identical_decisions_and_logs ... ok
+test e2e_framework_decision_cards_export_contains_all_decisions ... ok
+test e2e_framework_trait_evaluate_calibrate_snapshot_cycle ... ok
+test e2e_hardened_repair_evidence_chain_is_complete_and_gapless ... ok
+test e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl ... ok
+test e2e_hash_linked_repair_chain_verifies_record_integrity ... ok
+test e2e_independent_kernels_produce_consistent_results_under_concurrent_scenario ... ok
+test e2e_kernel_isolation_divergent_inputs_produce_independent_state ... ok
+test e2e_mode_behavioral_divergence_is_stable_and_structured ... ok
+test e2e_snapshot_captures_schema_version_and_core_fields ... ok
+test e2e_snapshot_deterministic_replay_produces_identical_snapshots ... ok
+test e2e_snapshot_golden_replay_field_stability ... ok
+test e2e_snapshot_serialization_contains_all_core_fields ... ok
+test e2e_snapshot_strict_vs_hardened_mode_independence ... ok
+test elf_got_disassembly_detector_catches_direct_and_indirect_libm_calls ... ok
+test release_libfrankenlibc_abi_has_zero_membrane_to_libm_calls ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.63s
+

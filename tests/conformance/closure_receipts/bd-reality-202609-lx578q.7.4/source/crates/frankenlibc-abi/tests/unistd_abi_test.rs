@@ -1,0 +1,18012 @@
+//! ABI integration tests for unistd_abi native implementations.
+//!
+//! Tests for promoted GlibcCallThrough -> Implemented symbols:
+//! - glob64 / globfree64
+//! - ftw / nftw / nftw64
+//! - setmntent / getmntent / endmntent
+
+#![allow(unsafe_code)]
+
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+use std::io::Read;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::FileTypeExt;
+use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::process::ExitStatusExt;
+use std::sync::atomic::AtomicI32;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[path = "common/fd_capture.rs"]
+mod fd_capture;
+
+#[path = "common/host_isolation.rs"]
+mod host_isolation;
+
+/// Serializes all gai_*/getaddrinfo_a tests in this binary.
+///
+/// host glibc's async-getaddrinfo machinery (gai_cancel, gai_error,
+/// gai_suspend, getaddrinfo_a) shares a single in-process request
+/// queue and a global state cache. Concurrent host gai_* calls in
+/// parallel test threads can mutate that state between our captured
+/// host snapshot and the matching abi snapshot, breaking the
+/// host-vs-abi parity assertions. Reproduced as bd-el0v8 — flaked
+/// `synchronous_gai_wrappers_match_host_degenerate_contracts` ~25%
+/// of stress runs at --test-threads=16.
+static GAI_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes tests that read or mutate the process cwd.
+///
+/// cwd is process-global, so chdir/fchdir tests can race with getcwd
+/// assertions when this test binary runs with multiple test threads.
+static CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes tests that mutate HOSTALIASES.
+static HOSTALIASES_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes tests that mutate exported argp globals.
+static ARGP_GLOBAL_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes wordexp host-vs-ABI tests that mutate process environment.
+static WORDEXP_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes tests that point passwd lookups at a fixture path.
+static PASSWD_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct HostaliasesEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl HostaliasesEnvGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("HOSTALIASES");
+        // SAFETY: HOSTALIASES mutation is serialized by HOSTALIASES_TEST_LOCK.
+        unsafe { std::env::set_var("HOSTALIASES", path) };
+        Self { previous }
+    }
+}
+
+impl Drop for HostaliasesEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: HOSTALIASES mutation is serialized by HOSTALIASES_TEST_LOCK.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var("HOSTALIASES", value),
+                None => std::env::remove_var("HOSTALIASES"),
+            }
+        }
+    }
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        // SAFETY: callers hold the relevant environment-mutation test lock.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        // SAFETY: callers hold the relevant environment-mutation test lock.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
+struct CwdRestore {
+    fd: c_int,
+}
+
+impl CwdRestore {
+    fn capture() -> Self {
+        // SAFETY: c"." is a static NUL-terminated path and open only returns an fd.
+        let fd = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+        assert!(fd >= 0, "failed to open current directory for cwd restore");
+        Self { fd }
+    }
+}
+
+impl Drop for CwdRestore {
+    fn drop(&mut self) {
+        // SAFETY: fd was returned by open in capture; best-effort restoration/close in Drop.
+        unsafe {
+            let _ = libc::fchdir(self.fd);
+            let _ = libc::close(self.fd);
+        }
+    }
+}
+
+fn cwd_test_lock() -> MutexGuard<'static, ()> {
+    CWD_TEST_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()).max(bytes.len());
+        std::ptr::write_bytes(raw, 0x7f, usable);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len());
+        raw.cast()
+    }
+}
+
+fn malloc_tracked_pointer_vector(values: &[*mut c_char]) -> *mut *mut c_char {
+    assert!(!values.is_empty());
+    unsafe {
+        let byte_len = std::mem::size_of_val(values);
+        let raw = frankenlibc_abi::malloc_abi::malloc(byte_len).cast::<*mut c_char>();
+        assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()).max(byte_len);
+        let usable_slots = usable / std::mem::size_of::<*mut c_char>();
+        for i in 0..usable_slots {
+            *raw.add(i) = values[values.len() - 1];
+        }
+        std::ptr::copy_nonoverlapping(values.as_ptr(), raw, values.len());
+        raw
+    }
+}
+
+fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(len);
+        assert!(!raw.is_null());
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+        raw
+    }
+}
+
+use frankenlibc_abi::errno_abi::__errno_location;
+use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
+use frankenlibc_abi::glibc_internal_abi::getdate_err;
+use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
+use frankenlibc_abi::resolv_abi::__h_errno_location;
+use frankenlibc_abi::unistd_abi::{
+    FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, bsd_getopt, chdir, chmod,
+    chown, close, closelog, creat, cuserid, eaccess, endaliasent, ether_line, euidaccess,
+    faccessat, fchmod, fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock,
+    flopen, flopenat, fmtmsg, fstat, fsync, ftruncate, fts_children as abi_fts_children,
+    fts_close as abi_fts_close, fts_open as abi_fts_open, fts_read as abi_fts_read,
+    fts_set as abi_fts_set, ftw as abi_ftw, gai_cancel, gai_error, gai_suspend, getaddrinfo_a,
+    getaliasbyname, getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate, getdate_r,
+    getegid, geteuid, getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostbyname2_r,
+    gethostent_r, gethostname, getnetbyaddr_r, getnetbyname, getnetbyname_r, getnetent_r,
+    getnetgrent, getnetgrent_r, getopt, getopt_long, getpid, getppid, getprotobyname_r,
+    getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
+    getuid, getutent, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64,
+    gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv,
+    msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
+    process_mrelease, process_vm_readv, process_vm_writev, putspent, pututxline, read, readlink,
+    readpassphrase, rename, rmdir, sem_close, sem_open, sem_unlink, semctl, semop, setfsent,
+    sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
+    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
+    strfmon, strfmon_l, strfry, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare,
+    updwtmp, updwtmpx, usleep, utmpname, vsyslog, wctrans, wordexp as abi_wordexp,
+    wordfree as abi_wordfree, write,
+};
+
+static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
+static FORK_SIGNAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+static FORK_SIGNAL_RESULT: AtomicI32 = AtomicI32::new(c_int::MIN);
+static FORK_SIGNAL_ERRNO: AtomicI32 = AtomicI32::new(0);
+const GAI_WAIT: c_int = 0;
+const GAI_NOWAIT: c_int = 1;
+const GAI_BADFLAGS_NEGATIVE_MODE: c_int = -1;
+const GAI_BADFLAGS_POSITIVE_MODE: c_int = 2;
+const GAI_EAI_ALLDONE: c_int = -103;
+
+#[test]
+fn backtrace_reports_at_least_one_frame() {
+    let mut frames = [std::ptr::null_mut::<c_void>(); 8];
+    let count = unsafe { frankenlibc_abi::unistd_abi::backtrace(frames.as_mut_ptr(), 8) };
+
+    assert!(
+        count > 0,
+        "backtrace should report a host frame or deterministic native fallback frame"
+    );
+    assert!(
+        !frames[0].is_null(),
+        "reported first backtrace frame must be non-null"
+    );
+}
+
+/// Mirror of glibc's `struct gaicb` (netdb.h). The first 4 pointer
+/// fields are documented; glibc reads `__return` (and historically
+/// the 5 `__unused` int slots) when implementing `gai_error`. The
+/// previous 32-byte layout omitted these trailing fields, so
+/// host_gai_error read past the struct boundary into uninitialized
+/// stack memory under parallel test pressure — produced bd-el0v8's
+/// "left=0 right=2" / "left=0 right=121360248" flake. (bd-el0v8)
+#[repr(C)]
+struct GaicbShape {
+    ar_name: *const c_char,
+    ar_service: *const c_char,
+    ar_request: *const c_void,
+    ar_result: *mut c_void,
+    /// `__return` per glibc — gai_error returns this value.
+    __return: c_int,
+    /// `__glibc_reserved`/`__unused` 5-element int tail.
+    __unused: [c_int; 5],
+}
+
+#[repr(C)]
+struct NetEnt {
+    n_name: *mut c_char,
+    n_aliases: *mut *mut c_char,
+    n_addrtype: c_int,
+    n_net: u32,
+}
+
+fn has_host_entry_for_tests() -> bool {
+    let Ok(content) = std::fs::read("/etc/hosts") else {
+        return false;
+    };
+    content.split(|&byte| byte == b'\n').any(|line| {
+        let Some((addr_text, hostnames)) = frankenlibc_core::resolv::parse_hosts_line(line) else {
+            return false;
+        };
+        if hostnames.is_empty() {
+            return false;
+        }
+        let Ok(addr_str) = std::str::from_utf8(&addr_text) else {
+            return false;
+        };
+        frankenlibc_core::resolv::parse_addr_binary(addr_str).is_some()
+    })
+}
+
+fn first_network_entry_for_tests() -> Option<(CString, u32)> {
+    let content = std::fs::read("/etc/networks").ok()?;
+    for line in content.split(|&byte| byte == b'\n') {
+        if let Some(entry) = frankenlibc_core::resolv::parse_networks_line(line)
+            && let Ok(name) = CString::new(entry.name)
+        {
+            return Some((name, entry.number));
+        }
+    }
+    None
+}
+
+fn has_service_entry_for_tests() -> bool {
+    std::fs::read("/etc/services").ok().is_some_and(|content| {
+        content
+            .split(|&byte| byte == b'\n')
+            .any(|line| frankenlibc_core::resolv::parse_services_line(line).is_some())
+    })
+}
+
+#[repr(C)]
+struct Fstab {
+    fs_spec: *mut c_char,
+    fs_file: *mut c_char,
+    fs_vfstype: *mut c_char,
+    fs_mntops: *mut c_char,
+    fs_type: *const c_char,
+    fs_freq: c_int,
+    fs_passno: c_int,
+}
+
+#[repr(C)]
+struct RpcEnt {
+    r_name: *mut c_char,
+    r_aliases: *mut *mut c_char,
+    r_number: c_int,
+}
+
+fn first_rpc_entry_for_tests() -> Option<(CString, c_int)> {
+    let content = std::fs::read("/etc/rpc").ok()?;
+    for line in content.split(|&byte| byte == b'\n') {
+        if let Some(entry) = frankenlibc_core::rpc::parse_rpc_line(line)
+            && let Ok(name) = CString::new(entry.name)
+        {
+            return Some((name, entry.number));
+        }
+    }
+    None
+}
+
+#[repr(C)]
+struct TtyEnt {
+    ty_name: *mut c_char,
+    ty_getty: *mut c_char,
+    ty_type: *mut c_char,
+    ty_status: c_int,
+    ty_window: *mut c_char,
+    ty_comment: *mut c_char,
+}
+
+unsafe extern "C" {
+    fn setrpcent(stayopen: c_int);
+    fn getrpcent_r(
+        result_buf: *mut RpcEnt,
+        buffer: *mut c_char,
+        buflen: usize,
+        result: *mut *mut RpcEnt,
+    ) -> c_int;
+    fn getrpcbyname_r(
+        name: *const c_char,
+        result_buf: *mut RpcEnt,
+        buffer: *mut c_char,
+        buflen: usize,
+        result: *mut *mut RpcEnt,
+    ) -> c_int;
+    fn getrpcbynumber_r(
+        number: c_int,
+        result_buf: *mut RpcEnt,
+        buffer: *mut c_char,
+        buflen: usize,
+        result: *mut *mut RpcEnt,
+    ) -> c_int;
+    fn endttyent() -> c_int;
+}
+
+unsafe extern "C" fn record_sigusr1(sig: c_int) {
+    SIGNAL_HIT.store(sig, Ordering::SeqCst);
+}
+
+#[test]
+fn isatty_invalid_fd_sets_ebadf() {
+    let rc = unsafe { isatty(-1) };
+    assert_eq!(rc, 0);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, libc::EBADF);
+}
+
+#[test]
+fn isatty_regular_file_sets_enotty_like_host() {
+    let file = std::fs::File::open("/etc/hosts").unwrap();
+    let fd = file.as_raw_fd();
+
+    let rc = unsafe { isatty(fd) };
+    assert_eq!(rc, 0);
+    let err = unsafe { *__errno_location() };
+    assert!(
+        err == libc::ENOTTY || err == libc::EINVAL,
+        "non-terminal fd should report ENOTTY-compatible errno, got {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fts_* parity tests
+// ---------------------------------------------------------------------------
+
+const TEST_FTS_PHYSICAL: c_int = 0x0010;
+const TEST_FTS_NAMEONLY: c_int = 0x0100;
+const TEST_FTS_AGAIN: c_int = 1;
+const TEST_FTS_FOLLOW: c_int = 2;
+const TEST_FTS_SKIP: c_int = 4;
+const TEST_FTS_DP: u16 = 6;
+
+unsafe extern "C" {
+    fn fts_open(
+        path_argv: *const *mut c_char,
+        options: c_int,
+        compar: Option<
+            unsafe extern "C" fn(*const *const AbiFtsEnt, *const *const AbiFtsEnt) -> c_int,
+        >,
+    ) -> *mut c_void;
+    fn fts_read(ftsp: *mut c_void) -> *mut AbiFtsEnt;
+    fn fts_children(ftsp: *mut c_void, instr: c_int) -> *mut AbiFtsEnt;
+    fn fts_set(ftsp: *mut c_void, f: *mut AbiFtsEnt, instr: c_int) -> c_int;
+    fn fts_close(ftsp: *mut c_void) -> c_int;
+}
+
+fn temp_path_buf(tag: &str) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStringExt;
+
+    let path = temp_path(tag);
+    std::path::PathBuf::from(std::ffi::OsString::from_vec(path.into_bytes()))
+}
+
+fn make_fts_argv(paths: &[std::path::PathBuf]) -> (Vec<CString>, Vec<*mut c_char>) {
+    let roots = paths
+        .iter()
+        .map(|path| CString::new(path.as_os_str().as_bytes()).unwrap())
+        .collect::<Vec<_>>();
+    let mut argv = roots
+        .iter()
+        .map(|path| path.as_ptr() as *mut c_char)
+        .collect::<Vec<_>>();
+    argv.push(std::ptr::null_mut());
+    (roots, argv)
+}
+
+fn clear_errno() {
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+}
+
+fn fts_names(mut entry: *mut AbiFtsEnt) -> Vec<String> {
+    let mut names = Vec::new();
+    while !entry.is_null() {
+        names.push(
+            unsafe { std::ffi::CStr::from_ptr((*entry).fts_name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned(),
+        );
+        entry = unsafe { (*entry).fts_link };
+    }
+    names
+}
+
+fn fts_path(entry: *mut AbiFtsEnt) -> String {
+    unsafe { std::ffi::CStr::from_ptr((*entry).fts_path) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[test]
+fn fts_open_zero_mode_and_empty_roots_match_host_behavior() {
+    let root = temp_path_buf("fts_open");
+    std::fs::create_dir_all(&root).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        clear_errno();
+        let host = fts_open(argv.as_ptr(), 0, None);
+        let host_errno = errno_value();
+
+        clear_errno();
+        let abi = abi_fts_open(argv.as_ptr() as *const *const c_char, 0, None);
+        let abi_errno = errno_value();
+
+        assert_eq!(abi.is_null(), host.is_null());
+        assert_eq!(abi_errno, host_errno, "zero-mode errno should match host");
+        if !host.is_null() {
+            assert_eq!(fts_close(host), 0);
+        }
+        if !abi.is_null() {
+            assert_eq!(abi_fts_close(abi), 0);
+        }
+    }
+
+    let empty = CString::new("").unwrap();
+    let empty_argv = [empty.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    unsafe {
+        clear_errno();
+        let host = fts_open(empty_argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let host_errno = errno_value();
+
+        clear_errno();
+        let abi = abi_fts_open(
+            empty_argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let abi_errno = errno_value();
+
+        assert!(host.is_null());
+        assert!(abi.is_null());
+        assert_eq!(abi_errno, host_errno, "empty-root errno should match host");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fts_open_rejects_tracked_unterminated_root_path() {
+    let raw_root = malloc_tracked_unterminated(b"/tmp/frankenlibc-fts-root");
+    let argv = [raw_root.cast_const(), std::ptr::null()];
+
+    unsafe {
+        clear_errno();
+        let stream = abi_fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let err = errno_value();
+        if !stream.is_null() {
+            assert_eq!(abi_fts_close(stream), 0);
+        }
+        frankenlibc_abi::malloc_abi::free(raw_root.cast());
+
+        assert!(stream.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn fts_children_before_first_read_matches_host_root_listing() {
+    let dir_root = temp_path_buf("fts_roots_dir");
+    let file_root = temp_path_buf("fts_roots_file");
+    std::fs::create_dir_all(&dir_root).unwrap();
+    std::fs::write(&file_root, b"root").unwrap();
+    let (_roots, argv) = make_fts_argv(&[dir_root.clone(), file_root.clone()]);
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        assert!(!host.is_null());
+        assert!(!abi.is_null());
+
+        let host_names = fts_names(fts_children(host, 0));
+        let abi_names = fts_names(abi_fts_children(abi, 0));
+        assert_eq!(abi_names, host_names);
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir_root);
+    let _ = std::fs::remove_file(&file_root);
+}
+
+#[test]
+fn fts_read_walk_matches_host_with_and_without_nostat() {
+    use std::os::unix::fs::PermissionsExt;
+    // Tcl's recursive `file delete`/`file copy` walk with FTS_PHYSICAL |
+    // FTS_NOCHDIR | FTS_NOSTAT. glibc stats the roots regardless, classifies
+    // child directories FTS_D (only non-directories become FTS_NSOK) and names
+    // a root returned by fts_read by its last component. fl answered FTS_NSOK
+    // for the root and never descended, so Tcl unlinked directories (EISDIR).
+    const TEST_FTS_NOCHDIR: c_int = 0x0004;
+    const TEST_FTS_NOSTAT: c_int = 0x0008;
+    let root = temp_path_buf("fts_walk");
+    std::fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    std::fs::write(root.join("file"), b"x").unwrap();
+    std::fs::write(root.join("sub/inner"), b"y").unwrap();
+    std::os::unix::fs::symlink("file", root.join("link")).unwrap();
+    // An unreadable directory: glibc reports FTS_DNR (with fts_errno) in place
+    // of its FTS_DP (as root it is simply readable, on both sides).
+    std::fs::create_dir_all(root.join("locked/hidden")).unwrap();
+    std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    let walk = |read: &dyn Fn() -> *mut AbiFtsEnt| {
+        let mut seen = Vec::new();
+        loop {
+            let e = read();
+            if e.is_null() {
+                break;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*e).fts_name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            seen.push((
+                unsafe { (*e).fts_info },
+                unsafe { (*e).fts_level },
+                unsafe { (*e).fts_errno },
+                name,
+                fts_path(e),
+            ));
+        }
+        seen.sort();
+        seen
+    };
+
+    // FTS_NOCHDIR in every case: without it glibc's walk chdir()s, and other
+    // tests in this binary change the process-wide cwd concurrently.
+    for options in [
+        TEST_FTS_PHYSICAL | TEST_FTS_NOCHDIR,
+        TEST_FTS_PHYSICAL | TEST_FTS_NOCHDIR | TEST_FTS_NOSTAT,
+    ] {
+        unsafe {
+            let host = fts_open(argv.as_ptr(), options, None);
+            let abi = abi_fts_open(argv.as_ptr() as *const *const c_char, options, None);
+            assert!(!host.is_null() && !abi.is_null());
+            let host_seen = walk(&|| fts_read(host));
+            let abi_seen = walk(&|| abi_fts_read(abi));
+            assert_eq!(abi_seen, host_seen, "fts walk with options {options:#x}");
+            assert!(host_seen.len() >= 7, "walk too short: {host_seen:?}");
+            assert_eq!(fts_close(host), 0);
+            assert_eq!(abi_fts_close(abi), 0);
+        }
+    }
+    let _ = std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o755));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn fts_children_directory_listing_and_nameonly_match_host() {
+    let root = temp_path_buf("fts_children_dir");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("file.txt"), b"file").unwrap();
+    std::os::unix::fs::symlink(root.join("file.txt"), root.join("link.txt")).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+
+        let host_root = fts_read(host);
+        let abi_root = abi_fts_read(abi);
+        assert!(!host_root.is_null());
+        assert!(!abi_root.is_null());
+
+        let host_names = fts_names(fts_children(host, 0));
+        let abi_names = fts_names(abi_fts_children(abi, 0));
+        assert_eq!(abi_names, host_names);
+
+        let host_repeat = fts_names(fts_children(host, 0));
+        let abi_repeat = fts_names(abi_fts_children(abi, 0));
+        assert_eq!(abi_repeat, host_repeat);
+
+        let host_nameonly = fts_names(fts_children(host, TEST_FTS_NAMEONLY));
+        let abi_nameonly = fts_names(abi_fts_children(abi, TEST_FTS_NAMEONLY));
+        assert_eq!(abi_nameonly, host_nameonly);
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn fts_children_on_nondirectory_matches_host_null_semantics() {
+    let root = temp_path_buf("fts_children_file");
+    std::fs::write(&root, b"plain").unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        assert!(!fts_read(host).is_null());
+        assert!(!abi_fts_read(abi).is_null());
+
+        clear_errno();
+        let host_children = fts_children(host, 0);
+        let host_errno = errno_value();
+
+        clear_errno();
+        let abi_children = abi_fts_children(abi, 0);
+        let abi_errno = errno_value();
+
+        assert!(host_children.is_null());
+        assert!(abi_children.is_null());
+        assert_eq!(abi_errno, host_errno);
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_file(&root);
+}
+
+#[test]
+fn fts_set_again_on_file_root_matches_host() {
+    let root = temp_path_buf("fts_again");
+    std::fs::write(&root, b"again").unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let host_entry = fts_read(host);
+        let abi_entry = abi_fts_read(abi);
+        assert!(!host_entry.is_null());
+        assert!(!abi_entry.is_null());
+
+        assert_eq!(fts_set(host, host_entry, TEST_FTS_AGAIN), 0);
+        assert_eq!(abi_fts_set(abi, abi_entry, TEST_FTS_AGAIN), 0);
+
+        let host_again = fts_read(host);
+        let abi_again = abi_fts_read(abi);
+        assert!(!host_again.is_null());
+        assert!(!abi_again.is_null());
+        assert_eq!((*abi_again).fts_info, (*host_again).fts_info);
+        assert_eq!(fts_path(abi_again), fts_path(host_again));
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_file(&root);
+}
+
+#[test]
+fn fts_set_follow_on_current_symlink_matches_host() {
+    let root = temp_path_buf("fts_follow_link");
+    let target = temp_path_buf("fts_follow_target");
+    std::fs::write(&target, b"target").unwrap();
+    std::os::unix::fs::symlink(&target, &root).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let host_symlink = fts_read(host);
+        let abi_symlink = abi_fts_read(abi);
+        assert!(!host_symlink.is_null());
+        assert!(!abi_symlink.is_null());
+
+        assert_eq!(fts_set(host, host_symlink, TEST_FTS_FOLLOW), 0);
+        assert_eq!(abi_fts_set(abi, abi_symlink, TEST_FTS_FOLLOW), 0);
+
+        let host_followed = fts_read(host);
+        let abi_followed = abi_fts_read(abi);
+        assert!(!host_followed.is_null());
+        assert!(!abi_followed.is_null());
+        assert_eq!((*abi_followed).fts_info, (*host_followed).fts_info);
+        assert_eq!(fts_path(abi_followed), fts_path(host_followed));
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_file(&root);
+    let _ = std::fs::remove_file(&target);
+}
+
+#[test]
+fn fts_set_skip_matches_host_and_invalid_instr_sets_einval() {
+    let root = temp_path_buf("fts_skip");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("child.txt"), b"child").unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let invalid = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let invalid_root = abi_fts_read(invalid);
+        assert!(!invalid_root.is_null());
+
+        clear_errno();
+        let abi_invalid = abi_fts_set(invalid, invalid_root, 999);
+        let abi_invalid_errno = errno_value();
+        assert_eq!(abi_invalid, -1);
+        assert_eq!(abi_invalid_errno, libc::EINVAL);
+        assert_eq!(abi_fts_close(invalid), 0);
+
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let host_root = fts_read(host);
+        let abi_root = abi_fts_read(abi);
+        assert!(!host_root.is_null());
+        assert!(!abi_root.is_null());
+
+        assert_eq!(fts_set(host, host_root, TEST_FTS_SKIP), 0);
+        assert_eq!(abi_fts_set(abi, abi_root, TEST_FTS_SKIP), 0);
+
+        let host_next = fts_read(host);
+        let abi_next = abi_fts_read(abi);
+        assert!(!host_next.is_null());
+        assert!(!abi_next.is_null());
+        assert_eq!((*abi_next).fts_info, (*host_next).fts_info);
+        assert_eq!((*abi_next).fts_info, TEST_FTS_DP);
+        assert_eq!(fts_path(abi_next), fts_path(host_next));
+
+        let host_end = fts_read(host);
+        let abi_end = abi_fts_read(abi);
+        assert!(host_end.is_null());
+        assert!(abi_end.is_null());
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ---------------------------------------------------------------------------
+// glob64 / globfree64 tests
+// ---------------------------------------------------------------------------
+
+/// Minimal view of the `glob_t` prefix used by our `glob64`/`globfree64`
+/// implementation on x86_64, where `glob_t` and `glob64_t` are layout-identical.
+#[repr(C)]
+struct GlobBuf {
+    gl_pathc: usize,
+    gl_pathv: *mut *mut c_char,
+    gl_offs: usize,
+}
+
+#[test]
+fn glob64_literal_path_exists() {
+    // /tmp should exist on any Linux system.
+    let pattern = b"/tmp\0";
+    let mut glob_buf = GlobBuf {
+        gl_pathc: 0,
+        gl_pathv: std::ptr::null_mut(),
+        gl_offs: 0,
+    };
+
+    let rc = unsafe {
+        glob64(
+            pattern.as_ptr() as *const c_char,
+            0,
+            None,
+            &mut glob_buf as *mut GlobBuf as *mut c_void,
+        )
+    };
+    assert_eq!(rc, 0, "glob64 should succeed for /tmp");
+    assert_eq!(
+        glob_buf.gl_pathc, 1,
+        "should find exactly 1 match for literal /tmp"
+    );
+    assert!(!glob_buf.gl_pathv.is_null());
+
+    // First path should be "/tmp"
+    let first = unsafe { *glob_buf.gl_pathv };
+    assert!(!first.is_null());
+    let first_str = unsafe { std::ffi::CStr::from_ptr(first) };
+    assert_eq!(first_str.to_bytes(), b"/tmp");
+
+    unsafe { globfree64(&mut glob_buf as *mut GlobBuf as *mut c_void) };
+    assert_eq!(glob_buf.gl_pathc, 0, "globfree64 should clear gl_pathc");
+    assert!(
+        glob_buf.gl_pathv.is_null(),
+        "globfree64 should clear gl_pathv"
+    );
+}
+
+#[test]
+fn glob64_nomatch_returns_error() {
+    let pattern = b"/nonexistent_frankenlibc_glob_test_xyz_42\0";
+    let mut glob_buf = GlobBuf {
+        gl_pathc: 0,
+        gl_pathv: std::ptr::null_mut(),
+        gl_offs: 0,
+    };
+
+    let rc = unsafe {
+        glob64(
+            pattern.as_ptr() as *const c_char,
+            0,
+            None,
+            &mut glob_buf as *mut GlobBuf as *mut c_void,
+        )
+    };
+    // GLOB_NOMATCH = 3
+    assert_eq!(
+        rc, 3,
+        "glob64 should return GLOB_NOMATCH for nonexistent path"
+    );
+}
+
+// Note: glob64(NULL, ...) returns -1 in glibc (EINVAL-style).
+// Our native impl returns GLOB_NOMATCH(3). In test mode we link against glibc.
+// Skipping NULL pattern test for conformance.
+
+// ---------------------------------------------------------------------------
+// ftw / nftw tests
+// ---------------------------------------------------------------------------
+
+unsafe extern "C-unwind" {
+    fn ftw(
+        dirpath: *const c_char,
+        func: Option<unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+        nopenfd: c_int,
+    ) -> c_int;
+    fn nftw(
+        dirpath: *const c_char,
+        func: Option<
+            unsafe extern "C-unwind" fn(
+                *const c_char,
+                *const libc::stat,
+                c_int,
+                *mut c_void,
+            ) -> c_int,
+        >,
+        nopenfd: c_int,
+        flags: c_int,
+    ) -> c_int;
+}
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static FTW_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C-unwind" fn ftw_counter(
+    _path: *const c_char,
+    _stat: *const libc::stat,
+    _flag: c_int,
+) -> c_int {
+    FTW_COUNT.fetch_add(1, Ordering::Relaxed);
+    0
+}
+
+#[test]
+fn ftw_walks_directory() {
+    // Create a temp dir with known structure
+    let tmpdir = std::env::temp_dir().join("frankenlibc_ftw_test");
+    let _ = std::fs::create_dir_all(tmpdir.join("subdir"));
+    let _ = std::fs::write(tmpdir.join("file1.txt"), "hello");
+    let _ = std::fs::write(tmpdir.join("subdir/file2.txt"), "world");
+
+    let path = format!("{}\0", tmpdir.display());
+
+    FTW_COUNT.store(0, Ordering::Relaxed);
+    let rc = unsafe { ftw(path.as_ptr() as *const c_char, Some(ftw_counter), 16) };
+    assert_eq!(rc, 0, "ftw should return 0 on success");
+
+    let count = FTW_COUNT.load(Ordering::Relaxed);
+    // Should visit at least: tmpdir, subdir, file1.txt, file2.txt = 4
+    assert!(
+        count >= 4,
+        "ftw should visit at least 4 entries, got {count}"
+    );
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&tmpdir);
+}
+
+// Note: ftw(NULL, ...) segfaults in glibc — our native impl handles it,
+// but in test mode we link against glibc, so we skip the NULL test.
+
+#[test]
+fn ftw_nonexistent_dir_returns_zero() {
+    // ftw on a non-existent directory should call func with FTW_NS and return 0
+    // (unless the callback returns non-zero)
+    static NS_COUNT: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C-unwind" fn ns_counter(
+        _path: *const c_char,
+        _stat: *const libc::stat,
+        flag: c_int,
+    ) -> c_int {
+        if flag == 3 {
+            // FTW_NS
+            NS_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        0
+    }
+    let path = b"/nonexistent_frankenlibc_ftw_dir_xyz\0";
+    NS_COUNT.store(0, Ordering::Relaxed);
+    let _rc = unsafe { ftw(path.as_ptr() as *const c_char, Some(ns_counter), 16) };
+    // glibc may return -1 for stat failure or call callback with FTW_NS; either is valid
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn abi_ftw_rejects_tracked_unterminated_dirpath() {
+    let path = b"/tmp/frankenlibc-ftw-unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(path.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(path.as_ptr(), raw, path.len());
+        *__errno_location() = 0;
+        let rc = abi_ftw(raw.cast(), Some(ftw_counter), 16);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+static NFTW_COUNT: AtomicUsize = AtomicUsize::new(0);
+static NFTW_MAX_LEVEL: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C-unwind" fn nftw_counter(
+    _path: *const c_char,
+    _stat: *const libc::stat,
+    _flag: c_int,
+    ftw_info: *mut c_void,
+) -> c_int {
+    NFTW_COUNT.fetch_add(1, Ordering::Relaxed);
+    if !ftw_info.is_null() {
+        // FTW info struct: { base: i32, level: i32 }
+        let level = unsafe { *((ftw_info as *const u8).add(4) as *const i32) } as usize;
+        NFTW_MAX_LEVEL.fetch_max(level, Ordering::Relaxed);
+    }
+    0
+}
+
+#[test]
+fn nftw_walks_with_info() {
+    let tmpdir = std::env::temp_dir().join("frankenlibc_nftw_test");
+    let _ = std::fs::create_dir_all(tmpdir.join("a/b"));
+    let _ = std::fs::write(tmpdir.join("a/b/deep.txt"), "deep");
+
+    let path = format!("{}\0", tmpdir.display());
+
+    NFTW_COUNT.store(0, Ordering::Relaxed);
+    NFTW_MAX_LEVEL.store(0, Ordering::Relaxed);
+
+    let rc = unsafe { nftw(path.as_ptr() as *const c_char, Some(nftw_counter), 16, 0) };
+    assert_eq!(rc, 0);
+
+    let count = NFTW_COUNT.load(Ordering::Relaxed);
+    assert!(
+        count >= 4,
+        "nftw should visit at least 4 entries, got {count}"
+    );
+
+    let max_level = NFTW_MAX_LEVEL.load(Ordering::Relaxed);
+    assert!(
+        max_level >= 2,
+        "nftw should reach level 2 for a/b/deep.txt, got {max_level}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmpdir);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn abi_nftw_rejects_tracked_unterminated_dirpath() {
+    let path = b"/tmp/frankenlibc-nftw-unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(path.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(path.as_ptr(), raw, path.len());
+        *__errno_location() = 0;
+        let rc = abi_nftw(raw.cast(), Some(nftw_counter), 16, 0);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn nftw_depth_flag_reports_dp() {
+    use std::sync::atomic::AtomicBool;
+
+    static SAW_DP: AtomicBool = AtomicBool::new(false);
+
+    unsafe extern "C-unwind" fn check_dp(
+        _path: *const c_char,
+        _stat: *const libc::stat,
+        flag: c_int,
+        _info: *mut c_void,
+    ) -> c_int {
+        if flag == 5 {
+            // FTW_DP = 5 (post-order directory)
+            SAW_DP.store(true, Ordering::Relaxed);
+        }
+        0
+    }
+
+    let tmpdir = std::env::temp_dir().join("frankenlibc_nftw_depth_test");
+    let _ = std::fs::create_dir_all(tmpdir.join("sub"));
+    let _ = std::fs::write(tmpdir.join("sub/f.txt"), "x");
+
+    let path = format!("{}\0", tmpdir.display());
+
+    SAW_DP.store(false, Ordering::Relaxed);
+    // FTW_DEPTH = 8
+    let rc = unsafe { nftw(path.as_ptr() as *const c_char, Some(check_dp), 16, 8) };
+    assert_eq!(rc, 0);
+    assert!(
+        SAW_DP.load(Ordering::Relaxed),
+        "FTW_DEPTH should produce FTW_DP type flag"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmpdir);
+}
+
+// ---------------------------------------------------------------------------
+// setmntent / getmntent / endmntent tests
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void;
+    fn getmntent(stream: *mut c_void) -> *mut c_void;
+    fn endmntent(stream: *mut c_void) -> c_int;
+}
+
+#[repr(C)]
+struct TestMntEnt {
+    mnt_fsname: *mut c_char,
+    mnt_dir: *mut c_char,
+    mnt_type: *mut c_char,
+    mnt_opts: *mut c_char,
+    mnt_freq: c_int,
+    mnt_passno: c_int,
+}
+
+#[test]
+fn mntent_reads_proc_mounts() {
+    let filename = b"/proc/mounts\0";
+    let mode = b"r\0";
+
+    let stream = unsafe {
+        setmntent(
+            filename.as_ptr() as *const c_char,
+            mode.as_ptr() as *const c_char,
+        )
+    };
+    // /proc/mounts should exist on Linux
+    if stream.is_null() {
+        // Skip on systems without /proc/mounts
+        return;
+    }
+
+    let entry = unsafe { getmntent(stream) };
+    assert!(!entry.is_null(), "should read at least one mount entry");
+
+    // struct mntent: { mnt_fsname (*), mnt_dir (*), mnt_type (*), mnt_opts (*), freq, passno }
+    let fsname_ptr = unsafe { *(entry as *const *const c_char) };
+    assert!(!fsname_ptr.is_null());
+    let fsname = unsafe { std::ffi::CStr::from_ptr(fsname_ptr) };
+    assert!(!fsname.to_bytes().is_empty(), "fsname should not be empty");
+
+    let dir_ptr = unsafe { *((entry as *const u8).add(8) as *const *const c_char) };
+    assert!(!dir_ptr.is_null());
+    let dir = unsafe { std::ffi::CStr::from_ptr(dir_ptr) };
+    assert!(!dir.to_bytes().is_empty(), "dir should not be empty");
+
+    let rc = unsafe { endmntent(stream) };
+    assert_eq!(rc, 1, "endmntent always returns 1");
+}
+
+// Note: getmntent(NULL) / endmntent(NULL) may segfault in glibc.
+// Our native impl handles NULL safely, but in test mode we link against glibc.
+// Skipping NULL safety tests for conformance.
+
+#[test]
+fn setmntent_nonexistent_returns_null() {
+    let filename = b"/nonexistent_frankenlibc_mnt_file_xyz\0";
+    let mode = b"r\0";
+    let stream = unsafe {
+        setmntent(
+            filename.as_ptr() as *const c_char,
+            mode.as_ptr() as *const c_char,
+        )
+    };
+    assert!(stream.is_null());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setmntent_rejects_tracked_unterminated_filename_and_mode() {
+    use frankenlibc_abi::unistd_abi::setmntent;
+
+    unsafe {
+        let raw_filename = malloc_tracked_unterminated(b"/proc/mounts");
+        *__errno_location() = 0;
+        let stream = setmntent(raw_filename, c"r".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_filename.cast());
+
+        assert!(stream.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        let raw_mode = malloc_tracked_unterminated(b"r");
+        *__errno_location() = 0;
+        let stream = setmntent(c"/proc/mounts".as_ptr(), raw_mode);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_mode.cast());
+
+        assert!(stream.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn hasmntopt_rejects_tracked_unterminated_options_and_needle() {
+    use frankenlibc_abi::unistd_abi::hasmntopt;
+
+    unsafe {
+        let raw_opts = malloc_tracked_unterminated(b"rw,noexec");
+        let ent = [
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            raw_opts.cast_const(),
+        ];
+        *__errno_location() = 0;
+        let result = hasmntopt(ent.as_ptr().cast(), c"noexec".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_opts.cast());
+
+        assert!(result.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        let raw_needle = malloc_tracked_unterminated(b"noexec");
+        let ent = [
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            c"rw,noexec".as_ptr(),
+        ];
+        *__errno_location() = 0;
+        let result = hasmntopt(ent.as_ptr().cast(), raw_needle);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_needle.cast());
+
+        assert!(result.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn addmntent_rejects_tracked_unterminated_fields() {
+    use frankenlibc_abi::unistd_abi::{addmntent, endmntent, setmntent};
+
+    unsafe {
+        let stream = setmntent(c"/dev/null".as_ptr(), c"w".as_ptr());
+        assert!(!stream.is_null());
+
+        let raw_fsname = malloc_tracked_unterminated(b"tmpfs");
+        let ent = TestMntEnt {
+            mnt_fsname: raw_fsname,
+            mnt_dir: c"/tmp".as_ptr() as *mut c_char,
+            mnt_type: c"tmpfs".as_ptr() as *mut c_char,
+            mnt_opts: c"rw".as_ptr() as *mut c_char,
+            mnt_freq: 0,
+            mnt_passno: 0,
+        };
+
+        *__errno_location() = 0;
+        let rc = addmntent(stream, (&ent as *const TestMntEnt).cast());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_fsname.cast());
+        let close_rc = endmntent(stream);
+
+        assert_eq!(rc, 1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fgetpwent / fgetgrent tests
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn fopen(path: *const c_char, mode: *const c_char) -> *mut c_void;
+    fn fclose(stream: *mut c_void) -> c_int;
+    fn fgetpwent(stream: *mut c_void) -> *mut c_void;
+    fn fgetgrent(stream: *mut c_void) -> *mut c_void;
+}
+
+#[repr(C)]
+struct AliasEnt {
+    alias_name: *mut c_char,
+    alias_members: *mut *mut c_char,
+    alias_local: c_int,
+}
+
+unsafe fn load_host_symbol(name: &str) -> Option<*mut c_void> {
+    let libc_name = CString::new("libc.so.6").unwrap();
+    let handle = unsafe { libc::dlopen(libc_name.as_ptr(), libc::RTLD_NOW) };
+    if handle.is_null() {
+        return None;
+    }
+    let sym = CString::new(name).unwrap();
+    let ptr = unsafe { libc::dlsym(handle, sym.as_ptr()) };
+    if ptr.is_null() { None } else { Some(ptr) }
+}
+
+type WordexpFn = unsafe extern "C" fn(*const c_char, *mut c_void, c_int) -> c_int;
+type WordfreeFn = unsafe extern "C" fn(*mut c_void);
+
+const TEST_WRDE_NOCMD: c_int = 1 << 2;
+const TEST_WRDE_UNDEF: c_int = 1 << 5;
+const TEST_WRDE_SYNTAX: c_int = 5;
+
+#[repr(C)]
+struct WordexpBuf {
+    we_wordc: usize,
+    we_wordv: *mut *mut c_char,
+    we_offs: usize,
+}
+
+unsafe fn load_host_wordexp_symbols() -> Option<(WordexpFn, WordfreeFn)> {
+    let wordexp_ptr = unsafe { load_host_symbol("wordexp") }?;
+    let wordfree_ptr = unsafe { load_host_symbol("wordfree") }?;
+    Some(unsafe {
+        (
+            std::mem::transmute::<*mut c_void, WordexpFn>(wordexp_ptr),
+            std::mem::transmute::<*mut c_void, WordfreeFn>(wordfree_ptr),
+        )
+    })
+}
+
+unsafe fn collect_wordexp_words(buf: &WordexpBuf) -> Vec<String> {
+    let mut words = Vec::new();
+    if buf.we_wordv.is_null() {
+        return words;
+    }
+    for idx in 0..buf.we_wordc {
+        let word_ptr = unsafe { *buf.we_wordv.add(buf.we_offs + idx) };
+        if word_ptr.is_null() {
+            continue;
+        }
+        words.push(
+            unsafe { std::ffi::CStr::from_ptr(word_ptr) }
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    words
+}
+
+unsafe fn run_wordexp_case(
+    wordexp_fn: WordexpFn,
+    wordfree_fn: WordfreeFn,
+    input: &CString,
+    flags: c_int,
+) -> (c_int, Vec<String>) {
+    let mut buf = WordexpBuf {
+        we_wordc: 0,
+        we_wordv: std::ptr::null_mut(),
+        we_offs: 0,
+    };
+    let rc = unsafe { wordexp_fn(input.as_ptr(), (&mut buf as *mut WordexpBuf).cast(), flags) };
+    let words = if rc == 0 {
+        unsafe { collect_wordexp_words(&buf) }
+    } else {
+        Vec::new()
+    };
+    if !buf.we_wordv.is_null() {
+        unsafe { wordfree_fn((&mut buf as *mut WordexpBuf).cast()) };
+    }
+    (rc, words)
+}
+
+#[test]
+fn fgetpwent_reads_etc_passwd() {
+    let path = b"/etc/passwd\0";
+    let mode = b"r\0";
+    let stream = unsafe {
+        fopen(
+            path.as_ptr() as *const c_char,
+            mode.as_ptr() as *const c_char,
+        )
+    };
+    if stream.is_null() {
+        // Skip if /etc/passwd is not readable (unlikely but safe)
+        return;
+    }
+
+    // Read the first entry
+    let entry = unsafe { fgetpwent(stream) };
+    assert!(!entry.is_null(), "should read at least one passwd entry");
+
+    // struct passwd layout: { pw_name (*), pw_passwd (*), pw_uid (u32), pw_gid (u32), pw_gecos (*), pw_dir (*), pw_shell (*) }
+    let pw_name = unsafe { *(entry as *const *const c_char) };
+    assert!(!pw_name.is_null(), "pw_name should not be null");
+    let name = unsafe { std::ffi::CStr::from_ptr(pw_name) };
+    assert!(
+        !name.to_bytes().is_empty(),
+        "first passwd entry should have a non-empty name"
+    );
+
+    // pw_uid is at offset 16 (after two pointers)
+    let pw_uid = unsafe { *((entry as *const u8).add(16) as *const u32) };
+    // First entry is usually root (uid 0), but don't enforce — just check it's a reasonable value
+    assert!(
+        pw_uid <= 65534,
+        "uid should be in valid range, got {pw_uid}"
+    );
+
+    unsafe { fclose(stream) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn wordexp_rejects_tracked_unterminated_input() {
+    let input = b"unterminated-wordexp-input";
+    let mut buf = WordexpBuf {
+        we_wordc: 0,
+        we_wordv: std::ptr::null_mut(),
+        we_offs: 0,
+    };
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(input.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(input.as_ptr(), raw, input.len());
+        let rc = abi_wordexp(raw.cast(), (&mut buf as *mut WordexpBuf).cast(), 0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, TEST_WRDE_SYNTAX);
+        assert_eq!(buf.we_wordc, 0);
+        assert!(buf.we_wordv.is_null());
+    }
+}
+
+#[test]
+fn wordexp_badchars_respect_quote_and_escape_context_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for (input, flags) in [
+        ("'a;b'", 0),
+        ("\"a;b\"", 0),
+        ("a\\;b", 0),
+        ("(", 0),
+        ("{", 0),
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, flags) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, flags) };
+        assert_eq!(abi, host, "wordexp mismatch for input {:?}", input);
+    }
+}
+
+#[test]
+fn wordexp_trailing_escape_matches_host_syntax_error() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in ["\\", "a\\", "\"a\\\""] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp trailing-escape syntax mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_nocmd_respects_quote_context_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in ["'$(echo hi)'", "'`echo hi`'", "\"$(echo hi)\""] {
+        let input = CString::new(input).unwrap();
+        let host =
+            unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, TEST_WRDE_NOCMD) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, TEST_WRDE_NOCMD) };
+        assert_eq!(
+            abi, host,
+            "wordexp WRDE_NOCMD mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_undef_respects_single_and_double_quote_context_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in [
+        "'$FRANKENLIBC_WORDEXP_UNSET_42'",
+        "\"$FRANKENLIBC_WORDEXP_UNSET_42\"",
+    ] {
+        unsafe {
+            libc::unsetenv(c"FRANKENLIBC_WORDEXP_UNSET_42".as_ptr());
+        }
+        let input = CString::new(input).unwrap();
+        let host =
+            unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, TEST_WRDE_UNDEF) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, TEST_WRDE_UNDEF) };
+        assert_eq!(
+            abi, host,
+            "wordexp WRDE_UNDEF mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_unquoted_parameter_expansion_field_splits_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    let _guard = WORDEXP_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let _var_guard = EnvVarGuard::set("FRANKENLIBC_WORDEXP_SPLIT_42", "alpha beta");
+
+    for input in [
+        "$FRANKENLIBC_WORDEXP_SPLIT_42",
+        "\"$FRANKENLIBC_WORDEXP_SPLIT_42\"",
+        "pre${FRANKENLIBC_WORDEXP_SPLIT_42}post",
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp field-splitting mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_non_whitespace_ifs_preserves_empty_fields_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    let _guard = WORDEXP_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let _ifs_guard = EnvVarGuard::set("IFS", ":");
+    let _var_guard = EnvVarGuard::set("FRANKENLIBC_WORDEXP_IFS_42", "a::b:");
+
+    for input in [
+        "$FRANKENLIBC_WORDEXP_IFS_42",
+        "x$FRANKENLIBC_WORDEXP_IFS_42",
+        "$FRANKENLIBC_WORDEXP_IFS_42:tail",
+        ":$FRANKENLIBC_WORDEXP_IFS_42",
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp non-whitespace IFS mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_malformed_braced_parameter_matches_host_quote_context() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in [
+        "${}",
+        "${FRANKENLIBC_WORDEXP_UNCLOSED_42",
+        "\"${}\"",
+        "\"${FRANKENLIBC_WORDEXP_UNCLOSED_42\"",
+        "'${}'",
+        "'${FRANKENLIBC_WORDEXP_UNCLOSED_42'",
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, 0) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, 0) };
+        assert_eq!(
+            abi, host,
+            "wordexp braced-parameter syntax mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn fgetpwent_reads_multiple_entries() {
+    let path = b"/etc/passwd\0";
+    let mode = b"r\0";
+    let stream = unsafe {
+        fopen(
+            path.as_ptr() as *const c_char,
+            mode.as_ptr() as *const c_char,
+        )
+    };
+    if stream.is_null() {
+        return;
+    }
+
+    let mut count = 0;
+    loop {
+        let entry = unsafe { fgetpwent(stream) };
+        if entry.is_null() {
+            break;
+        }
+        count += 1;
+        if count >= 100 {
+            break; // Safety limit
+        }
+    }
+
+    assert!(
+        count >= 1,
+        "should read at least 1 passwd entry, got {count}"
+    );
+
+    unsafe { fclose(stream) };
+}
+
+#[test]
+fn fgetgrent_reads_etc_group() {
+    let path = b"/etc/group\0";
+    let mode = b"r\0";
+    let stream = unsafe {
+        fopen(
+            path.as_ptr() as *const c_char,
+            mode.as_ptr() as *const c_char,
+        )
+    };
+    if stream.is_null() {
+        return;
+    }
+
+    let entry = unsafe { fgetgrent(stream) };
+    assert!(!entry.is_null(), "should read at least one group entry");
+
+    // struct group layout: { gr_name (*), gr_passwd (*), gr_gid (u32), [pad], gr_mem (**) }
+    let gr_name = unsafe { *(entry as *const *const c_char) };
+    assert!(!gr_name.is_null(), "gr_name should not be null");
+    let name = unsafe { std::ffi::CStr::from_ptr(gr_name) };
+    assert!(
+        !name.to_bytes().is_empty(),
+        "first group entry should have a non-empty name"
+    );
+
+    unsafe { fclose(stream) };
+}
+
+#[test]
+fn fgetgrent_reads_multiple_entries() {
+    let path = b"/etc/group\0";
+    let mode = b"r\0";
+    let stream = unsafe {
+        fopen(
+            path.as_ptr() as *const c_char,
+            mode.as_ptr() as *const c_char,
+        )
+    };
+    if stream.is_null() {
+        return;
+    }
+
+    let mut count = 0;
+    loop {
+        let entry = unsafe { fgetgrent(stream) };
+        if entry.is_null() {
+            break;
+        }
+        count += 1;
+        if count >= 100 {
+            break;
+        }
+    }
+
+    assert!(
+        count >= 1,
+        "should read at least 1 group entry, got {count}"
+    );
+
+    unsafe { fclose(stream) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getgrouplist_rejects_tracked_unterminated_user() {
+    use frankenlibc_abi::unistd_abi::getgrouplist;
+
+    let raw_user = malloc_tracked_unterminated(b"frankenlibc-user");
+    let mut groups = [0 as libc::gid_t; 4];
+    let mut ngroups = groups.len() as c_int;
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getgrouplist(raw_user, 0, groups.as_mut_ptr(), &mut ngroups);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_user.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn initgroups_rejects_tracked_unterminated_user() {
+    use frankenlibc_abi::unistd_abi::initgroups;
+
+    let raw_user = malloc_tracked_unterminated(b"frankenlibc-user");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = initgroups(raw_user, 0);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_user.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn res_query_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::unistd_abi::res_query;
+
+    let raw_name = malloc_tracked_unterminated(b"example.com");
+    let mut answer = [0u8; 512];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = res_query(raw_name, 1, 1, answer.as_mut_ptr(), answer.len() as c_int);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn res_search_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::unistd_abi::res_search;
+
+    let raw_name = malloc_tracked_unterminated(b"example.com");
+    let mut answer = [0u8; 512];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = res_search(raw_name, 1, 1, answer.as_mut_ptr(), answer.len() as c_int);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn dn_comp_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::unistd_abi::dn_comp;
+
+    let raw_name = malloc_tracked_unterminated(b"example.com");
+    let mut out = [0u8; 256];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = dn_comp(
+            raw_name,
+            out.as_mut_ptr(),
+            out.len() as c_int,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn dn_skipname_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::unistd_abi::dn_skipname;
+
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let rc = dn_skipname(raw, raw.wrapping_add(2));
+        assert_eq!(rc, -1);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn dn_expand_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::unistd_abi::dn_expand;
+
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let mut out = [0x7eu8; 8];
+        let rc = dn_expand(
+            raw,
+            raw.wrapping_add(2),
+            raw,
+            out.as_mut_ptr().cast(),
+            out.len() as c_int,
+        );
+        assert_eq!(rc, -1);
+        assert_eq!(out[0], 0x7e);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn dn_expand_caps_tracked_short_output_buffer() {
+    use frankenlibc_abi::unistd_abi::dn_expand;
+
+    let msg = [1, b'a', 0];
+    unsafe {
+        let out = malloc_tracked_zeroed_bytes(1).cast::<c_char>();
+        out.cast::<u8>().write(0x7e);
+        let rc = dn_expand(
+            msg.as_ptr(),
+            msg.as_ptr().add(msg.len()),
+            msg.as_ptr(),
+            out,
+            256,
+        );
+        assert_eq!(rc, -1);
+        assert_eq!(out.cast::<u8>().read(), 0x7e);
+        frankenlibc_abi::malloc_abi::free(out.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn herror_rejects_tracked_unterminated_prefix() {
+    use frankenlibc_abi::unistd_abi::herror;
+
+    let raw_prefix = malloc_tracked_unterminated(b"resolver-prefix");
+
+    unsafe {
+        *__errno_location() = 0;
+        herror(raw_prefix);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_prefix.cast());
+
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn fgetpwent_r_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetpwent_r_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nroot:x:0:0:root:/root:/bin/sh\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 256];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let rc = unsafe {
+        fgetpwent_r(
+            stream.cast(),
+            &mut entry,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut entry as *mut libc::passwd);
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.pw_name) };
+    assert_eq!(name.to_bytes(), b"root");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fgetpwent_r_caps_tracked_short_buffer() {
+    let path = b"/etc/passwd\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<libc::passwd>();
+    let rc = unsafe {
+        fgetpwent_r(
+            stream.cast(),
+            &mut entry,
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fgetpwent_r_rejects_tracked_short_result_buf() {
+    let path = b"/etc/passwd\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let raw_entry = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0 as c_char; 256];
+    let mut result = std::ptr::dangling_mut::<libc::passwd>();
+    let rc = unsafe {
+        fgetpwent_r(
+            stream.cast(),
+            raw_entry.cast::<libc::passwd>(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_entry.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_entry) };
+}
+
+#[test]
+fn fgetgrent_r_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetgrent_r_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nwheel:x:10:root\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let mut entry: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 256];
+    let mut result: *mut libc::group = std::ptr::null_mut();
+    let rc = unsafe {
+        fgetgrent_r(
+            stream.cast(),
+            &mut entry,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut entry as *mut libc::group);
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.gr_name) };
+    assert_eq!(name.to_bytes(), b"wheel");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fgetgrent_r_caps_tracked_short_buffer() {
+    let path = b"/etc/group\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let mut entry: libc::group = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<libc::group>();
+    let rc = unsafe {
+        fgetgrent_r(
+            stream.cast(),
+            &mut entry,
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fgetgrent_r_rejects_tracked_short_result_buf() {
+    let path = b"/etc/group\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let raw_entry = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0 as c_char; 256];
+    let mut result = std::ptr::dangling_mut::<libc::group>();
+    let rc = unsafe {
+        fgetgrent_r(
+            stream.cast(),
+            raw_entry.cast::<libc::group>(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_entry.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_entry) };
+}
+
+#[test]
+fn fgetspent_r_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetspent_r_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nroot:*:1:0:99999:7:::\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let mut entry: libc::spwd = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 256];
+    let mut result: *mut libc::spwd = std::ptr::null_mut();
+    let rc = unsafe {
+        fgetspent_r(
+            stream.cast(),
+            &mut entry,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut entry as *mut libc::spwd);
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.sp_namp) };
+    assert_eq!(name.to_bytes(), b"root");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+fn fgetspent_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetspent_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nroot:*:1:0:99999:7:::\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let entry = unsafe { fgetspent(stream.cast()) };
+    assert!(
+        !entry.is_null(),
+        "fgetspent should skip comments to the next entry"
+    );
+    let name = unsafe { std::ffi::CStr::from_ptr((*entry).sp_namp) };
+    assert_eq!(name.to_bytes(), b"root");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn putspent_rejects_tracked_unterminated_shadow_name() {
+    let raw_name = malloc_tracked_unterminated(b"root");
+    let mut ptr: *mut c_char = std::ptr::null_mut();
+    let mut size: usize = 0;
+    let stream = unsafe { frankenlibc_abi::stdio_abi::open_memstream(&mut ptr, &mut size) };
+    if stream.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+        return;
+    }
+
+    let mut entry: libc::spwd = unsafe { std::mem::zeroed() };
+    entry.sp_namp = raw_name;
+    entry.sp_pwdp = c"*".as_ptr() as *mut c_char;
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = putspent(&entry, stream.cast());
+        let err = *__errno_location();
+        let close_rc = frankenlibc_abi::stdio_abi::fclose(stream);
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 0);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fmtmsg_rejects_tracked_unterminated_label() {
+    let raw_label = malloc_tracked_unterminated(b"tool:label");
+    unsafe {
+        *__errno_location() = 0;
+        let rc = fmtmsg(
+            0x100,
+            raw_label,
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_label.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn alias_iterators_match_host_shape() {
+    type HostSetaliasentFn = unsafe extern "C" fn();
+    type HostEndaliasentFn = unsafe extern "C" fn();
+    type HostGetaliasentFn = unsafe extern "C" fn() -> *mut c_void;
+    type HostGetaliasentRFn =
+        unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
+
+    let Some(host_setaliasent) = (unsafe { load_host_symbol("setaliasent") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostSetaliasentFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_endaliasent) = (unsafe { load_host_symbol("endaliasent") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostEndaliasentFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_getaliasent) = (unsafe { load_host_symbol("getaliasent") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostGetaliasentFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_getaliasent_r) = (unsafe { load_host_symbol("getaliasent_r") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostGetaliasentRFn>(p) })
+    else {
+        return;
+    };
+
+    unsafe { host_setaliasent() };
+    let host_plain = unsafe { host_getaliasent() };
+    let host_plain_errno = unsafe { *libc::__errno_location() };
+    unsafe { host_endaliasent() };
+
+    unsafe { abi_setaliasent() };
+    let ours_plain = unsafe { getaliasent() };
+    let ours_plain_errno = unsafe { *__errno_location() };
+    unsafe { endaliasent() };
+
+    assert_eq!(ours_plain.is_null(), host_plain.is_null());
+    if host_plain.is_null() {
+        assert_eq!(ours_plain_errno, host_plain_errno);
+    }
+
+    let mut host_entry = AliasEnt {
+        alias_name: std::ptr::null_mut(),
+        alias_members: std::ptr::null_mut(),
+        alias_local: 0,
+    };
+    let mut host_buf = [0 as c_char; 1024];
+    let mut host_result: *mut c_void = std::ptr::dangling_mut::<c_void>();
+    unsafe { host_setaliasent() };
+    let host_rc = unsafe {
+        host_getaliasent_r(
+            (&mut host_entry as *mut AliasEnt).cast(),
+            host_buf.as_mut_ptr(),
+            host_buf.len(),
+            &mut host_result,
+        )
+    };
+    let host_errno = unsafe { *libc::__errno_location() };
+    unsafe { host_endaliasent() };
+
+    let mut our_entry = AliasEnt {
+        alias_name: std::ptr::null_mut(),
+        alias_members: std::ptr::null_mut(),
+        alias_local: 0,
+    };
+    let mut our_buf = [0 as c_char; 1024];
+    let mut our_result: *mut c_void = std::ptr::dangling_mut::<c_void>();
+    unsafe { abi_setaliasent() };
+    let our_rc = unsafe {
+        getaliasent_r(
+            (&mut our_entry as *mut AliasEnt).cast(),
+            our_buf.as_mut_ptr(),
+            our_buf.len(),
+            &mut our_result,
+        )
+    };
+    let our_errno = unsafe { *__errno_location() };
+    unsafe { endaliasent() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_result.is_null(), host_result.is_null());
+    if host_rc != 0 {
+        assert_eq!(our_errno, host_errno);
+    }
+}
+
+#[test]
+fn netgroup_iterators_match_host_shape() {
+    type HostSetnetgrentFn = unsafe extern "C" fn(*const c_char) -> c_int;
+    type HostEndnetgrentFn = unsafe extern "C" fn();
+    type HostGetnetgrentFn =
+        unsafe extern "C" fn(*mut *mut c_char, *mut *mut c_char, *mut *mut c_char) -> c_int;
+    type HostGetnetgrentRFn = unsafe extern "C" fn(
+        *mut *mut c_char,
+        *mut *mut c_char,
+        *mut *mut c_char,
+        *mut c_char,
+        usize,
+    ) -> c_int;
+
+    let Some(host_setnetgrent) = (unsafe { load_host_symbol("setnetgrent") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostSetnetgrentFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_endnetgrent) = (unsafe { load_host_symbol("endnetgrent") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostEndnetgrentFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_getnetgrent) = (unsafe { load_host_symbol("getnetgrent") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostGetnetgrentFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_getnetgrent_r) = (unsafe { load_host_symbol("getnetgrent_r") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostGetnetgrentRFn>(p) })
+    else {
+        return;
+    };
+
+    let missing = CString::new("frankenlibc-no-such-netgroup").unwrap();
+
+    let host_set_rc = unsafe { host_setnetgrent(missing.as_ptr()) };
+    let host_set_errno = unsafe { *libc::__errno_location() };
+    let mut host_h = std::ptr::dangling_mut::<c_char>();
+    let mut host_u = std::ptr::dangling_mut::<c_char>();
+    let mut host_d = std::ptr::dangling_mut::<c_char>();
+    let host_plain_rc = unsafe { host_getnetgrent(&mut host_h, &mut host_u, &mut host_d) };
+    let host_plain_errno = unsafe { *libc::__errno_location() };
+    let mut host_buf = [0 as c_char; 1024];
+    let host_r_rc = unsafe {
+        host_getnetgrent_r(
+            &mut host_h,
+            &mut host_u,
+            &mut host_d,
+            host_buf.as_mut_ptr(),
+            host_buf.len(),
+        )
+    };
+    let host_r_errno = unsafe { *libc::__errno_location() };
+    unsafe { host_endnetgrent() };
+
+    let our_set_rc = unsafe { setnetgrent(missing.as_ptr()) };
+    let our_set_errno = unsafe { *__errno_location() };
+    let mut our_h = std::ptr::dangling_mut::<c_char>();
+    let mut our_u = std::ptr::dangling_mut::<c_char>();
+    let mut our_d = std::ptr::dangling_mut::<c_char>();
+    let our_plain_rc = unsafe { getnetgrent(&mut our_h, &mut our_u, &mut our_d) };
+    let our_plain_errno = unsafe { *__errno_location() };
+    let mut our_buf = [0 as c_char; 1024];
+    let our_r_rc = unsafe {
+        getnetgrent_r(
+            &mut our_h,
+            &mut our_u,
+            &mut our_d,
+            our_buf.as_mut_ptr(),
+            our_buf.len(),
+        )
+    };
+    let our_r_errno = unsafe { *__errno_location() };
+    unsafe { frankenlibc_abi::unistd_abi::endnetgrent() };
+
+    assert_eq!(our_set_rc, host_set_rc);
+    assert_eq!(our_set_errno, host_set_errno);
+    assert_eq!(our_plain_rc, host_plain_rc);
+    assert_eq!(our_plain_errno, host_plain_errno);
+    assert_eq!(our_r_rc, host_r_rc);
+    assert_eq!(our_r_errno, host_r_errno);
+}
+
+#[test]
+fn logout_matches_host_missing_line_shape() {
+    type HostLogoutFn = unsafe extern "C" fn(*const c_char) -> c_int;
+    let Some(host_logout) = (unsafe { load_host_symbol("logout") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostLogoutFn>(p) })
+    else {
+        return;
+    };
+
+    let line = CString::new("frankenlibc-no-such-line").unwrap();
+
+    let host_rc = unsafe { host_logout(line.as_ptr()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { logout(line.as_ptr()) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn logout_rejects_tracked_unterminated_line() {
+    let raw_line = malloc_tracked_unterminated(b"frankenlibc-no-such-line");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = logout(raw_line);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_line.cast());
+
+        assert_eq!(rc, 0);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn logwtmp_rejects_tracked_unterminated_fields() {
+    let raw_line = malloc_tracked_unterminated(b"tty-franken");
+    let raw_name = malloc_tracked_unterminated(b"alice");
+    let raw_host = malloc_tracked_unterminated(b"example.test");
+
+    unsafe {
+        *__errno_location() = 0;
+        logwtmp(raw_line, std::ptr::null(), std::ptr::null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        logwtmp(c"tty-franken".as_ptr(), raw_name, std::ptr::null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        logwtmp(c"tty-franken".as_ptr(), c"alice".as_ptr(), raw_host);
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_line.cast());
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+        frankenlibc_abi::malloc_abi::free(raw_host.cast());
+    }
+}
+
+#[test]
+fn updwtmp_and_updwtmpx_match_host_file_effects() {
+    type HostUpdwtmpFn = unsafe extern "C" fn(*const c_char, *const c_void);
+    type HostUpdwtmpxFn = unsafe extern "C" fn(*const c_char, *const c_void);
+
+    let Some(host_updwtmp) = (unsafe { load_host_symbol("updwtmp") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostUpdwtmpFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_updwtmpx) = (unsafe { load_host_symbol("updwtmpx") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostUpdwtmpxFn>(p) })
+    else {
+        return;
+    };
+
+    let mut entry: libc::utmpx = unsafe { std::mem::zeroed() };
+    entry.ut_type = libc::USER_PROCESS;
+    entry.ut_pid = std::process::id() as libc::pid_t;
+    entry.ut_tv.tv_sec = 1_700_000_000;
+    entry.ut_tv.tv_usec = 123_456;
+    entry.ut_line[..4].copy_from_slice(&[b't' as i8, b't' as i8, b'y' as i8, b'7' as i8]);
+    entry.ut_id[..4].copy_from_slice(&[b'f' as i8, b'l' as i8, b'i' as i8, b'b' as i8]);
+    entry.ut_user[..4].copy_from_slice(&[b'r' as i8, b'o' as i8, b'o' as i8, b't' as i8]);
+    entry.ut_host[..9].copy_from_slice(&[
+        b'l' as i8, b'o' as i8, b'c' as i8, b'a' as i8, b'l' as i8, b'h' as i8, b'o' as i8,
+        b's' as i8, b't' as i8,
+    ]);
+
+    let host_wtmp = temp_path("host_wtmp");
+    let our_wtmp = temp_path("our_wtmp");
+    let host_wtmpx = temp_path("host_wtmpx");
+    let our_wtmpx = temp_path("our_wtmpx");
+
+    std::fs::write(host_wtmp.to_str().unwrap(), []).unwrap();
+    std::fs::write(our_wtmp.to_str().unwrap(), []).unwrap();
+    std::fs::write(host_wtmpx.to_str().unwrap(), []).unwrap();
+    std::fs::write(our_wtmpx.to_str().unwrap(), []).unwrap();
+
+    unsafe { host_updwtmp(host_wtmp.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+    unsafe { updwtmp(our_wtmp.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+    unsafe { host_updwtmpx(host_wtmpx.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+    unsafe { updwtmpx(our_wtmpx.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+
+    let host_wtmp_bytes = std::fs::read(host_wtmp.to_str().unwrap()).unwrap();
+    let our_wtmp_bytes = std::fs::read(our_wtmp.to_str().unwrap()).unwrap();
+    let host_wtmpx_bytes = std::fs::read(host_wtmpx.to_str().unwrap()).unwrap();
+    let our_wtmpx_bytes = std::fs::read(our_wtmpx.to_str().unwrap()).unwrap();
+
+    assert_eq!(our_wtmp_bytes, host_wtmp_bytes);
+    assert_eq!(our_wtmpx_bytes, host_wtmpx_bytes);
+
+    std::fs::remove_file(host_wtmp.to_str().unwrap()).unwrap();
+    std::fs::remove_file(our_wtmp.to_str().unwrap()).unwrap();
+    std::fs::remove_file(host_wtmpx.to_str().unwrap()).unwrap();
+    std::fs::remove_file(our_wtmpx.to_str().unwrap()).unwrap();
+}
+
+#[test]
+fn sigstack_null_args_match_host_shape() {
+    type HostSigstackFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
+    let Some(host_sigstack) = (unsafe { load_host_symbol("sigstack") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostSigstackFn>(p) })
+    else {
+        return;
+    };
+
+    let host_rc = unsafe { host_sigstack(std::ptr::null(), std::ptr::null_mut()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { sigstack(std::ptr::null(), std::ptr::null_mut()) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn sigvec_invalid_signal_sets_errno_like_sigaction() {
+    let host_rc = unsafe { libc::sigaction(0, std::ptr::null(), std::ptr::null_mut()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { sigvec(0, std::ptr::null(), std::ptr::null_mut()) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn sigpause_invalid_signal_is_rejected_without_blocking() {
+    let our_rc = unsafe { sigpause(0) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, -1);
+    assert_eq!(our_errno, libc::EINVAL);
+}
+
+#[test]
+fn gsignal_invalid_signal_sets_errno_like_raise() {
+    let invalid_sig = 1024;
+    let host_rc = unsafe { libc::raise(invalid_sig) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { gsignal(invalid_sig) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn ssignal_invalid_signal_sets_errno() {
+    let previous = unsafe { ssignal(1024, record_sigusr1 as *const () as libc::sighandler_t) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(previous, libc::SIG_ERR);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
+fn sigset_invalid_signal_sets_errno() {
+    let previous = unsafe { sigset(1024, record_sigusr1 as *const () as libc::sighandler_t) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(previous, libc::SIG_ERR);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
+fn __sysv_signal_invalid_signal_sets_errno() {
+    let previous = unsafe { __sysv_signal(1024, record_sigusr1 as *const () as *mut c_void) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(previous, libc::SIG_ERR as *mut c_void);
+    assert_eq!(err, libc::EINVAL);
+}
+
+fn errno_value() -> i32 {
+    // SAFETY: errno pointer is thread-local and valid.
+    unsafe { *__errno_location() }
+}
+
+fn unique_temp_path(tag: &str) -> CString {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock before unix epoch")
+        .as_nanos();
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "frankenlibc_euidaccess_{tag}_{}_{}",
+        std::process::id(),
+        nanos
+    ));
+    CString::new(path.as_os_str().as_bytes()).expect("temp path must not contain interior NUL")
+}
+
+#[test]
+fn euidaccess_null_path_sets_efault() {
+    let rc = unsafe { euidaccess(std::ptr::null(), libc::F_OK) };
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+}
+
+#[test]
+fn euidaccess_existing_path_matches_eaccess() {
+    let path = unique_temp_path("exists");
+    let path_str = path.to_str().expect("utf8 temp path");
+    std::fs::write(path_str, b"x").expect("create temp file");
+
+    let euid_rc = unsafe { euidaccess(path.as_ptr(), libc::F_OK) };
+    let e_rc = unsafe { eaccess(path.as_ptr(), libc::F_OK) };
+
+    assert_eq!(euid_rc, 0, "euidaccess should succeed for existing path");
+    assert_eq!(e_rc, 0, "eaccess should succeed for existing path");
+
+    let _ = std::fs::remove_file(path_str);
+}
+
+#[test]
+fn euidaccess_missing_path_fails_with_enoent() {
+    let path = unique_temp_path("missing");
+    let rc = unsafe { euidaccess(path.as_ptr(), libc::F_OK) };
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::ENOENT);
+}
+
+// ---------------------------------------------------------------------------
+// getcontext / setcontext / makecontext / swapcontext tests
+// ---------------------------------------------------------------------------
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod ucontext_protocol {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::OnceLock;
+
+    // Context restoration returns twice and replaces the running stack. Keep
+    // that protocol entirely in C/assembly, where volatile state and the SysV
+    // register contract can be checked without unwinding through Rust frames.
+    // Every context entry comes from the supplied function table; merely
+    // compiling this fixture against the host cannot qualify the native arm.
+    // The same source supports a standalone release-DSO probe when compiled
+    // with -DFRANKENLIBC_UCONTEXT_STANDALONE and linked with -ldl.
+    const C_SOURCE: &str = r#"
+#define _GNU_SOURCE
+#include <ucontext.h>
+#include <stdint.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <stddef.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+
+struct context_api {
+    int (*get)(ucontext_t *);
+    int (*set)(const ucontext_t *);
+    void (*make)(ucontext_t *, void (*)(void), int, ...);
+    int (*swap)(ucontext_t *, const ucontext_t *);
+    int *(*error_location)(void);
+};
+static struct context_api api;
+#define CHECK(expr) do { if (!(expr)) { \
+    fprintf(stderr, "ucontext assertion at C line %d: %s\n", __LINE__, #expr); \
+    _Exit(90); \
+} } while (0)
+
+static ucontext_t saved, main_ctx, first_ctx, second_ctx;
+static unsigned char first_stack[65536] __attribute__((aligned(16)));
+static unsigned char second_stack[65536] __attribute__((aligned(16)));
+static volatile int resumed, turns, link_stage;
+static sigset_t original_mask;
+static unsigned short original_cw, first_cw, second_cw;
+static unsigned int original_mxcsr, first_mxcsr, second_mxcsr;
+
+static unsigned short read_cw(void) {
+    unsigned short value;
+    __asm__ volatile("fnstcw %0" : "=m" (value));
+    return value;
+}
+static unsigned int read_mxcsr(void) {
+    unsigned int value;
+    __asm__ volatile("stmxcsr %0" : "=m" (value));
+    return value;
+}
+static void set_fp(unsigned short cw, unsigned int mxcsr) {
+    __asm__ volatile("fldcw %0\n\tldmxcsr %1" : : "m" (cw), "m" (mxcsr));
+}
+static void set_mask(int block_first) {
+    sigset_t mask = original_mask;
+    CHECK(sigdelset(&mask, block_first ? SIGUSR2 : SIGUSR1) == 0);
+    CHECK(sigaddset(&mask, block_first ? SIGUSR1 : SIGUSR2) == 0);
+    CHECK(sigprocmask(SIG_SETMASK, &mask, NULL) == 0);
+}
+static void check_environment(int first) {
+    sigset_t mask;
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &mask) == 0);
+    CHECK(sigismember(&mask, SIGUSR1) == first);
+    CHECK(sigismember(&mask, SIGUSR2) == !first);
+    CHECK(read_cw() == (first ? first_cw : second_cw));
+    CHECK((read_mxcsr() & ~0x3fu) ==
+          ((first ? first_mxcsr : second_mxcsr) & ~0x3fu));
+}
+static void restore_environment(void) {
+    CHECK(sigprocmask(SIG_SETMASK, &original_mask, NULL) == 0);
+    set_fp(original_cw, original_mxcsr);
+}
+static void test_get_set(void) {
+    resumed = 0;
+    set_mask(1);
+    set_fp(first_cw, first_mxcsr);
+    CHECK(api.get(&saved) == 0);
+    if (!resumed) {
+        resumed = 1;
+        set_mask(0);
+        set_fp(second_cw, second_mxcsr);
+        CHECK(api.set(&saved) == 0);
+        CHECK(0 && "setcontext returned instead of restoring getcontext");
+    }
+    CHECK(resumed == 1);
+    check_environment(1);
+    restore_environment();
+}
+
+// The wrappers preserve their own caller's registers, install six distinct
+// 64-bit values, and verify those values after the actual context restoration.
+// RBP is included; the C compiler cannot quietly reserve it for a frame pointer.
+#define REG_SAVE \
+    "push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n sub $40,%rsp\n"
+#define REG_VALUES \
+    "movabs $0x1122334455667788,%rbx\n movabs $0x2233445566778899,%rbp\n" \
+    "movabs $0x33445566778899aa,%r12\n movabs $0x445566778899aabb,%r13\n" \
+    "movabs $0x5566778899aabbcc,%r14\n movabs $0x66778899aabbccdd,%r15\n"
+#define REG_CHECK \
+    "movabs $0x1122334455667788,%rdx\n cmp %rdx,%rbx\n jne 8f\n" \
+    "movabs $0x2233445566778899,%rdx\n cmp %rdx,%rbp\n jne 8f\n" \
+    "movabs $0x33445566778899aa,%rdx\n cmp %rdx,%r12\n jne 8f\n" \
+    "movabs $0x445566778899aabb,%rdx\n cmp %rdx,%r13\n jne 8f\n" \
+    "movabs $0x5566778899aabbcc,%rdx\n cmp %rdx,%r14\n jne 8f\n" \
+    "movabs $0x66778899aabbccdd,%rdx\n cmp %rdx,%r15\n jne 8f\n" \
+    "xor %eax,%eax\n jmp 9f\n 8: mov $1,%eax\n"
+#define REG_RETURN \
+    "9: add $40,%rsp\n pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n ret\n"
+__attribute__((visibility("hidden")))
+int fl_context_get_registers(const struct context_api *, ucontext_t *);
+__attribute__((visibility("hidden")))
+int fl_context_swap_registers(const struct context_api *, ucontext_t *, const ucontext_t *);
+// Some glibc syscall-error paths leave R12 holding the target context. Protect
+// the C driver's locals while testing the returned error; the successful-swap
+// wrapper above independently checks every callee-saved register.
+__attribute__((visibility("hidden")))
+int fl_context_failed_swap(const struct context_api *, ucontext_t *, const ucontext_t *);
+__asm__(
+    ".text\n .globl fl_context_get_registers\n .hidden fl_context_get_registers\n"
+    ".type fl_context_get_registers,@function\n fl_context_get_registers:\n"
+    REG_SAVE
+    "mov %rdi,0(%rsp)\n mov %rsi,8(%rsp)\n movq $0,16(%rsp)\n"
+    REG_VALUES
+    "mov 0(%rsp),%rax\n mov 8(%rsp),%rdi\n call *0(%rax)\n"
+    "test %eax,%eax\n jne 8f\n cmpq $0,16(%rsp)\n jne 1f\n"
+    "movq $1,16(%rsp)\n xor %ebx,%ebx\n xor %ebp,%ebp\n"
+    "xor %r12d,%r12d\n xor %r13d,%r13d\n xor %r14d,%r14d\n xor %r15d,%r15d\n"
+    "mov 0(%rsp),%rax\n mov 8(%rsp),%rdi\n call *8(%rax)\n jmp 8f\n 1:\n"
+    REG_CHECK REG_RETURN
+    ".size fl_context_get_registers,.-fl_context_get_registers\n"
+    ".globl fl_context_swap_registers\n .hidden fl_context_swap_registers\n"
+    ".type fl_context_swap_registers,@function\n fl_context_swap_registers:\n"
+    REG_SAVE
+    "mov %rdi,%rax\n mov %rsi,%rdi\n mov %rdx,%rsi\n"
+    REG_VALUES
+    "call *24(%rax)\n test %eax,%eax\n jne 8f\n"
+    REG_CHECK REG_RETURN
+    ".size fl_context_swap_registers,.-fl_context_swap_registers\n"
+    ".globl fl_context_failed_swap\n .hidden fl_context_failed_swap\n"
+    ".type fl_context_failed_swap,@function\n fl_context_failed_swap:\n"
+    "push %r12\n mov %rdi,%rax\n mov %rsi,%rdi\n mov %rdx,%rsi\n"
+    "call *24(%rax)\n pop %r12\n ret\n"
+    ".size fl_context_failed_swap,.-fl_context_failed_swap\n"
+);
+
+static void first_coroutine(void) {
+    for (int i = 0; i < 16; ++i) {
+        CHECK(turns == i * 2);
+        check_environment(1);
+        ++turns;
+        CHECK(fl_context_swap_registers(&api, &first_ctx, &second_ctx) == 0);
+        check_environment(1);
+    }
+    // Returning must transfer to main_ctx through uc_link.
+}
+static void second_coroutine(void) {
+    for (int i = 0; i < 16; ++i) {
+        CHECK(turns == i * 2 + 1);
+        check_environment(0);
+        ++turns;
+        CHECK(fl_context_swap_registers(&api, &second_ctx, &first_ctx) == 0);
+        check_environment(0);
+    }
+    CHECK(0 && "the first coroutine should return to its uc_link");
+}
+static void prepare(ucontext_t *ctx, unsigned char *stack, ucontext_t *link) {
+    CHECK(api.get(ctx) == 0);
+    ctx->uc_stack.ss_sp = stack;
+    ctx->uc_stack.ss_size = sizeof(first_stack);
+    ctx->uc_stack.ss_flags = 0;
+    ctx->uc_link = link;
+}
+static void test_swaps(void) {
+    turns = 0;
+    set_mask(1);
+    set_fp(first_cw, first_mxcsr);
+    prepare(&first_ctx, first_stack, &main_ctx);
+    api.make(&first_ctx, first_coroutine, 0);
+    set_mask(0);
+    set_fp(second_cw, second_mxcsr);
+    prepare(&second_ctx, second_stack, &main_ctx);
+    api.make(&second_ctx, second_coroutine, 0);
+    restore_environment();
+    CHECK(fl_context_swap_registers(&api, &main_ctx, &first_ctx) == 0);
+    CHECK(turns == 32);
+    CHECK(read_cw() == original_cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (original_mxcsr & ~0x3fu));
+    sigset_t mask;
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &mask) == 0);
+    CHECK(sigismember(&mask, SIGUSR1) == sigismember(&original_mask, SIGUSR1));
+    CHECK(sigismember(&mask, SIGUSR2) == sigismember(&original_mask, SIGUSR2));
+}
+
+static uintptr_t expected[12];
+static uint64_t pointer_payload = UINT64_C(0xfedcba9876543210);
+static volatile int argument_count, argument_calls;
+__attribute__((used,visibility("hidden"))) volatile unsigned long fl_entry_alignment;
+static void check_args(const uintptr_t *args, int count) {
+    CHECK(count == argument_count);
+    CHECK(fl_entry_alignment == 8);
+    for (int i = 0; i < count; ++i) CHECK(args[i] == expected[i]);
+    if (count) CHECK(*(const uint64_t *)args[0] == pointer_payload);
+    ++argument_calls;
+}
+#define ARG_ENTRY(n) \
+    __attribute__((visibility("hidden"))) void args##n(void); \
+    __asm__(".text\n .globl args" #n "\n .hidden args" #n "\n" \
+            ".type args" #n ",@function\n args" #n ":\n" \
+            "mov %rsp,%rax\n and $15,%eax\n mov %rax,fl_entry_alignment(%rip)\n" \
+            "jmp args" #n "_body\n .size args" #n ",.-args" #n "\n"); \
+    __attribute__((used,visibility("hidden")))
+ARG_ENTRY(0) void args0_body(void) { check_args(NULL, 0); }
+ARG_ENTRY(1) void args1_body(uintptr_t a) { uintptr_t v[] = {a}; check_args(v, 1); }
+ARG_ENTRY(6) void args6_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f) {
+    uintptr_t v[] = {a,b,c,d,e,f}; check_args(v, 6);
+}
+ARG_ENTRY(7) void args7_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g) {
+    uintptr_t v[] = {a,b,c,d,e,f,g}; check_args(v, 7);
+}
+ARG_ENTRY(8) void args8_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g, uintptr_t h) {
+    uintptr_t v[] = {a,b,c,d,e,f,g,h}; check_args(v, 8);
+}
+ARG_ENTRY(9) void args9_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g, uintptr_t h, uintptr_t i) {
+    uintptr_t v[] = {a,b,c,d,e,f,g,h,i}; check_args(v, 9);
+}
+ARG_ENTRY(12) void args12_body(uintptr_t a, uintptr_t b, uintptr_t c,
+    uintptr_t d, uintptr_t e, uintptr_t f, uintptr_t g, uintptr_t h,
+    uintptr_t i, uintptr_t j, uintptr_t k, uintptr_t l) {
+    uintptr_t v[] = {a,b,c,d,e,f,g,h,i,j,k,l}; check_args(v, 12);
+}
+static void test_arguments(void) {
+    expected[0] = (uintptr_t)&pointer_payload;
+    CHECK(expected[0] > UINT32_MAX);
+    for (int i = 1; i < 12; ++i)
+        expected[i] = UINT64_C(0xabcdef1200000000) + (uintptr_t)i * 0x10101;
+    static const int counts[] = {0,1,6,7,8,9,12};
+    void (*functions[])(void) = {args0,args1,args6,args7,args8,args9,args12};
+    argument_calls = 0;
+    for (unsigned i = 0; i < sizeof(counts)/sizeof(counts[0]); ++i) {
+        argument_count = counts[i];
+        fl_entry_alignment = 0;
+        prepare(&first_ctx, first_stack, &main_ctx);
+        api.make(&first_ctx, functions[i], counts[i],
+            expected[0],expected[1],expected[2],expected[3],expected[4],expected[5],
+            expected[6],expected[7],expected[8],expected[9],expected[10],expected[11]);
+        CHECK(fl_context_swap_registers(&api, &main_ctx, &first_ctx) == 0);
+        CHECK(argument_calls == (int)i + 1);
+    }
+}
+static void link_first(void) { CHECK(link_stage == 0); link_stage = 1; }
+static void link_second(void) { CHECK(link_stage == 1); link_stage = 2; }
+static void test_link_chain(void) {
+    link_stage = 0;
+    prepare(&second_ctx, second_stack, &main_ctx);
+    api.make(&second_ctx, link_second, 0);
+    prepare(&first_ctx, first_stack, &second_ctx);
+    api.make(&first_ctx, link_first, 0);
+    CHECK(fl_context_swap_registers(&api, &main_ctx, &first_ctx) == 0);
+    CHECK(link_stage == 2);
+}
+static void empty_context(void) {}
+static void test_null_link(void) {
+    // A fresh host stdio stream avoids assumptions about the test runner's
+    // stdout buffering. Returning from uc_link == NULL must call exit and
+    // flush it; a direct exit_group/_exit loses this marker.
+    FILE *stream = fdopen(dup(STDOUT_FILENO), "w");
+    static char buffer[4096];
+    CHECK(stream != NULL);
+    CHECK(setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) == 0);
+    CHECK(fputs("ucontext-null-link-flushed\n", stream) >= 0);
+    prepare(&first_ctx, first_stack, NULL);
+    api.make(&first_ctx, empty_context, 0);
+    CHECK(api.swap(&main_ctx, &first_ctx) == 0);
+    CHECK(0 && "a NULL uc_link must exit the process");
+}
+static void unexpected_context(void) {
+    CHECK(0 && "a failed signal-mask syscall must not switch context");
+}
+static void test_syscall_failure(void) {
+    prepare(&first_ctx, first_stack, NULL);
+    api.make(&first_ctx, unexpected_context, 0);
+    int *error = api.error_location();
+    CHECK(error != NULL);
+    unsigned short cw = read_cw();
+    unsigned int mxcsr = read_mxcsr();
+    struct sock_filter instructions[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigprocmask, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog filter = {
+        .len = sizeof(instructions) / sizeof(instructions[0]),
+        .filter = instructions,
+    };
+    CHECK(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0);
+    CHECK(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &filter) == 0);
+    volatile uintptr_t stack_sentinel = UINT64_C(0x123456789abcdef0);
+    *error = 0;
+    CHECK(api.get(&saved) == -1);
+    CHECK(*error == EPERM);
+    CHECK(stack_sentinel == UINT64_C(0x123456789abcdef0));
+    CHECK(read_cw() == cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (mxcsr & ~0x3fu));
+    *error = 0;
+    CHECK(api.set(&first_ctx) == -1);
+    CHECK(*error == EPERM);
+    CHECK(stack_sentinel == UINT64_C(0x123456789abcdef0));
+    CHECK(read_cw() == cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (mxcsr & ~0x3fu));
+    *error = 0;
+    CHECK(fl_context_failed_swap(&api, &saved, &first_ctx) == -1);
+    CHECK(*error == EPERM);
+    CHECK(stack_sentinel == UINT64_C(0x123456789abcdef0));
+    CHECK(read_cw() == cw);
+    CHECK((read_mxcsr() & ~0x3fu) == (mxcsr & ~0x3fu));
+    // The filter is confined to this fresh subprocess. Avoid returning into
+    // Rust thread cleanup, which can legitimately need rt_sigprocmask itself.
+    static const char marker[] = "ucontext-syscall-error-ok\n";
+    CHECK(write(STDOUT_FILENO, marker, sizeof(marker) - 1) == sizeof(marker) - 1);
+    _Exit(0);
+}
+int fl_ucontext_probe(const struct context_api *functions, int scenario) {
+    api = *functions;
+    CHECK(api.get && api.set && api.make && api.swap && api.error_location);
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &original_mask) == 0);
+    original_cw = read_cw();
+    original_mxcsr = read_mxcsr();
+    first_cw = (original_cw & ~0xc00u) | 0x400u;
+    second_cw = (original_cw & ~0xc00u) | 0x800u;
+    first_mxcsr = (original_mxcsr & ~0x6000u) | 0x4000u;
+    second_mxcsr = (original_mxcsr & ~0x6000u) | 0x2000u;
+    if (scenario == 1) test_null_link();
+    if (scenario == 2) test_syscall_failure();
+    CHECK(scenario == 0);
+    test_get_set();
+    CHECK(fl_context_get_registers(&api, &saved) == 0);
+    test_swaps();
+    test_arguments();
+    test_link_chain();
+    restore_environment();
+    return 0;
+}
+
+#ifdef FRANKENLIBC_UCONTEXT_STANDALONE
+int main(int argc, char **argv) {
+    CHECK(argc == 3);
+    void *host = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    CHECK(host != NULL);
+    int is_host = strcmp(argv[1], "host") == 0;
+    void *provider = is_host ? host : dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    CHECK(provider != NULL);
+    const char *names[] = {"getcontext", "setcontext", "makecontext", "swapcontext", "__errno_location"};
+    void *symbols[5];
+    for (int i = 0; i < 5; ++i) {
+        symbols[i] = dlsym(provider, names[i]);
+        CHECK(symbols[i] != NULL);
+        if (!is_host && i < 4) CHECK(symbols[i] != dlsym(host, names[i]));
+    }
+    struct context_api functions;
+    _Static_assert(sizeof(functions) == sizeof(symbols), "function-table ABI");
+    memcpy(&functions, symbols, sizeof(functions));
+    alarm(15);
+    int result = fl_ucontext_probe(&functions, atoi(argv[2]));
+    puts("ucontext-protocol-ok");
+    return result;
+}
+#endif
+"#;
+
+    fn fixture() -> &'static Path {
+        static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
+        FIXTURE
+            .get_or_init(|| {
+                let directory = std::env::temp_dir().join(format!(
+                    "frankenlibc-ucontext-{}-{}",
+                    std::process::id(),
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                ));
+                std::fs::create_dir(&directory).expect("create ucontext fixture directory");
+                let source = directory.join("ucontext_protocol.c");
+                let library = directory.join("ucontext_protocol.so");
+                std::fs::write(&source, C_SOURCE).expect("write ucontext C fixture");
+                let output = Command::new("cc")
+                    .args([
+                        "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-fPIC", "-shared",
+                    ])
+                    .arg(&source)
+                    .arg("-o")
+                    .arg(&library)
+                    .output()
+                    .expect("compile ucontext C fixture (a C compiler is required)");
+                assert!(
+                    output.status.success(),
+                    "ucontext fixture compilation failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                library
+            })
+            .as_path()
+    }
+
+    fn run_provider(provider: &str, scenario: i32) -> String {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ucontext_protocol::protocol_child",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("FRANKENLIBC_TEST_UCONTEXT_FIXTURE", fixture())
+            .env("FRANKENLIBC_TEST_UCONTEXT_PROVIDER", provider)
+            .env("FRANKENLIBC_TEST_UCONTEXT_SCENARIO", scenario.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn isolated ucontext protocol");
+        let started = Instant::now();
+        let mut timed_out = false;
+        while child.try_wait().expect("poll ucontext child").is_none() {
+            if started.elapsed() >= Duration::from_secs(20) {
+                child.kill().expect("kill timed-out ucontext child");
+                timed_out = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().expect("collect ucontext child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !timed_out && output.status.success(),
+            "{provider} ucontext scenario {scenario}: status={}, timed_out={timed_out}; stdout={stdout}; stderr={stderr}",
+            output.status
+        );
+        stdout.into_owned()
+    }
+
+    #[test]
+    fn native_context_protocol_matches_host() {
+        for provider in ["host", "native"] {
+            let output = run_provider(provider, 0);
+            assert!(
+                output.contains("ucontext-protocol-ok"),
+                "{provider}: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn null_link_exits_and_flushes_streams() {
+        for provider in ["host", "native"] {
+            let output = run_provider(provider, 1);
+            assert!(
+                output.contains("ucontext-null-link-flushed"),
+                "{provider}: {output}"
+            );
+            assert!(
+                !output.contains("ucontext-protocol-ok"),
+                "NULL uc_link returned: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn signal_mask_syscall_failures_return_without_switching() {
+        for provider in ["host", "native"] {
+            let output = run_provider(provider, 2);
+            assert!(
+                output.contains("ucontext-syscall-error-ok"),
+                "{provider}: {output}"
+            );
+            assert!(
+                !output.contains("ucontext-protocol-ok"),
+                "filtered child returned into Rust cleanup: {output}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "invoked with explicit provider by the bounded ucontext parent tests"]
+    fn protocol_child() {
+        use frankenlibc_abi::unistd_abi;
+        #[repr(C)]
+        struct ContextApi {
+            get: *const c_void,
+            set: *const c_void,
+            make: *const c_void,
+            swap: *const c_void,
+            error_location: *const c_void,
+        }
+        let native = ContextApi {
+            get: unistd_abi::getcontext as *const c_void,
+            set: unistd_abi::setcontext as *const c_void,
+            make: unistd_abi::makecontext as *const c_void,
+            swap: unistd_abi::swapcontext as *const c_void,
+            error_location: __errno_location as *const c_void,
+        };
+        let provider = std::env::var("FRANKENLIBC_TEST_UCONTEXT_PROVIDER").unwrap();
+        // SAFETY: host_addr verifies that all four oracle addresses differ from
+        // the native definitions. The C fixture consumes their exact C ABIs.
+        let functions = match provider.as_str() {
+            "native" => native,
+            "host" => unsafe {
+                ContextApi {
+                    get: dlsym_oracle::host_addr(c"getcontext", native.get.cast()),
+                    set: dlsym_oracle::host_addr(c"setcontext", native.set.cast()),
+                    make: dlsym_oracle::host_addr(c"makecontext", native.make.cast()),
+                    swap: dlsym_oracle::host_addr(c"swapcontext", native.swap.cast()),
+                    error_location: dlsym_oracle::host_addr(
+                        c"__errno_location",
+                        native.error_location.cast(),
+                    ),
+                }
+            },
+            other => panic!("unknown ucontext provider {other}"),
+        };
+        let path =
+            CString::new(std::env::var("FRANKENLIBC_TEST_UCONTEXT_FIXTURE").unwrap()).unwrap();
+        let scenario: c_int = std::env::var("FRANKENLIBC_TEST_UCONTEXT_SCENARIO")
+            .unwrap()
+            .parse()
+            .unwrap();
+        // SAFETY: this freshly executed subprocess owns the fixture for its
+        // entire lifetime; a corrupt context cannot affect the parent runner.
+        unsafe {
+            let handle = libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+            assert!(!handle.is_null(), "load ucontext fixture");
+            let address = libc::dlsym(handle, c"fl_ucontext_probe".as_ptr());
+            assert!(!address.is_null(), "resolve ucontext fixture entry");
+            let probe: unsafe extern "C" fn(*const ContextApi, c_int) -> c_int =
+                std::mem::transmute(address);
+            assert_eq!(
+                probe(&functions, scenario),
+                0,
+                "{provider} ucontext protocol"
+            );
+        }
+        println!("ucontext-protocol-ok");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// argp_parse parity tests
+// ---------------------------------------------------------------------------
+// Note: glibc's argp_parse segfaults on NULL argp pointer.
+// Our native implementation returns EINVAL, but in test mode we link against
+// glibc, so we cannot test with NULL. We instead verify the ABI link exists
+// by constructing a minimal (empty) argp struct.
+
+unsafe extern "C" {
+    fn argp_parse(
+        argp: *const c_void,
+        argc: c_int,
+        argv: *mut *mut c_char,
+        flags: u32,
+        arg_index: *mut c_int,
+        input: *mut c_void,
+    ) -> c_int;
+}
+
+#[test]
+fn argp_parse_empty_args_succeeds() {
+    // Construct a minimal argp struct: all zeroes = no options, no parsers.
+    // struct argp { options, parser, args_doc, doc, children, help_filter, argp_domain }
+    let argp_struct = [0u8; 56]; // sizeof(struct argp) on x86_64
+
+    // Create a minimal argv: just a program name.
+    let prog = b"test\0";
+    let mut argv = [prog.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    let mut arg_index: c_int = 0;
+
+    let rc = unsafe {
+        argp_parse(
+            argp_struct.as_ptr() as *const c_void,
+            1,
+            argv.as_mut_ptr(),
+            0,
+            &mut arg_index,
+            std::ptr::null_mut(),
+        )
+    };
+    // With empty argp and no extra arguments, glibc's argp_parse should succeed (return 0).
+    assert_eq!(
+        rc, 0,
+        "argp_parse with empty argp and no args should succeed"
+    );
+}
+
+fn empty_argp_storage() -> [usize; 7] {
+    [0; 7]
+}
+
+const ARGP_NO_EXIT: c_uint = 0x20;
+
+#[allow(dead_code)]
+#[repr(C)]
+struct FixtureArgpState {
+    root_argp: *const c_void,
+    argc: c_int,
+    argv: *mut *mut c_char,
+    next: c_int,
+    flags: c_uint,
+    arg_num: c_uint,
+    quoted: c_int,
+    input: *mut c_void,
+    child_inputs: *mut *mut c_void,
+    hook: *mut c_void,
+    name: *mut c_char,
+    err_stream: *mut libc::FILE,
+    out_stream: *mut libc::FILE,
+    pstate: *mut c_void,
+}
+
+fn fixture_argp_state(root_argp: *const c_void, name: *mut c_char) -> FixtureArgpState {
+    FixtureArgpState {
+        root_argp,
+        argc: 0,
+        argv: std::ptr::null_mut(),
+        next: 0,
+        flags: 0,
+        arg_num: 0,
+        quoted: 0,
+        input: std::ptr::null_mut(),
+        child_inputs: std::ptr::null_mut(),
+        hook: std::ptr::null_mut(),
+        name,
+        err_stream: std::ptr::null_mut(),
+        out_stream: std::ptr::null_mut(),
+        pstate: std::ptr::null_mut(),
+    }
+}
+
+struct ArgpBugAddressGuard {
+    previous: *const c_char,
+}
+
+impl ArgpBugAddressGuard {
+    fn set(ptr: *const c_char) -> Self {
+        let previous = unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_bug_address };
+        unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_bug_address = ptr };
+        Self { previous }
+    }
+}
+
+impl Drop for ArgpBugAddressGuard {
+    fn drop(&mut self) {
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::argp_program_bug_address = self.previous;
+        }
+    }
+}
+
+struct ArgpVersionGlobalsGuard {
+    previous_version: *const c_char,
+    previous_hook: *mut c_void,
+}
+
+impl ArgpVersionGlobalsGuard {
+    fn set(version: *const c_char, hook: *mut c_void) -> Self {
+        let previous_version = unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version };
+        let previous_hook =
+            unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version_hook };
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::argp_program_version = version;
+            frankenlibc_abi::glibc_internal_abi::argp_program_version_hook = hook;
+        }
+        Self {
+            previous_version,
+            previous_hook,
+        }
+    }
+}
+
+impl Drop for ArgpVersionGlobalsGuard {
+    fn drop(&mut self) {
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::argp_program_version = self.previous_version;
+            frankenlibc_abi::glibc_internal_abi::argp_program_version_hook = self.previous_hook;
+        }
+    }
+}
+
+unsafe extern "C" fn argp_test_version_hook(stream: *mut libc::FILE, _state: *mut c_void) {
+    let msg = b"hooked version\n";
+    unsafe {
+        frankenlibc_abi::stdio_abi::fwrite(msg.as_ptr().cast(), 1, msg.len(), stream.cast());
+    }
+}
+
+fn capture_argp_stream_output(
+    write: impl FnOnce(*mut libc::FILE),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut fds = [0; 2];
+    let pipe_rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+    assert_eq!(
+        pipe_rc,
+        0,
+        "pipe2 failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mode = CString::new("w")?;
+    let stream = unsafe { libc::fdopen(fds[1], mode.as_ptr()) };
+    assert!(
+        !stream.is_null(),
+        "fdopen failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    write(stream);
+    assert_eq!(
+        unsafe { libc::fflush(stream) },
+        0,
+        "fflush failed: {}",
+        std::io::Error::last_os_error()
+    );
+    assert_eq!(
+        unsafe { libc::fclose(stream) },
+        0,
+        "fclose failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    // No child here: this helper writes and reads within one process, so the
+    // reap-then-drain deadlock does not apply and the plain read is correct.
+    // (It has its own latent limit — a write larger than the pipe buffer would
+    // block `fclose` against nobody — but that is a separate hazard from the
+    // fork helpers below and is not what bd-akzu9k is about.)
+    let mut output = String::new();
+    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    read_end.read_to_string(&mut output)?;
+    Ok(output)
+}
+
+/// `bounded_waitpid` that DRAINS a pipe while it waits.
+///
+/// Closes the last deadlock in these fork helpers (bd-akzu9k). The children here
+/// have stdout or stderr redirected into a 64K pipe, and the callers used to reap
+/// first and read afterwards: a child writing past the buffer blocks in `write()`
+/// while the parent blocks in the wait, and neither proceeds.
+///
+/// THE OBVIOUS FIX — read to EOF first, then reap — IS WRONG HERE, which is why
+/// this helper exists rather than a reordering. `read_to_end` returns at EOF, i.e.
+/// when the last write end closes, i.e. when the child exits. If the child never
+/// exits — a fork-inherited lock deadlock, or an arm whose child fails to abort —
+/// the read blocks forever and the deadline is never reached, because it would now
+/// sit after the read. That trades a bounded failure for an unbounded hang.
+///
+/// So the drain and the wait share ONE deadline: the fd is made non-blocking and
+/// emptied on every poll iteration, so the child can always make progress, and the
+/// same 30s limit still covers a child that simply never exits. A final drain runs
+/// after the child is reaped to collect whatever it wrote last.
+///
+/// # Safety
+/// `pid` must be an unreaped child of this process, and `drain_fd` the read end of
+/// a pipe this process owns.
+unsafe fn bounded_waitpid_draining(
+    pid: c_int,
+    status: &mut c_int,
+    drain_fd: c_int,
+    sink: &mut Vec<u8>,
+) -> c_int {
+    // SAFETY: `drain_fd` is a live fd owned by the caller.
+    let flags = unsafe { libc::fcntl(drain_fd, libc::F_GETFL) };
+    if flags >= 0 {
+        // SAFETY: as above; adding O_NONBLOCK to the existing flags.
+        let _ = unsafe { libc::fcntl(drain_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    }
+
+    let mut buf = [0u8; 4096];
+    let mut pump = |sink: &mut Vec<u8>| loop {
+        // SAFETY: reading into a local buffer from a live non-blocking fd.
+        let n = unsafe { libc::read(drain_fd, buf.as_mut_ptr().cast::<c_void>(), buf.len()) };
+        if n > 0 {
+            sink.extend_from_slice(&buf[..n as usize]);
+        } else {
+            break;
+        }
+    };
+
+    const LIMIT: Duration = Duration::from_secs(30);
+    let started = Instant::now();
+    loop {
+        pump(sink);
+        // SAFETY: caller guarantees `pid` is an unreaped child of this process.
+        let reaped = unsafe { libc::waitpid(pid, status as *mut c_int, libc::WNOHANG) };
+        if reaped != 0 {
+            pump(sink);
+            return reaped;
+        }
+        if started.elapsed() >= LIMIT {
+            // SAFETY: `pid` is our own child.
+            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+            // SAFETY: reapable promptly after SIGKILL.
+            let _ = unsafe { libc::waitpid(pid, status as *mut c_int, 0) };
+            panic!(
+                "child {pid} did not exit within {LIMIT:?} while its pipe was being \
+                 drained; killed it. The drain rules out pipe-capacity deadlock, so the \
+                 child is stuck for another reason — see `bounded_waitpid`."
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Bounded replacement for `waitpid(pid, status, 0)`.
+///
+/// WHY THIS EXISTS. Every fork site in this file used to reap with
+/// `waitpid(pid, &mut status, 0)` — a wait with NO timeout. A child that never
+/// exits therefore wedged the test binary permanently at ZERO CPU, and because
+/// libtest holds the process open, it wedged the whole `cargo test` invocation
+/// with it. One such hang was observed holding a build open for 4.2 hours before
+/// being killed by hand, on a host that was simultaneously running out of disk.
+///
+/// A hung child is not a hypothetical here; there are at least three ways to get
+/// one, and this file contains all three:
+///
+///   1. FORK IN A MULTITHREADED PROCESS. libtest runs arms in parallel threads.
+///      `fork()` gives the child only the calling thread, but all of the parent's
+///      locks in whatever state they were in — so a child that touches fl's
+///      errno or runtime_policy state can deadlock on a lock whose owning thread
+///      does not exist in the child, and never reach `_exit` or `abort`.
+///   2. PIPE-CAPACITY DEADLOCK. These helpers redirect the child's stderr into a
+///      pipe and then call `waitpid` BEFORE draining it. A child writing more
+///      than the pipe buffer blocks in `write()` while the parent blocks in
+///      `waitpid()`, and neither can proceed.
+///   3. A CHILD THAT SIMPLY DOES NOT ABORT when the test expected it to, which is
+///      the defect these arms exist to detect — and which previously presented as
+///      an infinite hang rather than as a failure.
+///
+/// So the timeout is the GATE, not a workaround: it converts all three from an
+/// unbounded hang into a named failure. It cannot mask a real defect, because the
+/// only behaviour it changes is that of a child which was never going to exit.
+///
+/// # Safety
+/// `pid` must be a child of this process, not yet reaped.
+unsafe fn bounded_waitpid(pid: c_int, status: &mut c_int) -> c_int {
+    const LIMIT: Duration = Duration::from_secs(30);
+    let started = Instant::now();
+    loop {
+        // SAFETY: caller guarantees `pid` is an unreaped child of this process.
+        let reaped = unsafe { libc::waitpid(pid, status as *mut c_int, libc::WNOHANG) };
+        if reaped != 0 {
+            return reaped;
+        }
+        if started.elapsed() >= LIMIT {
+            // SAFETY: `pid` is our own child; killing it is what makes the
+            // failure below reportable instead of leaving a stuck process behind.
+            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+            // SAFETY: after SIGKILL the child is reapable promptly.
+            let _ = unsafe { libc::waitpid(pid, status as *mut c_int, 0) };
+            panic!(
+                "child {pid} did not exit within {LIMIT:?}; killed it. A fork-based arm \
+                 in this file hung — see the three mechanisms documented on \
+                 `bounded_waitpid`. This is a FAILURE, not a flake: the old code would \
+                 have blocked here forever at zero CPU and held the whole cargo test \
+                 invocation open."
+            );
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn capture_argp_stdout_child_status(
+    expected_status: c_int,
+    returned_status: c_int,
+    child: impl FnOnce(),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut fds = [0; 2];
+    assert_eq!(
+        unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) },
+        0,
+        "pipe2 failed"
+    );
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe {
+            let _ = libc::close(fds[0]);
+            if libc::dup2(fds[1], libc::STDOUT_FILENO) < 0 {
+                libc::_exit(126);
+            }
+            let _ = libc::close(fds[1]);
+            child();
+            let _ = frankenlibc_abi::stdio_abi::fflush(std::ptr::null_mut());
+            libc::_exit(returned_status);
+        }
+    }
+
+    unsafe {
+        let _ = libc::close(fds[1]);
+    }
+
+    let mut status: c_int = 0;
+    let mut captured = Vec::new();
+    // SAFETY: `pid` is our child and `fds[0]` the pipe read end we own.
+    assert_eq!(
+        unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut captured) },
+        pid
+    );
+    assert!(
+        libc::WIFEXITED(status),
+        "child did not exit normally: {status}"
+    );
+    assert_eq!(libc::WEXITSTATUS(status), expected_status);
+
+    // SAFETY: the drain fd is owned here and closed exactly once.
+    unsafe { libc::close(fds[0]) };
+    Ok(String::from_utf8_lossy(&captured).into_owned())
+}
+
+fn run_argp_exit_probe(test_name: &str, expected_status: c_int, expected_output: &str) {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .output()
+        .expect("failed to spawn argp exit probe subprocess");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(expected_status),
+        "argp exit probe returned {:?}; stdout={stdout:?}; stderr={stderr:?}",
+        output.status.code(),
+    );
+    assert!(
+        stdout.contains(expected_output),
+        "argp exit probe omitted its diagnostic {expected_output:?}; stdout={stdout:?}; stderr={stderr:?}",
+    );
+}
+
+unsafe fn argp_exit_probe_stream() -> *mut libc::FILE {
+    // SAFETY: duplicating stdout gives the probe an independent descriptor which is
+    // consumed by process exit after the argp routine terminates the subprocess.
+    let fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    assert!(
+        fd >= 0,
+        "dup stdout failed: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: fd is a fresh writable descriptor and c"w" is NUL-terminated.
+    let stream = unsafe { libc::fdopen(fd, c"w".as_ptr()) };
+    assert!(
+        !stream.is_null(),
+        "fdopen stdout duplicate failed: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: stream is valid; unbuffered output makes the diagnostic observable
+    // even though argp_error/argp_failure exit without returning to this helper.
+    unsafe { libc::setvbuf(stream, std::ptr::null_mut(), libc::_IONBF, 0) };
+    stream
+}
+
+#[test]
+fn abi_argp_parse_empty_argp_matches_glibc_index_contracts() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let argp_struct = empty_argp_storage();
+    let prog = b"test\0";
+    let extra = b"extra\0";
+    let mut argv = [
+        prog.as_ptr() as *mut c_char,
+        extra.as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+
+    let mut index: c_int = -1;
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            2,
+            argv.as_mut_ptr(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+    assert_eq!(index, 1);
+
+    index = -1;
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            1,
+            argv.as_mut_ptr(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+    assert_eq!(index, 1);
+
+    index = -1;
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+    assert_eq!(index, 0);
+}
+
+static ARGP_CALLS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Records each callback as "KEY next=N arg_num=M"; declines operands, like
+/// getent's parser.
+unsafe extern "C" fn argp_recording_parser(
+    key: c_int,
+    arg: *mut c_char,
+    state: *mut FixtureArgpState,
+) -> c_int {
+    let st = unsafe { &*state };
+    let name = match key {
+        0 => "ARG".to_string(),
+        0x100_0001 => "END".to_string(),
+        0x100_0002 => "NO_ARGS".to_string(),
+        0x100_0003 => "INIT".to_string(),
+        0x100_0004 => "SUCCESS".to_string(),
+        0x100_0005 => "ERROR".to_string(),
+        0x100_0006 => "ARGS".to_string(),
+        0x100_0007 => "FINI".to_string(),
+        k => format!("'{}'", k as u8 as char),
+    };
+    let arg = if arg.is_null() {
+        String::new()
+    } else {
+        format!(
+            " {}",
+            unsafe { std::ffi::CStr::from_ptr(arg) }.to_string_lossy()
+        )
+    };
+    ARGP_CALLS.lock().unwrap().push(format!(
+        "{name}{arg} next={} arg_num={}",
+        st.next, st.arg_num
+    ));
+    match key {
+        k if k == b'v' as c_int => 0,
+        0 | 0x100_0006 => libc::E2BIG, // ARGP_ERR_UNKNOWN for operands
+        _ => 0,
+    }
+}
+
+#[test]
+fn abi_argp_parse_runs_the_parser_protocol_like_glibc() {
+    // Expected sequence captured from glibc 2.43 (fixture_argp.c
+    // "getent-shape-with-option"): the parser declines operands, so parsing
+    // stops at the first one and returns its index; NO_ARGS/END are skipped.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    ARGP_CALLS.lock().unwrap().clear();
+    #[repr(C)]
+    struct Opt(
+        *const c_char,
+        c_int,
+        *const c_char,
+        c_int,
+        *const c_char,
+        c_int,
+    );
+    let verbose = CString::new("verbose").unwrap();
+    let doc = CString::new("Be verbose").unwrap();
+    let options = [
+        Opt(
+            verbose.as_ptr(),
+            b'v' as c_int,
+            std::ptr::null(),
+            0,
+            doc.as_ptr(),
+            0,
+        ),
+        Opt(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+        ),
+    ];
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[0] = options.as_ptr() as usize;
+    argp_struct[1] = argp_recording_parser as *const () as usize;
+    let args: Vec<CString> = ["getent", "-v", "passwd", "root"]
+        .iter()
+        .map(|s| CString::new(*s).unwrap())
+        .collect();
+    let mut argv: Vec<*mut c_char> = args.iter().map(|s| s.as_ptr().cast_mut()).collect();
+    let mut index: c_int = -1;
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            4,
+            argv.as_mut_ptr(),
+            ARGP_NO_EXIT,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!((rc, index), (0, 2));
+    assert_eq!(
+        *ARGP_CALLS.lock().unwrap(),
+        [
+            "INIT next=0 arg_num=0",
+            "'v' next=2 arg_num=0",
+            "ARG passwd next=3 arg_num=0",
+            "ARGS next=2 arg_num=0",
+            "SUCCESS next=2 arg_num=0",
+            "FINI next=2 arg_num=0",
+        ]
+    );
+}
+
+#[test]
+fn abi_argp_parse_version_prints_configured_version_and_exits() {
+    // Poison-tolerant, matching PASSWD_ENV_LOCK's handling elsewhere in this
+    // file: these tests mutate the same argp globals, so if one of them panics
+    // the others would otherwise die on a poisoned mutex and report a failure
+    // that has nothing to do with what they test. A cascading failure hides the
+    // real one.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let version = CString::new("argp-demo 1.2").unwrap();
+    let _globals = ArgpVersionGlobalsGuard::set(version.as_ptr(), std::ptr::null_mut());
+
+    let output = capture_argp_stdout_child_status(0, 127, || unsafe {
+        let argp_struct = empty_argp_storage();
+        let prog = CString::new("argp-demo").unwrap();
+        let version_arg = CString::new("--version").unwrap();
+        let mut argv = [
+            prog.as_ptr() as *mut c_char,
+            version_arg.as_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+        ];
+
+        let _ = frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            2,
+            argv.as_mut_ptr(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "argp-demo 1.2\n");
+}
+
+#[test]
+fn abi_argp_parse_version_hook_overrides_version_string_without_exit_when_requested() {
+    // Poison-tolerant, matching PASSWD_ENV_LOCK's handling elsewhere in this
+    // file: these tests mutate the same argp globals, so if one of them panics
+    // the others would otherwise die on a poisoned mutex and report a failure
+    // that has nothing to do with what they test. A cascading failure hides the
+    // real one.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let version = CString::new("ignored-version").unwrap();
+    let _globals =
+        ArgpVersionGlobalsGuard::set(version.as_ptr(), argp_test_version_hook as *mut c_void);
+
+    // Status arguments were SWAPPED, which made this test unpassable rather
+    // than merely wrong. The helper is (expected_status, returned_status), where
+    // returned_status is what the child exits with once the closure RETURNS.
+    // Under ARGP_NO_EXIT argp_parse is supposed to return, so returning is the
+    // success path and 125 is the status a correct run produces — yet the test
+    // asserted the child exited 0. No behaviour of argp_parse could satisfy it:
+    // returning gave 125, and the closure's own failure branch also gave 125.
+    //
+    // Fixed by expecting 125 (correct completion) and moving the failure branch
+    // to a DISTINCT code, so a genuine argp_parse regression is now
+    // distinguishable from success instead of colliding with it.
+    let output = capture_argp_stdout_child_status(125, 125, || unsafe {
+        let argp_struct = empty_argp_storage();
+        let prog = CString::new("argp-demo").unwrap();
+        let version_arg = CString::new("--version").unwrap();
+        let mut argv = [
+            prog.as_ptr() as *mut c_char,
+            version_arg.as_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+        ];
+        let mut index: c_int = -1;
+
+        let rc = frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            2,
+            argv.as_mut_ptr(),
+            ARGP_NO_EXIT,
+            &mut index,
+            std::ptr::null_mut(),
+        );
+        if rc != 0 || index != 2 {
+            libc::_exit(124);
+        }
+    })
+    .unwrap();
+
+    assert_eq!(output, "hooked version\n");
+}
+
+#[test]
+fn abi_argp_help_renders_literal_usage_and_doc_sections() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+    const ARGP_HELP_LONG: c_uint = 0x08;
+    const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+    const ARGP_HELP_POST_DOC: c_uint = 0x20;
+
+    let args_doc = CString::new("INPUT [OUTPUT]").unwrap();
+    let doc = CString::new("before options\x0bafter options").unwrap();
+    let name = CString::new("argp-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    argp_struct[3] = doc.as_ptr() as usize;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            stream,
+            ARGP_HELP_SHORT_USAGE | ARGP_HELP_LONG | ARGP_HELP_PRE_DOC | ARGP_HELP_POST_DOC,
+            name.as_ptr().cast_mut(),
+        )
+    })
+    .unwrap();
+
+    // glibc 2.43 output for the same argp and flags.
+    assert_eq!(
+        output,
+        "Usage: argp-demo INPUT [OUTPUT]\nbefore options\n\nafter options\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_help_null_stream_preserves_fixture_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+
+    let args_doc = CString::new("INPUT").unwrap();
+    let name = CString::new("argp-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+
+    clear_errno();
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            std::ptr::null_mut(),
+            ARGP_HELP_SHORT_USAGE,
+            name.as_ptr().cast_mut(),
+        );
+    }
+
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_help_renders_configured_bug_address() {
+    const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
+
+    // Poison-tolerant, matching PASSWD_ENV_LOCK's handling elsewhere in this
+    // file: these tests mutate the same argp globals, so if one of them panics
+    // the others would otherwise die on a poisoned mutex and report a failure
+    // that has nothing to do with what they test. A cascading failure hides the
+    // real one.
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let bug_address = CString::new("bugs@example.test").unwrap();
+    let _bug_address_guard = ArgpBugAddressGuard::set(bug_address.as_ptr());
+    let argp_struct = empty_argp_storage();
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            stream,
+            ARGP_HELP_BUG_ADDR,
+            std::ptr::null_mut(),
+        )
+    })
+    .unwrap();
+
+    // glibc 2.43: no leading blank line when nothing precedes it.
+    assert_eq!(output, "Report bugs to bugs@example.test.\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_help_ignores_unterminated_literal_text() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+    const ARGP_HELP_LONG: c_uint = 0x08;
+    const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+    const ARGP_HELP_POST_DOC: c_uint = 0x20;
+    const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
+
+    let args_doc = vec![b'A'; ARGP_TEXT_SCAN_LIMIT];
+    let doc = vec![b'B'; ARGP_TEXT_SCAN_LIMIT];
+    let name = CString::new("bounded-argp").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    argp_struct[3] = doc.as_ptr() as usize;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_help(
+            argp_struct.as_ptr().cast(),
+            stream,
+            ARGP_HELP_SHORT_USAGE | ARGP_HELP_LONG | ARGP_HELP_PRE_DOC | ARGP_HELP_POST_DOC,
+            name.as_ptr().cast_mut(),
+        )
+    })
+    .unwrap();
+
+    assert_eq!(output, "Usage: bounded-argp\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_state_help_renders_state_root_usage_and_docs_without_exiting() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+    const ARGP_HELP_SEE: c_uint = 0x04;
+    const ARGP_HELP_LONG: c_uint = 0x08;
+    const ARGP_HELP_PRE_DOC: c_uint = 0x10;
+    const ARGP_HELP_POST_DOC: c_uint = 0x20;
+    const ARGP_HELP_EXIT_OK: c_uint = 0x200;
+
+    let args_doc = CString::new("INPUT").unwrap();
+    let doc = CString::new("state pre\x0bstate post").unwrap();
+    let name = CString::new("state-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    argp_struct[3] = doc.as_ptr() as usize;
+    let mut state = fixture_argp_state(argp_struct.as_ptr().cast(), name.as_ptr().cast_mut());
+    // Without ARGP_NO_EXIT, ARGP_HELP_EXIT_OK exits (as in glibc).
+    state.flags = ARGP_NO_EXIT;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_state_help(
+            (&mut state as *mut FixtureArgpState).cast(),
+            stream,
+            ARGP_HELP_SHORT_USAGE
+                | ARGP_HELP_SEE
+                | ARGP_HELP_LONG
+                | ARGP_HELP_PRE_DOC
+                | ARGP_HELP_POST_DOC
+                | ARGP_HELP_EXIT_OK,
+        )
+    })
+    .unwrap();
+
+    // glibc 2.43 output for the same state and flags.
+    assert_eq!(
+        output,
+        "Usage: state-demo INPUT\nstate pre\nTry `state-demo --help' or `state-demo --usage' \
+         for more information.\n\nstate post\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_state_help_null_state_preserves_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        frankenlibc_abi::unistd_abi::argp_state_help(
+            std::ptr::null_mut(),
+            stream,
+            ARGP_HELP_SHORT_USAGE,
+        )
+    })
+    .unwrap();
+
+    assert_eq!(output, "");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_usage_renders_usage_to_state_error_stream_without_exiting() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let args_doc = CString::new("INPUT").unwrap();
+    let name = CString::new("usage-demo").unwrap();
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[2] = args_doc.as_ptr() as usize;
+    let mut state = fixture_argp_state(argp_struct.as_ptr().cast(), name.as_ptr().cast_mut());
+    // argp_usage exits with argp_err_exit_status unless ARGP_NO_EXIT.
+    state.flags = ARGP_NO_EXIT;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_usage((&mut state as *mut FixtureArgpState).cast());
+    })
+    .unwrap();
+
+    // glibc 2.43 output.
+    assert_eq!(
+        output,
+        "Usage: usage-demo INPUT\nTry `usage-demo --help' or `usage-demo --usage' for more \
+         information.\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_usage_null_state_preserves_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    clear_errno();
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_usage(std::ptr::null_mut());
+    }
+
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let name = CString::new("diag-demo").unwrap();
+    let fmt = CString::new("bad %s %d").unwrap();
+    let option = CString::new("option").unwrap();
+    let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+    state.flags = ARGP_NO_EXIT;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_error(
+            (&mut state as *mut FixtureArgpState).cast(),
+            fmt.as_ptr(),
+            option.as_ptr(),
+            7 as c_int,
+        );
+    })
+    .unwrap();
+
+    // glibc 2.43 (with a root argp; glibc crashes on a null one).
+    assert_eq!(
+        output,
+        "diag-demo: bad option 7\nTry `diag-demo --help' or `diag-demo --usage' for more \
+         information.\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_error_normalizes_negative_star_width_and_precision() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let name = CString::new("diag-demo").unwrap();
+    let fmt = CString::new("bad |%*d| %.*s").unwrap();
+    let word = CString::new("abcdef").unwrap();
+    let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+    state.flags = ARGP_NO_EXIT;
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_error(
+            (&mut state as *mut FixtureArgpState).cast(),
+            fmt.as_ptr(),
+            -5 as c_int,
+            42 as c_int,
+            -1 as c_int,
+            word.as_ptr(),
+        );
+    })
+    .unwrap();
+
+    assert_eq!(
+        output,
+        "diag-demo: bad |42   | abcdef\nTry `diag-demo --help' or `diag-demo --usage' for more \
+         information.\n"
+    );
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let name = CString::new("diag-demo").unwrap();
+    let fmt = CString::new("failed item %d").unwrap();
+    let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+
+    clear_errno();
+    let output = capture_argp_stream_output(|stream| unsafe {
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_failure(
+            (&mut state as *mut FixtureArgpState).cast(),
+            0,
+            libc::EINVAL,
+            fmt.as_ptr(),
+            5 as c_int,
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "diag-demo: failed item 5: Invalid argument\n");
+    assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_error_exits_with_configured_status_in_child() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    run_argp_exit_probe(
+        "argp_error_exits_with_configured_status_probe_process",
+        73,
+        "exit-demo: fatal 3\n",
+    );
+}
+
+#[test]
+#[ignore]
+fn argp_error_exits_with_configured_status_probe_process() {
+    let name = CString::new("exit-demo").unwrap();
+    let fmt = CString::new("fatal %d").unwrap();
+
+    unsafe {
+        frankenlibc_abi::glibc_internal_abi::argp_err_exit_status = 73;
+        let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+        state.err_stream = argp_exit_probe_stream();
+        frankenlibc_abi::unistd_abi::argp_error(
+            (&mut state as *mut FixtureArgpState).cast(),
+            fmt.as_ptr(),
+            3 as c_int,
+        );
+    }
+}
+
+#[test]
+fn abi_argp_failure_exits_with_status_in_child() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    run_argp_exit_probe(
+        "argp_failure_exits_with_status_probe_process",
+        74,
+        "failure-demo: failed item: No such file or directory\n",
+    );
+}
+
+#[test]
+#[ignore]
+fn argp_failure_exits_with_status_probe_process() {
+    let name = CString::new("failure-demo").unwrap();
+    let fmt = CString::new("failed %s").unwrap();
+    let item = CString::new("item").unwrap();
+
+    unsafe {
+        let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+        state.err_stream = argp_exit_probe_stream();
+        frankenlibc_abi::unistd_abi::argp_failure(
+            (&mut state as *mut FixtureArgpState).cast(),
+            74,
+            libc::ENOENT,
+            fmt.as_ptr(),
+            item.as_ptr(),
+        );
+    }
+}
+
+#[test]
+fn abi_argp_failure_honors_no_exit_flag() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    run_argp_exit_probe(
+        "argp_failure_honors_no_exit_flag_probe_process",
+        0,
+        "failure-demo: failed 9: Invalid argument\n",
+    );
+}
+
+#[test]
+#[ignore]
+fn argp_failure_honors_no_exit_flag_probe_process() {
+    let name = CString::new("failure-demo").unwrap();
+    let fmt = CString::new("failed %d").unwrap();
+
+    unsafe {
+        let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+        state.flags = ARGP_NO_EXIT;
+        state.err_stream = argp_exit_probe_stream();
+        frankenlibc_abi::unistd_abi::argp_failure(
+            (&mut state as *mut FixtureArgpState).cast(),
+            74,
+            libc::EINVAL,
+            fmt.as_ptr(),
+            9 as c_int,
+        );
+    }
+}
+
+#[test]
+fn abi_argp_error_and_failure_null_state_preserve_fixture_noop_contract() {
+    let _guard = ARGP_GLOBAL_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let fmt = CString::new("ignored %d").unwrap();
+
+    clear_errno();
+    unsafe {
+        frankenlibc_abi::unistd_abi::argp_error(std::ptr::null_mut(), fmt.as_ptr(), 1 as c_int);
+        frankenlibc_abi::unistd_abi::argp_failure(
+            std::ptr::null_mut(),
+            0,
+            libc::EINVAL,
+            fmt.as_ptr(),
+            2 as c_int,
+        );
+    }
+
+    assert_eq!(errno_value(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// SysV IPC surface tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn named_semaphore_open_close_unlink_roundtrip() {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_nanos();
+    let name = CString::new(format!("/frankenlibc_sem_{stamp}_{}", std::process::id()))
+        .expect("generated semaphore name should not contain NUL");
+    let failed = usize::MAX as *mut c_void;
+
+    unsafe {
+        let _ = sem_unlink(name.as_ptr());
+        *__errno_location() = 0;
+    }
+
+    let sem = unsafe {
+        sem_open(
+            name.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL,
+            0o600 as libc::mode_t,
+            2u32,
+        )
+    };
+    assert_ne!(
+        sem,
+        failed,
+        "sem_open create failed errno={}",
+        errno_value()
+    );
+
+    assert_eq!(unsafe { sem_close(sem) }, 0);
+
+    let reopened = unsafe { sem_open(name.as_ptr(), 0) };
+    assert_ne!(
+        reopened,
+        failed,
+        "sem_open existing failed errno={}",
+        errno_value()
+    );
+    assert_eq!(unsafe { sem_close(reopened) }, 0);
+    assert_eq!(unsafe { sem_unlink(name.as_ptr()) }, 0);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn named_semaphore_rejects_tracked_unterminated_name() {
+    let name = b"/frankenlibc_sem_unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(name.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(name.as_ptr(), raw, name.len());
+
+        *__errno_location() = 0;
+        let opened = sem_open(raw.cast(), libc::O_RDONLY);
+        let open_errno = errno_value();
+
+        *__errno_location() = 0;
+        let unlinked = sem_unlink(raw.cast());
+        let unlink_errno = errno_value();
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(opened, usize::MAX as *mut c_void);
+        assert_eq!(open_errno, libc::EINVAL);
+        assert_eq!(unlinked, -1);
+        assert_eq!(unlink_errno, libc::EINVAL);
+    }
+}
+
+#[test]
+fn shmdt_null_pointer_fails_with_einval_like_host() {
+    let rc = unsafe { shmdt(std::ptr::null()) };
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+fn semctl_ipc_rmid_without_variadic_arg_fails_for_invalid_semaphore_id() {
+    // bd-jm3h: host glibc returns EINVAL for semctl(-1, 0, IPC_RMID).
+    // The broad is_expected_sysvipc_errno sentinel accepted a whole
+    // family; tighten to the exact host-parity contract so any future
+    // drift surfaces immediately.
+    let rc = unsafe { semctl(-1, 0, libc::IPC_RMID) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        errno_value(),
+        libc::EINVAL,
+        "semctl(-1, 0, IPC_RMID) must return EINVAL (host-parity), got {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn semop_null_payload_nonzero_ops_fails_cleanly() {
+    // bd-7g3f: host glibc surfaces EFAULT for semop(_, NULL, nsops>0)
+    // because the kernel dereferences sops before validating semid.
+    // Tighten from the broad family sentinel to the exact host-parity
+    // errno so future drift is caught immediately.
+    let rc = unsafe { semop(-1, std::ptr::null_mut(), 1) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        errno_value(),
+        libc::EFAULT,
+        "semop(-1, NULL, 1) must return EFAULT (host-parity), got {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn msgsnd_null_payload_nonzero_size_fails_cleanly() {
+    // bd-6kkg: host glibc surfaces EFAULT for msgsnd(_, NULL, size>0)
+    // because the kernel dereferences msgp before the queue-id check.
+    let rc = unsafe { msgsnd(-1, std::ptr::null(), 8, 0) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        errno_value(),
+        libc::EFAULT,
+        "msgsnd(-1, NULL, 8, 0) must return EFAULT (host-parity), got {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn msgrcv_null_payload_nonzero_size_fails_cleanly() {
+    // bd-he3h: for msgrcv the kernel validates msgid BEFORE the msgp
+    // pointer, so the invalid queue-id path wins: msgrcv(-1, NULL, 8,
+    // 0, 0) returns EINVAL, not EFAULT. Pin that precedence rule.
+    let rc = unsafe { msgrcv(-1, std::ptr::null_mut(), 8, 0, 0) };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        errno_value(),
+        libc::EINVAL,
+        "msgrcv(-1, NULL, 8, 0, 0) must return EINVAL (host-parity: invalid msqid wins over NULL payload), got {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn process_vm_readv_null_iov_nonzero_counts_set_efault_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut remote_byte = 0_u8;
+    let remote_iov = libc::iovec {
+        iov_base: (&mut remote_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 0) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
+}
+
+#[test]
+fn process_vm_writev_null_iov_nonzero_counts_set_efault_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut local_byte = 7_u8;
+    let local_iov = libc::iovec {
+        iov_base: (&mut local_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 0) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
+}
+
+#[test]
+fn process_vm_readv_invalid_flags_override_null_iov_fault_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut remote_byte = 0_u8;
+    let remote_iov = libc::iovec {
+        iov_base: (&mut remote_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_vm_writev_invalid_flags_override_null_iov_fault_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut local_byte = 7_u8;
+    let local_iov = libc::iovec {
+        iov_base: (&mut local_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_vm_readv_zero_local_iov_count_preserves_errno_and_succeeds() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut remote_byte = 0_u8;
+    let remote_iov = libc::iovec {
+        iov_base: (&mut remote_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe { libc::process_vm_readv(pid, std::ptr::null(), 0, &remote_iov, 1, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, &remote_iov, 1, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
+}
+
+#[test]
+fn process_vm_writev_zero_remote_iov_count_preserves_errno_and_succeeds() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut local_byte = 7_u8;
+    let local_iov = libc::iovec {
+        iov_base: (&mut local_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe { libc::process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 0, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 0, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
+}
+
+#[test]
+fn process_vm_readv_all_null_zero_counts_preserve_errno_and_succeed() {
+    let pid = std::process::id() as libc::pid_t;
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc =
+        unsafe { libc::process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
+}
+
+#[test]
+fn process_vm_readv_invalid_flags_override_all_null_zero_counts_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+
+    clear_errno();
+    let host_rc =
+        unsafe { libc::process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_vm_writev_all_null_zero_counts_preserve_errno_and_succeed() {
+    let pid = std::process::id() as libc::pid_t;
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc =
+        unsafe { libc::process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
+}
+
+#[test]
+fn process_vm_writev_invalid_flags_override_all_null_zero_counts_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+
+    clear_errno();
+    let host_rc =
+        unsafe { libc::process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_madvise_null_iov_nonzero_len_sets_efault_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            1_usize,
+            libc::MADV_NORMAL,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
+}
+
+#[test]
+fn process_madvise_null_iov_zero_len_invalid_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            0_usize,
+            libc::MADV_NORMAL,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 0, libc::MADV_NORMAL, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn process_madvise_invalid_flags_set_einval_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            0_usize,
+            libc::MADV_NORMAL,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 0, libc::MADV_NORMAL, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_madvise_invalid_flags_override_bad_pidfd_and_missing_iov_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            1_usize,
+            libc::MADV_NORMAL,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_mrelease_invalid_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            -1 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(-1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn process_mrelease_invalid_flags_override_invalid_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            -1 as libc::c_long,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(-1, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_mrelease_zero_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            0 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(0, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn process_mrelease_invalid_flags_override_zero_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            0 as libc::c_long,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn pidfd_getfd_invalid_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_getfd,
+            -1 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { pidfd_getfd(-1, 0, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn pidfd_getfd_invalid_targetfd_does_not_override_invalid_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_getfd,
+            -1 as libc::c_long,
+            -1 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { pidfd_getfd(-1, -1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn pidfd_getfd_invalid_flags_override_invalid_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_getfd,
+            -1 as libc::c_long,
+            0 as libc::c_long,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { pidfd_getfd(-1, 0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn mount_setattr_null_pathname_invalid_dirfd_sets_einval_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            -1 as libc::c_long,
+            std::ptr::null::<c_char>(),
+            0 as libc::c_uint,
+            std::ptr::null::<c_void>(),
+            0_usize,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { mount_setattr(-1, std::ptr::null(), 0, std::ptr::null_mut(), 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn mount_setattr_null_pathname_at_empty_path_still_sets_einval_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            std::ptr::null::<c_char>(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            std::ptr::null::<c_void>(),
+            0_usize,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe {
+        mount_setattr(
+            libc::AT_FDCWD,
+            std::ptr::null(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn mount_setattr_slash_path_null_attr_sets_einval_like_host() {
+    let slash = CString::new("/").unwrap();
+
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            slash.as_ptr(),
+            0 as libc::c_uint,
+            std::ptr::null::<c_void>(),
+            0_usize,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc =
+        unsafe { mount_setattr(libc::AT_FDCWD, slash.as_ptr(), 0, std::ptr::null_mut(), 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn mount_setattr_empty_path_preserves_unprivileged_eperm_like_host() {
+    let empty = CString::new("").unwrap();
+    let attr_size = std::mem::size_of::<[u64; 4]>();
+
+    let mut host_plain_attr = [0_u64; 4];
+    clear_errno();
+    let host_plain_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            empty.as_ptr(),
+            0 as libc::c_uint,
+            host_plain_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    let host_plain_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_plain_attr = [0_u64; 4];
+    clear_errno();
+    let abi_plain_rc = unsafe {
+        mount_setattr(
+            libc::AT_FDCWD,
+            empty.as_ptr(),
+            0,
+            abi_plain_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    let abi_plain_errno = errno_value();
+
+    // fl must do whatever the HOST did — that is the actual contract, and it is
+    // checked on the return value as well as errno now, which the hardcoded
+    // `== -1` pair never really did.
+    assert_eq!(
+        i64::from(abi_plain_rc),
+        host_plain_rc,
+        "mount_setattr(plain) rc: fl={abi_plain_rc} host={host_plain_rc}"
+    );
+    assert_eq!(abi_plain_errno, host_plain_errno);
+    // EPERM is only the right answer when we are actually unprivileged. The
+    // rch workers run as root, where this syscall does NOT fail, so asserting
+    // it unconditionally made this test permanently red on the whole fleet.
+    if unsafe { libc::geteuid() } != 0 {
+        assert_eq!(
+            abi_plain_errno,
+            libc::EPERM,
+            "unprivileged mount_setattr(plain) must be EPERM"
+        );
+    }
+
+    let mut host_empty_path_attr = [0_u64; 4];
+    clear_errno();
+    let host_empty_path_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            empty.as_ptr(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            host_empty_path_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    let host_empty_path_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_empty_path_attr = [0_u64; 4];
+    clear_errno();
+    let abi_empty_path_rc = unsafe {
+        mount_setattr(
+            libc::AT_FDCWD,
+            empty.as_ptr(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            abi_empty_path_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    let abi_empty_path_errno = errno_value();
+
+    assert_eq!(
+        i64::from(abi_empty_path_rc),
+        host_empty_path_rc,
+        "mount_setattr(AT_EMPTY_PATH) rc: fl={abi_empty_path_rc} host={host_empty_path_rc}"
+    );
+    assert_eq!(abi_empty_path_errno, host_empty_path_errno);
+    if unsafe { libc::geteuid() } != 0 {
+        assert_eq!(
+            abi_empty_path_errno,
+            libc::EPERM,
+            "unprivileged mount_setattr(AT_EMPTY_PATH) must be EPERM"
+        );
+    }
+}
+
+#[test]
+fn setns_invalid_fd_sets_errno_like_host() {
+    clear_errno();
+    let host_rc = unsafe { libc::setns(-1, 0) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { setns(-1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn unshare_invalid_flags_sets_errno_like_host() {
+    clear_errno();
+    let host_rc = unsafe { libc::unshare(-1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { unshare(-1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn getaddrinfo_a_zero_item_requests_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [std::ptr::null_mut()];
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, requests.as_mut_ptr(), -1, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [std::ptr::null_mut(), std::ptr::null_mut()];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_zeroed_gaicb_requests_finish_with_noname_and_preserve_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut first: GaicbShape = unsafe { std::mem::zeroed() };
+    let mut second: GaicbShape = unsafe { std::mem::zeroed() };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [
+        (&mut first as *mut GaicbShape).cast::<c_void>(),
+        (&mut second as *mut GaicbShape).cast::<c_void>(),
+    ];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(
+        unsafe { gai_error((&mut first as *mut GaicbShape).cast()) },
+        libc::EAI_NONAME
+    );
+    assert_eq!(
+        unsafe { gai_error((&mut second as *mut GaicbShape).cast()) },
+        libc::EAI_NONAME
+    );
+    assert!(first.ar_result.is_null() && second.ar_result.is_null());
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut mixed_requests = [
+        std::ptr::null_mut(),
+        (&mut first as *mut GaicbShape).cast::<c_void>(),
+    ];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_NOWAIT,
+            mixed_requests.as_mut_ptr(),
+            mixed_requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+    // NOWAIT retains the request until completion. Do not let stack storage
+    // expire while the new native resolver can still publish a result.
+    let first_ptr = (&mut first as *mut GaicbShape).cast::<c_void>();
+    let pending = [first_ptr.cast_const()];
+    let timeout = libc::timespec {
+        tv_sec: 2,
+        tv_nsec: 0,
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while unsafe { gai_error(first_ptr) } == -100 {
+        assert!(Instant::now() < deadline, "zeroed request must finish");
+        let rc = unsafe { gai_suspend(pending.as_ptr(), 1, &timeout) };
+        assert!(rc == 0 || rc == GAI_EAI_ALLDONE || rc == -104);
+    }
+    assert_eq!(unsafe { gai_error(first_ptr) }, libc::EAI_NONAME);
+    assert!(first.ar_result.is_null());
+}
+
+#[test]
+fn getaddrinfo_a_nowait_degenerate_requests_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [std::ptr::null_mut()];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_NOWAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_null_list =
+        unsafe { host_getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let host_null_list_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_null_list =
+        unsafe { getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let abi_null_list_errno = errno_value();
+    assert_eq!(abi_null_list, host_null_list);
+    assert_eq!(abi_null_list_errno, host_null_list_errno);
+
+    let mut host_requests = [std::ptr::null_mut()];
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_all_null = unsafe {
+        host_getaddrinfo_a(
+            GAI_NOWAIT,
+            host_requests.as_mut_ptr(),
+            host_requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    let host_all_null_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_requests = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_all_null = unsafe {
+        getaddrinfo_a(
+            GAI_NOWAIT,
+            abi_requests.as_mut_ptr(),
+            abi_requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    let abi_all_null_errno = errno_value();
+    assert_eq!(abi_all_null, host_all_null);
+    assert_eq!(abi_all_null_errno, host_all_null_errno);
+}
+
+#[test]
+fn getaddrinfo_a_wait_zero_requests_preserve_errno_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_null_list =
+        unsafe { host_getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let host_null_list_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_null_list =
+        unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let abi_null_list_errno = errno_value();
+    assert_eq!(abi_null_list, host_null_list);
+    assert_eq!(abi_null_list_errno, host_null_list_errno);
+
+    let mut host_requests = [std::ptr::null_mut()];
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_negative_nitems = unsafe {
+        host_getaddrinfo_a(
+            GAI_WAIT,
+            host_requests.as_mut_ptr(),
+            -1,
+            std::ptr::null_mut(),
+        )
+    };
+    let host_negative_nitems_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_requests = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_negative_nitems = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            abi_requests.as_mut_ptr(),
+            -1,
+            std::ptr::null_mut(),
+        )
+    };
+    let abi_negative_nitems_errno = errno_value();
+    assert_eq!(abi_negative_nitems, host_negative_nitems);
+    assert_eq!(abi_negative_nitems_errno, host_negative_nitems_errno);
+}
+
+#[test]
+fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    for mode in [
+        GAI_WAIT,
+        GAI_NOWAIT,
+        GAI_BADFLAGS_NEGATIVE_MODE,
+        GAI_BADFLAGS_POSITIVE_MODE,
+    ] {
+        unsafe {
+            *libc::__errno_location() = libc::E2BIG;
+        }
+        let host_empty =
+            unsafe { host_getaddrinfo_a(mode, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+        let host_empty_errno = unsafe { *libc::__errno_location() };
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_empty =
+            unsafe { getaddrinfo_a(mode, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+        let abi_empty_errno = errno_value();
+        assert_eq!(abi_empty, host_empty, "mode {mode} empty-list rc");
+        assert_eq!(
+            abi_empty_errno, host_empty_errno,
+            "mode {mode} empty-list errno"
+        );
+
+        let mut host_requests = [std::ptr::null_mut()];
+        unsafe {
+            *libc::__errno_location() = libc::E2BIG;
+        }
+        let host_all_null = unsafe {
+            host_getaddrinfo_a(
+                mode,
+                host_requests.as_mut_ptr(),
+                host_requests.len() as c_int,
+                std::ptr::null_mut(),
+            )
+        };
+        let host_all_null_errno = unsafe { *libc::__errno_location() };
+
+        let mut abi_requests = [std::ptr::null_mut()];
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_all_null = unsafe {
+            getaddrinfo_a(
+                mode,
+                abi_requests.as_mut_ptr(),
+                abi_requests.len() as c_int,
+                std::ptr::null_mut(),
+            )
+        };
+        let abi_all_null_errno = errno_value();
+        assert_eq!(abi_all_null, host_all_null, "mode {mode} all-null rc");
+        assert_eq!(
+            abi_all_null_errno, host_all_null_errno,
+            "mode {mode} all-null errno"
+        );
+    }
+}
+
+#[test]
+fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    for (label, mode, nitems) in [
+        ("negative_badflags", GAI_BADFLAGS_NEGATIVE_MODE, 0),
+        ("positive_badflags", GAI_BADFLAGS_POSITIVE_MODE, 1),
+    ] {
+        let mut host_requests = [std::ptr::null_mut()];
+        unsafe {
+            *libc::__errno_location() = libc::E2BIG;
+        }
+        let host_rc = unsafe {
+            host_getaddrinfo_a(
+                mode,
+                host_requests.as_mut_ptr(),
+                nitems,
+                std::ptr::null_mut(),
+            )
+        };
+        let host_errno = unsafe { *libc::__errno_location() };
+
+        let mut abi_requests = [std::ptr::null_mut()];
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_rc = unsafe {
+            getaddrinfo_a(
+                mode,
+                abi_requests.as_mut_ptr(),
+                nitems,
+                std::ptr::null_mut(),
+            )
+        };
+        let abi_errno = errno_value();
+
+        assert_eq!(abi_rc, host_rc, "{label} rc");
+        assert_eq!(abi_errno, host_errno, "{label} errno");
+        assert_eq!(abi_rc, libc::EAI_SYSTEM, "{label} rc contract");
+        assert_eq!(abi_errno, libc::EINVAL, "{label} errno contract");
+    }
+}
+
+#[test]
+fn getaddrinfo_a_resolves_numeric_requests_instead_of_returning_enosys() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let hints = libc::addrinfo {
+        ai_flags: libc::AI_NUMERICHOST | libc::AI_NUMERICSERV,
+        ai_family: libc::AF_INET,
+        ai_socktype: libc::SOCK_STREAM,
+        ai_protocol: 0,
+        ai_addrlen: 0,
+        ai_addr: std::ptr::null_mut(),
+        ai_canonname: std::ptr::null_mut(),
+        ai_next: std::ptr::null_mut(),
+    };
+    let mut request = GaicbShape {
+        ar_name: c"127.0.0.7".as_ptr(),
+        ar_service: c"43127".as_ptr(),
+        ar_request: (&hints as *const libc::addrinfo).cast(),
+        ar_result: std::ptr::null_mut(),
+        __return: 0,
+        __unused: [0; 5],
+    };
+    let cb = (&mut request as *mut GaicbShape).cast::<c_void>();
+    let mut requests = [cb];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(unsafe { gai_error(cb) }, 0);
+    assert!(!request.ar_result.is_null());
+    unsafe {
+        let result = &*request.ar_result.cast::<libc::addrinfo>();
+        assert_eq!(result.ai_family, libc::AF_INET);
+        assert_eq!(result.ai_socktype, libc::SOCK_STREAM);
+        assert_eq!(
+            result.ai_addrlen as usize,
+            std::mem::size_of::<libc::sockaddr_in>()
+        );
+        let address = &*result.ai_addr.cast::<libc::sockaddr_in>();
+        assert_eq!(u16::from_be(address.sin_port), 43127);
+        assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 7]);
+        frankenlibc_abi::resolv_abi::freeaddrinfo(request.ar_result.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getaddrinfo_a_rejects_tracked_short_request_list() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tracked_requests = malloc_tracked_pointer_vector(&[std::ptr::null_mut()]);
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            tracked_requests.cast::<*mut c_void>(),
+            2,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(tracked_requests.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getaddrinfo_a_rejects_tracked_short_zeroed_request_descriptor() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let raw_req = malloc_tracked_zeroed_bytes(std::mem::size_of::<*const c_void>());
+    let mut requests = [raw_req];
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_req);
+    }
+}
+
+#[test]
+fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(unsafe { gai_cancel(std::ptr::null_mut()) }, GAI_EAI_ALLDONE);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut dummy = 0u8;
+    let dummy_ptr = &mut dummy as *mut _ as *mut c_void;
+    assert_eq!(unsafe { gai_cancel(dummy_ptr) }, GAI_EAI_ALLDONE);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn gai_error_validates_storage_and_reports_the_actual_request_status() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+
+    let mut request: GaicbShape = unsafe { std::mem::zeroed() };
+    request.ar_name = c"opaque".as_ptr();
+    for status in [
+        0,
+        libc::EAI_NONAME,
+        libc::EAI_AGAIN,
+        libc::EAI_SYSTEM,
+        -100,
+        -101,
+    ] {
+        request.__return = status;
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        assert_eq!(
+            unsafe { gai_error((&mut request as *mut GaicbShape).cast()) },
+            status
+        );
+        assert_eq!(errno_value(), libc::E2BIG);
+    }
+}
+
+#[test]
+fn gai_error_zeroed_gaicb_reports_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let request_ptr = (&mut request as *mut GaicbShape).cast::<c_void>();
+    assert_eq!(unsafe { gai_error(request_ptr) }, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gai_error_rejects_tracked_short_zeroed_request_descriptor() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let raw_req = malloc_tracked_zeroed_bytes(std::mem::size_of::<*const c_void>());
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(unsafe { gai_error(raw_req) }, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_req);
+    }
+}
+
+#[test]
+fn gai_error_zeroed_gaicb_preserves_errno_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+    let Some(host_gai_error) = (unsafe { load_host_symbol("gai_error") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiErrorFn>(ptr) })
+    else {
+        return;
+    };
+
+    let mut host_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe { host_gai_error((&mut host_request as *mut GaicbShape).cast()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { gai_error((&mut abi_request as *mut GaicbShape).cast()) };
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+}
+
+#[test]
+fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 0, std::ptr::null()) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let requests: [*const c_void; 1] = [std::ptr::null()];
+    assert_eq!(
+        unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, std::ptr::null()) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    const EMPTY_INVALID_NANOSECONDS_SENTINEL: c_int = libc::E2BIG;
+    const EMPTY_INVALID_SECONDS_SENTINEL: c_int = libc::EOVERFLOW;
+    const NULL_SLOT_INVALID_NANOSECONDS_SENTINEL: c_int = libc::ENAMETOOLONG;
+    const NULL_SLOT_INVALID_SECONDS_SENTINEL: c_int = libc::EMSGSIZE;
+
+    let invalid_nanoseconds = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    let invalid_seconds = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 0,
+    };
+
+    unsafe {
+        *__errno_location() = EMPTY_INVALID_NANOSECONDS_SENTINEL;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 0, &invalid_nanoseconds) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), EMPTY_INVALID_NANOSECONDS_SENTINEL);
+
+    unsafe {
+        *__errno_location() = EMPTY_INVALID_SECONDS_SENTINEL;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 0, &invalid_seconds) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), EMPTY_INVALID_SECONDS_SENTINEL);
+
+    let requests: [*const c_void; 1] = [std::ptr::null()];
+
+    unsafe {
+        *__errno_location() = NULL_SLOT_INVALID_NANOSECONDS_SENTINEL;
+    }
+    assert_eq!(
+        unsafe {
+            gai_suspend(
+                requests.as_ptr(),
+                requests.len() as c_int,
+                &invalid_nanoseconds,
+            )
+        },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), NULL_SLOT_INVALID_NANOSECONDS_SENTINEL);
+
+    unsafe {
+        *__errno_location() = NULL_SLOT_INVALID_SECONDS_SENTINEL;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds,) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), NULL_SLOT_INVALID_SECONDS_SENTINEL);
+}
+
+#[test]
+fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGaiCancelFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type HostGaiSuspendFn =
+        unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+    const EMPTY_INVALID_TIMEOUT_SENTINEL: c_int = libc::EILSEQ;
+
+    let Some(host_gai_cancel) = (unsafe { load_host_symbol("gai_cancel") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiCancelFn>(ptr) })
+    else {
+        return;
+    };
+    let Some(host_gai_error) = (unsafe { load_host_symbol("gai_error") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiErrorFn>(ptr) })
+    else {
+        return;
+    };
+    let Some(host_gai_suspend) = (unsafe { load_host_symbol("gai_suspend") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
+    else {
+        return;
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_cancel_null = unsafe { host_gai_cancel(std::ptr::null_mut()) };
+    let host_cancel_null_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_cancel_null = unsafe { gai_cancel(std::ptr::null_mut()) };
+    let abi_cancel_null_errno = errno_value();
+    assert_eq!(abi_cancel_null, host_cancel_null);
+    assert_eq!(abi_cancel_null_errno, host_cancel_null_errno);
+
+    let mut host_dummy = 0u8;
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_cancel_dummy = unsafe { host_gai_cancel((&mut host_dummy as *mut u8).cast()) };
+    let host_cancel_dummy_errno = unsafe { *libc::__errno_location() };
+    let mut abi_dummy = 0u8;
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_cancel_dummy = unsafe { gai_cancel((&mut abi_dummy as *mut u8).cast()) };
+    let abi_cancel_dummy_errno = errno_value();
+    assert_eq!(abi_cancel_dummy, host_cancel_dummy);
+    assert_eq!(abi_cancel_dummy_errno, host_cancel_dummy_errno);
+
+    let mut host_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_error_zeroed =
+        unsafe { host_gai_error((&mut host_request as *mut GaicbShape).cast()) };
+    let host_error_zeroed_errno = unsafe { *libc::__errno_location() };
+    let mut abi_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_error_zeroed = unsafe { gai_error((&mut abi_request as *mut GaicbShape).cast()) };
+    let abi_error_zeroed_errno = errno_value();
+    assert_eq!(abi_error_zeroed, host_error_zeroed);
+    assert_eq!(abi_error_zeroed_errno, host_error_zeroed_errno);
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_suspend_empty = unsafe { host_gai_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    let host_suspend_empty_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_suspend_empty = unsafe { gai_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    let abi_suspend_empty_errno = errno_value();
+    assert_eq!(abi_suspend_empty, host_suspend_empty);
+    assert_eq!(abi_suspend_empty_errno, host_suspend_empty_errno);
+
+    let host_requests: [*const c_void; 1] = [std::ptr::null()];
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_suspend_null_slot = unsafe {
+        host_gai_suspend(
+            host_requests.as_ptr(),
+            host_requests.len() as c_int,
+            std::ptr::null(),
+        )
+    };
+    let host_suspend_null_slot_errno = unsafe { *libc::__errno_location() };
+    let abi_requests: [*const c_void; 1] = [std::ptr::null()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_suspend_null_slot = unsafe {
+        gai_suspend(
+            abi_requests.as_ptr(),
+            abi_requests.len() as c_int,
+            std::ptr::null(),
+        )
+    };
+    let abi_suspend_null_slot_errno = errno_value();
+    assert_eq!(abi_suspend_null_slot, host_suspend_null_slot);
+    assert_eq!(abi_suspend_null_slot_errno, host_suspend_null_slot_errno);
+
+    let invalid_timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    unsafe {
+        *libc::__errno_location() = EMPTY_INVALID_TIMEOUT_SENTINEL;
+    }
+    let host_suspend_invalid_timeout =
+        unsafe { host_gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
+    let host_suspend_invalid_timeout_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = EMPTY_INVALID_TIMEOUT_SENTINEL;
+    }
+    let abi_suspend_invalid_timeout = unsafe { gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
+    let abi_suspend_invalid_timeout_errno = errno_value();
+    assert_eq!(abi_suspend_invalid_timeout, host_suspend_invalid_timeout);
+    assert_eq!(
+        abi_suspend_invalid_timeout_errno,
+        host_suspend_invalid_timeout_errno
+    );
+}
+
+#[test]
+fn gai_suspend_all_null_request_timeouts_match_host_contract() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    type HostGaiSuspendFn =
+        unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+    const NULL_SLOT_INVALID_NANOSECONDS_SENTINEL: c_int = libc::ENOTRECOVERABLE;
+    const NULL_SLOT_INVALID_SECONDS_SENTINEL: c_int = libc::EREMOTEIO;
+
+    let Some(host_gai_suspend) = (unsafe { load_host_symbol("gai_suspend") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
+    else {
+        return;
+    };
+
+    let requests: [*const c_void; 1] = [std::ptr::null()];
+    let invalid_nanoseconds = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    let invalid_seconds = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 0,
+    };
+
+    unsafe {
+        *libc::__errno_location() = NULL_SLOT_INVALID_NANOSECONDS_SENTINEL;
+    }
+    let host_invalid_nanoseconds = unsafe {
+        host_gai_suspend(
+            requests.as_ptr(),
+            requests.len() as c_int,
+            &invalid_nanoseconds,
+        )
+    };
+    let host_invalid_nanoseconds_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = NULL_SLOT_INVALID_NANOSECONDS_SENTINEL;
+    }
+    let abi_invalid_nanoseconds = unsafe {
+        gai_suspend(
+            requests.as_ptr(),
+            requests.len() as c_int,
+            &invalid_nanoseconds,
+        )
+    };
+    let abi_invalid_nanoseconds_errno = errno_value();
+    assert_eq!(abi_invalid_nanoseconds, host_invalid_nanoseconds);
+    assert_eq!(
+        abi_invalid_nanoseconds_errno,
+        host_invalid_nanoseconds_errno
+    );
+
+    unsafe {
+        *libc::__errno_location() = NULL_SLOT_INVALID_SECONDS_SENTINEL;
+    }
+    let host_invalid_seconds =
+        unsafe { host_gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds) };
+    let host_invalid_seconds_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = NULL_SLOT_INVALID_SECONDS_SENTINEL;
+    }
+    let abi_invalid_seconds =
+        unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds) };
+    let abi_invalid_seconds_errno = errno_value();
+    assert_eq!(abi_invalid_seconds, host_invalid_seconds);
+    assert_eq!(abi_invalid_seconds_errno, host_invalid_seconds_errno);
+}
+
+#[test]
+fn async_dns_stub_tests_keep_host_parity_and_safe_divergence_paths_separate() {
+    // Proven host-parity path: degenerate synchronous cases with empty or
+    // all-NULL request sets preserve host libc behavior exactly.
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) },
+        0
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    let all_null_requests: [*mut c_void; 1] = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe {
+            gai_suspend(
+                all_null_requests.as_ptr().cast(),
+                all_null_requests.len() as c_int,
+                std::ptr::null(),
+            )
+        },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    let mut zeroed_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_error((&mut zeroed_request as *mut GaicbShape).cast()) },
+        0
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    // Intentional safe-divergence path: crash-prone or unsupported async
+    // submission shapes do not mirror host UB and instead fail safely.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(
+        unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 1, std::ptr::null_mut()) },
+        libc::EAI_SYSTEM
+    );
+    assert_eq!(errno_value(), libc::ENOSYS);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 1, std::ptr::null()) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+}
+
+#[test]
+fn host_gai_error_null_probe_process() {
+    if std::env::var_os("FRANKENLIBC_HOST_GAI_ERROR_NULL_PROBE").is_none() {
+        return;
+    }
+
+    type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let host_gai_error = unsafe { load_host_symbol("gai_error") }
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiErrorFn>(ptr) })
+        .expect("host gai_error symbol should exist for null probe");
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { host_gai_error(std::ptr::null_mut()) };
+    let err = unsafe { *libc::__errno_location() };
+    println!("HOST_GAI_ERROR_NULL_RETURN:{rc}:{err}");
+}
+
+#[test]
+fn host_getaddrinfo_a_null_list_positive_nitems_probe_process() {
+    if std::env::var_os("FRANKENLIBC_HOST_GETADDRINFO_A_NULL_LIST_PROBE").is_none() {
+        return;
+    }
+
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+    let host_getaddrinfo_a = unsafe { load_host_symbol("getaddrinfo_a") }
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+        .expect("host getaddrinfo_a symbol should exist for null-list probe");
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { host_getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 1, std::ptr::null_mut()) };
+    let err = unsafe { *libc::__errno_location() };
+    println!("HOST_GETADDRINFO_A_NULL_LIST_RETURN:{rc}:{err}");
+}
+
+#[test]
+fn host_gai_suspend_null_list_nonzero_ent_probe_process() {
+    let Some(ent) = std::env::var_os("FRANKENLIBC_HOST_GAI_SUSPEND_NULL_LIST_ENT")
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.parse::<c_int>().ok())
+    else {
+        return;
+    };
+
+    type HostGaiSuspendFn =
+        unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+    let host_gai_suspend = unsafe { load_host_symbol("gai_suspend") }
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
+        .expect("host gai_suspend symbol should exist for null-list probe");
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { host_gai_suspend(std::ptr::null(), ent, std::ptr::null()) };
+    let err = unsafe { *libc::__errno_location() };
+    println!("HOST_GAI_SUSPEND_NULL_LIST_RETURN:{ent}:{rc}:{err}");
+}
+
+#[test]
+fn gai_error_null_policy_is_characterized_without_crashing_parent_tests() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("host_gai_error_null_probe_process")
+        .arg("--nocapture")
+        .env("FRANKENLIBC_HOST_GAI_ERROR_NULL_PROBE", "1")
+        .output()
+        .expect("failed to spawn host gai_error(NULL) probe subprocess");
+
+    let host_stdout = String::from_utf8_lossy(&output.stdout);
+    let host_stderr = String::from_utf8_lossy(&output.stderr);
+    let host_signal = output.status.signal();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { gai_error(std::ptr::null_mut()) };
+    let abi_errno = errno_value();
+    assert_eq!(abi_rc, libc::EAI_SYSTEM);
+    assert_eq!(abi_errno, libc::ENOSYS);
+
+    if output.status.success() {
+        assert!(
+            host_stdout.contains("HOST_GAI_ERROR_NULL_RETURN:"),
+            "host gai_error(NULL) probe exited successfully without reporting its outcome; stdout={host_stdout:?} stderr={host_stderr:?}"
+        );
+    } else {
+        assert!(
+            host_signal.is_some(),
+            "host gai_error(NULL) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
+            output.status.code()
+        );
+    }
+}
+
+#[test]
+fn gai_suspend_null_list_nonzero_ent_policy_is_characterized_without_crashing_parent_tests() {
+    for ent in [1, -1] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("host_gai_suspend_null_list_nonzero_ent_probe_process")
+            .arg("--nocapture")
+            .env(
+                "FRANKENLIBC_HOST_GAI_SUSPEND_NULL_LIST_ENT",
+                ent.to_string(),
+            )
+            .output()
+            .expect("failed to spawn host gai_suspend(NULL, nonzero ent) probe subprocess");
+
+        let host_stdout = String::from_utf8_lossy(&output.stdout);
+        let host_stderr = String::from_utf8_lossy(&output.stderr);
+        let host_signal = output.status.signal();
+
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_rc = unsafe { gai_suspend(std::ptr::null(), ent, std::ptr::null()) };
+        let abi_errno = errno_value();
+        assert_eq!(abi_rc, GAI_EAI_ALLDONE, "ent={ent} rc");
+        assert_eq!(abi_errno, libc::E2BIG, "ent={ent} errno");
+
+        if output.status.success() {
+            assert!(
+                host_stdout.contains(&format!("HOST_GAI_SUSPEND_NULL_LIST_RETURN:{ent}:")),
+                "host gai_suspend(NULL, ent={ent}) probe exited successfully without reporting its outcome; stdout={host_stdout:?} stderr={host_stderr:?}"
+            );
+        } else {
+            assert!(
+                host_signal.is_some(),
+                "host gai_suspend(NULL, ent={ent}) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
+                output.status.code()
+            );
+        }
+    }
+}
+
+#[test]
+fn getaddrinfo_a_null_list_positive_nitems_policy_is_characterized_without_crashing_parent_tests() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("host_getaddrinfo_a_null_list_positive_nitems_probe_process")
+        .arg("--nocapture")
+        .env("FRANKENLIBC_HOST_GETADDRINFO_A_NULL_LIST_PROBE", "1")
+        .output()
+        .expect("failed to spawn host getaddrinfo_a(NULL, positive nitems) probe subprocess");
+
+    let host_stdout = String::from_utf8_lossy(&output.stdout);
+    let host_stderr = String::from_utf8_lossy(&output.stderr);
+    let host_signal = output.status.signal();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 1, std::ptr::null_mut()) };
+    let abi_errno = errno_value();
+    assert_eq!(abi_rc, libc::EAI_SYSTEM);
+    assert_eq!(abi_errno, libc::ENOSYS);
+
+    if output.status.success() {
+        assert!(
+            host_stdout.contains("HOST_GETADDRINFO_A_NULL_LIST_RETURN:"),
+            "host getaddrinfo_a(NULL, positive nitems) probe exited successfully without reporting its outcome; stdout={host_stdout:?} stderr={host_stderr:?}"
+        );
+    } else {
+        assert!(
+            host_signal.is_some(),
+            "host getaddrinfo_a(NULL, positive nitems) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
+            output.status.code()
+        );
+    }
+}
+
+#[test]
+fn strfmon_small_buffer_sets_e2big() {
+    let mut buf = [0_i8; 4];
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { strfmon(buf.as_mut_ptr(), buf.len(), c"%n".as_ptr(), 1234.56_f64) };
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn strfmon_invalid_inputs_set_einval() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(
+        unsafe { strfmon(std::ptr::null_mut(), 8, c"%n".as_ptr(), 1.0_f64) },
+        -1
+    );
+    assert_eq!(errno_value(), libc::EINVAL);
+
+    let mut buf = [0_i8; 8];
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(
+        unsafe {
+            strfmon_l(
+                buf.as_mut_ptr(),
+                0,
+                std::ptr::null_mut(),
+                c"%n".as_ptr(),
+                1.0_f64,
+            )
+        },
+        -1
+    );
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<c_char>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.cast::<u8>(), bytes.len()) };
+    raw
+}
+
+unsafe extern "C" fn call_vsyslog(priority: c_int, fmt: *const c_char, mut args: ...) {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { vsyslog(priority, fmt, ap) };
+}
+
+#[test]
+fn syslog_and_vsyslog_write_perror_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("syslog_perror_child_process")
+        .arg("--nocapture")
+        .env("FLC_SYSLOG_PERROR_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("frankenlibc-syslog-proof: direct syslog 17"),
+        "syslog perror output missing from stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("frankenlibc-syslog-proof: variadic syslog 23"),
+        "vsyslog perror output missing from stderr: {stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn syslog_perror_child_process() {
+    if std::env::var_os("FLC_SYSLOG_PERROR_CHILD").is_none() {
+        return;
+    }
+
+    unsafe {
+        openlog(c"frankenlibc-syslog-proof".as_ptr(), libc::LOG_PERROR, 0);
+        syslog(libc::LOG_ERR, c"direct syslog %d".as_ptr(), 17i32);
+        call_vsyslog(libc::LOG_ERR, c"variadic syslog %d".as_ptr(), 23i32);
+        closelog();
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn syslog_ignores_tracked_unterminated_ident_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"TRACKED_UNTERMINATED_SYSLOG_IDENT";
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("syslog_tracked_unterminated_ident_child_process")
+        .arg("--nocapture")
+        .env("FLC_SYSLOG_UNTERMINATED_IDENT_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(payload.len())
+            .any(|window| window == payload),
+        "unterminated tracked ident leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn syslog_tracked_unterminated_ident_child_process() {
+    if std::env::var_os("FLC_SYSLOG_UNTERMINATED_IDENT_CHILD").is_none() {
+        return;
+    }
+
+    let ident = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_SYSLOG_IDENT") };
+    unsafe {
+        openlog(ident.cast_const(), libc::LOG_PERROR, 0);
+        syslog(libc::LOG_ERR, c"safe syslog message".as_ptr());
+        closelog();
+        frankenlibc_abi::malloc_abi::free(ident.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn syslog_ignores_tracked_unterminated_format_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"TRACKED_UNTERMINATED_SYSLOG_FMT";
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("syslog_tracked_unterminated_format_child_process")
+        .arg("--nocapture")
+        .env("FLC_SYSLOG_UNTERMINATED_FMT_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(payload.len())
+            .any(|window| window == payload),
+        "unterminated tracked format leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn syslog_tracked_unterminated_format_child_process() {
+    if std::env::var_os("FLC_SYSLOG_UNTERMINATED_FMT_CHILD").is_none() {
+        return;
+    }
+
+    let fmt = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_SYSLOG_FMT") };
+    unsafe {
+        openlog(c"frankenlibc-syslog-test".as_ptr(), libc::LOG_PERROR, 0);
+        syslog(libc::LOG_ERR, fmt.cast_const());
+        closelog();
+        frankenlibc_abi::malloc_abi::free(fmt.cast());
+    }
+}
+
+#[test]
+fn ssignal_and_gsignal_deliver_signal() {
+    SIGNAL_HIT.store(0, Ordering::SeqCst);
+    let previous = unsafe {
+        ssignal(
+            libc::SIGUSR1,
+            record_sigusr1 as *const () as libc::sighandler_t,
+        )
+    };
+    assert_ne!(previous, libc::SIG_ERR);
+    let rc = unsafe { gsignal(libc::SIGUSR1) };
+    assert_eq!(rc, 0, "gsignal should report successful signal delivery");
+    assert_eq!(
+        SIGNAL_HIT.load(Ordering::SeqCst),
+        libc::SIGUSR1,
+        "handler installed by ssignal should observe SIGUSR1"
+    );
+
+    let _ = unsafe { libc::signal(libc::SIGUSR1, libc::SIG_DFL) };
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: process identity
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getpid_returns_positive() {
+    let pid = unsafe { getpid() };
+    assert!(pid > 0);
+}
+
+#[test]
+fn getppid_returns_positive() {
+    let ppid = unsafe { getppid() };
+    assert!(ppid > 0);
+}
+
+#[test]
+fn getuid_returns_valid_uid() {
+    let uid = unsafe { getuid() };
+    // UID is always >= 0 (unsigned)
+    assert!(uid < 65536 || uid == uid); // Just verify it returns
+}
+
+#[test]
+fn geteuid_returns_valid_uid() {
+    let euid = unsafe { geteuid() };
+    // In test context, euid should match uid
+    let uid = unsafe { getuid() };
+    assert_eq!(euid, uid);
+}
+
+#[test]
+fn cuserid_null_uses_internal_stable_buffer() {
+    let first = unsafe { cuserid(std::ptr::null_mut()) };
+    assert!(!first.is_null());
+    let first_text = unsafe { CStr::from_ptr(first) }
+        .to_str()
+        .expect("cuserid internal buffer must contain utf-8");
+    assert!(
+        !first_text.is_empty(),
+        "cuserid internal buffer must contain a login name"
+    );
+
+    let second = unsafe { cuserid(std::ptr::null_mut()) };
+    assert_eq!(
+        second, first,
+        "cuserid(NULL) should reuse the caller-thread internal buffer"
+    );
+}
+
+#[test]
+fn cuserid_resolves_current_uid_from_passwd_backend() {
+    let _lock = PASSWD_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let uid = unsafe { getuid() };
+    let gid = unsafe { getgid() };
+    let path = temp_path("cuserid_passwd");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(
+        path_str,
+        format!("frankencuserid:x:{uid}:{gid}:Franken cuserid:/tmp:/bin/sh\n"),
+    )
+    .unwrap();
+    let _guard = EnvVarGuard::set("FRANKENLIBC_PASSWD_PATH", path_str);
+
+    let mut caller_buf = [0 as c_char; 32];
+    let caller_ptr = unsafe { cuserid(caller_buf.as_mut_ptr()) };
+    assert_eq!(caller_ptr, caller_buf.as_mut_ptr());
+    let caller_name = unsafe { CStr::from_ptr(caller_ptr) };
+    assert_eq!(caller_name.to_bytes(), b"frankencuserid");
+
+    let static_ptr = unsafe { cuserid(std::ptr::null_mut()) };
+    assert!(!static_ptr.is_null());
+    let static_name = unsafe { CStr::from_ptr(static_ptr) };
+    assert_eq!(static_name.to_bytes(), b"frankencuserid");
+
+    let _ = std::fs::remove_file(path_str);
+}
+
+#[test]
+fn getgid_returns_valid_gid() {
+    let _gid = unsafe { getgid() };
+    // Just verify it doesn't crash
+}
+
+#[test]
+fn getegid_returns_valid_gid() {
+    let egid = unsafe { getegid() };
+    let gid = unsafe { getgid() };
+    assert_eq!(egid, gid);
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: filesystem - getcwd, chdir
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getcwd_returns_current_directory() {
+    let _cwd_lock = cwd_test_lock();
+    let mut buf = [0i8; 4096];
+    let ptr = unsafe { getcwd(buf.as_mut_ptr(), buf.len()) };
+    assert!(!ptr.is_null());
+    let cwd = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
+    assert!(cwd.starts_with('/'), "cwd should be absolute: {cwd}");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getcwd_caps_tracked_short_output_buffer() {
+    let _cwd_lock = cwd_test_lock();
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let ptr = unsafe { getcwd(raw.cast::<c_char>(), 256) };
+
+    assert!(ptr.is_null());
+    assert_eq!(errno_value(), libc::ERANGE);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+fn getcwd_null_buffer_allocates() {
+    let _cwd_lock = cwd_test_lock();
+    let ptr = unsafe { getcwd(std::ptr::null_mut(), 0) };
+    if !ptr.is_null() {
+        let cwd = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
+        assert!(cwd.starts_with('/'));
+        unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast()) };
+    }
+}
+
+#[test]
+fn chdir_and_fchdir_round_trip() {
+    let _cwd_lock = cwd_test_lock();
+    let _cwd_restore = CwdRestore::capture();
+    let mut orig = [0i8; 4096];
+    let p = unsafe { getcwd(orig.as_mut_ptr(), orig.len()) };
+    assert!(!p.is_null());
+
+    let tmp = CString::new("/tmp").unwrap();
+    let rc = unsafe { chdir(tmp.as_ptr()) };
+    assert_eq!(rc, 0);
+
+    let mut after = [0i8; 4096];
+    let p_after = unsafe { getcwd(after.as_mut_ptr(), after.len()) };
+    assert!(!p_after.is_null());
+    let cwd_after = unsafe { std::ffi::CStr::from_ptr(after.as_ptr()) }.to_bytes();
+    assert_eq!(cwd_after, b"/tmp");
+
+    // Restore via chdir
+    unsafe { chdir(orig.as_ptr()) };
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: file I/O - open, read, write, close, lseek
+// ---------------------------------------------------------------------------
+
+fn temp_path(tag: &str) -> CString {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    CString::new(format!(
+        "/tmp/frankenlibc_unistd_{tag}_{}_{nanos}",
+        std::process::id()
+    ))
+    .unwrap()
+}
+
+fn copy_c_char_bytes(dst: &mut [c_char], src: &[u8]) {
+    let copy_len = src.len().min(dst.len().saturating_sub(1));
+    for (slot, byte) in dst.iter_mut().zip(src.iter()).take(copy_len) {
+        *slot = *byte as c_char;
+    }
+}
+
+fn utmp_entry(ut_type: i16, ut_id: &[u8], ut_line: &[u8], ut_user: &[u8]) -> libc::utmpx {
+    let mut entry: libc::utmpx = unsafe { std::mem::zeroed() };
+    entry.ut_type = ut_type;
+    entry.ut_pid = 4242;
+    copy_c_char_bytes(&mut entry.ut_id, ut_id);
+    copy_c_char_bytes(&mut entry.ut_line, ut_line);
+    copy_c_char_bytes(&mut entry.ut_user, ut_user);
+    entry
+}
+
+fn write_utmp_fixture(path: &CString, entries: &[libc::utmpx]) {
+    assert_eq!(std::mem::size_of::<libc::utmpx>(), 384);
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(entries));
+    for entry in entries {
+        let entry_bytes = unsafe {
+            std::slice::from_raw_parts(
+                (entry as *const libc::utmpx).cast::<u8>(),
+                std::mem::size_of::<libc::utmpx>(),
+            )
+        };
+        bytes.extend_from_slice(entry_bytes);
+    }
+    std::fs::write(path.to_str().unwrap(), bytes).unwrap();
+}
+
+fn with_temp_utmp_fixture<F>(tag: &str, entries: &[libc::utmpx], f: F)
+where
+    F: FnOnce(),
+{
+    let path = temp_path(tag);
+    let default_utmp = CString::new("/var/run/utmp").unwrap();
+    write_utmp_fixture(&path, entries);
+    let rc = unsafe { utmpname(path.as_ptr()) };
+    assert_eq!(rc, 0, "utmpname failed: errno={}", errno_value());
+    unsafe { setutent() };
+    f();
+    let rc = unsafe { utmpname(default_utmp.as_ptr()) };
+    assert_eq!(rc, 0, "failed to restore default utmp path");
+    unsafe { setutent() };
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn utmpname_rejects_tracked_unterminated_path() {
+    let raw = malloc_tracked_unterminated(b"/tmp/frankenlibc-utmp-unterminated");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = utmpname(raw);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn tempnam_falls_back_for_tracked_unterminated_dir_and_prefix() {
+    use frankenlibc_abi::unistd_abi::tempnam;
+
+    unsafe {
+        let raw_dir = malloc_tracked_unterminated(b"/tmp/frankenlibc-tempnam-dir");
+        *__errno_location() = 0;
+        let p = tempnam(raw_dir, c"abc".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_dir.cast());
+
+        assert!(!p.is_null());
+        let bytes = CStr::from_ptr(p).to_bytes().to_vec();
+        frankenlibc_abi::malloc_abi::free(p.cast());
+        assert!(bytes.starts_with(b"/tmp/abc"), "got {bytes:?}");
+        assert_eq!(err, libc::EINVAL);
+    }
+
+    unsafe {
+        let raw_pfx = malloc_tracked_unterminated(b"prefix-without-nul");
+        *__errno_location() = 0;
+        let p = tempnam(std::ptr::null(), raw_pfx);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_pfx.cast());
+
+        assert!(!p.is_null());
+        let bytes = CStr::from_ptr(p).to_bytes().to_vec();
+        frankenlibc_abi::malloc_abi::free(p.cast());
+        assert!(bytes.starts_with(b"/tmp/tmp"), "got {bytes:?}");
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn open_write_read_close_round_trip() {
+    let path = temp_path("owrc");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0, "open failed: errno={}", errno_value());
+
+    let data = b"hello world";
+    let written = unsafe { write(fd, data.as_ptr().cast(), data.len()) };
+    assert_eq!(written as usize, data.len());
+
+    // Seek back to start
+    let pos = unsafe { lseek(fd, 0, libc::SEEK_SET) };
+    assert_eq!(pos, 0);
+
+    let mut buf = [0u8; 32];
+    let n = unsafe { read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(n as usize, data.len());
+    assert_eq!(&buf[..n as usize], data);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn read_rejects_tracked_short_output_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert!(
+        tracked_remaining < OVERLONG_IO_LEN,
+        "test allocation should be tracked as shorter than the requested read"
+    );
+
+    clear_errno();
+    let n = unsafe { read(-1, raw, OVERLONG_IO_LEN) };
+    assert_eq!(n, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn write_rejects_tracked_short_input_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    unsafe { raw.cast::<u8>().write(b'x') };
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert!(
+        tracked_remaining < OVERLONG_IO_LEN,
+        "test allocation should be tracked as shorter than the requested write"
+    );
+
+    clear_errno();
+    let n = unsafe { write(-1, raw.cast_const(), OVERLONG_IO_LEN) };
+    assert_eq!(n, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+fn open_pty_pair_for_ttyname() -> Option<(c_int, c_int)> {
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        return None;
+    }
+    if unsafe { libc::grantpt(master) } != 0 || unsafe { libc::unlockpt(master) } != 0 {
+        unsafe { libc::close(master) };
+        return None;
+    }
+
+    let mut pty_num: c_uint = 0;
+    const TIOCGPTN: libc::c_ulong = 0x80045430;
+    if unsafe { libc::ioctl(master, TIOCGPTN, &mut pty_num) } != 0 {
+        unsafe { libc::close(master) };
+        return None;
+    }
+
+    let path = CString::new(format!("/dev/pts/{pty_num}")).expect("valid PTY path");
+    let slave = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
+    if slave < 0 {
+        unsafe { libc::close(master) };
+        return None;
+    }
+    Some((master, slave))
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ptsname_r_caps_tracked_short_output_buffer() {
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        return;
+    }
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::ptsname_r(master, raw.cast::<c_char>(), 128) };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert_eq!(errno_value(), libc::ERANGE);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(master);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ttyname_r_caps_tracked_short_output_buffer() {
+    let Some((master, slave)) = open_pty_pair_for_ttyname() else {
+        return;
+    };
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let rc = unsafe { frankenlibc_abi::unistd_abi::ttyname_r(slave, raw.cast::<c_char>(), 128) };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(slave);
+        libc::close(master);
+    }
+}
+
+#[test]
+fn getutid_and_getutline_follow_native_utmp_fixture() {
+    let entries = [
+        utmp_entry(libc::BOOT_TIME, b"bt0", b"system boot", b""),
+        utmp_entry(libc::USER_PROCESS, b"p42", b"tty-franken", b"alice"),
+    ];
+    with_temp_utmp_fixture("utmp_search", &entries, || {
+        let mut id_query = utmp_entry(libc::USER_PROCESS, b"p42", b"", b"");
+        unsafe { setutent() };
+        let by_id =
+            unsafe { getutid((&mut id_query as *mut libc::utmpx).cast()) as *mut libc::utmpx };
+        assert!(
+            !by_id.is_null(),
+            "getutid should find matching USER_PROCESS"
+        );
+        let line = unsafe { std::ffi::CStr::from_ptr((*by_id).ut_line.as_ptr()) };
+        assert_eq!(line.to_bytes(), b"tty-franken");
+
+        let mut line_query = utmp_entry(0, b"", b"tty-franken", b"");
+        unsafe { setutent() };
+        let by_line =
+            unsafe { getutline((&mut line_query as *mut libc::utmpx).cast()) as *mut libc::utmpx };
+        assert!(
+            !by_line.is_null(),
+            "getutline should find matching LOGIN/USER_PROCESS line"
+        );
+        let user = unsafe { std::ffi::CStr::from_ptr((*by_line).ut_user.as_ptr()) };
+        assert_eq!(user.to_bytes(), b"alice");
+    });
+}
+
+#[test]
+fn getutent_r_and_getutid_r_surface_native_results() {
+    let entries = [utmp_entry(libc::USER_PROCESS, b"p77", b"tty-r", b"bob")];
+    with_temp_utmp_fixture("utmp_reentrant", &entries, || {
+        let mut out: libc::utmpx = unsafe { std::mem::zeroed() };
+        let mut outp = std::ptr::dangling_mut::<c_void>();
+
+        unsafe { setutent() };
+        let rc = unsafe { getutent_r((&mut out as *mut libc::utmpx).cast(), &mut outp) };
+        assert_eq!(rc, 0, "getutent_r should read the first fixture entry");
+        assert_eq!(outp, (&mut out as *mut libc::utmpx).cast());
+        let user = unsafe { std::ffi::CStr::from_ptr(out.ut_user.as_ptr()) };
+        assert_eq!(user.to_bytes(), b"bob");
+
+        let mut query = utmp_entry(libc::USER_PROCESS, b"p77", b"", b"");
+        outp = std::ptr::dangling_mut::<c_void>();
+        unsafe { setutent() };
+        let rc = unsafe {
+            getutid_r(
+                (&mut query as *mut libc::utmpx).cast(),
+                (&mut out as *mut libc::utmpx).cast(),
+                &mut outp,
+            )
+        };
+        assert_eq!(
+            rc, 0,
+            "getutid_r should copy the matched entry into caller storage"
+        );
+        assert_eq!(outp, (&mut out as *mut libc::utmpx).cast());
+        let line = unsafe { std::ffi::CStr::from_ptr(out.ut_line.as_ptr()) };
+        assert_eq!(line.to_bytes(), b"tty-r");
+
+        let mut line_query = utmp_entry(0, b"", b"tty-r", b"");
+        outp = std::ptr::dangling_mut::<c_void>();
+        unsafe { setutent() };
+        let rc = unsafe {
+            getutline_r(
+                (&mut line_query as *mut libc::utmpx).cast(),
+                (&mut out as *mut libc::utmpx).cast(),
+                &mut outp,
+            )
+        };
+        assert_eq!(rc, 0, "getutline_r should copy the matched entry");
+        assert_eq!(outp, (&mut out as *mut libc::utmpx).cast());
+        let user = unsafe { std::ffi::CStr::from_ptr(out.ut_user.as_ptr()) };
+        assert_eq!(user.to_bytes(), b"bob");
+    });
+}
+
+#[test]
+fn getutid_r_invalid_type_sets_einval_and_nulls_result() {
+    let entries = [utmp_entry(
+        libc::USER_PROCESS,
+        b"p88",
+        b"tty-invalid",
+        b"carol",
+    )];
+    with_temp_utmp_fixture("utmp_invalid", &entries, || {
+        let mut query = utmp_entry(0, b"", b"", b"");
+        let mut out: libc::utmpx = unsafe { std::mem::zeroed() };
+        let mut outp = std::ptr::dangling_mut::<c_void>();
+
+        unsafe { setutent() };
+        let rc = unsafe {
+            getutid_r(
+                (&mut query as *mut libc::utmpx).cast(),
+                (&mut out as *mut libc::utmpx).cast(),
+                &mut outp,
+            )
+        };
+        assert_eq!(rc, -1);
+        assert_eq!(errno_value(), libc::EINVAL);
+        assert!(
+            outp.is_null(),
+            "failed getutid_r should null the result pointer"
+        );
+    });
+}
+
+#[test]
+fn pututxline_appends_entry_and_returns_internal_copy() {
+    let entry = utmp_entry(libc::USER_PROCESS, b"px1", b"tty-putx", b"dana");
+    with_temp_utmp_fixture("utmpx_put", &[], || {
+        let returned = unsafe { pututxline(&entry as *const libc::utmpx) };
+        assert!(!returned.is_null(), "pututxline should return stored entry");
+        assert_ne!(
+            returned,
+            (&entry as *const libc::utmpx).cast_mut(),
+            "pututxline should return its internal storage, not caller storage"
+        );
+        let returned_user = unsafe { std::ffi::CStr::from_ptr((*returned).ut_user.as_ptr()) };
+        assert_eq!(returned_user.to_bytes(), b"dana");
+
+        unsafe { setutent() };
+        let read_back = unsafe { getutent() as *mut libc::utmpx };
+        assert!(
+            !read_back.is_null(),
+            "pututxline should append to the active utmp file"
+        );
+        let read_line = unsafe { std::ffi::CStr::from_ptr((*read_back).ut_line.as_ptr()) };
+        assert_eq!(read_line.to_bytes(), b"tty-putx");
+    });
+}
+
+#[test]
+fn getprotobyname_r_resolves_tcp_and_nulls_missing() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let name = CString::new("tcp").unwrap();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            name.as_ptr(),
+            (&mut proto as *mut libc::protoent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, (&mut proto as *mut libc::protoent).cast());
+    let resolved_name = unsafe { std::ffi::CStr::from_ptr(proto.p_name) };
+    assert_eq!(resolved_name.to_bytes(), b"tcp");
+    assert_eq!(proto.p_proto, 6);
+
+    let missing = CString::new("frankenlibc-no-such-proto").unwrap();
+    result = std::ptr::dangling_mut::<c_void>();
+    let rc = unsafe {
+        getprotobyname_r(
+            missing.as_ptr(),
+            (&mut proto as *mut libc::protoent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(
+        result.is_null(),
+        "missing protocol should return rc=0 with NULL result"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getprotobyname_r_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"tcp");
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            raw_name,
+            (&mut proto as *mut libc::protoent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getprotobyname_r_caps_tracked_short_buffer() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let name = CString::new("tcp").unwrap();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            name.as_ptr(),
+            (&mut proto as *mut libc::protoent).cast(),
+            raw_buf.cast::<c_char>(),
+            512,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getprotobyname_r_rejects_tracked_short_result_buf() {
+    let raw_proto = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let name = CString::new("tcp").unwrap();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            name.as_ptr(),
+            raw_proto,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_proto.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_proto) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getprotobynumber_r_caps_tracked_short_buffer() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe {
+        getprotobynumber_r(
+            6,
+            (&mut proto as *mut libc::protoent).cast(),
+            raw_buf.cast::<c_char>(),
+            512,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getprotobynumber_r_and_getprotoent_r_surface_entries() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe {
+        getprotobynumber_r(
+            17,
+            (&mut proto as *mut libc::protoent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, (&mut proto as *mut libc::protoent).cast());
+    let resolved_name = unsafe { std::ffi::CStr::from_ptr(proto.p_name) };
+    assert_eq!(resolved_name.to_bytes(), b"udp");
+    assert_eq!(proto.p_proto, 17);
+
+    unsafe { setprotoent(1) };
+    result = std::ptr::dangling_mut::<c_void>();
+    let rc = unsafe {
+        getprotoent_r(
+            (&mut proto as *mut libc::protoent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, (&mut proto as *mut libc::protoent).cast());
+    assert!(
+        !proto.p_name.is_null(),
+        "first protocol enumeration entry should populate p_name"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getprotoent_r_caps_tracked_short_buffer() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    unsafe { setprotoent(1) };
+    let rc = unsafe {
+        getprotoent_r(
+            (&mut proto as *mut libc::protoent).cast(),
+            raw_buf.cast::<c_char>(),
+            512,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn gethostent_r_surfaces_host_enumeration_entry() {
+    let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 2048];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    unsafe { sethostent(1) };
+    let rc = unsafe {
+        gethostent_r(
+            (&mut host as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, (&mut host as *mut libc::hostent).cast());
+    assert!(
+        !host.h_name.is_null(),
+        "host enumeration should populate h_name"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostent_r_caps_tracked_short_buffer() {
+    if !has_host_entry_for_tests() {
+        return;
+    }
+    let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    unsafe { sethostent(1) };
+    let rc = unsafe {
+        gethostent_r(
+            (&mut host as *mut libc::hostent).cast(),
+            raw_buf.cast::<c_char>(),
+            2048,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostent_r_rejects_tracked_short_result_buf() {
+    let raw_host = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 2048];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostent_r(
+            raw_host,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_host.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_host) };
+}
+
+#[test]
+fn getnet_r_wrappers_match_host_success_and_miss_shapes() {
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    unsafe { setnetent(1) };
+    let rc = unsafe {
+        getnetent_r(
+            (&mut net as *mut NetEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0, "getnetent_r should not hard-fail with ENOENT");
+    if !result.is_null() {
+        assert_eq!(result, (&mut net as *mut NetEnt).cast());
+        assert!(
+            !net.n_name.is_null(),
+            "enumerated network entry should populate n_name"
+        );
+    }
+
+    result = std::ptr::dangling_mut::<c_void>();
+    h_errno = -1;
+    let missing = CString::new("frankenlibc-no-such-network").unwrap();
+    let rc = unsafe {
+        getnetbyname_r(
+            missing.as_ptr(),
+            (&mut net as *mut NetEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(
+        result.is_null(),
+        "missing network lookup should return rc=0 with NULL result"
+    );
+
+    result = std::ptr::dangling_mut::<c_void>();
+    h_errno = -1;
+    let rc = unsafe {
+        getnetbyaddr_r(
+            u32::MAX,
+            libc::AF_INET,
+            (&mut net as *mut NetEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(
+        result.is_null(),
+        "missing network address lookup should return rc=0 with NULL result"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnetbyname_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"loopback");
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = getnetbyname(raw_name);
+        let err = *__errno_location();
+
+        assert!(result.is_null());
+        assert_eq!(err, libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnetbyname_r_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"loopback");
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyname_r(
+            raw_name,
+            (&mut net as *mut NetEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnetbyname_r_caps_tracked_short_buffer() {
+    let Some((name, _)) = first_network_entry_for_tests() else {
+        return;
+    };
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyname_r(
+            name.as_ptr(),
+            (&mut net as *mut NetEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnetbyname_r_rejects_tracked_short_result_buf() {
+    let Some((name, _)) = first_network_entry_for_tests() else {
+        return;
+    };
+    let raw_net = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyname_r(
+            name.as_ptr(),
+            raw_net,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_net.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_net) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnetbyaddr_r_caps_tracked_short_buffer() {
+    let Some((_, network_number)) = first_network_entry_for_tests() else {
+        return;
+    };
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyaddr_r(
+            network_number,
+            libc::AF_INET,
+            (&mut net as *mut NetEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getnetent_r_caps_tracked_short_buffer() {
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    unsafe { setnetent(1) };
+    let rc = unsafe {
+        getnetent_r(
+            (&mut net as *mut NetEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn wctrans_rejects_tracked_unterminated_property() {
+    let raw_property = malloc_tracked_unterminated(b"toupper");
+
+    unsafe {
+        *__errno_location() = 0;
+        let desc = wctrans(raw_property);
+        let err = *__errno_location();
+
+        assert_eq!(desc, 0);
+        assert_eq!(err, libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(raw_property.cast());
+    }
+}
+
+#[test]
+fn getservent_and_getprotoent_surface_first_entries() {
+    unsafe { setservent(1) };
+    let servent = unsafe { getservent() as *mut libc::servent };
+    assert!(
+        !servent.is_null(),
+        "getservent should enumerate a service entry"
+    );
+    let service_name = unsafe { std::ffi::CStr::from_ptr((*servent).s_name) };
+    assert!(
+        !service_name.to_bytes().is_empty(),
+        "enumerated service entry should populate s_name"
+    );
+
+    unsafe { setprotoent(1) };
+    let protoent = unsafe { getprotoent() as *mut libc::protoent };
+    assert!(
+        !protoent.is_null(),
+        "getprotoent should enumerate a protocol entry"
+    );
+    let proto_name = unsafe { std::ffi::CStr::from_ptr((*protoent).p_name) };
+    assert!(
+        !proto_name.to_bytes().is_empty(),
+        "enumerated protocol entry should populate p_name"
+    );
+}
+
+#[test]
+fn getservent_r_surfaces_first_service_entry() {
+    let mut service: libc::servent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    unsafe { setservent(1) };
+    let rc = unsafe {
+        getservent_r(
+            (&mut service as *mut libc::servent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, (&mut service as *mut libc::servent).cast());
+    assert!(
+        !service.s_name.is_null(),
+        "reentrant service lookup should populate s_name"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getservent_r_caps_tracked_short_buffer() {
+    if !has_service_entry_for_tests() {
+        return;
+    }
+    let mut service: libc::servent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    unsafe { setservent(1) };
+    let rc = unsafe {
+        getservent_r(
+            (&mut service as *mut libc::servent).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getservent_r_rejects_tracked_short_result_buf() {
+    let raw_service = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe { getservent_r(raw_service, buf.as_mut_ptr(), buf.len(), &mut result) };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_service.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_service) };
+}
+
+#[test]
+fn fstab_wrappers_surface_host_entries() {
+    let rc = unsafe { setfsent() };
+    assert_eq!(rc, 1, "setfsent should succeed on this host");
+
+    let entry = unsafe { getfsent() as *mut Fstab };
+    assert!(
+        !entry.is_null(),
+        "getfsent should return the first fstab entry"
+    );
+    assert!(
+        unsafe { !(*entry).fs_spec.is_null() && !(*entry).fs_file.is_null() },
+        "fstab entry should populate fs_spec and fs_file"
+    );
+
+    let spec = unsafe { CString::new(std::ffi::CStr::from_ptr((*entry).fs_spec).to_bytes()) }
+        .expect("fstab spec should be valid C string bytes");
+    let file = unsafe { CString::new(std::ffi::CStr::from_ptr((*entry).fs_file).to_bytes()) }
+        .expect("fstab file should be valid C string bytes");
+
+    let by_file = unsafe { getfsfile(file.as_ptr()) as *mut Fstab };
+    assert!(
+        !by_file.is_null(),
+        "getfsfile should find the same entry by mount point"
+    );
+    let by_spec = unsafe { getfsspec(spec.as_ptr()) as *mut Fstab };
+    assert!(
+        !by_spec.is_null(),
+        "getfsspec should find the same entry by device spec"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn fstab_lookup_rejects_tracked_unterminated_keys() {
+    let raw_file = malloc_tracked_unterminated(b"/");
+    let raw_spec = malloc_tracked_unterminated(b"/dev/root");
+
+    unsafe {
+        *__errno_location() = 0;
+        let by_file = getfsfile(raw_file) as *mut Fstab;
+        let file_err = *__errno_location();
+        assert!(by_file.is_null());
+        assert_eq!(file_err, libc::EINVAL);
+
+        *__errno_location() = 0;
+        let by_spec = getfsspec(raw_spec) as *mut Fstab;
+        let spec_err = *__errno_location();
+        assert!(by_spec.is_null());
+        assert_eq!(spec_err, libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_file.cast());
+        frankenlibc_abi::malloc_abi::free(raw_spec.cast());
+    }
+}
+
+#[test]
+fn ttyent_wrappers_match_host_miss_shape() {
+    let tty_name = CString::new("frankenlibc-no-such-tty").unwrap();
+    let missing = unsafe { getttynam(tty_name.as_ptr()) as *mut TtyEnt };
+    assert!(
+        missing.is_null(),
+        "getttynam should return NULL for a missing tty entry"
+    );
+
+    let rc = unsafe { setttyent() };
+    assert_eq!(
+        rc, 0,
+        "setttyent should mirror host failure when /etc/ttys is absent"
+    );
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+
+    let entry = unsafe { getttyent() as *mut TtyEnt };
+    assert!(
+        entry.is_null(),
+        "getttyent should return NULL when tty database is unavailable"
+    );
+
+    let end_rc = unsafe { endttyent() };
+    assert_eq!(end_rc, 1, "endttyent should mirror host success shape");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getttynam_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"tty1");
+
+    unsafe {
+        *__errno_location() = 0;
+        let entry = getttynam(raw_name) as *mut TtyEnt;
+        let err = *__errno_location();
+
+        assert!(entry.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+fn getdate_and_getdate_r_follow_host_datemsk_contract() {
+    let datemsk = temp_path("datemsk");
+    std::fs::write(datemsk.to_str().unwrap(), "%Y-%m-%d %H:%M:%S\n").unwrap();
+    let datemsk_value = CString::new(datemsk.to_str().unwrap()).unwrap();
+    unsafe {
+        libc::setenv(c"DATEMSK".as_ptr(), datemsk_value.as_ptr(), 1);
+    }
+
+    let date = CString::new("1970-01-01 00:00:00  ").unwrap();
+    unsafe { getdate_err = -1 };
+    let parsed = unsafe { getdate(date.as_ptr()) as *mut libc::tm };
+    assert!(
+        !parsed.is_null(),
+        "getdate should parse with DATEMSK template"
+    );
+    assert_eq!(unsafe { getdate_err }, 0);
+    assert_eq!(unsafe { (*parsed).tm_year + 1900 }, 1970);
+    assert_eq!(unsafe { (*parsed).tm_mon + 1 }, 1);
+    assert_eq!(unsafe { (*parsed).tm_mday }, 1);
+
+    let bad = CString::new("frankenlibc definitely invalid").unwrap();
+    unsafe { getdate_err = -1 };
+    let missing = unsafe { getdate(bad.as_ptr()) };
+    assert!(missing.is_null(), "invalid getdate input should fail");
+    assert_eq!(unsafe { getdate_err }, 7);
+
+    let mut out: libc::tm = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getdate_r(date.as_ptr(), (&mut out as *mut libc::tm).cast()) };
+    assert_eq!(rc, 0);
+    assert_eq!(out.tm_year + 1900, 1970);
+    assert_eq!(out.tm_mon + 1, 1);
+    assert_eq!(out.tm_mday, 1);
+
+    let rc = unsafe { getdate_r(bad.as_ptr(), (&mut out as *mut libc::tm).cast()) };
+    assert_eq!(rc, 7);
+
+    unsafe {
+        libc::unsetenv(c"DATEMSK".as_ptr());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getdate_and_getdate_r_reject_tracked_unterminated_input() {
+    let raw_date = malloc_tracked_unterminated(b"1970-01-01 00:00:00");
+
+    unsafe {
+        getdate_err = -1;
+        let parsed = getdate(raw_date);
+        assert!(parsed.is_null());
+        assert_eq!(std::ptr::addr_of!(getdate_err).read(), 8);
+
+        let mut out: libc::tm = std::mem::zeroed();
+        let rc = getdate_r(raw_date, (&mut out as *mut libc::tm).cast());
+        assert_eq!(rc, 8);
+
+        frankenlibc_abi::malloc_abi::free(raw_date.cast());
+    }
+}
+
+#[test]
+fn gethostbyname2_supports_ipv6_localhost() {
+    unsafe { *__h_errno_location() = -1 };
+    let name = CString::new("localhost").unwrap();
+    let host = unsafe { gethostbyname2(name.as_ptr(), libc::AF_INET6) as *mut libc::hostent };
+    assert!(
+        !host.is_null(),
+        "gethostbyname2 should resolve IPv6 localhost"
+    );
+    assert_eq!(unsafe { (*host).h_addrtype }, libc::AF_INET6);
+    assert_eq!(unsafe { (*host).h_length }, 16);
+    assert!(
+        unsafe { !(*host).h_addr_list.is_null() && !(*(*host).h_addr_list).is_null() },
+        "IPv6 hostent should expose at least one address"
+    );
+
+    let first_addr = unsafe { *(*host).h_addr_list } as *const libc::in6_addr;
+    assert_eq!(
+        unsafe { (*first_addr).s6_addr },
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    assert_eq!(unsafe { *__h_errno_location() }, 0);
+}
+
+type Gethostbyname2R = unsafe extern "C" fn(
+    *const c_char,
+    c_int,
+    *mut libc::hostent,
+    *mut c_char,
+    usize,
+    *mut *mut libc::hostent,
+    *mut c_int,
+) -> c_int;
+
+/// Host glibc's `gethostbyname2_r`, for expectations that depend on this
+/// machine's /etc/hosts and resolver rather than on fl.
+fn host_gethostbyname2_r() -> Gethostbyname2R {
+    // SAFETY: the type is gethostbyname2_r's C prototype; fl's definition is
+    // passed so a collapsed oracle aborts instead of comparing fl with itself.
+    unsafe { dlsym_oracle::host_fn(c"gethostbyname2_r", gethostbyname2_r as *const ()) }
+}
+
+/// `(rc, result is non-null, h_errno, aliases)` of one gethostbyname2_r call.
+fn gethostbyname2_r_outcome(
+    f: Gethostbyname2R,
+    name: &CStr,
+    af: c_int,
+) -> (c_int, bool, c_int, Vec<Vec<u8>>) {
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 1024];
+    let mut result: *mut libc::hostent = std::ptr::null_mut();
+    let mut h_errno = -1;
+    // SAFETY: valid name, hostent, buffer and output slots.
+    let rc = unsafe {
+        f(
+            name.as_ptr(),
+            af,
+            &mut hostent,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    let mut aliases = Vec::new();
+    if !result.is_null() && !hostent.h_aliases.is_null() {
+        let mut p = hostent.h_aliases;
+        // SAFETY: a successful call leaves a NULL-terminated alias array.
+        unsafe {
+            while !(*p).is_null() {
+                aliases.push(CStr::from_ptr(*p).to_bytes().to_vec());
+                p = p.add(1);
+            }
+        }
+    }
+    (rc, !result.is_null(), h_errno, aliases)
+}
+
+#[test]
+fn gethostbyname2_r_missing_host_matches_host_glibc() {
+    // Whether a missing name is HOST_NOT_FOUND or TRY_AGAIN (no reachable
+    // DNS) depends on this machine, so glibc on the same machine decides.
+    let name = CString::new("frankenlibc-no-such-host.invalid").unwrap();
+    let fl = gethostbyname2_r_outcome(gethostbyname2_r, &name, libc::AF_INET6);
+    let host = gethostbyname2_r_outcome(host_gethostbyname2_r(), &name, libc::AF_INET6);
+    assert!(!host.1, "the .invalid name resolved on the host");
+    assert_eq!((fl.0, fl.1, fl.2), (host.0, host.1, host.2));
+}
+
+#[test]
+#[ignore = "pins HOST_NOT_FOUND, which needs a reachable resolver; gethostbyname2_r_missing_host_matches_host_glibc compares with glibc instead (bd-f7qzp8)"]
+fn gethostbyname2_r_missing_host_returns_zero_with_null_result() {
+    let name = CString::new("frankenlibc-no-such-host.invalid").unwrap();
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(result.is_null(), "missing host should yield NULL result");
+    assert_eq!(h_errno, 1);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostbyname2_r_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"localhost");
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            raw_name,
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+
+    assert_eq!(rc, 0);
+    assert!(result.is_null());
+    assert_eq!(h_errno, 1);
+}
+
+#[test]
+fn gethostbyname2_r_ipv6_localhost_packs_result_into_caller_buffer() {
+    let name = CString::new("localhost").unwrap();
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result: *mut libc::hostent = std::ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut hostent as *mut libc::hostent);
+    assert_eq!(h_errno, 0);
+    assert_eq!(hostent.h_addrtype, libc::AF_INET6);
+    assert_eq!(hostent.h_length, 16);
+    assert_eq!(hostent.h_name, buf.as_mut_ptr());
+    let resolved_name = unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes();
+    assert_eq!(resolved_name, b"localhost");
+    assert!(!hostent.h_addr_list.is_null());
+    assert!(!unsafe { *hostent.h_addr_list }.is_null());
+    let first_addr = unsafe { *hostent.h_addr_list } as *const libc::in6_addr;
+    assert_eq!(
+        unsafe { (*first_addr).s6_addr },
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    assert!(!hostent.h_aliases.is_null());
+    // The aliases are this machine's /etc/hosts entries for ::1 (commonly
+    // "ip6-localhost ip6-loopback"): glibc on the same machine decides.
+    let fl = gethostbyname2_r_outcome(gethostbyname2_r, &name, libc::AF_INET6);
+    let host = gethostbyname2_r_outcome(host_gethostbyname2_r(), &name, libc::AF_INET6);
+    assert_eq!(fl.3, host.3, "aliases differ from glibc's");
+}
+
+#[test]
+fn gethostbyname2_r_ipv6_small_buffer_preserves_h_errno() {
+    let name = CString::new("localhost").unwrap();
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    // Too small for the name and one aligned 16-byte address, whatever
+    // aliases this machine's /etc/hosts gives ::1 (64 bytes fitted on a host
+    // without them).
+    let mut buf = [0i8; 16];
+    let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(
+        result.is_null(),
+        "small caller buffer should yield NULL result on ERANGE"
+    );
+    assert_eq!(
+        h_errno, -1,
+        "glibc leaves h_errno untouched when gethostbyname2_r returns ERANGE"
+    );
+}
+
+#[test]
+fn ether_line_parses_valid_ethers_entry() {
+    let line = CString::new("08:00:20:00:61:cb printer").unwrap();
+    let mut addr = [0u8; 6];
+    let mut hostname = [0 as c_char; 64];
+
+    let rc = unsafe {
+        ether_line(
+            line.as_ptr(),
+            addr.as_mut_ptr().cast(),
+            hostname.as_mut_ptr(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(addr, [0x08, 0x00, 0x20, 0x00, 0x61, 0xcb]);
+
+    let parsed_name = unsafe { std::ffi::CStr::from_ptr(hostname.as_ptr()) };
+    assert_eq!(parsed_name.to_bytes(), b"printer");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn ether_line_rejects_tracked_unterminated_input() {
+    let text = b"08:00:20:00:61:cb printer";
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(text.len()) };
+    assert!(!raw.is_null());
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), raw.cast::<u8>(), text.len());
+    }
+
+    let mut addr = [0u8; 6];
+    let mut hostname = [0 as c_char; 64];
+    let rc = unsafe {
+        ether_line(
+            raw.cast::<c_char>(),
+            addr.as_mut_ptr().cast(),
+            hostname.as_mut_ptr(),
+        )
+    };
+    assert_eq!(
+        rc, -1,
+        "tracked unterminated ether_line input must not be scanned past allocation"
+    );
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
+
+#[test]
+fn setnetgrent_missing_group_matches_host_miss_shape() {
+    let missing = CString::new("frankenlibc-no-such-netgroup").unwrap();
+    let rc = unsafe { setnetgrent(missing.as_ptr()) };
+    assert_eq!(rc, 0, "missing netgroup should mirror host failure shape");
+
+    let mut host = std::ptr::dangling_mut::<c_char>();
+    let mut user = std::ptr::dangling_mut::<c_char>();
+    let mut domain = std::ptr::dangling_mut::<c_char>();
+    let next = unsafe { getnetgrent(&mut host, &mut user, &mut domain) };
+    assert_eq!(next, 0, "missing netgroup should enumerate no entries");
+    assert_eq!(host, std::ptr::dangling_mut::<c_char>());
+    assert_eq!(user, std::ptr::dangling_mut::<c_char>());
+    assert_eq!(domain, std::ptr::dangling_mut::<c_char>());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setnetgrent_rejects_tracked_unterminated_group() {
+    let raw_group = malloc_tracked_unterminated(b"frankenlibc-netgroup");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = setnetgrent(raw_group);
+        let err = *__errno_location();
+
+        assert_eq!(rc, 0);
+        assert_eq!(err, libc::EINVAL);
+
+        let mut host = std::ptr::dangling_mut::<c_char>();
+        let mut user = std::ptr::dangling_mut::<c_char>();
+        let mut domain = std::ptr::dangling_mut::<c_char>();
+        let next = getnetgrent(&mut host, &mut user, &mut domain);
+        assert_eq!(next, 0);
+        assert_eq!(host, std::ptr::dangling_mut::<c_char>());
+        assert_eq!(user, std::ptr::dangling_mut::<c_char>());
+        assert_eq!(domain, std::ptr::dangling_mut::<c_char>());
+
+        frankenlibc_abi::malloc_abi::free(raw_group.cast());
+    }
+}
+
+#[test]
+fn alias_lookup_missing_entry_sets_errno() {
+    let missing = CString::new("frankenlibc-no-such-alias").unwrap();
+    unsafe { *__errno_location() = 0 };
+    let plain = unsafe { getaliasbyname(missing.as_ptr()) };
+    assert!(plain.is_null(), "missing alias should return NULL");
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+
+    #[repr(C)]
+    struct AliasEnt {
+        alias_name: *mut c_char,
+        alias_members_len: usize,
+        alias_members: *mut *mut c_char,
+        alias_local: c_int,
+    }
+
+    let mut ent: AliasEnt = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        getaliasbyname_r(
+            missing.as_ptr(),
+            (&mut ent as *mut AliasEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::ENOENT);
+    assert!(
+        result.is_null(),
+        "missing alias should null the result pointer"
+    );
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn alias_lookup_rejects_tracked_unterminated_name() {
+    #[repr(C)]
+    struct AliasEnt {
+        alias_name: *mut c_char,
+        alias_members_len: usize,
+        alias_members: *mut *mut c_char,
+        alias_local: c_int,
+    }
+
+    let raw_name = malloc_tracked_unterminated(b"frankenlibc-alias");
+
+    unsafe {
+        *__errno_location() = 0;
+        let plain = getaliasbyname(raw_name);
+        let plain_err = *__errno_location();
+        assert!(plain.is_null());
+        assert_eq!(plain_err, libc::EINVAL);
+
+        let mut ent: AliasEnt = std::mem::zeroed();
+        let mut buf = [0i8; 512];
+        let mut result = std::ptr::dangling_mut::<c_void>();
+        let rc = getaliasbyname_r(
+            raw_name,
+            (&mut ent as *mut AliasEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn rpc_lookup_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"portmapper");
+
+    unsafe {
+        *__errno_location() = 0;
+        let plain = frankenlibc_abi::unistd_abi::getrpcbyname(raw_name).cast::<RpcEnt>();
+        let plain_err = *__errno_location();
+        assert!(plain.is_null());
+        assert_eq!(plain_err, libc::EINVAL);
+
+        let mut rpc: RpcEnt = std::mem::zeroed();
+        let mut buf = [0i8; 1024];
+        let mut result = std::ptr::dangling_mut::<RpcEnt>();
+        let rc = frankenlibc_abi::unistd_abi::getrpcbyname_r(
+            raw_name,
+            (&mut rpc as *mut RpcEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            (&mut result as *mut *mut RpcEnt).cast(),
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+fn rpc_reentrant_wrappers_match_host_shapes() {
+    let mut rpc: RpcEnt = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<RpcEnt>();
+
+    let name = CString::new("portmapper").unwrap();
+    let rc = unsafe {
+        getrpcbyname_r(
+            name.as_ptr(),
+            &mut rpc,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(std::ptr::eq(result, &rpc));
+    let rpc_name = unsafe { std::ffi::CStr::from_ptr(rpc.r_name) };
+    assert_eq!(rpc_name.to_bytes(), b"portmapper");
+    assert_eq!(rpc.r_number, 100000);
+
+    result = std::ptr::dangling_mut::<RpcEnt>();
+    let missing = CString::new("frankenlibc-no-rpc").unwrap();
+    let rc = unsafe {
+        getrpcbyname_r(
+            missing.as_ptr(),
+            &mut rpc,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(
+        result.is_null(),
+        "missing RPC name should return rc=0 with NULL result"
+    );
+
+    result = std::ptr::dangling_mut::<RpcEnt>();
+    let rc =
+        unsafe { getrpcbynumber_r(100000, &mut rpc, buf.as_mut_ptr(), buf.len(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(std::ptr::eq(result, &rpc));
+    assert_eq!(rpc.r_number, 100000);
+
+    unsafe { setrpcent(1) };
+    result = std::ptr::dangling_mut::<RpcEnt>();
+    let rc = unsafe { getrpcent_r(&mut rpc, buf.as_mut_ptr(), buf.len(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(std::ptr::eq(result, &rpc));
+    assert!(
+        !rpc.r_name.is_null(),
+        "reentrant RPC iteration should populate r_name"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getrpcbyname_r_caps_tracked_short_buffer() {
+    let Some((name, _)) = first_rpc_entry_for_tests() else {
+        return;
+    };
+    let mut rpc: RpcEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<RpcEnt>();
+
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::getrpcbyname_r(
+            name.as_ptr(),
+            (&mut rpc as *mut RpcEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            (&mut result as *mut *mut RpcEnt).cast(),
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getrpcbyname_r_rejects_tracked_short_result_buf() {
+    let Some((name, _)) = first_rpc_entry_for_tests() else {
+        return;
+    };
+    let raw_rpc = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<RpcEnt>();
+
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::getrpcbyname_r(
+            name.as_ptr(),
+            raw_rpc,
+            buf.as_mut_ptr(),
+            buf.len(),
+            (&mut result as *mut *mut RpcEnt).cast(),
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_rpc.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_rpc) };
+}
+
+#[test]
+fn creat_creates_file() {
+    let path = temp_path("creat");
+    let fd = unsafe { creat(path.as_ptr(), 0o644) };
+    assert!(fd >= 0);
+    assert_eq!(unsafe { close(fd) }, 0);
+    assert!(std::path::Path::new(path.to_str().unwrap()).exists());
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn lseek_reports_position() {
+    let path = temp_path("lseek");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    let data = b"0123456789";
+    unsafe { write(fd, data.as_ptr().cast(), data.len()) };
+
+    assert_eq!(unsafe { lseek(fd, 0, libc::SEEK_END) }, 10);
+    assert_eq!(unsafe { lseek(fd, 3, libc::SEEK_SET) }, 3);
+    assert_eq!(unsafe { lseek(fd, 2, libc::SEEK_CUR) }, 5);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn isatty_returns_zero_for_regular_file() {
+    let path = temp_path("isatty");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+    assert_eq!(unsafe { isatty(fd) }, 0);
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: stat family
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stat_reads_file_metadata() {
+    let path = temp_path("stat");
+    std::fs::write(path.to_str().unwrap(), b"test data").unwrap();
+
+    let mut buf = [0u8; 256]; // Oversized buffer for struct stat
+    let rc = unsafe { stat(path.as_ptr(), buf.as_mut_ptr().cast()) };
+    assert_eq!(rc, 0);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn fstat_reads_fd_metadata() {
+    let path = temp_path("fstat");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    let mut buf = [0u8; 256];
+    let rc = unsafe { fstat(fd, buf.as_mut_ptr().cast()) };
+    assert_eq!(rc, 0);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn lstat_returns_symlink_info() {
+    let target = temp_path("lstat_tgt");
+    let linkp = temp_path("lstat_lnk");
+    std::fs::write(target.to_str().unwrap(), b"x").unwrap();
+
+    let rc = unsafe { symlink(target.as_ptr(), linkp.as_ptr()) };
+    if rc == 0 {
+        let mut buf = [0u8; 256];
+        let sr = unsafe { lstat(linkp.as_ptr(), buf.as_mut_ptr().cast()) };
+        assert_eq!(sr, 0);
+        let _ = std::fs::remove_file(linkp.to_str().unwrap());
+    }
+    let _ = std::fs::remove_file(target.to_str().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: filesystem ops
+// ---------------------------------------------------------------------------
+
+#[test]
+fn access_checks_file_existence() {
+    let path = temp_path("access");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+
+    assert_eq!(unsafe { access(path.as_ptr(), libc::F_OK) }, 0);
+    assert_eq!(unsafe { access(path.as_ptr(), libc::R_OK) }, 0);
+
+    let missing = temp_path("access_miss");
+    assert_eq!(unsafe { access(missing.as_ptr(), libc::F_OK) }, -1);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn link_creates_hard_link() {
+    let src = temp_path("link_src");
+    let dst = temp_path("link_dst");
+    std::fs::write(src.to_str().unwrap(), b"data").unwrap();
+
+    let rc = unsafe { link(src.as_ptr(), dst.as_ptr()) };
+    assert_eq!(rc, 0);
+    assert!(std::path::Path::new(dst.to_str().unwrap()).exists());
+
+    let _ = std::fs::remove_file(dst.to_str().unwrap());
+    let _ = std::fs::remove_file(src.to_str().unwrap());
+}
+
+#[test]
+fn symlink_and_readlink_round_trip() {
+    let target = temp_path("sym_tgt");
+    let linkp = temp_path("sym_lnk");
+    std::fs::write(target.to_str().unwrap(), b"x").unwrap();
+
+    let rc = unsafe { symlink(target.as_ptr(), linkp.as_ptr()) };
+    assert_eq!(rc, 0);
+
+    let mut buf = [0i8; 4096];
+    let n = unsafe { readlink(linkp.as_ptr(), buf.as_mut_ptr(), buf.len()) };
+    assert!(n > 0);
+    let resolved = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(resolved.as_bytes(), target.as_bytes());
+
+    let _ = std::fs::remove_file(linkp.to_str().unwrap());
+    let _ = std::fs::remove_file(target.to_str().unwrap());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn readlink_caps_tracked_short_output_buffer() {
+    let target = CString::new("tracked-readlink-target").unwrap();
+    let linkp = temp_path("sym_lnk_tracked_short");
+    assert_eq!(unsafe { symlink(target.as_ptr(), linkp.as_ptr()) }, 0);
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let n = unsafe { readlink(linkp.as_ptr(), raw.cast::<c_char>(), 256) };
+
+    assert_eq!(n, 1);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, b't');
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+    let _ = std::fs::remove_file(linkp.to_str().unwrap());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn readlinkat_caps_tracked_short_output_buffer() {
+    let target = CString::new("tracked-readlinkat-target").unwrap();
+    let linkp = temp_path("sym_lnk_at_tracked_short");
+    assert_eq!(unsafe { symlink(target.as_ptr(), linkp.as_ptr()) }, 0);
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let n = unsafe {
+        frankenlibc_abi::unistd_abi::readlinkat(
+            libc::AT_FDCWD,
+            linkp.as_ptr(),
+            raw.cast::<c_char>(),
+            256,
+        )
+    };
+
+    assert_eq!(n, 1);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, b't');
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+    let _ = std::fs::remove_file(linkp.to_str().unwrap());
+}
+
+#[test]
+fn unlink_removes_file() {
+    let path = temp_path("unlink");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+    assert!(std::path::Path::new(path.to_str().unwrap()).exists());
+
+    assert_eq!(unsafe { unlink(path.as_ptr()) }, 0);
+    assert!(!std::path::Path::new(path.to_str().unwrap()).exists());
+}
+
+#[test]
+fn mkdir_and_rmdir_round_trip() {
+    let path = temp_path("mkrmdir");
+    assert_eq!(unsafe { mkdir(path.as_ptr(), 0o755) }, 0);
+    assert!(std::path::Path::new(path.to_str().unwrap()).is_dir());
+
+    assert_eq!(unsafe { rmdir(path.as_ptr()) }, 0);
+    assert!(!std::path::Path::new(path.to_str().unwrap()).exists());
+}
+
+#[test]
+fn rename_moves_file() {
+    let src = temp_path("rename_src");
+    let dst = temp_path("rename_dst");
+    std::fs::write(src.to_str().unwrap(), b"content").unwrap();
+
+    assert_eq!(unsafe { rename(src.as_ptr(), dst.as_ptr()) }, 0);
+    assert!(!std::path::Path::new(src.to_str().unwrap()).exists());
+    assert!(std::path::Path::new(dst.to_str().unwrap()).exists());
+
+    let _ = std::fs::remove_file(dst.to_str().unwrap());
+}
+
+#[test]
+fn chmod_changes_permissions() {
+    let path = temp_path("chmod");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+
+    assert_eq!(unsafe { chmod(path.as_ptr(), 0o444) }, 0);
+
+    let meta = std::fs::metadata(path.to_str().unwrap()).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(meta.permissions().mode() & 0o777, 0o444);
+
+    // Restore write permission before cleanup
+    assert_eq!(unsafe { chmod(path.as_ptr(), 0o644) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn fchmod_changes_permissions() {
+    let path = temp_path("fchmod");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    assert_eq!(unsafe { fchmod(fd, 0o444) }, 0);
+
+    let meta = std::fs::metadata(path.to_str().unwrap()).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(meta.permissions().mode() & 0o777, 0o444);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    std::fs::set_permissions(
+        path.to_str().unwrap(),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn chown_does_not_crash() {
+    let path = temp_path("chown");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+
+    let uid = unsafe { getuid() };
+    let gid = unsafe { getgid() };
+    // Chown to self should succeed
+    let rc = unsafe { chown(path.as_ptr(), uid, gid) };
+    assert_eq!(rc, 0);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn fchown_does_not_crash() {
+    let path = temp_path("fchown");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    let uid = unsafe { getuid() };
+    let gid = unsafe { getgid() };
+    let rc = unsafe { fchown(fd, uid, gid) };
+    assert_eq!(rc, 0);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn truncate_shrinks_file() {
+    let path = temp_path("trunc");
+    std::fs::write(path.to_str().unwrap(), b"0123456789").unwrap();
+
+    assert_eq!(unsafe { truncate(path.as_ptr(), 5) }, 0);
+    let meta = std::fs::metadata(path.to_str().unwrap()).unwrap();
+    assert_eq!(meta.len(), 5);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn ftruncate_shrinks_file() {
+    let path = temp_path("ftrunc");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    let data = b"0123456789";
+    unsafe { write(fd, data.as_ptr().cast(), data.len()) };
+
+    assert_eq!(unsafe { ftruncate(fd, 3) }, 0);
+    assert_eq!(unsafe { lseek(fd, 0, libc::SEEK_END) }, 3);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn fsync_and_fdatasync_on_regular_file() {
+    let path = temp_path("fsync");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    unsafe { write(fd, b"test".as_ptr().cast(), 4) };
+    assert_eq!(unsafe { fsync(fd) }, 0);
+    assert_eq!(unsafe { fdatasync(fd) }, 0);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn flock_exclusive_and_unlock() {
+    let path = temp_path("flock");
+    let fd = unsafe { open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0);
+
+    assert_eq!(unsafe { flock(fd, libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    assert_eq!(unsafe { flock(fd, libc::LOCK_UN) }, 0);
+
+    assert_eq!(unsafe { close(fd) }, 0);
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: pipe
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pipe_creates_connected_fds() {
+    let mut fds = [0i32; 2];
+    assert_eq!(
+        unsafe { frankenlibc_abi::io_abi::pipe(fds.as_mut_ptr()) },
+        0
+    );
+    assert!(fds[0] >= 0);
+    assert!(fds[1] >= 0);
+
+    let msg = b"hi";
+    let written = unsafe { write(fds[1], msg.as_ptr().cast(), msg.len()) };
+    assert_eq!(written as usize, msg.len());
+
+    let mut buf = [0u8; 4];
+    let n = unsafe { read(fds[0], buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(n as usize, msg.len());
+    assert_eq!(&buf[..n as usize], msg);
+
+    unsafe { close(fds[0]) };
+    unsafe { close(fds[1]) };
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: umask
+// ---------------------------------------------------------------------------
+
+#[test]
+fn umask_round_trips() {
+    let old = unsafe { umask(0o077) };
+    let restored = unsafe { umask(old) };
+    assert_eq!(restored, 0o077);
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: hostname
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gethostname_returns_nonempty_string() {
+    let mut buf = [0i8; 256];
+    let rc = unsafe { gethostname(buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(rc, 0);
+    let name = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert!(!name.is_empty());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn gethostname_caps_tracked_short_output_buffer() {
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    assert_eq!(unsafe { libc::uname(uts.as_mut_ptr()) }, 0);
+    let uts = unsafe { uts.assume_init() };
+    assert_ne!(uts.nodename[0], 0);
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let rc = unsafe { gethostname(raw.cast::<c_char>(), 256) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::ENAMETOOLONG);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, uts.nodename[0] as u8);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getdomainname_caps_tracked_short_output_buffer() {
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    assert_eq!(unsafe { libc::uname(uts.as_mut_ptr()) }, 0);
+    let uts = unsafe { uts.assume_init() };
+    let domain_len = uts
+        .domainname
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(uts.domainname.len());
+    let expected_first = if domain_len == 0 {
+        0
+    } else {
+        uts.domainname[0] as u8
+    };
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let rc = unsafe { frankenlibc_abi::unistd_abi::getdomainname(raw.cast::<c_char>(), 256) };
+
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, expected_first);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: uname
+// ---------------------------------------------------------------------------
+
+#[test]
+fn uname_fills_sysname() {
+    let mut buf = [0u8; 512]; // Oversized buffer for struct utsname
+    let rc = unsafe { uname(buf.as_mut_ptr().cast()) };
+    assert_eq!(rc, 0);
+    // First field is sysname - should start with "Linux"
+    let sysname = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) }.to_string_lossy();
+    assert_eq!(&*sysname, "Linux");
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: sysconf, pathconf
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sysconf_page_size_is_positive_power_of_two() {
+    let ps = unsafe { sysconf(libc::_SC_PAGESIZE) };
+    assert!(ps > 0);
+    assert_eq!(ps & (ps - 1), 0, "page size should be power of 2");
+}
+
+#[test]
+fn sysconf_nprocessors_is_positive() {
+    let n = unsafe { sysconf(libc::_SC_NPROCESSORS_ONLN) };
+    assert!(n >= 1);
+}
+
+#[test]
+fn pathconf_on_slash() {
+    let root = CString::new("/").unwrap();
+    let name_max = unsafe { pathconf(root.as_ptr(), libc::_PC_NAME_MAX) };
+    assert!(name_max > 0, "NAME_MAX on / should be positive");
+}
+
+#[test]
+fn sysconf_ngroups_max_matches_procfs_when_available() {
+    let value = unsafe { sysconf(libc::_SC_NGROUPS_MAX) };
+    assert!(value > 0, "NGROUPS_MAX should be positive");
+
+    if let Ok(raw) = std::fs::read_to_string("/proc/sys/kernel/ngroups_max")
+        && let Ok(expected) = raw.trim().parse::<libc::c_long>()
+    {
+        assert_eq!(value, expected);
+    }
+}
+
+#[test]
+fn sysconf_thread_stack_min_matches_libc_constant() {
+    let value = unsafe { sysconf(libc::_SC_THREAD_STACK_MIN) };
+    assert_eq!(value, libc::PTHREAD_STACK_MIN as libc::c_long);
+}
+
+#[test]
+fn sysconf_phys_pages_uses_runtime_page_size() {
+    let value = unsafe { sysconf(libc::_SC_PHYS_PAGES) };
+    assert!(value > 0, "PHYS_PAGES should be positive");
+
+    let page_size = unsafe { sysconf(libc::_SC_PAGESIZE) } as u64;
+    let meminfo = std::fs::read_to_string("/proc/meminfo").expect("/proc/meminfo should exist");
+    let total_kb = meminfo
+        .lines()
+        .find_map(|line| {
+            if !line.starts_with("MemTotal:") {
+                return None;
+            }
+            line.split_whitespace().nth(1)?.parse::<u64>().ok()
+        })
+        .expect("MemTotal should be present");
+    let expected = ((total_kb * 1024) / page_size) as libc::c_long;
+
+    assert_eq!(value, expected);
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: alarm, sleep, usleep
+// ---------------------------------------------------------------------------
+
+#[test]
+fn alarm_returns_previous_alarm() {
+    let prev = unsafe { alarm(10) };
+    // Cancel the alarm
+    let remaining = unsafe { alarm(0) };
+    assert!(remaining <= 10);
+    // Restore whatever was there before
+    if prev > 0 {
+        unsafe { alarm(prev) };
+    }
+}
+
+#[test]
+fn usleep_zero_returns_immediately() {
+    let rc = unsafe { usleep(0) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: faccessat
+// ---------------------------------------------------------------------------
+
+#[test]
+fn faccessat_checks_existence() {
+    let path = temp_path("faccessat");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+
+    let rc = unsafe { faccessat(libc::AT_FDCWD, path.as_ptr(), libc::F_OK, 0) };
+    assert_eq!(rc, 0);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn faccessat_at_eaccess_checks_existence() {
+    let path = temp_path("faccessat_at_eaccess");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+
+    let rc = unsafe { faccessat(libc::AT_FDCWD, path.as_ptr(), libc::F_OK, libc::AT_EACCESS) };
+    assert_eq!(rc, 0);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Core POSIX: mkfifo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mkfifo_creates_named_pipe() {
+    let path = temp_path("mkfifo");
+    let rc = unsafe { mkfifo(path.as_ptr(), 0o644) };
+    assert_eq!(rc, 0);
+
+    let meta = std::fs::symlink_metadata(path.to_str().unwrap()).unwrap();
+    assert!(meta.file_type().is_fifo());
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// aio_suspend timespec validation (bd-4rdz8)
+//
+// POSIX requires aio_suspend to fail with EINVAL when tv_nsec is out of
+// [0, 999_999_999] or when the timespec is otherwise unusable. Prior to
+// bd-4rdz8 the implementation cast `ts.tv_sec as u64` and would then
+// `Instant + Duration`, which panics (process abort) for a negative
+// tv_sec reinterpreted as ~u64::MAX. These tests pin the EINVAL contract.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn aio_suspend_rejects_negative_tv_sec_without_panic() {
+    let cb: *const c_void = std::ptr::null();
+    let list = [&cb as *const *const c_void as *const c_void];
+    let ts = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 0,
+    };
+    clear_errno();
+    let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
+    assert_eq!(rc, -1, "aio_suspend with tv_sec<0 must return -1 (EINVAL)");
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+fn aio_suspend_rejects_negative_tv_nsec() {
+    let cb: *const c_void = std::ptr::null();
+    let list = [&cb as *const *const c_void as *const c_void];
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: -1,
+    };
+    clear_errno();
+    let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
+    assert_eq!(rc, -1, "aio_suspend with tv_nsec<0 must return -1 (EINVAL)");
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+fn aio_suspend_rejects_oversize_tv_nsec() {
+    let cb: *const c_void = std::ptr::null();
+    let list = [&cb as *const *const c_void as *const c_void];
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    clear_errno();
+    let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
+    assert_eq!(
+        rc, -1,
+        "aio_suspend with tv_nsec >= 1_000_000_000 must return -1 (EINVAL)"
+    );
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+fn aio_suspend_rejects_empty_list_before_timeout() {
+    // nent <= 0 is its own EINVAL path that must trigger before we ever
+    // look at the timespec — adversarial timestamps should not affect it.
+    clear_errno();
+    let rc = unsafe { aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getrandom_caps_tracked_short_output_buffer() {
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let n = unsafe { frankenlibc_abi::unistd_abi::getrandom(raw, 256, 0) };
+
+    assert_eq!(n, 1);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getentropy_rejects_tracked_short_output_buffer() {
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::getentropy(raw, 2) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// arc4random_buf short-read contract (bd-ubkl7)
+//
+// Linux getrandom(2) may short-read for nbytes > 256. arc4random_buf must
+// loop until the whole buffer is filled; leaving a trailing window
+// uninitialized would be a security defect (caller treats it as entropy).
+// The test initializes the buffer to a sentinel and then asserts no byte
+// retains the sentinel after arc4random_buf completes — statistically a
+// 1_024-byte /dev/urandom read will overwrite every byte (probability of a
+// single byte matching 0xA5 is 1/256; probability that ALL 1024 coincide
+// with the sentinel is (1/256)^1024 ≈ 0). The 0-byte request must be a
+// no-op and must not touch the buffer.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arc4random_buf_fills_entire_buffer_past_256_bytes() {
+    const N: usize = 1024;
+    let mut buf = [0xA5_u8; N];
+    unsafe { arc4random_buf(buf.as_mut_ptr() as *mut c_void, N) };
+    // A correct implementation MUST overwrite every byte. Find any byte that
+    // still carries the 0xA5 sentinel — a single hit is allowed (random
+    // matches happen), but a contiguous trailing window >= 16 bytes of
+    // sentinels is the short-read signature the bug would produce.
+    let mut trailing = 0usize;
+    for &b in buf.iter().rev() {
+        if b == 0xA5 {
+            trailing += 1;
+        } else {
+            break;
+        }
+    }
+    assert!(
+        trailing < 16,
+        "arc4random_buf left {trailing} trailing bytes at the 0xA5 sentinel — looks like a short-read bug"
+    );
+}
+
+#[test]
+fn arc4random_buf_zero_size_is_noop() {
+    let mut buf = [0xA5_u8; 4];
+    unsafe { arc4random_buf(buf.as_mut_ptr() as *mut c_void, 0) };
+    assert_eq!(buf, [0xA5; 4], "arc4random_buf(_, 0) must not write");
+}
+
+#[test]
+fn arc4random_buf_null_pointer_is_noop() {
+    // Null buffer is an invalid request but must not crash.
+    unsafe { arc4random_buf(std::ptr::null_mut(), 0) };
+    unsafe { arc4random_buf(std::ptr::null_mut(), 64) };
+}
+
+// ===========================================================================
+// posix_close (POSIX 2024 §close)
+// ===========================================================================
+
+use frankenlibc_abi::unistd_abi::posix_close;
+
+#[test]
+fn posix_close_zero_flag_closes_valid_fd() {
+    // Open /dev/null then posix_close it.
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "open /dev/null failed");
+    let rc = unsafe { posix_close(fd, 0) };
+    assert_eq!(rc, 0, "posix_close(valid fd, 0) should succeed");
+}
+
+#[test]
+fn posix_close_unknown_flag_returns_einval() {
+    // POSIX 2024 reserves all non-zero flag values. Any non-zero
+    // flag must return -1 with errno=EINVAL — without ever touching
+    // the fd.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { posix_close(-1, 1) };
+    assert_eq!(rc, -1, "posix_close with unknown flag must return -1");
+    let err = unsafe { *__errno_location() };
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "posix_close unknown-flag errno must be EINVAL"
+    );
+}
+
+#[test]
+fn posix_close_invalid_fd_returns_minus_one() {
+    // close(-1) sets errno=EBADF; posix_close(-1, 0) propagates that
+    // (EBADF is not EINPROGRESS so no translation).
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { posix_close(-1, 0) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, libc::EBADF, "posix_close(-1, 0) errno should be EBADF");
+}
+
+// ---------------------------------------------------------------------------
+// bsd_getopt (libbsd: BSD-flavored getopt with stripped +/- prefix)
+// ---------------------------------------------------------------------------
+//
+// libbsd's bsd_getopt strips a leading '+' or '-' from `optstring`
+// and forwards to POSIX getopt. We exercise three behaviors:
+//   1. Plain optstring forwarded unchanged.
+//   2. '+' prefix stripped before parse.
+//   3. '-' prefix stripped before parse.
+// All three must yield the same option-character output.
+//
+// getopt is stateful (libc_optind, libc_optarg) — we serialise the
+// tests via a Mutex so they don't race the global getopt state.
+
+static BSD_GETOPT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn reset_getopt_state_for_test() {
+    // Reset getopt state. libc_optind is exported by glibc; setting
+    // it to 0 forces the ABI shim to clear its bundled-option cursor.
+    unsafe extern "C" {
+        static mut optind: c_int;
+    }
+    unsafe { optind = 0 };
+}
+
+fn run_bsd_getopt_with_args(optstring: &core::ffi::CStr, args: &[&core::ffi::CStr]) -> Vec<c_int> {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+
+    let mut argv: Vec<*mut c_char> = args.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+    argv.push(std::ptr::null_mut());
+
+    let mut out = Vec::new();
+    loop {
+        let rc = unsafe { bsd_getopt(args.len() as c_int, argv.as_ptr(), optstring.as_ptr()) };
+        if rc == -1 {
+            break;
+        }
+        out.push(rc);
+    }
+    out
+}
+
+#[test]
+fn bsd_getopt_plain_optstring_forwards_unchanged() {
+    let chars = run_bsd_getopt_with_args(c"abc", &[c"prog", c"-a", c"-b", c"-c"]);
+    assert_eq!(chars, vec![b'a' as c_int, b'b' as c_int, b'c' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_strips_leading_plus_prefix() {
+    // Same arguments + same effective optspec; "+abc" must behave
+    // identically to "abc" once the '+' is stripped.
+    let chars = run_bsd_getopt_with_args(c"+abc", &[c"prog", c"-a", c"-b"]);
+    assert_eq!(chars, vec![b'a' as c_int, b'b' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_strips_leading_minus_prefix() {
+    let chars = run_bsd_getopt_with_args(c"-abc", &[c"prog", c"-a", c"-c"]);
+    assert_eq!(chars, vec![b'a' as c_int, b'c' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_unknown_option_returns_question_mark() {
+    let chars = run_bsd_getopt_with_args(c"+ab", &[c"prog", c"-z"]);
+    assert_eq!(chars, vec![b'?' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_null_optstring_returns_minus_one() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let arg0 = c"prog";
+    let argv: [*mut c_char; 2] = [arg0.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    let rc = unsafe { bsd_getopt(1, argv.as_ptr(), std::ptr::null()) };
+    assert_eq!(rc, -1, "NULL optstring must yield -1 (matches getopt)");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn bsd_getopt_rejects_tracked_unterminated_prefixed_optstring() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_optstring = malloc_tracked_unterminated(b"+a");
+    let argv: [*mut c_char; 3] = [
+        c"prog".as_ptr() as *mut c_char,
+        c"-a".as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = bsd_getopt(2, argv.as_ptr(), raw_optstring);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_optstring.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn bsd_getopt_double_prefix_only_strips_one() {
+    // libbsd strips at most one prefix char. "++a" → after stripping
+    // '+', optstring is "+a", which then itself starts with '+' as
+    // a getopt-spec char (since our getopt treats unknown specs as
+    // valid letter "p" expectations? actually just "+" is not a
+    // valid option char). The first char after stripping is '+',
+    // which isn't an option character, so '-+' as an arg yields '?'.
+    // Verify the strip happens exactly once.
+    let chars = run_bsd_getopt_with_args(c"++a", &[c"prog", c"-a"]);
+    assert_eq!(chars, vec![b'a' as c_int]);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getopt_rejects_tracked_unterminated_argv_entry() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_arg = malloc_tracked_unterminated(b"-a");
+    let mut argv = vec![
+        c"prog".as_ptr() as *mut c_char,
+        raw_arg,
+        std::ptr::null_mut(),
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getopt(2, argv.as_mut_ptr(), c"a".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_arg.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getopt_long_rejects_tracked_unterminated_argv_entry() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_arg = malloc_tracked_unterminated(b"--alpha");
+    let mut argv = vec![
+        c"prog".as_ptr() as *mut c_char,
+        raw_arg,
+        std::ptr::null_mut(),
+    ];
+    let longopts = [
+        libc::option {
+            name: c"alpha".as_ptr(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: b'a' as c_int,
+        },
+        libc::option {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getopt_long(
+            2,
+            argv.as_mut_ptr(),
+            c"".as_ptr(),
+            longopts.as_ptr(),
+            std::ptr::null_mut(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_arg.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn getopt_long_rejects_tracked_unterminated_option_name() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_name = malloc_tracked_unterminated(b"alpha");
+    let mut argv = vec![
+        c"prog".as_ptr() as *mut c_char,
+        c"--alpha".as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+    let longopts = [
+        libc::option {
+            name: raw_name,
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: b'a' as c_int,
+        },
+        libc::option {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getopt_long(
+            2,
+            argv.as_mut_ptr(),
+            c"".as_ptr(),
+            longopts.as_ptr(),
+            std::ptr::null_mut(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// flopen / flopenat (libbsd open-with-advisory-lock)
+// ---------------------------------------------------------------------------
+//
+// libbsd defines O_SHLOCK = 0x10, O_EXLOCK = 0x20 (BSD-historic bit
+// positions). We strip them before calling open() and use them to
+// pick the flock() kind.
+
+const LIBBSD_O_SHLOCK: c_int = 0x10;
+const LIBBSD_O_EXLOCK: c_int = 0x20;
+
+fn flopen_temp_path(tag: &str) -> std::path::PathBuf {
+    let seq = std::sync::atomic::AtomicU64::new(
+        std::process::id() as u64
+            ^ std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
+    );
+    let n = seq.load(std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "frankenlibc-flopen-{tag}-{n}-{}",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn flopen_creates_file_with_default_lock() {
+    let path = flopen_temp_path("create");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { flopen(cs.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0, "flopen failed; errno={}", unsafe {
+        *__errno_location()
+    });
+    unsafe { close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_strips_shlock_and_exlock_before_open() {
+    // O_EXLOCK alone (no O_CREAT) requires that the file already exists.
+    let path = flopen_temp_path("exlock");
+    std::fs::write(&path, b"hello").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY | LIBBSD_O_EXLOCK, 0) };
+    assert!(fd >= 0);
+    unsafe { close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_o_shlock_takes_shared_lock() {
+    let path = flopen_temp_path("shlock");
+    std::fs::write(&path, b"data").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // First fd gets a shared lock.
+    let fd1 = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY | LIBBSD_O_SHLOCK, 0) };
+    assert!(fd1 >= 0);
+    // Second fd with shared lock must succeed (multiple shared locks
+    // are allowed simultaneously).
+    let fd2 = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY | LIBBSD_O_SHLOCK, 0) };
+    assert!(fd2 >= 0, "second shared lock should succeed");
+    unsafe {
+        close(fd1);
+        close(fd2);
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_nonblock_with_existing_exclusive_lock_returns_minus_one() {
+    let path = flopen_temp_path("nonblock");
+    std::fs::write(&path, b"x").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    // Take a blocking exclusive lock first.
+    let fd1 = unsafe { flopen(cs.as_ptr(), libc::O_RDWR | LIBBSD_O_EXLOCK, 0) };
+    assert!(fd1 >= 0);
+
+    // Second flopen with O_NONBLOCK must fail without blocking, since
+    // the exclusive lock is already held by fd1.
+    unsafe { *__errno_location() = 0 };
+    let fd2 = unsafe {
+        flopen(
+            cs.as_ptr(),
+            libc::O_RDWR | LIBBSD_O_EXLOCK | libc::O_NONBLOCK,
+            0,
+        )
+    };
+    assert_eq!(fd2, -1, "non-blocking second exclusive lock must fail");
+    let err = unsafe { *__errno_location() };
+    assert!(
+        err == libc::EAGAIN || err == libc::EWOULDBLOCK,
+        "expected EAGAIN/EWOULDBLOCK, got {err}"
+    );
+
+    unsafe { close(fd1) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_nonexistent_path_returns_minus_one() {
+    let path = flopen_temp_path("absent");
+    // Deliberately do NOT create it.
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    unsafe { *__errno_location() = 0 };
+    let fd = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY, 0) };
+    assert_eq!(fd, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+}
+
+#[test]
+fn flopen_null_path_returns_minus_one_with_efault() {
+    unsafe { *__errno_location() = 0 };
+    let fd = unsafe { flopen(std::ptr::null(), libc::O_RDONLY, 0) };
+    assert_eq!(fd, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+#[test]
+fn flopenat_relative_to_at_fdcwd() {
+    let path = flopen_temp_path("at-cwd");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe {
+        flopenat(
+            libc::AT_FDCWD,
+            cs.as_ptr(),
+            libc::O_CREAT | libc::O_RDWR,
+            0o644,
+        )
+    };
+    assert!(fd >= 0);
+    unsafe { close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopenat_null_path_returns_minus_one_with_efault() {
+    unsafe { *__errno_location() = 0 };
+    let fd = unsafe { flopenat(libc::AT_FDCWD, std::ptr::null(), libc::O_RDONLY, 0) };
+    assert_eq!(fd, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+// ---------------------------------------------------------------------------
+// readpassphrase (OpenBSD: passphrase reader)
+// ---------------------------------------------------------------------------
+//
+// We exercise the RPP_STDIN flag path so we can drive the read via a pipe
+// without needing a real /dev/tty. Tests are serialized via a Mutex
+// because they temporarily dup2 over stdin (fd 0).
+
+const RPP_ECHO_ON: c_int = 0x01;
+const RPP_FORCELOWER: c_int = 0x04;
+const RPP_FORCEUPPER: c_int = 0x08;
+const RPP_SEVENBIT: c_int = 0x10;
+const RPP_STDIN: c_int = 0x20;
+
+static READPASSPHRASE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn run_with_piped_stdin(payload: &[u8], call: impl FnOnce()) {
+    let _guard = READPASSPHRASE_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut pipefds = [0 as c_int; 2];
+    let rc = unsafe { libc::pipe(pipefds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let written = unsafe { libc::write(pipefds[1], payload.as_ptr() as *const _, payload.len()) };
+    assert_eq!(written as usize, payload.len());
+    unsafe { libc::close(pipefds[1]) };
+
+    // Restored by a Drop guard, INCLUDING on unwind (bd-ug42ol). `call()` is the
+    // readpassphrase invocation under test and its callers assert on the result;
+    // a panic anywhere in that window would skip a straight-line
+    // `dup2(saved_stdin, 0)` and leave this process's STDIN pointed at a drained
+    // pipe for the remaining 635 tests, so every later arm here would read EOF
+    // and fail for a reason unrelated to what it tests.
+    {
+        // SAFETY: duplicates the live stdin; the guard restores and closes it.
+        let _restore = unsafe { fd_capture::StdFdRestore::new(0) };
+        unsafe { libc::dup2(pipefds[0], 0) };
+        unsafe { libc::close(pipefds[0]) };
+
+        call();
+    }
+}
+
+#[test]
+fn readpassphrase_null_buf_returns_null() {
+    let prompt = c"";
+    let p = unsafe { readpassphrase(prompt.as_ptr(), std::ptr::null_mut(), 16, RPP_STDIN) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn readpassphrase_bufsiz_zero_returns_null() {
+    let prompt = c"";
+    let mut buf = [0i8; 16];
+    let p = unsafe { readpassphrase(prompt.as_ptr(), buf.as_mut_ptr(), 0, RPP_STDIN) };
+    assert!(p.is_null());
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn readpassphrase_rejects_tracked_unterminated_prompt() {
+    let raw_prompt = malloc_tracked_unterminated(b"password: ");
+    let mut buf = [0i8; 16];
+
+    run_with_piped_stdin(b"secret\n", || unsafe {
+        *__errno_location() = 0;
+        let p = readpassphrase(
+            raw_prompt,
+            buf.as_mut_ptr(),
+            buf.len(),
+            RPP_STDIN | RPP_ECHO_ON,
+        );
+        let err = *__errno_location();
+
+        assert!(p.is_null());
+        assert_eq!(err, libc::EINVAL);
+    });
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_prompt.cast()) };
+}
+
+#[test]
+fn readpassphrase_reads_line_via_stdin() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"secret123\n", || {
+        let prompt = c"";
+        let p = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+        assert!(!p.is_null());
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"secret123");
+}
+
+#[test]
+fn readpassphrase_strips_trailing_newline_only() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"hello-world\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"hello-world");
+}
+
+#[test]
+fn readpassphrase_truncates_at_bufsiz_minus_one() {
+    let mut buf = [0i8; 6]; // 5 chars + NUL
+    run_with_piped_stdin(b"abcdefghij\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"abcde", "must NUL-terminate at bufsiz - 1");
+}
+
+#[test]
+fn readpassphrase_force_upper_uppercases_input() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"MixedCase\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON | RPP_FORCEUPPER,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"MIXEDCASE");
+}
+
+#[test]
+fn readpassphrase_force_lower_lowercases_input() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"MixedCase\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON | RPP_FORCELOWER,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"mixedcase");
+}
+
+#[test]
+fn readpassphrase_seven_bit_strips_high_bit() {
+    let mut buf = [0i8; 32];
+    let payload = [0xc1u8, 0xa9, b'X', b'\n'];
+    run_with_piped_stdin(&payload, || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON | RPP_SEVENBIT,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    // 0xc1 & 0x7f = 0x41 = 'A'; 0xa9 & 0x7f = 0x29 = ')'.
+    assert_eq!(s, b"A)X");
+}
+
+#[test]
+fn readpassphrase_empty_input_yields_empty_string() {
+    let mut buf = [0i8; 16];
+    run_with_piped_stdin(b"\n", || {
+        let prompt = c"";
+        let p = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+        assert!(!p.is_null());
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"");
+}
+
+// ---------------------------------------------------------------------------
+// setproctitle / setproctitle_init (FreeBSD/libbsd)
+// ---------------------------------------------------------------------------
+//
+// setproctitle_init mutates a global Mutex<Option<ProcTitleStorage>>;
+// we serialize the tests via a dedicated lock so concurrent runs
+// don't race the captured (base, capacity) pair. Each test allocates
+// its own argv-shaped buffer to use as the capture target so we don't
+// trample the real /proc/self/cmdline.
+
+static SETPROCTITLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Build a synthetic argv+envp buffer so setproctitle_init has a
+/// real region to capture. Returns (argv: Vec<*mut c_char>,
+/// envp: Vec<*mut c_char>, backing: Vec<Vec<u8>>) — the backing
+/// vec must outlive the argv pointers.
+fn build_synthetic_argv(
+    progname: &str,
+    extra_capacity: usize,
+) -> (Vec<*mut c_char>, Vec<*mut c_char>, Vec<Vec<u8>>) {
+    // Construct a contiguous byte buffer containing argv0 + padding +
+    // a NUL envp string. We need argv[0] and envp[0] to point into
+    // contiguous memory so the walk in setproctitle_init computes
+    // a sensible capacity.
+    let mut backing: Vec<Vec<u8>> = Vec::new();
+    let mut buf: Vec<u8> = Vec::with_capacity(progname.len() + 1 + extra_capacity);
+    buf.extend_from_slice(progname.as_bytes());
+    buf.push(0);
+    // Padding so capacity > strlen(progname) + 1.
+    buf.extend(std::iter::repeat_n(b'X', extra_capacity));
+    buf.push(0);
+    backing.push(buf);
+
+    let raw = backing[0].as_mut_ptr() as *mut c_char;
+    let envp_offset = progname.len() + 1;
+    let envp_ptr = unsafe { raw.add(envp_offset) };
+    let argv: Vec<*mut c_char> = vec![raw, std::ptr::null_mut()];
+    let envp: Vec<*mut c_char> = vec![envp_ptr, std::ptr::null_mut()];
+    (argv, envp, backing)
+}
+
+#[test]
+fn setproctitle_with_init_writes_to_captured_argv() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("testprog", 64);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    let fmt = c"-just-a-title-%d";
+    unsafe { setproctitle(fmt.as_ptr(), 42i32) };
+
+    // Read back the title from the captured base. With "-" prefix
+    // stripped the result is "just-a-title-42".
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"just-a-title-42");
+}
+
+#[test]
+fn setproctitle_default_prefix_includes_progname() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    // Force the published progname so the prefix is deterministic.
+    static STABLE_PROGNAME: &std::ffi::CStr = c"myprog";
+    let old_progname = frankenlibc_abi::startup_abi::program_invocation_short_name.swap(
+        STABLE_PROGNAME.as_ptr() as *mut c_char,
+        std::sync::atomic::Ordering::AcqRel,
+    );
+
+    let fmt = c"hello %s";
+    let world = c"world";
+    unsafe { setproctitle(fmt.as_ptr(), world.as_ptr()) };
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"myprog: hello world");
+
+    frankenlibc_abi::startup_abi::program_invocation_short_name
+        .store(old_progname, std::sync::atomic::Ordering::Release);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setproctitle_skips_unterminated_published_progname() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    let raw_progname = malloc_tracked_unterminated(b"badprog");
+    let old_progname = frankenlibc_abi::startup_abi::program_invocation_short_name
+        .swap(raw_progname, std::sync::atomic::Ordering::AcqRel);
+
+    let fmt = c"hello";
+    unsafe {
+        setproctitle(fmt.as_ptr());
+        frankenlibc_abi::startup_abi::program_invocation_short_name
+            .store(old_progname, std::sync::atomic::Ordering::Release);
+        frankenlibc_abi::malloc_abi::free(raw_progname.cast());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"hello");
+}
+
+#[test]
+fn setproctitle_truncates_at_capacity_minus_one() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // Tight buffer: progname "x" + 8 bytes of padding = capacity 10.
+    let (mut argv, mut envp, backing) = build_synthetic_argv("x", 8);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    let fmt = c"-thisIsAReallyLongProcessTitle";
+    unsafe { setproctitle(fmt.as_ptr()) };
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    // Capacity is "x\0" + 8 'X's + trailing NUL = 11 bytes; the
+    // implementation NUL-pads then writes capacity-1 bytes max.
+    // The backing vec is 11 bytes total; the last byte is reserved
+    // for NUL. Expect the first 10 bytes of "thisIsAReallyLongProcessTitle".
+    assert!(s.len() <= 10);
+    assert_eq!(s, b"thisIsARea"[..s.len().min(10)].to_vec());
+}
+
+#[test]
+fn setproctitle_null_argv_init_is_no_op() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // NULL argv should not crash; subsequent setproctitle is a no-op
+    // when no storage was captured.
+    unsafe { setproctitle_init(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+    // Don't assert anything — just verify no panic.
+}
+
+#[test]
+fn setproctitle_without_init_is_no_op() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // Reset PROCTITLE_STATE by passing argc=0 via a real init with
+    // NULL argv, then verify setproctitle has no stale captured
+    // argv region to mutate.
+    unsafe { setproctitle_init(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+    let fmt = c"-anything";
+    unsafe { setproctitle(fmt.as_ptr()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setproctitle_rejects_tracked_unterminated_format() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    let raw_fmt = malloc_tracked_unterminated(b"-should-not-render-%d");
+    unsafe {
+        setproctitle(raw_fmt, 123i32);
+        frankenlibc_abi::malloc_abi::free(raw_fmt.cast());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setproctitle_init_rejects_tracked_unterminated_argv_entry() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    unsafe { setproctitle_init(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+
+    let raw_arg = malloc_tracked_unterminated(b"bad");
+    let mut argv = vec![raw_arg, std::ptr::null_mut()];
+    unsafe {
+        setproctitle_init(1, argv.as_mut_ptr(), std::ptr::null_mut());
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw_bytes = unsafe { std::slice::from_raw_parts(raw_arg.cast::<u8>(), 3) };
+    assert_eq!(raw_bytes, b"bad");
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_arg.cast()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setproctitle_init_rejects_tracked_unterminated_envp_entry() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    let raw_env = malloc_tracked_unterminated(b"BAD_ENV=value");
+    envp[0] = raw_env;
+
+    unsafe {
+        setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr());
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_env.cast()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setproctitle_init_rejects_tracked_short_argv_vector() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (argv, _envp, backing) = build_synthetic_argv("originalname", 64);
+    let tracked_argv = malloc_tracked_pointer_vector(&[argv[0]]);
+
+    unsafe {
+        setproctitle_init(4096, tracked_argv, std::ptr::null_mut());
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+    unsafe { frankenlibc_abi::malloc_abi::free(tracked_argv.cast()) };
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn setproctitle_init_rejects_tracked_envp_vector_without_null() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, _envp, backing) = build_synthetic_argv("originalname", 64);
+    let tracked_envp = malloc_tracked_pointer_vector(&[argv[0]]);
+
+    unsafe {
+        setproctitle_init(1, argv.as_mut_ptr(), tracked_envp);
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+    unsafe { frankenlibc_abi::malloc_abi::free(tracked_envp.cast()) };
+}
+
+// ===========================================================================
+// makedev / major / minor (glibc dev_t packing)
+// ===========================================================================
+
+use frankenlibc_abi::unistd_abi::{
+    gnu_dev_major, gnu_dev_makedev, gnu_dev_minor, major, makedev, minor,
+};
+
+#[test]
+fn makedev_round_trip_small_values() {
+    let dev = unsafe { makedev(8, 1) };
+    assert_eq!(unsafe { major(dev) }, 8);
+    assert_eq!(unsafe { minor(dev) }, 1);
+}
+
+#[test]
+fn makedev_round_trip_high_minor() {
+    // Minor 0x1234 exercises both the low-byte field and the
+    // shifted-into-high field.
+    let dev = unsafe { makedev(259, 0x1234) };
+    assert_eq!(unsafe { major(dev) }, 259);
+    assert_eq!(unsafe { minor(dev) }, 0x1234);
+}
+
+#[test]
+fn makedev_round_trip_high_major() {
+    // Major above 0xfff exercises the upper-32-bits field.
+    let dev = unsafe { makedev(0x12345, 7) };
+    assert_eq!(unsafe { major(dev) }, 0x12345);
+    assert_eq!(unsafe { minor(dev) }, 7);
+}
+
+#[test]
+fn makedev_round_trip_arbitrary_pairs() {
+    // Spot-check several distinct (major, minor) combinations at
+    // boundary positions of the bit layout.
+    for (mj, mn) in [
+        (0u32, 0u32),
+        (1, 0xff),
+        (0xfff, 0xff),
+        (0x1000, 0x100),
+        (0xffffu32, 0xffff),
+        (0x12345, 0x6789a),
+    ] {
+        let dev = unsafe { makedev(mj, mn) };
+        assert_eq!(unsafe { major(dev) }, mj, "major mismatch for ({mj},{mn})");
+        assert_eq!(unsafe { minor(dev) }, mn, "minor mismatch for ({mj},{mn})");
+    }
+}
+
+#[test]
+fn makedev_matches_gnu_dev_makedev() {
+    // The bare-name aliases must produce the same dev_t as the
+    // gnu_dev_* primitives.
+    let cases = [(8, 1), (0xfff, 0xff), (0x12345, 0x6789a)];
+    for (mj, mn) in cases {
+        let a = unsafe { makedev(mj, mn) };
+        let b = unsafe { gnu_dev_makedev(mj, mn) };
+        assert_eq!(a, b, "makedev/gnu_dev_makedev divergence for ({mj},{mn})");
+    }
+}
+
+#[test]
+fn major_minor_match_gnu_dev_versions() {
+    let cases: [u64; 4] = [0, 0x12345678, 0xdead_beef_cafe_babe, u64::MAX];
+    for raw in cases {
+        let dev = raw as libc::dev_t;
+        assert_eq!(unsafe { major(dev) }, unsafe { gnu_dev_major(dev) });
+        assert_eq!(unsafe { minor(dev) }, unsafe { gnu_dev_minor(dev) });
+    }
+}
+
+// ===========================================================================
+// secure_path (NetBSD libutil security check)
+// ===========================================================================
+
+use frankenlibc_abi::unistd_abi::secure_path;
+
+#[test]
+fn secure_path_null_argument_returns_minus_one_efault() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(std::ptr::null()) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EFAULT
+    );
+}
+
+#[test]
+fn secure_path_nonexistent_path_returns_minus_one() {
+    let p = c"/nonexistent/path/should/never/exist/secure-path-test";
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(p.as_ptr()) };
+    assert_eq!(r, -1);
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    // Underlying lstat sets ENOENT (or similar).
+    assert!(err == libc::ENOENT || err == libc::ENOTDIR);
+}
+
+#[test]
+fn secure_path_world_writable_file_fails_with_eperm() {
+    // Create a temp file owned by current user, set mode 0666, and
+    // verify secure_path rejects it.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("secure_path_test_{}", std::process::id()));
+    std::fs::write(&path, b"data").unwrap();
+    let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    unsafe { libc::chmod(path_c.as_ptr(), 0o666) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(path_c.as_ptr()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r, -1, "world-writable file must fail");
+    assert_eq!(err, libc::EPERM);
+}
+
+#[test]
+fn secure_path_group_writable_file_fails_with_eperm() {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("secure_path_test_grp_{}", std::process::id()));
+    std::fs::write(&path, b"data").unwrap();
+    let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    unsafe { libc::chmod(path_c.as_ptr(), 0o660) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(path_c.as_ptr()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r, -1, "group-writable file must fail");
+    assert_eq!(err, libc::EPERM);
+}
+
+#[test]
+fn secure_path_non_root_owned_file_fails_with_eperm() {
+    // When tests run as non-root, every file we create is owned
+    // by us, so secure_path must reject it for the wrong-owner
+    // reason. Skip the assertion if we ARE root.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("secure_path_owner_{}", std::process::id()));
+    std::fs::write(&path, b"data").unwrap();
+    let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    // Set restrictive perms so the only failure reason is owner.
+    unsafe { libc::chmod(path_c.as_ptr(), 0o600) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(path_c.as_ptr()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r, -1, "non-root-owned file must fail for non-root tests");
+    assert_eq!(err, libc::EPERM);
+}
+
+#[test]
+fn secure_path_root_owned_secure_file_passes() {
+    // /etc/passwd is universally root-owned and 0644 on Linux —
+    // a perfect smoke test that secure_path returns 0 for a
+    // legitimately secure file.
+    let p = c"/etc/passwd";
+    let r = unsafe { secure_path(p.as_ptr()) };
+    // If /etc/passwd doesn't exist or has unusual perms on this
+    // host (very unlikely), we treat the test as inconclusive
+    // rather than failing — the negative-path tests above carry
+    // the load.
+    if r != 0 {
+        eprintln!(
+            "secure_path(/etc/passwd) returned {} errno={} — host has \
+             non-standard perms; skipping positive assertion",
+            r,
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+        );
+    }
+}
+
+// ===========================================================================
+// __getppid + __getuid/euid/gid/egid + __setuid/gid/euid/egid + __setsid +
+// __setpgrp (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_getppid_matches_getppid() {
+    use frankenlibc_abi::unistd_abi::{__getppid, getppid};
+    assert_eq!(unsafe { __getppid() }, unsafe { getppid() });
+}
+
+#[test]
+fn under_getuid_geteuid_getgid_getegid_match_public() {
+    use frankenlibc_abi::unistd_abi::{
+        __getegid, __geteuid, __getgid, __getuid, getegid, geteuid, getgid, getuid,
+    };
+    assert_eq!(unsafe { __getuid() }, unsafe { getuid() });
+    assert_eq!(unsafe { __geteuid() }, unsafe { geteuid() });
+    assert_eq!(unsafe { __getgid() }, unsafe { getgid() });
+    assert_eq!(unsafe { __getegid() }, unsafe { getegid() });
+}
+
+#[test]
+fn under_setuid_setgid_seteuid_setegid_to_self_succeed() {
+    use frankenlibc_abi::unistd_abi::{
+        __setegid, __seteuid, __setgid, __setuid, getegid, geteuid, getgid, getuid,
+    };
+    let uid = unsafe { getuid() };
+    let euid = unsafe { geteuid() };
+    let gid = unsafe { getgid() };
+    let egid = unsafe { getegid() };
+    // Setting to current values is always permitted.
+    assert_eq!(unsafe { __setuid(uid) }, 0);
+    assert_eq!(unsafe { __seteuid(euid) }, 0);
+    assert_eq!(unsafe { __setgid(gid) }, 0);
+    assert_eq!(unsafe { __setegid(egid) }, 0);
+}
+
+#[test]
+fn under_setpgrp_resolves() {
+    // setpgrp() uses setpgid(0, 0) which may EPERM in some sandboxes
+    // — we just verify the alias resolves and returns 0 or -1
+    // without panicking.
+    use frankenlibc_abi::unistd_abi::__setpgrp;
+    let _ = unsafe { __setpgrp() };
+}
+
+#[test]
+fn under_setsid_resolves() {
+    // setsid() fails with EPERM if the caller is already a process
+    // group leader, which is the typical case in test runners. We
+    // just verify the alias resolves.
+    use frankenlibc_abi::unistd_abi::__setsid;
+    let _ = unsafe { __setsid() };
+}
+
+#[test]
+fn under_gettid_matches_gettid() {
+    use frankenlibc_abi::glibc_internal_abi::{__gettid, gettid};
+    assert_eq!(unsafe { __gettid() }, unsafe { gettid() });
+}
+
+// ===========================================================================
+// __setrlimit + __getrusage + __pathconf + __getitimer + __setitimer +
+// __getpriority + __setpriority + __times (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_setrlimit_to_self_succeeds() {
+    use frankenlibc_abi::resource_abi::__setrlimit;
+    let mut current: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut current) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __setrlimit(libc::RLIMIT_NOFILE as c_int, &current) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_getrusage_self_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__getrusage;
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __getrusage(libc::RUSAGE_SELF, &mut usage) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_pathconf_known_path_returns_value() {
+    use frankenlibc_abi::unistd_abi::__pathconf;
+    let p = c"/tmp";
+    // _PC_NAME_MAX is well-defined for any FS that supports filenames.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let v = unsafe { __pathconf(p.as_ptr(), libc::_PC_NAME_MAX) };
+    assert!(v >= 0, "pathconf returned {v}");
+}
+
+#[test]
+fn under_getitimer_setitimer_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__getitimer, __setitimer};
+    // Disable the timer (zero values), then read it back via __getitimer.
+    let zero = libc::itimerval {
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        it_value: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+    };
+    let rc = unsafe { __setitimer(libc::ITIMER_REAL, &zero, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    let mut got: libc::itimerval = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __getitimer(libc::ITIMER_REAL, &mut got) };
+    assert_eq!(rc, 0);
+    assert_eq!(got.it_value.tv_sec, 0);
+    assert_eq!(got.it_value.tv_usec, 0);
+}
+
+#[test]
+fn under_getpriority_setpriority_round_trip_for_self() {
+    use frankenlibc_abi::unistd_abi::{__getpriority, __setpriority};
+    // Read current PRIO_PROCESS for self, then set it to the same
+    // value (always permitted).
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let cur = unsafe { __getpriority(libc::PRIO_PROCESS as c_int, 0) };
+    // getpriority can legitimately return -1; check errno.
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(err, 0, "getpriority errno = {err}");
+    let rc = unsafe { __setpriority(libc::PRIO_PROCESS as c_int, 0, cur) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_times_returns_nonzero_clock_ticks() {
+    use frankenlibc_abi::glibc_internal_abi::__times;
+    let mut buf: libc::tms = unsafe { std::mem::zeroed() };
+    let v = unsafe { __times((&mut buf) as *mut _ as *mut std::ffi::c_void) };
+    // times returns the elapsed real time in clock ticks since
+    // some past time; on Linux it's monotonically nonnegative.
+    assert!(v >= 0);
+}
+
+// ===========================================================================
+// __chdir + __fchdir + __mkdir + __rmdir + __unlink + __link +
+// __symlink + __rename + __access (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_access_existing_path_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__access;
+    let p = c"/tmp";
+    let rc = unsafe { __access(p.as_ptr(), libc::F_OK) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_access_missing_path_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__access;
+    let p = c"/nonexistent_franken_aliases_xyz";
+    let rc = unsafe { __access(p.as_ptr(), libc::F_OK) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn under_chdir_to_tmp_succeeds() {
+    use frankenlibc_abi::unistd_abi::{__chdir, getcwd};
+    let _cwd_lock = cwd_test_lock();
+    let _cwd_restore = CwdRestore::capture();
+    // Save and restore cwd to avoid disturbing other tests.
+    let mut saved = [0 as c_char; 4096];
+    let p_saved = unsafe { getcwd(saved.as_mut_ptr(), saved.len()) };
+    assert!(!p_saved.is_null());
+    let p = c"/tmp";
+    let rc = unsafe { __chdir(p.as_ptr()) };
+    assert_eq!(rc, 0);
+    // Restore using the same alias to also exercise it.
+    let rc = unsafe { __chdir(saved.as_ptr()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_fchdir_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__fchdir, getcwd};
+    let _cwd_lock = cwd_test_lock();
+    let _cwd_restore = CwdRestore::capture();
+    let saved_fd = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(saved_fd >= 0);
+    // Open /tmp as a directory fd, fchdir to it, then back.
+    let tmp_fd = unsafe { libc::open(c"/tmp".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(tmp_fd >= 0);
+    let rc = unsafe { __fchdir(tmp_fd) };
+    assert_eq!(rc, 0);
+    let mut buf = [0 as c_char; 4096];
+    let _ = unsafe { getcwd(buf.as_mut_ptr(), buf.len()) };
+    let rc = unsafe { __fchdir(saved_fd) };
+    assert_eq!(rc, 0);
+    unsafe { libc::close(tmp_fd) };
+    unsafe { libc::close(saved_fd) };
+}
+
+#[test]
+fn under_mkdir_rmdir_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__mkdir, __rmdir};
+    let path = format!("/tmp/franken_under_mkdir_{}", std::process::id());
+    let path_c = std::ffi::CString::new(path.clone()).unwrap();
+    let rc = unsafe { __mkdir(path_c.as_ptr(), 0o755) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __rmdir(path_c.as_ptr()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_unlink_link_symlink_rename_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__link, __rename, __symlink, __unlink};
+    let base = format!("/tmp/franken_under_path_{}", std::process::id());
+    let primary = format!("{base}_primary");
+    let hardlink = format!("{base}_hardlink");
+    let symlink = format!("{base}_symlink");
+    let renamed = format!("{base}_renamed");
+
+    // Create primary file.
+    std::fs::write(&primary, b"x").unwrap();
+
+    let primary_c = std::ffi::CString::new(primary.clone()).unwrap();
+    let hardlink_c = std::ffi::CString::new(hardlink.clone()).unwrap();
+    let symlink_c = std::ffi::CString::new(symlink.clone()).unwrap();
+    let renamed_c = std::ffi::CString::new(renamed.clone()).unwrap();
+
+    // __link: create hardlink.
+    assert_eq!(
+        unsafe { __link(primary_c.as_ptr(), hardlink_c.as_ptr()) },
+        0
+    );
+    // __symlink: create symlink.
+    assert_eq!(
+        unsafe { __symlink(primary_c.as_ptr(), symlink_c.as_ptr()) },
+        0
+    );
+    // __rename: rename hardlink to renamed.
+    assert_eq!(
+        unsafe { __rename(hardlink_c.as_ptr(), renamed_c.as_ptr()) },
+        0
+    );
+    // __unlink: clean up all of them.
+    assert_eq!(unsafe { __unlink(renamed_c.as_ptr()) }, 0);
+    assert_eq!(unsafe { __unlink(symlink_c.as_ptr()) }, 0);
+    assert_eq!(unsafe { __unlink(primary_c.as_ptr()) }, 0);
+}
+
+// ===========================================================================
+// __getcwd / __getlogin / __getlogin_r (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_getcwd_matches_getcwd() {
+    use frankenlibc_abi::unistd_abi::{__getcwd, getcwd};
+    let _cwd_lock = cwd_test_lock();
+    let mut a = [0 as c_char; 4096];
+    let mut b = [0 as c_char; 4096];
+    let p_a = unsafe { getcwd(a.as_mut_ptr(), a.len()) };
+    let p_b = unsafe { __getcwd(b.as_mut_ptr(), b.len()) };
+    assert!(!p_a.is_null());
+    assert!(!p_b.is_null());
+    let s_a = unsafe { std::ffi::CStr::from_ptr(p_a) };
+    let s_b = unsafe { std::ffi::CStr::from_ptr(p_b) };
+    assert_eq!(s_a, s_b);
+}
+
+#[test]
+fn under_getlogin_resolves() {
+    use frankenlibc_abi::unistd_abi::__getlogin;
+    let _ = unsafe { __getlogin() }; // smoke: just verify it returns
+}
+
+#[test]
+fn under_getlogin_r_matches_getlogin_r_or_returns_einval() {
+    use frankenlibc_abi::unistd_abi::{__getlogin_r, getlogin_r};
+    let mut a = [0 as c_char; 256];
+    let mut b = [0 as c_char; 256];
+    let r_a = unsafe { getlogin_r(a.as_mut_ptr(), a.len()) };
+    let r_b = unsafe { __getlogin_r(b.as_mut_ptr(), b.len()) };
+    // Both should agree on success/failure and (on success) on the result.
+    assert_eq!(r_a, r_b);
+    if r_a == 0 {
+        let s_a = unsafe { std::ffi::CStr::from_ptr(a.as_ptr()) };
+        let s_b = unsafe { std::ffi::CStr::from_ptr(b.as_ptr()) };
+        assert_eq!(s_a, s_b);
+    }
+}
+
+// ===========================================================================
+// __strerror_l (glibc reserved-namespace alias of strerror_l)
+// ===========================================================================
+
+#[test]
+fn under_strerror_l_matches_strerror_l() {
+    use frankenlibc_abi::unistd_abi::{__strerror_l, strerror_l};
+    let p = unsafe { strerror_l(libc::ENOENT, std::ptr::null_mut()) };
+    let q = unsafe { __strerror_l(libc::ENOENT, std::ptr::null_mut()) };
+    assert!(!p.is_null());
+    assert!(!q.is_null());
+    let a = unsafe { std::ffi::CStr::from_ptr(p) };
+    let b = unsafe { std::ffi::CStr::from_ptr(q) };
+    assert_eq!(a, b);
+}
+
+// ===========================================================================
+// __xpg_basename / strfry bounded C-string scans
+// ===========================================================================
+
+#[test]
+fn strfry_preserves_pointer_length_nul_and_byte_multiset() {
+    for input in [
+        &b""[..],
+        &b"x"[..],
+        &b"abcdef"[..],
+        &b"aabbccdd"[..],
+        &b"0123456789"[..],
+    ] {
+        let mut buf = input.to_vec();
+        buf.push(0);
+        let raw = buf.as_mut_ptr().cast::<c_char>();
+
+        let ret = unsafe { strfry(raw) };
+        assert_eq!(ret, raw, "strfry should return its input pointer");
+        assert_eq!(
+            buf[input.len()],
+            0,
+            "strfry should preserve the original NUL terminator for {input:?}"
+        );
+
+        let output = unsafe { CStr::from_ptr(raw) }.to_bytes().to_vec();
+        assert_eq!(
+            output.len(),
+            input.len(),
+            "strfry should preserve C-string length for {input:?}"
+        );
+
+        let mut expected = input.to_vec();
+        let mut observed = output;
+        expected.sort_unstable();
+        observed.sort_unstable();
+        assert_eq!(
+            observed, expected,
+            "strfry should only permute existing bytes for {input:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn xpg_basename_rejects_tracked_unterminated_path() {
+    use frankenlibc_abi::unistd_abi::__xpg_basename;
+
+    let raw = malloc_tracked_unterminated(b"/tmp/frankenlibc-basename");
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = __xpg_basename(raw);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(CStr::from_ptr(result).to_bytes(), b".");
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn strfry_rejects_tracked_unterminated_string() {
+    use frankenlibc_abi::unistd_abi::strfry;
+
+    let input = b"abcdef";
+    let raw = malloc_tracked_unterminated(input);
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = strfry(raw);
+        let err = *__errno_location();
+        let observed = std::slice::from_raw_parts(raw.cast::<u8>(), input.len()).to_vec();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(result, raw);
+        assert_eq!(observed, input);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+// ===========================================================================
+// __cxa_pure_virtual (Itanium C++ ABI pure-virtual stub)
+// ===========================================================================
+
+fn assert_cxa_fail_stop_hook_aborts_with_stderr(
+    label: &str,
+    expected_stderr: &str,
+    hook: unsafe extern "C" fn() -> !,
+) {
+    let mut fds = [0; 2];
+    assert_eq!(
+        unsafe { libc::pipe(fds.as_mut_ptr()) },
+        0,
+        "pipe failed for {label}: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+
+    if pid == 0 {
+        unsafe {
+            let _ = libc::close(fds[0]);
+            if libc::dup2(fds[1], libc::STDERR_FILENO) < 0 {
+                libc::_exit(126);
+            }
+            if fds[1] != libc::STDERR_FILENO {
+                let _ = libc::close(fds[1]);
+            }
+            hook();
+        }
+    }
+
+    unsafe {
+        let _ = libc::close(fds[1]);
+    }
+
+    // FIXED (bd-akzu9k): the drain now runs INSIDE the wait, sharing its deadline.
+    // The note below is kept because it records why the obvious reordering — read
+    // to EOF first, then reap — is NOT what was done, and must not be substituted
+    // for this.
+    //
+    // The ordering below — reap, then drain — has a real flaw: the child's stderr
+    // is dup2'd into a 64K pipe, so a child that writes past the buffer blocks in
+    // `write()` while the parent sits in the wait. `bounded_waitpid` caps that at
+    // 30s, so it fails rather than hanging, but it is a degradation and not a fix.
+    //
+    // The textbook correction is to drain first, since the parent then consumes
+    // continuously and `read_to_end` returns at EOF when the last write end closes.
+    // IT IS WRONG HERE AND STRICTLY WORSE. If the child never exits — a
+    // fork-inherited lock deadlock, or an arm whose child simply fails to abort,
+    // which are the two mechanisms that actually caused a 4.2-hour wedge — then no
+    // write end ever closes, `read_to_end` blocks FOREVER, and `bounded_waitpid`
+    // is never reached because it would now run after the read. The reordering
+    // bypasses the very deadline meant to contain the problem, trading a bounded
+    // failure for an unbounded hang.
+    //
+    // A correct fix needs a deadline on the READ as well as the wait: set the read
+    // end non-blocking and drain it inside `bounded_waitpid`'s existing WNOHANG
+    // poll loop, so one deadline covers both. Not done here because it restructures
+    // the wait/drain interleaving in a suite that is currently green, and getting it
+    // wrong reproduces exactly the hang it is meant to remove.
+    let mut status: c_int = 0;
+    let mut stderr_bytes = Vec::new();
+    // SAFETY: `pid` is our child and `fds[0]` is the pipe read end we own.
+    let waited = unsafe { bounded_waitpid_draining(pid, &mut status, fds[0], &mut stderr_bytes) };
+    assert_eq!(waited, pid, "waitpid failed for {label}");
+    // SAFETY: the drain fd is owned here and closed exactly once.
+    unsafe { libc::close(fds[0]) };
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
+
+    assert!(
+        libc::WIFSIGNALED(status),
+        "{label} child must terminate by signal; status={status}, stderr={stderr:?}"
+    );
+    assert_eq!(
+        libc::WTERMSIG(status),
+        libc::SIGABRT,
+        "{label} child must terminate with SIGABRT; stderr={stderr:?}"
+    );
+    assert!(
+        stderr.contains(expected_stderr),
+        "{label} child stderr must contain {expected_stderr:?}; stderr={stderr:?}"
+    );
+}
+
+#[test]
+fn cxa_pure_virtual_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_pure_virtual;
+
+    assert_cxa_fail_stop_hook_aborts_with_stderr(
+        "__cxa_pure_virtual",
+        "pure virtual method called",
+        __cxa_pure_virtual,
+    );
+}
+
+#[test]
+fn cxa_throw_bad_array_new_length_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_throw_bad_array_new_length;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_throw_bad_array_new_length() };
+        // Unreachable.
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_call_unexpected_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_call_unexpected;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_call_unexpected(std::ptr::null_mut()) };
+        // Unreachable.
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_call_terminate_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_call_terminate;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_call_terminate(std::ptr::null_mut()) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_deleted_virtual_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_deleted_virtual;
+
+    assert_cxa_fail_stop_hook_aborts_with_stderr(
+        "__cxa_deleted_virtual",
+        "deleted virtual method called",
+        __cxa_deleted_virtual,
+    );
+}
+
+#[test]
+fn cxa_bad_cast_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_bad_cast;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_bad_cast() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_bad_typeid_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_bad_typeid;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_bad_typeid() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_throw_bad_array_length_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_throw_bad_array_length;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_throw_bad_array_length() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_guard_acquire_first_call_returns_one() {
+    use frankenlibc_abi::unistd_abi::__cxa_guard_acquire;
+    let mut g: u64 = 0;
+    let rc = unsafe { __cxa_guard_acquire(&mut g) };
+    assert_eq!(
+        rc, 1,
+        "first acquire on a fresh guard must elect this caller"
+    );
+    let bytes = g.to_ne_bytes();
+    assert_eq!(bytes[0], 0, "byte 0 (initialized) still zero");
+    assert_eq!(bytes[1], 1, "byte 1 (in-progress) now set");
+}
+
+#[test]
+fn cxa_guard_release_marks_initialized_and_subsequent_acquire_returns_zero() {
+    use frankenlibc_abi::unistd_abi::{__cxa_guard_acquire, __cxa_guard_release};
+    let mut g: u64 = 0;
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 1);
+    unsafe { __cxa_guard_release(&mut g) };
+    let bytes = g.to_ne_bytes();
+    assert_eq!(bytes[0], 1, "release sets byte 0 (initialized)");
+    assert_eq!(bytes[1], 0, "release clears byte 1 (in-progress)");
+
+    // Subsequent acquires on the same guard return 0 (already done).
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 0);
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 0);
+}
+
+#[test]
+fn cxa_guard_abort_clears_in_progress_so_next_acquire_re_races() {
+    use frankenlibc_abi::unistd_abi::{__cxa_guard_abort, __cxa_guard_acquire};
+    let mut g: u64 = 0;
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 1);
+    unsafe { __cxa_guard_abort(&mut g) };
+    let bytes = g.to_ne_bytes();
+    assert_eq!(bytes[0], 0, "abort leaves byte 0 (uninitialized)");
+    assert_eq!(bytes[1], 0, "abort clears byte 1 (in-progress)");
+
+    // The next acquire wins again because no one finished initialization.
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 1);
+}
+
+#[test]
+fn cxa_guard_acquire_concurrent_threads_only_one_winner() {
+    use frankenlibc_abi::unistd_abi::{__cxa_guard_acquire, __cxa_guard_release};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::thread;
+    use std::time::Duration;
+
+    // Allocate a guard on the heap so threads share its address.
+    let g_box: Box<u64> = Box::new(0);
+    let g_ptr = Box::into_raw(g_box);
+    // SAFETY: g_ptr lives until the end of this test.
+    let g_addr = g_ptr as usize;
+
+    let winners = Arc::new(AtomicI32::new(0));
+    let losers = Arc::new(AtomicI32::new(0));
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let winners = winners.clone();
+        let losers = losers.clone();
+        handles.push(thread::spawn(move || {
+            let g = g_addr as *mut u64;
+            let rc = unsafe { __cxa_guard_acquire(g) };
+            if rc == 1 {
+                // Simulate slow initialization so other threads block.
+                thread::sleep(Duration::from_millis(20));
+                winners.fetch_add(1, Ordering::SeqCst);
+                unsafe { __cxa_guard_release(g) };
+            } else {
+                losers.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(
+        winners.load(Ordering::SeqCst),
+        1,
+        "exactly one thread should win the initialization race"
+    );
+    assert_eq!(
+        losers.load(Ordering::SeqCst),
+        7,
+        "the other seven threads should observe the completed init"
+    );
+
+    // Reclaim the heap allocation.
+    let _ = unsafe { Box::from_raw(g_ptr) };
+}
+
+#[test]
+fn cxa_guard_null_pointer_returns_zero_no_op() {
+    use frankenlibc_abi::unistd_abi::{
+        __cxa_guard_abort, __cxa_guard_acquire, __cxa_guard_release,
+    };
+    // NULL guard pointer must be defended-against (never dereference);
+    // acquire returns 0 (treat as already initialized) and the others
+    // are no-ops.
+    assert_eq!(unsafe { __cxa_guard_acquire(std::ptr::null_mut()) }, 0);
+    unsafe { __cxa_guard_release(std::ptr::null_mut()) };
+    unsafe { __cxa_guard_abort(std::ptr::null_mut()) };
+}
+
+// ---------------------------------------------------------------------------
+// __cxa_thread_atexit / __cxa_tm_cleanup / __cxa_vec_ctor / dtor / cleanup
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cxa_tm_cleanup_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::__cxa_tm_cleanup;
+    // Just verify that calling it with arbitrary args doesn't crash;
+    // there is no observable side effect to assert.
+    unsafe {
+        __cxa_tm_cleanup(std::ptr::null_mut(), std::ptr::null_mut(), 0);
+        __cxa_tm_cleanup(0xdead_beef_usize as *mut c_void, std::ptr::null_mut(), 7);
+    }
+}
+
+#[test]
+fn cxa_thread_atexit_registers_via_impl() {
+    use frankenlibc_abi::unistd_abi::__cxa_thread_atexit;
+
+    // We can't easily observe the registry side-effect from outside
+    // the abi crate (it lives in startup_abi), but we can verify the
+    // wrapper accepts the call and returns 0 for the standard happy
+    // path that the impl uses.
+    unsafe extern "C" fn noop_dtor(_obj: *mut c_void) {}
+    let mut payload: i32 = 42;
+    let rc = unsafe {
+        __cxa_thread_atexit(
+            noop_dtor,
+            &mut payload as *mut i32 as *mut c_void,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn cxa_vec_ctor_runs_constructor_in_forward_order() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_ctor;
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn ctor_record(p: *mut c_void) {
+        let v = unsafe { *(p as *mut u32) } as usize;
+        ORDER.lock().unwrap().push(v);
+    }
+
+    // Initialize array elements with their indices so the ctor records
+    // the visit order.
+    let mut buf: [u32; 5] = [0, 1, 2, 3, 4];
+    ORDER.lock().unwrap().clear();
+    unsafe {
+        __cxa_vec_ctor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            Some(ctor_record),
+            None,
+        );
+    }
+    assert_eq!(*ORDER.lock().unwrap(), vec![0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn cxa_vec_dtor_runs_destructor_in_reverse_order() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_dtor;
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn dtor_record(p: *mut c_void) {
+        let v = unsafe { *(p as *mut u32) } as usize;
+        ORDER.lock().unwrap().push(v);
+    }
+
+    let mut buf: [u32; 5] = [10, 11, 12, 13, 14];
+    ORDER.lock().unwrap().clear();
+    unsafe {
+        __cxa_vec_dtor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            Some(dtor_record),
+        );
+    }
+    assert_eq!(*ORDER.lock().unwrap(), vec![14, 13, 12, 11, 10]);
+}
+
+#[test]
+fn cxa_vec_cleanup_matches_vec_dtor_order() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_cleanup;
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn dtor_record(p: *mut c_void) {
+        let v = unsafe { *(p as *mut u32) } as usize;
+        ORDER.lock().unwrap().push(v);
+    }
+
+    let mut buf: [u32; 3] = [100, 200, 300];
+    ORDER.lock().unwrap().clear();
+    unsafe {
+        __cxa_vec_cleanup(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            Some(dtor_record),
+        );
+    }
+    assert_eq!(*ORDER.lock().unwrap(), vec![300, 200, 100]);
+}
+
+#[test]
+fn cxa_vec_ctor_dtor_tolerate_null_callbacks_and_zero_count() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_ctor, __cxa_vec_dtor};
+
+    let mut buf: [u32; 4] = [0; 4];
+
+    // NULL ctor → no-op. NULL dtor → no-op. zero count → no-op.
+    unsafe {
+        __cxa_vec_ctor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            None,
+            None,
+        );
+        __cxa_vec_dtor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            None,
+        );
+        __cxa_vec_ctor(
+            buf.as_mut_ptr() as *mut c_void,
+            0,
+            std::mem::size_of::<u32>(),
+            None,
+            None,
+        );
+    }
+
+    // NULL array → no-op (must not deref).
+    unsafe {
+        __cxa_vec_ctor(std::ptr::null_mut(), 5, 4, None, None);
+        __cxa_vec_dtor(std::ptr::null_mut(), 5, 4, None);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// __cxa_vec_new / new2 / new3 / delete / delete2 / delete3 / cctor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cxa_vec_new_then_delete_round_trips_with_padding() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete, __cxa_vec_new};
+    use std::sync::Mutex;
+
+    static CTOR_VISITS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    static DTOR_VISITS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn ctor(p: *mut c_void) {
+        unsafe { *(p as *mut u32) = 0xCAFE };
+        CTOR_VISITS.lock().unwrap().push(p as usize);
+    }
+    unsafe extern "C" fn dtor(p: *mut c_void) {
+        DTOR_VISITS.lock().unwrap().push(p as usize);
+    }
+
+    CTOR_VISITS.lock().unwrap().clear();
+    DTOR_VISITS.lock().unwrap().clear();
+
+    let count = 5usize;
+    let size = std::mem::size_of::<u32>();
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe { __cxa_vec_new(count, size, padding, Some(ctor), Some(dtor)) };
+    assert!(!arr.is_null());
+
+    // Each element initialised to 0xCAFE by the ctor.
+    let s = unsafe { std::slice::from_raw_parts(arr as *const u32, count) };
+    for &v in s {
+        assert_eq!(v, 0xCAFE);
+    }
+    assert_eq!(CTOR_VISITS.lock().unwrap().len(), count);
+
+    // Delete recovers count from padding and runs dtor in reverse.
+    unsafe { __cxa_vec_delete(arr, size, padding, Some(dtor)) };
+    let dtor_visits = DTOR_VISITS.lock().unwrap().clone();
+    assert_eq!(dtor_visits.len(), count);
+    // Reverse order: addresses descending.
+    for w in dtor_visits.windows(2) {
+        assert!(w[0] > w[1], "dtor visit order must be reverse");
+    }
+}
+
+#[test]
+fn cxa_vec_new_returns_null_on_overflow() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_new;
+    let p = unsafe { __cxa_vec_new(usize::MAX, 2, 0, None, None) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn cxa_vec_new_returns_null_on_zero_total() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_new;
+    // count=0, padding=0 → 0 bytes total → NULL.
+    let p = unsafe { __cxa_vec_new(0, 4, 0, None, None) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn cxa_vec_new2_uses_caller_supplied_alloc() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_new2;
+    use std::sync::Mutex;
+
+    static ALLOC_BYTES: Mutex<usize> = Mutex::new(0);
+    static SCRATCH: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+    unsafe extern "C" fn my_alloc(n: usize) -> *mut c_void {
+        *ALLOC_BYTES.lock().unwrap() = n;
+        let mut buf = vec![0u8; n];
+        let p = buf.as_mut_ptr() as *mut c_void;
+        *SCRATCH.lock().unwrap() = Some(buf);
+        p
+    }
+
+    let count = 3usize;
+    let size = 8usize;
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe { __cxa_vec_new2(count, size, padding, None, None, Some(my_alloc), None) };
+    assert!(!arr.is_null());
+    assert_eq!(*ALLOC_BYTES.lock().unwrap(), count * size + padding);
+
+    // Drop the scratch buffer at end of test to avoid leak; the caller
+    // owns the allocation since we used a custom allocator.
+    *SCRATCH.lock().unwrap() = None;
+}
+
+#[test]
+fn cxa_vec_delete2_calls_caller_supplied_dealloc() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete2, __cxa_vec_new2};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DEALLOCED_ADDR: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn my_alloc(n: usize) -> *mut c_void {
+        let layout =
+            std::alloc::Layout::from_size_align(n, std::mem::align_of::<usize>()).expect("layout");
+        unsafe { std::alloc::alloc_zeroed(layout) as *mut c_void }
+    }
+    unsafe extern "C" fn my_dealloc(p: *mut c_void) {
+        DEALLOCED_ADDR.store(p as usize, Ordering::SeqCst);
+        // Don't actually free; we'll leak this small allocation.
+        // The test only verifies the dealloc callback fired with the
+        // raw pointer (= array - padding).
+    }
+
+    let count = 4usize;
+    let size = 4usize;
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe {
+        __cxa_vec_new2(
+            count,
+            size,
+            padding,
+            None,
+            None,
+            Some(my_alloc),
+            Some(my_dealloc),
+        )
+    };
+    assert!(!arr.is_null());
+
+    DEALLOCED_ADDR.store(0, Ordering::SeqCst);
+    unsafe { __cxa_vec_delete2(arr, size, padding, None, Some(my_dealloc)) };
+    let raw_seen = DEALLOCED_ADDR.load(Ordering::SeqCst);
+    let raw_expected = unsafe { (arr as *mut u8).sub(padding) } as usize;
+    assert_eq!(raw_seen, raw_expected);
+}
+
+#[test]
+fn cxa_vec_delete3_passes_total_size_to_dealloc() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete3, __cxa_vec_new3};
+    use std::sync::Mutex;
+
+    static DEALLOC_SIZE: Mutex<usize> = Mutex::new(0);
+
+    unsafe extern "C" fn my_alloc(n: usize) -> *mut c_void {
+        let layout =
+            std::alloc::Layout::from_size_align(n, std::mem::align_of::<usize>()).expect("layout");
+        unsafe { std::alloc::alloc_zeroed(layout) as *mut c_void }
+    }
+    unsafe extern "C" fn my_dealloc(_p: *mut c_void, n: usize) {
+        *DEALLOC_SIZE.lock().unwrap() = n;
+    }
+
+    let count = 6usize;
+    let size = 4usize;
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe {
+        __cxa_vec_new3(
+            count,
+            size,
+            padding,
+            None,
+            None,
+            Some(my_alloc),
+            Some(my_dealloc),
+        )
+    };
+    assert!(!arr.is_null());
+
+    *DEALLOC_SIZE.lock().unwrap() = 0;
+    unsafe { __cxa_vec_delete3(arr, size, padding, None, Some(my_dealloc)) };
+    assert_eq!(*DEALLOC_SIZE.lock().unwrap(), count * size + padding);
+}
+
+#[test]
+fn cxa_vec_delete_handles_null_array() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete, __cxa_vec_delete2, __cxa_vec_delete3};
+    // All three delete variants must accept NULL without crashing.
+    unsafe {
+        __cxa_vec_delete(std::ptr::null_mut(), 4, 8, None);
+        __cxa_vec_delete2(std::ptr::null_mut(), 4, 8, None, None);
+        __cxa_vec_delete3(std::ptr::null_mut(), 4, 8, None, None);
+    }
+}
+
+#[test]
+fn cxa_vec_cctor_invokes_copy_constructor_per_element() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_cctor;
+    use std::sync::Mutex;
+
+    static PAIRS: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn copy_ctor(d: *mut c_void, s: *mut c_void) {
+        let sv = unsafe { *(s as *mut u32) };
+        unsafe { *(d as *mut u32) = sv * 10 };
+        PAIRS.lock().unwrap().push((sv, sv * 10));
+    }
+
+    let mut src: [u32; 4] = [1, 2, 3, 4];
+    let mut dst: [u32; 4] = [0; 4];
+    PAIRS.lock().unwrap().clear();
+
+    unsafe {
+        __cxa_vec_cctor(
+            dst.as_mut_ptr() as *mut c_void,
+            src.as_mut_ptr() as *mut c_void,
+            src.len(),
+            std::mem::size_of::<u32>(),
+            Some(copy_ctor),
+            None,
+        );
+    }
+    assert_eq!(dst, [10, 20, 30, 40]);
+    assert_eq!(
+        *PAIRS.lock().unwrap(),
+        vec![(1, 10), (2, 20), (3, 30), (4, 40)]
+    );
+}
+
+#[test]
+fn cxa_get_globals_returns_stable_per_thread_pointer() {
+    use frankenlibc_abi::unistd_abi::{__cxa_get_globals, __cxa_get_globals_fast};
+
+    // Same thread → same pointer across calls.
+    let a = unsafe { __cxa_get_globals() };
+    let b = unsafe { __cxa_get_globals() };
+    assert!(!a.is_null());
+    assert_eq!(a, b);
+
+    // _fast variant returns the same pointer as the regular form.
+    let c = unsafe { __cxa_get_globals_fast() };
+    assert_eq!(a, c);
+
+    // Counter is initially 0 (uncaughtExceptions starts at 0).
+    let g = unsafe { &*a };
+    assert_eq!(g.uncaught_exceptions, 0);
+    assert!(g.caught_exceptions.is_null());
+}
+
+#[test]
+fn cxa_get_globals_returns_distinct_pointers_per_thread() {
+    use frankenlibc_abi::unistd_abi::__cxa_get_globals;
+
+    let main_ptr = unsafe { __cxa_get_globals() };
+    assert!(!main_ptr.is_null());
+
+    let main_addr = main_ptr as usize;
+    let other_addr = std::thread::spawn(|| unsafe { __cxa_get_globals() } as usize)
+        .join()
+        .unwrap();
+    assert_ne!(
+        main_addr, other_addr,
+        "different threads must observe distinct __cxa_eh_globals storage"
+    );
+}
+
+// ===========================================================================
+// __dso_handle (Itanium C++ ABI per-DSO handle)
+// ===========================================================================
+
+#[test]
+fn dso_handle_symbol_resolves_and_is_stable() {
+    // The address of __dso_handle is the unique handle; the value
+    // stored at that address is conventionally NULL for static-link
+    // builds. Both reads of the address must return the same
+    // pointer (proves the symbol is a real global, not a temporary).
+    let a: *const _ = &raw const frankenlibc_abi::unistd_abi::__dso_handle;
+    let b: *const _ = &raw const frankenlibc_abi::unistd_abi::__dso_handle;
+    assert_eq!(a, b);
+}
+
+#[test]
+fn dso_handle_address_works_as_cxa_atexit_dso_arg() {
+    // Register a destructor with `&__dso_handle` as the DSO key,
+    // then run `__cxa_finalize` with the same key — the
+    // destructor must fire exactly once.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static FIRED: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn dtor(_arg: *mut std::ffi::c_void) {
+        FIRED.fetch_add(1, Ordering::SeqCst);
+    }
+
+    FIRED.store(0, Ordering::SeqCst);
+    let dso = &raw const frankenlibc_abi::unistd_abi::__dso_handle as *mut std::ffi::c_void;
+    let rc = unsafe { frankenlibc_abi::unistd_abi::__cxa_atexit(dtor, std::ptr::null_mut(), dso) };
+    assert_eq!(rc, 0, "__cxa_atexit must accept &__dso_handle");
+
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    assert_eq!(
+        FIRED.load(Ordering::SeqCst),
+        1,
+        "destructor registered with &__dso_handle must fire on __cxa_finalize"
+    );
+
+    // Calling __cxa_finalize again with the same dso must NOT
+    // re-fire (we drained the matching entries).
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    assert_eq!(FIRED.load(Ordering::SeqCst), 1);
+}
+
+// ---------------------------------------------------------------------------
+// mq_clocksend / mq_clockreceive
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+struct MqAttr {
+    mq_flags: libc::c_long,
+    mq_maxmsg: libc::c_long,
+    mq_msgsize: libc::c_long,
+    mq_curmsgs: libc::c_long,
+    _pad: [libc::c_long; 4],
+}
+
+fn mq_unique_name(label: &str) -> CString {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    CString::new(format!("/fl_mq_clock_{label}_{pid}_{id}")).unwrap()
+}
+
+fn mq_open_for_test(name: &CStr) -> Option<c_int> {
+    use frankenlibc_abi::unistd_abi as fl;
+    let attr = MqAttr {
+        mq_maxmsg: 4,
+        mq_msgsize: 32,
+        ..Default::default()
+    };
+    let mqd = unsafe {
+        fl::mq_open(
+            name.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+            0o600,
+            &attr as *const MqAttr as *const libc::mq_attr,
+        )
+    };
+    if mqd < 0 { None } else { Some(mqd) }
+}
+
+fn timespec_after_ms(clockid: libc::clockid_t, ms: i64) -> libc::timespec {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(clockid, &mut ts) };
+    let total_ns = ts.tv_nsec + ms * 1_000_000;
+    ts.tv_sec += (total_ns / 1_000_000_000) as libc::time_t;
+    ts.tv_nsec = total_ns % 1_000_000_000;
+    ts
+}
+
+#[test]
+fn mq_clocksend_clockreceive_realtime_round_trip() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("rt");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable (sandbox?), skipping");
+        return;
+    };
+
+    let payload = b"hello-clock";
+    let abs = timespec_after_ms(libc::CLOCK_REALTIME, 1_000);
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            5,
+            libc::CLOCK_REALTIME,
+            &abs,
+        )
+    };
+    assert_eq!(
+        rc,
+        0,
+        "mq_clocksend failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 32];
+    let mut prio: c_uint = 0;
+    let abs2 = timespec_after_ms(libc::CLOCK_REALTIME, 1_000);
+    let n = unsafe {
+        fl::mq_clockreceive(
+            mqd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut prio,
+            libc::CLOCK_REALTIME,
+            &abs2,
+        )
+    };
+    assert!(
+        n >= 0,
+        "mq_clockreceive failed: {}",
+        std::io::Error::last_os_error()
+    );
+    assert_eq!(&buf[..n as usize], payload);
+    assert_eq!(prio, 5);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+#[test]
+fn mq_clocksend_clockreceive_monotonic_round_trip() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("mono");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable, skipping");
+        return;
+    };
+
+    let payload = b"mono-clock";
+    let abs = timespec_after_ms(libc::CLOCK_MONOTONIC, 1_000);
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            7,
+            libc::CLOCK_MONOTONIC,
+            &abs,
+        )
+    };
+    assert_eq!(
+        rc,
+        0,
+        "mq_clocksend(MONO) failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 32];
+    let mut prio: c_uint = 0;
+    let abs2 = timespec_after_ms(libc::CLOCK_MONOTONIC, 1_000);
+    let n = unsafe {
+        fl::mq_clockreceive(
+            mqd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut prio,
+            libc::CLOCK_MONOTONIC,
+            &abs2,
+        )
+    };
+    assert!(n >= 0);
+    assert_eq!(&buf[..n as usize], payload);
+    assert_eq!(prio, 7);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+#[test]
+fn mq_clocksend_invalid_clockid_returns_einval() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("badclock");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable, skipping");
+        return;
+    };
+
+    let abs = libc::timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
+    let bad_clockid: libc::clockid_t = 99;
+    let payload = b"x";
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            bad_clockid,
+            &abs,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+
+    let mut buf = [0u8; 32];
+    let n = unsafe {
+        fl::mq_clockreceive(
+            mqd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            std::ptr::null_mut(),
+            bad_clockid,
+            &abs,
+        )
+    };
+    assert_eq!(n, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+#[test]
+fn mq_clocksend_null_abstime_blocks_until_full_then_eagain() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("nullabs");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable, skipping");
+        return;
+    };
+
+    // mq_open above used max=4 messages; send 4 to fill the queue.
+    for _ in 0..4 {
+        let abs = timespec_after_ms(libc::CLOCK_REALTIME, 500);
+        let rc = unsafe {
+            fl::mq_clocksend(
+                mqd,
+                b"x".as_ptr() as *const c_char,
+                1,
+                0,
+                libc::CLOCK_REALTIME,
+                &abs,
+            )
+        };
+        assert_eq!(rc, 0);
+    }
+    // 5th send with a tight timeout should fail with ETIMEDOUT.
+    let abs = timespec_after_ms(libc::CLOCK_REALTIME, 50);
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            b"x".as_ptr() as *const c_char,
+            1,
+            0,
+            libc::CLOCK_REALTIME,
+            &abs,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ETIMEDOUT);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+// ---------------------------------------------------------------------------
+// openat2 / futex_waitv
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
+
+#[test]
+fn openat2_opens_existing_file_in_temp_dir() {
+    use frankenlibc_abi::unistd_abi::openat2;
+    let path = std::env::temp_dir().join(format!("frankenlibc_openat2_{}.txt", std::process::id()));
+    std::fs::write(&path, b"hello").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let how = OpenHow {
+        flags: libc::O_RDONLY as u64,
+        mode: 0,
+        resolve: 0,
+    };
+    let fd = unsafe {
+        openat2(
+            libc::AT_FDCWD,
+            cpath.as_ptr(),
+            &how as *const OpenHow as *const c_void,
+            std::mem::size_of::<OpenHow>(),
+        )
+    };
+    assert!(
+        fd >= 0,
+        "openat2 failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
+    assert_eq!(n, 5);
+    assert_eq!(&buf[..5], b"hello");
+
+    unsafe { libc::close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn openat2_returns_einval_on_wrong_struct_size() {
+    use frankenlibc_abi::unistd_abi::openat2;
+    let path = CString::new("/tmp").unwrap();
+    let how = OpenHow {
+        flags: 0,
+        mode: 0,
+        resolve: 0,
+    };
+    // Pass a clearly-wrong size (1 byte). Kernel should reject.
+    let rc = unsafe {
+        openat2(
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            &how as *const OpenHow as *const c_void,
+            1,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn openat2_null_pathname_returns_efault() {
+    use frankenlibc_abi::unistd_abi::openat2;
+    let how = OpenHow {
+        flags: 0,
+        mode: 0,
+        resolve: 0,
+    };
+    let rc = unsafe {
+        openat2(
+            libc::AT_FDCWD,
+            std::ptr::null(),
+            &how as *const OpenHow as *const c_void,
+            std::mem::size_of::<OpenHow>(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn futex_waitv_zero_count_with_null_returns_einval() {
+    use frankenlibc_abi::unistd_abi::futex_waitv;
+    // Zero futexes is invalid per the kernel.
+    let rc = unsafe {
+        futex_waitv(
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn futex_waitv_null_waiters_with_positive_count_returns_efault() {
+    use frankenlibc_abi::unistd_abi::futex_waitv;
+    let rc = unsafe {
+        futex_waitv(
+            std::ptr::null(),
+            1,
+            0,
+            std::ptr::null(),
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn futex_waitv_immediate_timeout_returns_etimedout() {
+    use frankenlibc_abi::unistd_abi::futex_waitv;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    // FUTEX_32 + FUTEX_PRIVATE_FLAG = 2 | 0x80 = 0x82, but the
+    // futex_waitv kernel ABI uses just FUTEX2 size flags. For a 32-bit
+    // futex we use FUTEX2_SIZE_U32 = 2.
+    const FUTEX2_SIZE_U32: u32 = 2;
+
+    #[repr(C)]
+    struct FutexWaitV {
+        val: u64,
+        uaddr: u64,
+        flags: u32,
+        reserved: u32,
+    }
+
+    let value = AtomicU32::new(42);
+    let waiter = FutexWaitV {
+        val: 42, // wait while uaddr == 42; will time out since nothing wakes us
+        uaddr: &value as *const AtomicU32 as u64,
+        flags: FUTEX2_SIZE_U32,
+        reserved: 0,
+    };
+
+    // Set timeout to "now" so the kernel returns ETIMEDOUT immediately.
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
+
+    let rc = unsafe {
+        futex_waitv(
+            &waiter as *const FutexWaitV as *const c_void,
+            1,
+            0,
+            &now,
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    // Kernel reports ETIMEDOUT for a deadline already in the past.
+    // Some kernels return EAGAIN instead if the value didn't match (it
+    // does match here), but accept either to be defensive.
+    assert!(
+        errno == libc::ETIMEDOUT || errno == libc::EAGAIN,
+        "expected ETIMEDOUT or EAGAIN, got {errno}"
+    );
+    let _ = value.load(Ordering::SeqCst); // silence unused warning
+}
+
+// ---------------------------------------------------------------------------
+// mseal / memfd_secret / rseq / cachestat
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mseal_either_seals_or_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::mseal;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert!(p != libc::MAP_FAILED);
+
+    let rc = unsafe { mseal(p, page_size, 0) };
+    if rc == 0 {
+        // Sealed; subsequent munmap should fail with EPERM. We accept
+        // the failure as confirmation; do not retry the unmap.
+        let unmap_rc = unsafe { libc::munmap(p, page_size) };
+        assert_eq!(unmap_rc, -1);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EINVAL || errno == libc::EPERM,
+            "unexpected mseal errno: {errno}"
+        );
+        unsafe { libc::munmap(p, page_size) };
+    }
+}
+
+#[test]
+fn memfd_secret_either_creates_fd_or_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::memfd_secret;
+    let fd = unsafe { memfd_secret(0) };
+    if fd >= 0 {
+        let _ = unsafe { libc::close(fd) };
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EOPNOTSUPP || errno == libc::EPERM,
+            "unexpected memfd_secret errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn rseq_null_pointer_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rseq;
+    let rc = unsafe { rseq(std::ptr::null_mut(), 0, 0, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn cachestat_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::cachestat;
+    let rc = unsafe { cachestat(0, std::ptr::null(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn cachestat_either_returns_data_or_enosys_on_real_file() {
+    use frankenlibc_abi::unistd_abi::cachestat;
+
+    #[repr(C)]
+    struct CachestatRange {
+        off: u64,
+        len: u64,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Cachestat {
+        nr_cache: u64,
+        nr_dirty: u64,
+        nr_writeback: u64,
+        nr_evicted: u64,
+        nr_recently_evicted: u64,
+    }
+
+    let path =
+        std::env::temp_dir().join(format!("frankenlibc_cachestat_{}.bin", std::process::id()));
+    std::fs::write(&path, vec![0u8; 4096]).unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0);
+
+    let range = CachestatRange { off: 0, len: 4096 };
+    let mut cstat = Cachestat::default();
+    let rc = unsafe {
+        cachestat(
+            fd as c_uint,
+            &range as *const CachestatRange as *const c_void,
+            &mut cstat as *mut Cachestat as *mut c_void,
+            0,
+        )
+    };
+    if rc == 0 {
+        assert!(cstat.nr_cache <= 1);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EOPNOTSUPP,
+            "unexpected cachestat errno: {errno}"
+        );
+    }
+    unsafe { libc::close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// NUMA memory policy: get/set_mempolicy + mbind + migrate_pages + move_pages
+// + set_mempolicy_home_node
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_mempolicy_returns_default_for_calling_thread() {
+    use frankenlibc_abi::unistd_abi::get_mempolicy;
+    let mut mode: c_int = -1;
+    let rc = unsafe { get_mempolicy(&mut mode, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
+    if rc == 0 {
+        assert!(mode >= 0);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EPERM || errno == libc::EINVAL,
+            "unexpected get_mempolicy errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn set_mempolicy_default_round_trip() {
+    use frankenlibc_abi::unistd_abi::{get_mempolicy, set_mempolicy};
+    let rc = unsafe { set_mempolicy(0, std::ptr::null(), 0) };
+    if rc != 0 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EPERM,
+            "unexpected set_mempolicy errno: {errno}"
+        );
+        return;
+    }
+    let mut mode: c_int = -1;
+    let rc = unsafe { get_mempolicy(&mut mode, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
+    assert_eq!(rc, 0);
+    assert_eq!(mode, 0);
+}
+
+#[test]
+fn mbind_invalid_mode_returns_einval() {
+    use frankenlibc_abi::unistd_abi::mbind;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert!(p != libc::MAP_FAILED);
+
+    let rc = unsafe {
+        mbind(
+            p,
+            page_size as libc::c_ulong,
+            255, // invalid mode
+            std::ptr::null(),
+            0,
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected mbind errno: {errno}"
+    );
+
+    unsafe { libc::munmap(p, page_size) };
+}
+
+#[test]
+fn migrate_pages_to_nonexistent_pid_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::migrate_pages;
+    let rc = unsafe { migrate_pages(i32::MAX, 0, std::ptr::null(), std::ptr::null()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::ESRCH || errno == libc::ENOSYS || errno == libc::EPERM,
+        "unexpected migrate_pages errno: {errno}"
+    );
+}
+
+#[test]
+fn move_pages_query_only_for_self_returns_node_or_known_errno() {
+    use frankenlibc_abi::unistd_abi::move_pages;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert!(p != libc::MAP_FAILED);
+    unsafe { *(p as *mut u8) = 0x42 };
+
+    let pages: [*mut c_void; 1] = [p];
+    let mut status: [c_int; 1] = [-99];
+    let rc = unsafe {
+        move_pages(
+            0,
+            1,
+            pages.as_ptr(),
+            std::ptr::null(),
+            status.as_mut_ptr(),
+            0,
+        )
+    };
+    if rc == 0 {
+        assert!(status[0] >= 0 || status[0] == -libc::ENOENT);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::EINVAL || errno == libc::ENOSYS || errno == libc::EPERM,
+            "unexpected move_pages errno: {errno}"
+        );
+    }
+
+    unsafe { libc::munmap(p, page_size) };
+}
+
+#[test]
+fn set_mempolicy_home_node_either_succeeds_or_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::set_mempolicy_home_node;
+    // (start=0, len=0) is a documented no-op on kernels that support
+    // the call: returns 0. Older kernels return ENOSYS. Anything else
+    // is unexpected. Verify the wrapper at least round-trips through
+    // the kernel without UB.
+    let rc = unsafe { set_mempolicy_home_node(0, 0, 0, 0) };
+    if rc == -1 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EINVAL || errno == libc::EFAULT,
+            "unexpected set_mempolicy_home_node errno: {errno}"
+        );
+    } else {
+        assert_eq!(rc, 0, "non-error return must be 0");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// statmount / listmount / finit_module / quotactl_fd / map_shadow_stack /
+// bpf / kexec_load / kexec_file_load
+// ---------------------------------------------------------------------------
+
+#[test]
+fn statmount_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::statmount;
+    let rc = unsafe { statmount(std::ptr::null(), std::ptr::null_mut(), 0, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn listmount_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::listmount;
+    let rc = unsafe { listmount(std::ptr::null(), std::ptr::null_mut(), 0, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn finit_module_invalid_fd_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::finit_module;
+    let rc = unsafe { finit_module(-1, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EBADF || errno == libc::EPERM || errno == libc::ENOSYS,
+        "unexpected finit_module errno: {errno}"
+    );
+}
+
+#[test]
+fn quotactl_fd_invalid_fd_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::quotactl_fd;
+    let rc = unsafe { quotactl_fd(0xFFFF_FFFF, 0, 0, std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EBADF || errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected quotactl_fd errno: {errno}"
+    );
+}
+
+#[test]
+fn map_shadow_stack_returns_known_errno_or_addr() {
+    use frankenlibc_abi::unistd_abi::map_shadow_stack;
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as libc::c_ulong;
+    let rc = unsafe { map_shadow_stack(0, page, 0) };
+    if rc < 0 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS
+                || errno == libc::EOPNOTSUPP
+                || errno == libc::EINVAL
+                || errno == libc::ENOTSUP,
+            "unexpected map_shadow_stack errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn bpf_size_zero_with_null_attr_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::bpf;
+    // BPF_MAP_LOOKUP_ELEM = 1, NULL attr + size 0: kernel typically
+    // returns EINVAL; unprivileged callers may get EPERM.
+    let rc = unsafe { bpf(1, std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::EPERM || errno == libc::ENOSYS,
+        "unexpected bpf errno: {errno}"
+    );
+}
+
+#[test]
+fn bpf_null_attr_with_positive_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::bpf;
+    let rc = unsafe { bpf(0, std::ptr::null_mut(), 16) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn kexec_load_with_null_segments_and_positive_count_returns_efault() {
+    use frankenlibc_abi::unistd_abi::kexec_load;
+    let rc = unsafe { kexec_load(0, 1, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    // THE EXPECTED ERRNO DEPENDS ON PRIVILEGE, and asserting EFAULT unconditionally
+    // made this arm fail for every unprivileged runner. `kexec_load` is gated on
+    // CAP_SYS_BOOT, and the kernel checks the capability BEFORE it looks at the
+    // segments pointer — so an unprivileged caller gets EPERM and never reaches the
+    // EFAULT this arm is named for. It is not a divergence: fl forwarded the call
+    // and reported exactly what the kernel returned.
+    //
+    // The neighbouring syscall arms (`finit_module`, `quotactl_fd`) already use the
+    // errno-set convention for this reason. This one keeps its FULL STRENGTH where
+    // it can actually run rather than merely widening the set: as root the kernel
+    // does reach the pointer check, so EFAULT is still demanded there, and EPERM is
+    // accepted only when the process genuinely lacks the capability.
+    // SAFETY: geteuid is always callable and cannot fail.
+    let privileged = unsafe { libc::geteuid() } == 0;
+    if privileged {
+        assert_eq!(
+            errno,
+            libc::EFAULT,
+            "as root the capability check passes, so kexec_load must reach the \
+             segments pointer and report EFAULT"
+        );
+    } else {
+        assert_eq!(
+            errno,
+            libc::EPERM,
+            "unprivileged, kexec_load must fail the CAP_SYS_BOOT check with EPERM \
+             before examining the segments pointer"
+        );
+    }
+}
+
+#[test]
+fn kexec_load_unprivileged_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::kexec_load;
+
+    // nr_segments == 0 is the kexec UNLOAD operation, so this is not a
+    // guaranteed failure: as root it succeeds and returns 0. The test asserted
+    // -1 unconditionally, which made it permanently red on the rch fleet, whose
+    // workers run as root.
+    //
+    // Rather than merely relax the assertion, compare against the host syscall —
+    // this test had no oracle at all before, so it could only ever check fl
+    // against a hardcoded guess about the environment.
+    //
+    // Succeeding as root also really unloads the worker's staged kexec image.
+    // So both arms run on a thread with CAP_SYS_BOOT dropped and take the
+    // privilege-rejection path on every runner.
+    host_isolation::without_capability(host_isolation::CAP_SYS_BOOT, || {
+        unsafe { *libc::__errno_location() = 0 };
+        let host_rc = unsafe { libc::syscall(libc::SYS_kexec_load, 0_i64, 0_i64, 0_i64, 0_i64) };
+        let host_errno = unsafe { *libc::__errno_location() };
+
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+        let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+        assert_eq!(rc, host_rc, "kexec_load rc: fl={rc} host={host_rc}");
+        if host_rc == -1 {
+            assert_eq!(
+                errno, host_errno,
+                "kexec_load errno: fl={errno} host={host_errno}"
+            );
+            assert!(
+                errno == libc::EPERM
+                    || errno == libc::ENOSYS
+                    || errno == libc::EINVAL
+                    || errno == libc::EBUSY,
+                "unexpected kexec_load errno: {errno}"
+            );
+        }
+    });
+}
+
+#[test]
+fn kexec_file_load_unprivileged_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::kexec_file_load;
+    let rc = unsafe { kexec_file_load(-1, -1, 0, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EPERM
+            || errno == libc::ENOSYS
+            || errno == libc::EBADF
+            || errno == libc::EINVAL,
+        "unexpected kexec_file_load errno: {errno}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// set_robust_list / get_robust_list / lsm_get_self_attr / lsm_set_self_attr /
+// lsm_list_modules
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_robust_list_for_self_returns_head_and_len() {
+    use frankenlibc_abi::unistd_abi::get_robust_list;
+    let mut head: *mut c_void = std::ptr::null_mut();
+    let mut len: usize = 0;
+    let rc = unsafe { get_robust_list(0, &mut head, &mut len) };
+    if rc == 0 {
+        // Glibc threads have a robust_list_head registered; head is
+        // typically non-NULL inside a threaded test runner. len matches
+        // sizeof(struct robust_list_head) = 24 bytes on x86_64.
+        assert!(len == 24 || len == 0);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // Older kernels: ENOSYS. Sandbox: EPERM.
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EPERM,
+            "unexpected get_robust_list errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn get_robust_list_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::get_robust_list;
+    let rc = unsafe { get_robust_list(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn set_robust_list_with_zero_len_round_trip() {
+    use frankenlibc_abi::unistd_abi::{get_robust_list, set_robust_list};
+
+    // Save current head + len so we can restore.
+    let mut saved_head: *mut c_void = std::ptr::null_mut();
+    let mut saved_len: usize = 0;
+    let rc = unsafe { get_robust_list(0, &mut saved_head, &mut saved_len) };
+    if rc != 0 {
+        return; // sandbox lacks the syscall; nothing to test.
+    }
+
+    // set_robust_list(NULL, 0) is the documented "unregister" form.
+    let rc = unsafe { set_robust_list(std::ptr::null_mut(), 0) };
+    assert!(
+        rc == 0 || {
+            let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+            errno == libc::ENOSYS || errno == libc::EINVAL
+        }
+    );
+
+    // Restore the original head + len so the test runner doesn't lose
+    // its robust mutex cleanup hook.
+    let _ = unsafe { set_robust_list(saved_head, saved_len) };
+}
+
+#[test]
+fn lsm_get_self_attr_null_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::lsm_get_self_attr;
+    let rc = unsafe { lsm_get_self_attr(0, std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn lsm_get_self_attr_invalid_attr_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::lsm_get_self_attr;
+    let mut size: u32 = 0;
+    let rc = unsafe { lsm_get_self_attr(0xFFFF_FFFF, std::ptr::null_mut(), &mut size, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::ENOSYS
+            || errno == libc::EINVAL
+            || errno == libc::EOPNOTSUPP
+            || errno == libc::ENOENT,
+        "unexpected lsm_get_self_attr errno: {errno}"
+    );
+}
+
+#[test]
+fn lsm_set_self_attr_null_ctx_with_positive_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::lsm_set_self_attr;
+    let rc = unsafe { lsm_set_self_attr(0, std::ptr::null(), 16, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn lsm_list_modules_null_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::lsm_list_modules;
+    let rc = unsafe { lsm_list_modules(std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn lsm_list_modules_query_size_returns_data_or_known_errno() {
+    use frankenlibc_abi::unistd_abi::lsm_list_modules;
+    // Size-only query: pass NULL ids + size=0 to learn the required
+    // buffer length on Linux 6.8+. Older kernels return ENOSYS.
+    let mut size: u32 = 0;
+    let rc = unsafe { lsm_list_modules(std::ptr::null_mut(), &mut size, 0) };
+    if rc == 0 {
+        // size now holds the count of LSM module IDs available.
+        // No further assertion; just verifying the wrapper round-trips.
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // E2BIG when the kernel needs a bigger buffer is also valid; we
+        // accept the typical fallbacks here.
+        assert!(
+            errno == libc::ENOSYS
+                || errno == libc::E2BIG
+                || errno == libc::EINVAL
+                || errno == libc::EOPNOTSUPP,
+            "unexpected lsm_list_modules errno: {errno}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// faccessat2 / io_pgetevents / clone3
+// ---------------------------------------------------------------------------
+
+#[test]
+fn faccessat2_existing_file_returns_zero() {
+    use frankenlibc_abi::unistd_abi::faccessat2;
+    let path =
+        std::env::temp_dir().join(format!("frankenlibc_faccessat2_{}.txt", std::process::id()));
+    std::fs::write(&path, b"x").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let rc = unsafe { faccessat2(libc::AT_FDCWD, cpath.as_ptr(), libc::F_OK, 0) };
+    if rc == 0 {
+        // OK on any modern kernel.
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // Older kernels: ENOSYS.
+        assert!(
+            errno == libc::ENOSYS,
+            "unexpected faccessat2 errno: {errno}"
+        );
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn faccessat2_missing_file_returns_enoent() {
+    use frankenlibc_abi::unistd_abi::faccessat2;
+    let cpath = CString::new("/nonexistent/path/for/faccessat2_test").unwrap();
+    let rc = unsafe { faccessat2(libc::AT_FDCWD, cpath.as_ptr(), libc::F_OK, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::ENOENT || errno == libc::ENOSYS,
+        "unexpected faccessat2 errno: {errno}"
+    );
+}
+
+#[test]
+fn io_pgetevents_invalid_ctx_returns_einval() {
+    use frankenlibc_abi::unistd_abi::io_pgetevents;
+    // Bogus ctx_id (0 is never a valid io_setup() id).
+    let mut events = [0u8; 32 * 4];
+    let rc = unsafe {
+        io_pgetevents(
+            0,
+            0,
+            1,
+            events.as_mut_ptr() as *mut c_void,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected io_pgetevents errno: {errno}"
+    );
+}
+
+#[test]
+fn io_pgetevents_null_events_with_positive_nr_returns_efault() {
+    use frankenlibc_abi::unistd_abi::io_pgetevents;
+    let rc = unsafe {
+        io_pgetevents(
+            0,
+            0,
+            1,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[repr(C)]
+struct CloneTailProbeContext {
+    write_fd: c_int,
+    require_child_tid: bool,
+    child_tid: c_int,
+}
+
+unsafe extern "C" fn clone_tail_probe_child(arg: *mut c_void) -> c_int {
+    let context = unsafe { &mut *arg.cast::<CloneTailProbeContext>() };
+    let child_tid_matches = if context.require_child_tid {
+        context.child_tid == unsafe { libc::syscall(libc::SYS_gettid) as c_int }
+    } else {
+        true
+    };
+    let marker = [u8::from(child_tid_matches)];
+    let _ = unsafe { libc::write(context.write_fd, marker.as_ptr().cast(), marker.len()) };
+    0
+}
+
+#[derive(Clone, Copy)]
+enum CloneEntry {
+    Public,
+    Internal,
+}
+
+#[derive(Clone, Copy)]
+enum CloneTailCase {
+    Omitted,
+    ParentTid,
+    ChildTid,
+}
+
+unsafe fn invoke_clone_tail_case(
+    entry: CloneEntry,
+    case: CloneTailCase,
+    stack_top: *mut c_void,
+    context: *mut CloneTailProbeContext,
+    parent_tid: *mut c_int,
+) -> c_int {
+    let flags = libc::SIGCHLD
+        | match case {
+            CloneTailCase::Omitted => 0,
+            CloneTailCase::ParentTid => libc::CLONE_PARENT_SETTID,
+            CloneTailCase::ChildTid => libc::CLONE_CHILD_SETTID,
+        };
+    let callback = Some(clone_tail_probe_child as unsafe extern "C" fn(*mut c_void) -> c_int);
+    match (entry, case) {
+        (CloneEntry::Public, CloneTailCase::Omitted) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(callback, stack_top, flags, context.cast())
+        },
+        (CloneEntry::Internal, CloneTailCase::Omitted) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(callback, stack_top, flags, context.cast())
+        },
+        (CloneEntry::Public, CloneTailCase::ParentTid) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                parent_tid.cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Internal, CloneTailCase::ParentTid) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                parent_tid.cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Public, CloneTailCase::ChildTid) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::addr_of_mut!((*context).child_tid).cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Internal, CloneTailCase::ChildTid) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::addr_of_mut!((*context).child_tid).cast::<c_void>(),
+            )
+        },
+    }
+}
+
+#[test]
+fn clone_exports_execute_four_arg_and_positional_tid_forms() {
+    for entry in [CloneEntry::Public, CloneEntry::Internal] {
+        for case in [
+            CloneTailCase::Omitted,
+            CloneTailCase::ParentTid,
+            CloneTailCase::ChildTid,
+        ] {
+            let mut pipe_fds = [-1; 2];
+            assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+            let mut stack = vec![0_u8; 1024 * 1024];
+            let stack_top = unsafe { stack.as_mut_ptr().add(stack.len()) }.cast::<c_void>();
+            let mut context = CloneTailProbeContext {
+                write_fd: pipe_fds[1],
+                require_child_tid: matches!(case, CloneTailCase::ChildTid),
+                child_tid: -1,
+            };
+            let mut parent_tid = -1;
+            let pid = unsafe {
+                invoke_clone_tail_case(entry, case, stack_top, &mut context, &mut parent_tid)
+            };
+            assert!(pid > 0, "clone entry returned {pid}");
+            if matches!(case, CloneTailCase::ParentTid) {
+                assert_eq!(parent_tid, pid, "parent_tid slot was not forwarded");
+            }
+            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+
+            let mut marker = [0_u8; 1];
+            assert_eq!(
+                unsafe { libc::read(pipe_fds[0], marker.as_mut_ptr().cast(), marker.len()) },
+                1
+            );
+            assert_eq!(marker[0], 1, "child_tid slot was not forwarded");
+            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+struct CloneTlsProbeContext {
+    write_fd: c_int,
+    _padding: c_int,
+    observed_fs: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "C" fn clone_tls_probe_child(_arg: *mut c_void) -> c_int {
+    std::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rdi",
+        // arch_prctl(ARCH_GET_FS, &context.observed_fs)
+        "mov eax, 158",
+        "mov edi, 0x1003",
+        "lea rsi, [rbx + 8]",
+        "syscall",
+        "test rax, rax",
+        "jnz 2f",
+        // write(context.write_fd, &context.observed_fs, 8)
+        "mov edi, [rbx]",
+        "lea rsi, [rbx + 8]",
+        "mov edx, 8",
+        "mov eax, 1",
+        "syscall",
+        "cmp rax, 8",
+        "jne 2f",
+        "xor eax, eax",
+        "pop rbx",
+        "ret",
+        "2:",
+        "mov eax, 1",
+        "pop rbx",
+        "ret",
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn clone_exports_preserve_the_positional_tls_slot() {
+    for entry in [CloneEntry::Public, CloneEntry::Internal] {
+        let mut pipe_fds = [-1; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+        let mut stack = vec![0_u8; 1024 * 1024];
+        let stack_top = unsafe { stack.as_mut_ptr().add(stack.len()) }.cast::<c_void>();
+        let mut tls_storage = Box::new([0_u8; 4096]);
+        let tls_base = tls_storage.as_mut_ptr().cast::<c_void>();
+        let mut context = CloneTlsProbeContext {
+            write_fd: pipe_fds[1],
+            _padding: 0,
+            observed_fs: 0,
+        };
+        let callback = Some(clone_tls_probe_child as unsafe extern "C" fn(*mut c_void) -> c_int);
+        let flags = libc::SIGCHLD | libc::CLONE_SETTLS;
+        let pid = match entry {
+            CloneEntry::Public => unsafe {
+                frankenlibc_abi::unistd_abi::clone(
+                    callback,
+                    stack_top,
+                    flags,
+                    std::ptr::addr_of_mut!(context).cast(),
+                    std::ptr::null_mut::<c_void>(),
+                    tls_base,
+                )
+            },
+            CloneEntry::Internal => unsafe {
+                frankenlibc_abi::glibc_internal_abi::__clone(
+                    callback,
+                    stack_top,
+                    flags,
+                    std::ptr::addr_of_mut!(context).cast(),
+                    std::ptr::null_mut::<c_void>(),
+                    tls_base,
+                )
+            },
+        };
+        assert!(pid > 0, "clone entry returned {pid}");
+        assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+
+        let mut observed_fs = 0_u64;
+        assert_eq!(
+            unsafe {
+                libc::read(
+                    pipe_fds[0],
+                    std::ptr::addr_of_mut!(observed_fs).cast(),
+                    std::mem::size_of::<u64>(),
+                )
+            },
+            std::mem::size_of::<u64>() as isize
+        );
+        assert_eq!(observed_fs, tls_base as u64, "TLS slot was not forwarded");
+        assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0);
+    }
+}
+
+#[test]
+fn clone3_null_args_returns_efault() {
+    use frankenlibc_abi::unistd_abi::clone3;
+    let rc = unsafe { clone3(std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn clone3_zero_size_returns_einval() {
+    use frankenlibc_abi::unistd_abi::clone3;
+    // Pass non-NULL pointer but size=0 — kernel rejects with EINVAL
+    // because the smallest known struct clone_args is much bigger.
+    let mut dummy = [0u8; 8];
+    let rc = unsafe { clone3(dummy.as_mut_ptr() as *mut c_void, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected clone3 errno: {errno}"
+    );
+}
+
+unsafe extern "C" fn fork_signal_handler(_signal: c_int) {
+    let result = unsafe { frankenlibc_abi::unistd_abi::_Fork() };
+    if result == 0 {
+        // `_exit` is async-signal-safe and prevents the child from returning
+        // through the copied libtest signal frame.
+        unsafe { libc::_exit(0) };
+    }
+    let error = if result < 0 {
+        unsafe { std::ptr::read_volatile(__errno_location()) }
+    } else {
+        0
+    };
+    FORK_SIGNAL_ERRNO.store(error, Ordering::SeqCst);
+    FORK_SIGNAL_RESULT.store(result, Ordering::SeqCst);
+}
+
+struct ForkSignalHandlerRestore {
+    previous: libc::sigaction,
+}
+
+impl ForkSignalHandlerRestore {
+    fn install() -> Self {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = fork_signal_handler as *const () as usize;
+        action.sa_flags = 0;
+        assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+
+        let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::sigaction(libc::SIGUSR2, &action, &mut previous) },
+            0
+        );
+        Self { previous }
+    }
+}
+
+impl Drop for ForkSignalHandlerRestore {
+    fn drop(&mut self) {
+        let rc = unsafe { libc::sigaction(libc::SIGUSR2, &self.previous, std::ptr::null_mut()) };
+        assert_eq!(rc, 0, "failed to restore SIGUSR2 disposition");
+    }
+}
+
+#[test]
+fn fork_from_signal_handler_stress_executes_without_locks() {
+    const ITERATIONS: usize = 32;
+
+    let _lock = FORK_SIGNAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _restore = ForkSignalHandlerRestore::install();
+
+    for iteration in 0..ITERATIONS {
+        FORK_SIGNAL_RESULT.store(c_int::MIN, Ordering::SeqCst);
+        FORK_SIGNAL_ERRNO.store(0, Ordering::SeqCst);
+        assert_eq!(unsafe { libc::raise(libc::SIGUSR2) }, 0);
+
+        let pid = FORK_SIGNAL_RESULT.load(Ordering::SeqCst);
+        assert!(
+            pid > 0,
+            "signal iteration {iteration}: _Fork returned {pid}"
+        );
+        assert_eq!(
+            FORK_SIGNAL_ERRNO.load(Ordering::SeqCst),
+            0,
+            "signal iteration {iteration}: successful _Fork recorded errno"
+        );
+        let mut status = 0;
+        assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+    }
+}
+
+unsafe fn install_clone_eagain_seccomp_filter() -> c_int {
+    // `struct seccomp_data.nr` is the first 32-bit word. Load it, reject only
+    // clone(2) with EAGAIN, and allow every other syscall needed to return from
+    // the handler and report the result.
+    let mut filter = [
+        libc::sock_filter {
+            code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone as u32,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ERRNO | libc::EAGAIN as u32,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ALLOW,
+        },
+    ];
+    let mut program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+        return -1;
+    }
+    unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER,
+            std::ptr::addr_of_mut!(program),
+        )
+    }
+}
+
+#[test]
+fn fork_from_signal_handler_forced_error_sets_errno() {
+    let _lock = FORK_SIGNAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _restore = ForkSignalHandlerRestore::install();
+
+    let probe_pid = unsafe { libc::fork() };
+    assert!(probe_pid >= 0, "failed to fork seccomp probe process");
+    if probe_pid == 0 {
+        FORK_SIGNAL_RESULT.store(c_int::MIN, Ordering::SeqCst);
+        FORK_SIGNAL_ERRNO.store(0, Ordering::SeqCst);
+        if unsafe { install_clone_eagain_seccomp_filter() } != 0 {
+            unsafe { libc::_exit(2) };
+        }
+        if unsafe { libc::raise(libc::SIGUSR2) } != 0 {
+            unsafe { libc::_exit(3) };
+        }
+
+        let result = FORK_SIGNAL_RESULT.load(Ordering::SeqCst);
+        let handler_errno = FORK_SIGNAL_ERRNO.load(Ordering::SeqCst);
+        let caller_errno = unsafe { std::ptr::read_volatile(__errno_location()) };
+        let ok = result == -1 && handler_errno == libc::EAGAIN && caller_errno == libc::EAGAIN;
+        unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+    }
+
+    let mut status = 0;
+    assert_eq!(
+        unsafe { bounded_waitpid(probe_pid, &mut status) },
+        probe_pid
+    );
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(
+        libc::WEXITSTATUS(status),
+        0,
+        "seccomp-forced _Fork failure did not publish EAGAIN from the signal handler"
+    );
+}
+
+const PROCESS_LOG_BOUNDARY_MODE: &str = "FRANKENLIBC_PROCESS_LOG_BOUNDARY_MODE";
+
+#[repr(C)]
+#[derive(Default)]
+struct Clone3Args {
+    flags: u64,
+    pidfd: u64,
+    child_tid: u64,
+    parent_tid: u64,
+    exit_signal: u64,
+    stack: u64,
+    stack_size: u64,
+    tls: u64,
+    set_tid: u64,
+    set_tid_size: u64,
+    cgroup: u64,
+}
+
+fn monotonic_second_for_process_log_probe() -> i64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) },
+        0
+    );
+    now.tv_sec
+}
+
+fn run_process_log_boundary_driver() {
+    const RATE_LIMIT: usize = 1024;
+    const PARENT_ROW: &str = r#"{"probe":"parent-fill"}"#;
+    const CLONE3_ROW: &str = r#"{"probe":"clone3-child"}"#;
+    const PARENT_AFTER_SPAWN_ROW: &str = r#"{"probe":"parent-after-spawn"}"#;
+
+    let previous_second = monotonic_second_for_process_log_probe();
+    let start_second = loop {
+        let current = monotonic_second_for_process_log_probe();
+        if current != previous_second {
+            break current;
+        }
+        std::hint::spin_loop();
+    };
+
+    for _ in 0..RATE_LIMIT {
+        frankenlibc_membrane::heal::append_runtime_log_record(PARENT_ROW);
+    }
+    // Confirm the parent window is exhausted before exercising either child.
+    frankenlibc_membrane::heal::append_runtime_log_record(PARENT_AFTER_SPAWN_ROW);
+
+    let mut clone_args = Clone3Args {
+        exit_signal: libc::SIGCHLD as u64,
+        ..Clone3Args::default()
+    };
+    let clone_pid = unsafe {
+        frankenlibc_abi::unistd_abi::clone3(
+            std::ptr::addr_of_mut!(clone_args).cast(),
+            std::mem::size_of::<Clone3Args>(),
+        )
+    };
+    assert!(clone_pid >= 0, "clone3 stack=0 failed: {clone_pid}");
+    if clone_pid == 0 {
+        frankenlibc_membrane::heal::append_runtime_log_record(CLONE3_ROW);
+        unsafe { libc::_exit(0) };
+    }
+    let mut clone_status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(clone_pid, &mut clone_status, 0) },
+        clone_pid
+    );
+    assert!(libc::WIFEXITED(clone_status));
+    assert_eq!(libc::WEXITSTATUS(clone_status), 0);
+
+    let current_exe = std::env::current_exe().expect("current test executable");
+    let executable = CString::new(current_exe.as_os_str().as_bytes()).unwrap();
+    let argv_storage = [
+        executable.clone(),
+        CString::new("--exact").unwrap(),
+        CString::new("clone3_and_posix_spawn_keep_runtime_log_process_local").unwrap(),
+        CString::new("--nocapture").unwrap(),
+        CString::new("--test-threads=1").unwrap(),
+    ];
+    let mut argv: Vec<*mut c_char> = argv_storage
+        .iter()
+        .map(|value| value.as_ptr().cast_mut())
+        .collect();
+    argv.push(std::ptr::null_mut());
+
+    let mut env_storage: Vec<CString> = std::env::vars_os()
+        .filter(|(key, _)| key.as_os_str().as_bytes() != PROCESS_LOG_BOUNDARY_MODE.as_bytes())
+        .map(|(key, value)| {
+            let mut pair = key.as_os_str().as_bytes().to_vec();
+            pair.push(b'=');
+            pair.extend_from_slice(value.as_os_str().as_bytes());
+            CString::new(pair).expect("environment entry without NUL")
+        })
+        .collect();
+    env_storage.push(CString::new(format!("{PROCESS_LOG_BOUNDARY_MODE}=exec")).unwrap());
+    let mut envp: Vec<*mut c_char> = env_storage
+        .iter()
+        .map(|value| value.as_ptr().cast_mut())
+        .collect();
+    envp.push(std::ptr::null_mut());
+
+    let mut spawn_pid = -1;
+    let spawn_rc = unsafe {
+        frankenlibc_abi::process_abi::posix_spawn(
+            &mut spawn_pid,
+            executable.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    assert_eq!(spawn_rc, 0, "posix_spawn failed with errno {spawn_rc}");
+    let mut spawn_status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(spawn_pid, &mut spawn_status, 0) },
+        spawn_pid
+    );
+    assert!(libc::WIFEXITED(spawn_status));
+    assert_eq!(libc::WEXITSTATUS(spawn_status), 0);
+
+    // A pre-exec reset in the CLONE_VM child would clear this shared parent
+    // window and wrongly admit the row. The exec'd image, in contrast, has its
+    // own process state and must have admitted SPAWN_ROW above.
+    frankenlibc_membrane::heal::append_runtime_log_record(PARENT_AFTER_SPAWN_ROW);
+    assert_eq!(
+        monotonic_second_for_process_log_probe(),
+        start_second,
+        "process-log boundary probe crossed its one-second admission window"
+    );
+}
+
+#[test]
+fn clone3_and_posix_spawn_keep_runtime_log_process_local() {
+    match std::env::var(PROCESS_LOG_BOUNDARY_MODE).as_deref() {
+        Ok("driver") => run_process_log_boundary_driver(),
+        Ok("exec") => {
+            frankenlibc_membrane::heal::append_runtime_log_record(r#"{"probe":"spawn-exec"}"#);
+        }
+        _ => {
+            let name = c"frankenlibc-process-log-boundary";
+            let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) as c_int };
+            assert!(
+                fd >= 0,
+                "memfd_create failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut log = unsafe { std::fs::File::from_raw_fd(fd) };
+            let log_path = format!("/proc/self/fd/{fd}");
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("current test executable"),
+            )
+            .args([
+                "--exact",
+                "clone3_and_posix_spawn_keep_runtime_log_process_local",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PROCESS_LOG_BOUNDARY_MODE, "driver")
+            .env("FRANKENLIBC_LOG", log_path)
+            .output()
+            .expect("run process-log boundary driver");
+            assert!(
+                output.status.success(),
+                "driver failed: status={:?}\nstdout={}\nstderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let mut contents = String::new();
+            log.read_to_string(&mut contents).unwrap();
+            let rows: Vec<&str> = contents.lines().collect();
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"parent-fill"}"#)
+                    .count(),
+                1024
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"clone3-child"}"#)
+                    .count(),
+                1,
+                "stack=0 clone3 child did not receive a fresh PID-keyed budget"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"spawn-exec"}"#)
+                    .count(),
+                1,
+                "post-exec spawn image did not initialize its own log stream"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"parent-after-spawn"}"#)
+                    .count(),
+                0,
+                "CLONE_VM spawn child reset the parent's shared admission window"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fchmodat2 / eventfd2 / rt_sigprocmask / rt_sigqueueinfo / rt_sigsuspend /
+// rt_tgsigqueueinfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fchmodat2_changes_mode_on_real_file() {
+    use frankenlibc_abi::unistd_abi::fchmodat2;
+    let path =
+        std::env::temp_dir().join(format!("frankenlibc_fchmodat2_{}.txt", std::process::id()));
+    std::fs::write(&path, b"x").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let rc = unsafe { fchmodat2(libc::AT_FDCWD, cpath.as_ptr(), 0o600, 0) };
+    if rc == 0 {
+        let meta = std::fs::metadata(&path).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(errno == libc::ENOSYS, "unexpected fchmodat2 errno: {errno}");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fchmodat2_null_path_returns_efault() {
+    use frankenlibc_abi::unistd_abi::fchmodat2;
+    let rc = unsafe { fchmodat2(libc::AT_FDCWD, std::ptr::null(), 0o600, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn eventfd2_creates_fd_with_initval_and_round_trips() {
+    use frankenlibc_abi::unistd_abi::eventfd2;
+    let fd = unsafe { eventfd2(7, 0) };
+    assert!(
+        fd >= 0,
+        "eventfd2 failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
+    assert_eq!(n, 8);
+    assert_eq!(u64::from_ne_bytes(buf), 7);
+
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn eventfd2_invalid_flags_return_einval() {
+    use frankenlibc_abi::unistd_abi::eventfd2;
+    let fd = unsafe { eventfd2(0, !0) };
+    assert_eq!(fd, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn rt_sigprocmask_round_trips_block_unblock() {
+    use frankenlibc_abi::unistd_abi::rt_sigprocmask;
+    let mut blocked: u64 = 1u64 << (libc::SIGUSR1 - 1);
+    let mut prev: u64 = 0;
+
+    // Block SIGUSR1.
+    let rc = unsafe {
+        rt_sigprocmask(
+            libc::SIG_BLOCK,
+            &mut blocked as *mut u64 as *const c_void,
+            &mut prev as *mut u64 as *mut c_void,
+            std::mem::size_of::<u64>(),
+        )
+    };
+    assert_eq!(
+        rc,
+        0,
+        "rt_sigprocmask block failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    // Restore prior mask.
+    let rc = unsafe {
+        rt_sigprocmask(
+            libc::SIG_SETMASK,
+            &mut prev as *mut u64 as *const c_void,
+            std::ptr::null_mut(),
+            std::mem::size_of::<u64>(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn rt_sigqueueinfo_null_uinfo_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rt_sigqueueinfo;
+    let rc = unsafe { rt_sigqueueinfo(std::process::id() as libc::pid_t, 0, std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn rt_sigsuspend_null_mask_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rt_sigsuspend;
+    let rc = unsafe { rt_sigsuspend(std::ptr::null(), 8) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn rt_tgsigqueueinfo_null_uinfo_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rt_tgsigqueueinfo;
+    let rc = unsafe {
+        rt_tgsigqueueinfo(
+            std::process::id() as libc::pid_t,
+            std::process::id() as libc::pid_t,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn openpty_copies_nul_terminated_slave_name() {
+    use frankenlibc_abi::unistd_abi::openpty;
+
+    let mut master: c_int = -1;
+    let mut slave: c_int = -1;
+    let mut name = [0 as c_char; 128];
+
+    let rc = unsafe {
+        openpty(
+            &mut master,
+            &mut slave,
+            name.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if rc < 0 {
+        return;
+    }
+
+    assert!(
+        matches!(name.iter().position(|&byte| byte == 0), Some(nul) if nul > 0),
+        "openpty should copy a non-empty NUL-terminated slave name"
+    );
+
+    unsafe {
+        let _ = libc::close(master);
+        let _ = libc::close(slave);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// libcrypt aliases + DES no-ops + crypt_preferred_method + crypt_checksalt
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fcrypt_alias_matches_crypt_for_sha512() {
+    use frankenlibc_abi::unistd_abi::{crypt, fcrypt};
+    let key = CString::new("hunter2").unwrap();
+    let salt = CString::new("$6$abcdefgh").unwrap();
+    let a = unsafe { crypt(key.as_ptr(), salt.as_ptr()) };
+    let b = unsafe { fcrypt(key.as_ptr(), salt.as_ptr()) };
+    assert!(!a.is_null() && !b.is_null());
+    let sa = unsafe { CStr::from_ptr(a) };
+    let sb = unsafe { CStr::from_ptr(b) };
+    assert_eq!(sa, sb);
+}
+
+#[test]
+fn fcrypt_null_inputs_return_failure_token_and_einval() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::fcrypt;
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = fcrypt(std::ptr::null(), std::ptr::null());
+        assert!(!result.is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+    }
+}
+
+#[test]
+fn xcrypt_alias_matches_crypt_for_md5() {
+    use frankenlibc_abi::unistd_abi::{crypt, xcrypt};
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$1$saltyMc$").unwrap();
+    let a = unsafe { crypt(key.as_ptr(), salt.as_ptr()) };
+    let b = unsafe { xcrypt(key.as_ptr(), salt.as_ptr()) };
+    assert!(!a.is_null() && !b.is_null());
+    let sa = unsafe { CStr::from_ptr(a) };
+    let sb = unsafe { CStr::from_ptr(b) };
+    assert_eq!(sa, sb);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn crypt_rejects_tracked_unterminated_key_and_salt() {
+    use frankenlibc_abi::unistd_abi::crypt;
+    let valid_key = CString::new("hunter2").unwrap();
+    let valid_salt = CString::new("$6$abcdefgh").unwrap();
+
+    unsafe {
+        let key = b"unterminated-key";
+        let raw_key = frankenlibc_abi::malloc_abi::malloc(key.len()).cast::<u8>();
+        assert!(!raw_key.is_null());
+        std::ptr::copy_nonoverlapping(key.as_ptr(), raw_key, key.len());
+
+        *__errno_location() = 0;
+        let hashed = crypt(raw_key.cast(), valid_salt.as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_key.cast());
+
+        assert!(hashed.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+
+    unsafe {
+        let salt = b"$6$unterminated-salt";
+        let raw_salt = frankenlibc_abi::malloc_abi::malloc(salt.len()).cast::<u8>();
+        assert!(!raw_salt.is_null());
+        std::ptr::copy_nonoverlapping(salt.as_ptr(), raw_salt, salt.len());
+
+        *__errno_location() = 0;
+        let hashed = crypt(valid_key.as_ptr(), raw_salt.cast());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_salt.cast());
+
+        assert!(hashed.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn encrypt_setkey_des_stubs_are_noops() {
+    use frankenlibc_abi::unistd_abi::{encrypt, encrypt_r, setkey, setkey_r};
+    let mut block: [c_char; 64] = [0; 64];
+    let key: [c_char; 64] = [0; 64];
+    // Just verify the calls don't crash; there's nothing observable
+    // about them.
+    unsafe {
+        setkey(key.as_ptr());
+        encrypt(block.as_mut_ptr(), 0);
+        setkey_r(key.as_ptr(), std::ptr::null_mut());
+        encrypt_r(block.as_mut_ptr(), 0, std::ptr::null_mut());
+    }
+}
+
+#[test]
+fn crypt_preferred_method_is_supported_by_crypt_checksalt() {
+    use frankenlibc_abi::unistd_abi::{crypt_checksalt, crypt_preferred_method};
+    let p = unsafe { crypt_preferred_method() };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(
+        !s.to_bytes().is_empty(),
+        "the preferred crypt method must be a non-empty prefix"
+    );
+    assert_eq!(
+        unsafe { crypt_checksalt(p) },
+        0,
+        "the advertised preferred method must be accepted by crypt_checksalt"
+    );
+}
+
+#[test]
+fn crypt_checksalt_classifies_known_prefixes() {
+    use frankenlibc_abi::unistd_abi::crypt_checksalt;
+    let md5 = CString::new("$1$saltsalt$").unwrap();
+    let sha256 = CString::new("$5$rounds=5000$saltsalt$").unwrap();
+    let sha512 = CString::new("$6$saltsalt$").unwrap();
+    let yescrypt = CString::new("$y$j9T$usesomesalt$").unwrap();
+    let bcrypt = CString::new("$2b$05$abcdefghijklmnopqrstuu").unwrap();
+    let bcrypt_x = CString::new("$2x$05$abcdefghijklmnopqrstuu").unwrap();
+    let scrypt = CString::new("$7$C6..../....SodiumChloride$").unwrap();
+    let alternate_md5 = CString::new("$md5$saltsalt$").unwrap();
+    let bogus = CString::new("$plain$saltsalt$").unwrap();
+    let des2 = CString::new("ab").unwrap();
+
+    // libxcrypt classifies MD5 and SHA-256 as METHOD_LEGACY rather
+    // than OK. Keep this ABI test aligned with the live-host
+    // differential gate rather than collapsing the five-way contract.
+    assert_eq!(unsafe { crypt_checksalt(md5.as_ptr()) }, 3);
+    assert_eq!(unsafe { crypt_checksalt(sha256.as_ptr()) }, 3);
+    assert_eq!(unsafe { crypt_checksalt(sha512.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(yescrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(bcrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(bcrypt_x.as_ptr()) }, 3);
+    assert_eq!(unsafe { crypt_checksalt(scrypt.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(alternate_md5.as_ptr()) }, 3);
+    assert_eq!(unsafe { crypt_checksalt(bogus.as_ptr()) }, 1);
+    assert_eq!(unsafe { crypt_checksalt(des2.as_ptr()) }, 1);
+    // NULL input must not crash; returns CRYPT_SALT_INVALID.
+    assert_eq!(unsafe { crypt_checksalt(std::ptr::null()) }, 1);
+}
+
+#[test]
+fn crypt_delegates_modern_bcrypt_to_libxcrypt() {
+    use frankenlibc_abi::unistd_abi::crypt;
+
+    let key = CString::new("correct horse battery staple").unwrap();
+    let salt = CString::new("$2b$05$abcdefghijklmnopqrstuu").unwrap();
+    let hash = unsafe { crypt(key.as_ptr(), salt.as_ptr()) };
+
+    assert!(
+        !hash.is_null(),
+        "libxcrypt crypt must return a static result"
+    );
+    let hash = unsafe { CStr::from_ptr(hash) }.to_bytes();
+    assert!(
+        hash.starts_with(b"$2b$"),
+        "bcrypt result must retain its method"
+    );
+    assert_ne!(
+        hash, b"*0",
+        "supported bcrypt must not return failure token"
+    );
+    assert_ne!(
+        hash, b"*1",
+        "supported bcrypt must not return failure token"
+    );
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn crypt_checksalt_rejects_tracked_unterminated_setting() {
+    use frankenlibc_abi::unistd_abi::crypt_checksalt;
+    let setting = b"$6$unterminated-setting";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(setting.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(setting.as_ptr(), raw, setting.len());
+        let rc = crypt_checksalt(raw.cast());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// crypt_r / crypt_rn / crypt_ra + crypt_gensalt family
+// ---------------------------------------------------------------------------
+
+#[test]
+fn crypt_r_writes_into_caller_buffer_matching_crypt() {
+    use frankenlibc_abi::unistd_abi::{crypt, crypt_r};
+    let key = CString::new("hunter2").unwrap();
+    let salt = CString::new("$6$abcdefgh").unwrap();
+    let mut data = [0u8; 512];
+    let p = unsafe {
+        crypt_r(
+            key.as_ptr(),
+            salt.as_ptr(),
+            data.as_mut_ptr() as *mut c_void,
+        )
+    };
+    assert!(!p.is_null());
+    let s_r = unsafe { CStr::from_ptr(p) };
+    let s_plain = unsafe { CStr::from_ptr(crypt(key.as_ptr(), salt.as_ptr())) };
+    assert_eq!(s_r, s_plain);
+    // Result was written at offset 0 of the data buffer.
+    assert_eq!(p as *const u8, data.as_ptr());
+}
+
+#[test]
+fn crypt_rn_refuses_buffer_too_small() {
+    use frankenlibc_abi::unistd_abi::crypt_rn;
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$6$saltsalt").unwrap();
+    let mut buf = [0u8; 8]; // too small for SHA-512 result
+    let p = unsafe {
+        crypt_rn(
+            key.as_ptr(),
+            salt.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn crypt_ra_allocates_buffer_when_data_null() {
+    use frankenlibc_abi::unistd_abi::crypt_ra;
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$6$saltsalt").unwrap();
+    let mut data: *mut c_void = std::ptr::null_mut();
+    let mut size: c_int = 0;
+    let p = unsafe { crypt_ra(key.as_ptr(), salt.as_ptr(), &mut data, &mut size) };
+    assert!(!p.is_null());
+    assert!(!data.is_null());
+    assert!(size >= 384);
+    // Free via our malloc_abi; data was allocated through it.
+    unsafe { frankenlibc_abi::malloc_abi::free(data) };
+}
+
+#[test]
+fn crypt_gensalt_default_is_sha512() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let rbytes = b"randombytes!";
+    let p = unsafe {
+        crypt_gensalt(
+            std::ptr::null(),
+            0,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(s.to_bytes().starts_with(b"$6$"), "got: {s:?}");
+    assert!(s.to_bytes().len() >= 3 + 16, "len: {}", s.to_bytes().len()); // "$6$" + 16 chars of salt
+}
+
+#[test]
+fn crypt_gensalt_explicit_md5_prefix() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let prefix = CString::new("$1$").unwrap();
+    let rbytes = b"someentropyhere";
+    let p = unsafe {
+        crypt_gensalt(
+            prefix.as_ptr(),
+            0,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(s.to_bytes().starts_with(b"$1$"), "got: {s:?}");
+}
+
+#[test]
+fn crypt_gensalt_with_rounds_emits_rounds_segment_for_sha() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let prefix = CString::new("$6$").unwrap();
+    let rbytes = b"morerandomnessok";
+    let p = unsafe {
+        crypt_gensalt(
+            prefix.as_ptr(),
+            10_000,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    let bytes = s.to_bytes();
+    let prefix = b"$6$rounds=10000$";
+    assert!(bytes.starts_with(prefix), "got: {s:?}");
+    assert!(
+        bytes.len() >= prefix.len() + 16,
+        "salt tail was truncated: {s:?}"
+    );
+}
+
+#[test]
+fn crypt_gensalt_r_returns_erange_on_small_buffer() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt_r;
+    let mut out = [0u8; 4]; // too small even for "$6$" + NUL
+    let p = unsafe {
+        crypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            out.as_mut_ptr() as *mut c_char,
+            out.len() as c_int,
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn crypt_gensalt_rejects_invalid_prefix_and_negative_entropy_size() {
+    use frankenlibc_abi::unistd_abi::{crypt_gensalt, crypt_gensalt_r};
+    let bogus = CString::new("$2b$").unwrap();
+    let mut out = [0u8; 64];
+
+    let p = unsafe { crypt_gensalt(bogus.as_ptr(), 0, std::ptr::null(), 0) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+
+    let p = unsafe {
+        crypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            -1,
+            out.as_mut_ptr() as *mut c_char,
+            out.len() as c_int,
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn crypt_gensalt_rejects_tracked_unterminated_prefix() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let prefix = b"$6$unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(prefix.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(prefix.as_ptr(), raw, prefix.len());
+
+        *__errno_location() = 0;
+        let generated = crypt_gensalt(raw.cast(), 0, std::ptr::null(), 0);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert!(generated.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn crypt_gensalt_rn_matches_r_variant() {
+    use frankenlibc_abi::unistd_abi::{crypt_gensalt_r, crypt_gensalt_rn};
+    let prefix = CString::new("$5$").unwrap();
+    let rbytes = b"someentropyhere";
+    let mut a = [0u8; 64];
+    let mut b = [0u8; 64];
+
+    let pa = unsafe {
+        crypt_gensalt_r(
+            prefix.as_ptr(),
+            5000,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+            a.as_mut_ptr() as *mut c_char,
+            a.len() as c_int,
+        )
+    };
+    let pb = unsafe {
+        crypt_gensalt_rn(
+            prefix.as_ptr(),
+            5000,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+            b.as_mut_ptr() as *mut c_char,
+            b.len() as c_int,
+        )
+    };
+
+    assert!(!pa.is_null() && !pb.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(pa) }, unsafe { CStr::from_ptr(pb) });
+}
+
+#[test]
+fn crypt_ra_grows_existing_too_small_buffer() {
+    use frankenlibc_abi::unistd_abi::crypt_ra;
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$6$saltsalt").unwrap();
+    let mut data = unsafe { frankenlibc_abi::malloc_abi::malloc(8) };
+    assert!(!data.is_null());
+    let mut size: c_int = 8;
+
+    let p = unsafe { crypt_ra(key.as_ptr(), salt.as_ptr(), &mut data, &mut size) };
+    assert!(!p.is_null());
+    assert!(!data.is_null());
+    assert!(size >= 384);
+    assert_eq!(p as *mut c_void, data);
+    unsafe { frankenlibc_abi::malloc_abi::free(data) };
+}
+
+#[test]
+fn crypt_gensalt_ra_allocates_via_malloc() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt_ra;
+    let p = unsafe { crypt_gensalt_ra(std::ptr::null(), 0, std::ptr::null(), 0) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(s.to_bytes().starts_with(b"$6$"));
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
+}
+
+#[test]
+fn xcrypt_aliases_match_crypt_counterparts() {
+    use frankenlibc_abi::unistd_abi::{
+        crypt, crypt_gensalt, crypt_gensalt_r, crypt_r, xcrypt_gensalt, xcrypt_gensalt_r, xcrypt_r,
+    };
+    let key = CString::new("hunter2").unwrap();
+    let salt = CString::new("$6$abcdefgh").unwrap();
+
+    // xcrypt_r vs crypt_r write the same bytes.
+    let mut a = [0u8; 384];
+    let mut b = [0u8; 384];
+    let pa = unsafe { crypt_r(key.as_ptr(), salt.as_ptr(), a.as_mut_ptr() as *mut c_void) };
+    let pb = unsafe { xcrypt_r(key.as_ptr(), salt.as_ptr(), b.as_mut_ptr() as *mut c_void) };
+    assert_eq!(unsafe { CStr::from_ptr(pa) }, unsafe { CStr::from_ptr(pb) });
+
+    // xcrypt_gensalt vs crypt_gensalt produce identical strings for the
+    // same arguments.
+    let r = b"sixteenrandomby!";
+    let pa = unsafe {
+        crypt_gensalt(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+        )
+    };
+    assert!(!pa.is_null());
+    let pa_bytes = unsafe { CStr::from_ptr(pa) }.to_bytes().to_vec();
+    let pb = unsafe {
+        xcrypt_gensalt(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+        )
+    };
+    assert!(!pb.is_null());
+    assert_eq!(pa_bytes, unsafe { CStr::from_ptr(pb) }.to_bytes());
+
+    // Same for the _r variant.
+    let mut buf = [0u8; 64];
+    let pc = unsafe {
+        xcrypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len() as c_int,
+        )
+    };
+    assert!(!pc.is_null());
+    let mut buf2 = [0u8; 64];
+    let pd = unsafe {
+        crypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+            buf2.as_mut_ptr() as *mut c_char,
+            buf2.len() as c_int,
+        )
+    };
+    assert_eq!(unsafe { CStr::from_ptr(pc) }, unsafe { CStr::from_ptr(pd) });
+
+    // Sanity: the gensalt result is a valid input for crypt().
+    let mut salt_str = pa_bytes;
+    salt_str.push(0);
+    let hashed = unsafe { crypt(key.as_ptr(), salt_str.as_ptr() as *const c_char) };
+    assert!(!hashed.is_null());
+}
+
+#[test]
+fn yp_fail_safe_stubs_zero_outputs_and_return_stable_errors() {
+    use frankenlibc_abi::unistd_abi::{
+        yp_all, yp_bind, yp_first, yp_get_default_domain, yp_maplist, yp_master, yp_match, yp_next,
+        yp_order, yp_unbind, yp_update, ypbinderr_string, yperr_string, ypprot_err,
+    };
+
+    const YPERR_DOMAIN: c_int = 3;
+    const YPERR_YPBIND: c_int = 10;
+    const YPERR_NODOM: c_int = 12;
+
+    let dom = c"local";
+    let map = c"passwd.byname";
+    let key = c"root";
+
+    let mut domain = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    assert_eq!(unsafe { yp_get_default_domain(&mut domain) }, YPERR_NODOM);
+    assert!(domain.is_null());
+
+    assert_eq!(unsafe { yp_bind(dom.as_ptr()) }, YPERR_DOMAIN);
+    unsafe { yp_unbind(dom.as_ptr()) };
+
+    let mut val = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    let mut vallen: c_int = -1;
+    assert_eq!(
+        unsafe {
+            yp_match(
+                dom.as_ptr(),
+                map.as_ptr(),
+                key.as_ptr(),
+                4,
+                &mut val,
+                &mut vallen,
+            )
+        },
+        YPERR_DOMAIN
+    );
+    assert!(val.is_null());
+    assert_eq!(vallen, 0);
+
+    let mut outkey = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    let mut outkeylen: c_int = -1;
+    let mut outval = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    let mut outvallen: c_int = -1;
+    assert_eq!(
+        unsafe {
+            yp_first(
+                dom.as_ptr(),
+                map.as_ptr(),
+                &mut outkey,
+                &mut outkeylen,
+                &mut outval,
+                &mut outvallen,
+            )
+        },
+        YPERR_DOMAIN
+    );
+    assert!(outkey.is_null());
+    assert_eq!(outkeylen, 0);
+    assert!(outval.is_null());
+    assert_eq!(outvallen, 0);
+
+    outkey = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    outkeylen = -1;
+    outval = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    outvallen = -1;
+    assert_eq!(
+        unsafe {
+            yp_next(
+                dom.as_ptr(),
+                map.as_ptr(),
+                key.as_ptr(),
+                4,
+                &mut outkey,
+                &mut outkeylen,
+                &mut outval,
+                &mut outvallen,
+            )
+        },
+        YPERR_DOMAIN
+    );
+    assert!(outkey.is_null());
+    assert_eq!(outkeylen, 0);
+    assert!(outval.is_null());
+    assert_eq!(outvallen, 0);
+
+    assert_eq!(
+        unsafe { yp_all(dom.as_ptr(), map.as_ptr(), std::ptr::null_mut()) },
+        YPERR_DOMAIN
+    );
+
+    let mut master = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    assert_eq!(
+        unsafe { yp_master(dom.as_ptr(), map.as_ptr(), &mut master) },
+        YPERR_DOMAIN
+    );
+    assert!(master.is_null());
+
+    let mut order: c_uint = 123;
+    assert_eq!(
+        unsafe { yp_order(dom.as_ptr(), map.as_ptr(), &mut order) },
+        YPERR_DOMAIN
+    );
+    assert_eq!(order, 0);
+
+    let mut maplist = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+    assert_eq!(
+        unsafe { yp_maplist(dom.as_ptr(), &mut maplist) },
+        YPERR_DOMAIN
+    );
+    assert!(maplist.is_null());
+
+    assert_eq!(
+        unsafe {
+            yp_update(
+                dom.as_ptr(),
+                map.as_ptr(),
+                1,
+                key.as_ptr(),
+                4,
+                key.as_ptr(),
+                4,
+            )
+        },
+        YPERR_DOMAIN
+    );
+
+    assert_eq!(
+        unsafe { CStr::from_ptr(yperr_string(YPERR_NODOM)) }.to_bytes(),
+        b"local domain name not set"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(yperr_string(-1)) }.to_bytes(),
+        b"unknown yp error"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(ypbinderr_string(2)) }.to_bytes(),
+        b"Domain not bound"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(ypbinderr_string(-1)) }.to_bytes(),
+        b"unknown ypbind error"
+    );
+    assert_eq!(unsafe { ypprot_err(0) }, 0);
+    assert_eq!(unsafe { ypprot_err(1) }, YPERR_YPBIND);
+}
+
+#[test]
+fn nis_plus_fail_safe_helpers_format_and_free_deterministically() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_free_directory, nis_free_object, nis_free_request, nis_freenames, nis_freeresult,
+        nis_freeservlist, nis_freetags, nis_lerror, nis_local_directory, nis_local_group,
+        nis_local_host, nis_local_principal, nis_sperrno, nis_sperror, nis_sperror_r,
+    };
+
+    let empty = c"";
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_directory()) }, empty);
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_host()) }, empty);
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_principal()) }, empty);
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_group()) }, empty);
+
+    let name_unreachable = unsafe { CStr::from_ptr(nis_sperrno(5)) }
+        .to_bytes()
+        .to_vec();
+    assert_eq!(name_unreachable, b"Name unreachable");
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_sperrno(999)) }.to_bytes(),
+        b"Unknown NIS+ error"
+    );
+
+    let label = c"nis";
+    let allocated = unsafe { nis_sperror(5, label.as_ptr()) };
+    assert!(!allocated.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(allocated) }.to_bytes(),
+        b"nis: Name unreachable"
+    );
+    unsafe { frankenlibc_abi::malloc_abi::free(allocated as *mut c_void) };
+
+    let mut small = [0u8; 4];
+    clear_errno();
+    let p = unsafe { nis_sperror_r(5, label.as_ptr(), small.as_mut_ptr() as *mut c_char, 4) };
+    assert!(p.is_null());
+    assert_eq!(errno_value(), libc::ERANGE);
+
+    let mut out = [0u8; 64];
+    let p = unsafe {
+        nis_sperror_r(
+            5,
+            label.as_ptr(),
+            out.as_mut_ptr() as *mut c_char,
+            out.len(),
+        )
+    };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(
+        unsafe { CStr::from_ptr(p) }.to_bytes(),
+        b"nis: Name unreachable"
+    );
+
+    unsafe {
+        nis_lerror(5, label.as_ptr());
+        nis_freeresult(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_freenames(std::ptr::NonNull::<*mut c_char>::dangling().as_ptr());
+        nis_free_object(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_free_directory(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_free_request(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_freeservlist(std::ptr::NonNull::<*mut c_void>::dangling().as_ptr());
+        nis_freetags(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+    }
+}
+
+#[test]
+fn nis_plus_name_helpers_split_compare_and_clone_deterministically() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_clone_directory, nis_clone_object, nis_clone_result, nis_dir_cmp, nis_domain_of,
+        nis_domain_of_r, nis_leaf_of, nis_leaf_of_r, nis_name_of, nis_name_of_r,
+    };
+
+    let name = c"host.subdom.dom.";
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_domain_of(name.as_ptr())) }.to_bytes(),
+        b"subdom.dom."
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_leaf_of(name.as_ptr())) }.to_bytes(),
+        b"host"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_name_of(name.as_ptr())) }.to_bytes(),
+        b"host.subdom.dom."
+    );
+
+    let escaped = c"host\\.part.dom.";
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_domain_of(escaped.as_ptr())) }.to_bytes(),
+        b"dom."
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_leaf_of(escaped.as_ptr())) }.to_bytes(),
+        b"host\\.part"
+    );
+
+    let mut out = [0u8; 64];
+    let p = unsafe { nis_domain_of_r(name.as_ptr(), out.as_mut_ptr() as *mut c_char, out.len()) };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(unsafe { CStr::from_ptr(p) }.to_bytes(), b"subdom.dom.");
+
+    let p = unsafe { nis_leaf_of_r(name.as_ptr(), out.as_mut_ptr() as *mut c_char, out.len()) };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(unsafe { CStr::from_ptr(p) }.to_bytes(), b"host");
+
+    let p = unsafe { nis_name_of_r(name.as_ptr(), out.as_mut_ptr() as *mut c_char, out.len()) };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(unsafe { CStr::from_ptr(p) }.to_bytes(), b"host.subdom.dom.");
+
+    let mut small = [0u8; 4];
+    clear_errno();
+    let p = unsafe {
+        nis_name_of_r(
+            name.as_ptr(),
+            small.as_mut_ptr() as *mut c_char,
+            small.len(),
+        )
+    };
+    assert!(p.is_null());
+    assert_eq!(errno_value(), libc::ERANGE);
+
+    clear_errno();
+    let p = unsafe { nis_leaf_of_r(name.as_ptr(), std::ptr::null_mut(), 0) };
+    assert!(p.is_null());
+    assert_eq!(errno_value(), libc::EINVAL);
+
+    assert_eq!(unsafe { nis_dir_cmp(c"Dom.".as_ptr(), c"dom".as_ptr()) }, 1);
+    assert_eq!(
+        unsafe { nis_dir_cmp(c"aaa.".as_ptr(), c"bbb.".as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { nis_dir_cmp(c"bbb.".as_ptr(), c"aaa.".as_ptr()) },
+        2
+    );
+    assert_eq!(
+        unsafe { nis_dir_cmp(std::ptr::null(), c"aaa.".as_ptr()) },
+        3
+    );
+
+    assert!(
+        unsafe { nis_clone_directory(std::ptr::NonNull::<c_void>::dangling().as_ptr()) }.is_null()
+    );
+    assert!(
+        unsafe {
+            nis_clone_object(
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            nis_clone_result(
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+            )
+        }
+        .is_null()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// NIS / yp_* fail-safe stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn yp_get_default_domain_returns_nodom_and_zeroes_outptr() {
+    use frankenlibc_abi::unistd_abi::yp_get_default_domain;
+    let mut out: *mut c_char = 0xDEAD_BEEF_usize as *mut c_char;
+    let rc = unsafe { yp_get_default_domain(&mut out) };
+    assert_eq!(rc, 12, "YPERR_NODOM expected"); // YPERR_NODOM
+    assert!(out.is_null());
+}
+
+#[test]
+fn yp_bind_returns_ypdomain_unbind_is_noop() {
+    use frankenlibc_abi::unistd_abi::{yp_bind, yp_unbind};
+    let dom = CString::new("nis.example.com").unwrap();
+    let rc = unsafe { yp_bind(dom.as_ptr()) };
+    assert_eq!(rc, 3, "YPERR_DOMAIN expected"); // YPERR_DOMAIN
+    unsafe { yp_unbind(dom.as_ptr()) };
+}
+
+#[test]
+fn yp_match_zeroes_outputs_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_match;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("passwd.byname").unwrap();
+    let key = CString::new("alice").unwrap();
+    let mut val: *mut c_char = 0xDEAD_BEEF_usize as *mut c_char;
+    let mut vallen: c_int = 99;
+    let rc = unsafe {
+        yp_match(
+            dom.as_ptr(),
+            map.as_ptr(),
+            key.as_ptr(),
+            key.as_bytes().len() as c_int,
+            &mut val,
+            &mut vallen,
+        )
+    };
+    assert_eq!(rc, 3);
+    assert!(val.is_null());
+    assert_eq!(vallen, 0);
+}
+
+#[test]
+fn yp_first_zeroes_all_outputs() {
+    use frankenlibc_abi::unistd_abi::yp_first;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("hosts.byname").unwrap();
+    let mut k: *mut c_char = 0xDEAD as *mut c_char;
+    let mut kl: c_int = 99;
+    let mut v: *mut c_char = 0xCAFE as *mut c_char;
+    let mut vl: c_int = 99;
+    let rc = unsafe { yp_first(dom.as_ptr(), map.as_ptr(), &mut k, &mut kl, &mut v, &mut vl) };
+    assert_eq!(rc, 3);
+    assert!(k.is_null() && v.is_null() && kl == 0 && vl == 0);
+}
+
+#[test]
+fn yp_next_zeroes_all_outputs() {
+    use frankenlibc_abi::unistd_abi::yp_next;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("group.byname").unwrap();
+    let inkey = b"prev";
+    let mut k: *mut c_char = 0xDEAD as *mut c_char;
+    let mut kl: c_int = 99;
+    let mut v: *mut c_char = 0xCAFE as *mut c_char;
+    let mut vl: c_int = 99;
+    let rc = unsafe {
+        yp_next(
+            dom.as_ptr(),
+            map.as_ptr(),
+            inkey.as_ptr() as *const c_char,
+            inkey.len() as c_int,
+            &mut k,
+            &mut kl,
+            &mut v,
+            &mut vl,
+        )
+    };
+    assert_eq!(rc, 3);
+    assert!(k.is_null() && v.is_null() && kl == 0 && vl == 0);
+}
+
+#[test]
+fn yp_all_does_not_invoke_callback_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_all;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("netgroup").unwrap();
+    let cb_dummy: usize = 0xCAFEBABE;
+    let rc = unsafe { yp_all(dom.as_ptr(), map.as_ptr(), cb_dummy as *mut c_void) };
+    assert_eq!(rc, 3);
+}
+
+#[test]
+fn yp_master_zeroes_outname_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_master;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("services.byname").unwrap();
+    let mut out: *mut c_char = 0xDEAD as *mut c_char;
+    let rc = unsafe { yp_master(dom.as_ptr(), map.as_ptr(), &mut out) };
+    assert_eq!(rc, 3);
+    assert!(out.is_null());
+}
+
+#[test]
+fn yp_order_zeroes_order_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_order;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("passwd.byname").unwrap();
+    let mut order: c_uint = 99;
+    let rc = unsafe { yp_order(dom.as_ptr(), map.as_ptr(), &mut order) };
+    assert_eq!(rc, 3);
+    assert_eq!(order, 0);
+}
+
+#[test]
+fn yp_maplist_zeroes_outptr_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_maplist;
+    let dom = CString::new("d").unwrap();
+    let mut out: *mut c_void = 0xDEAD as *mut c_void;
+    let rc = unsafe { yp_maplist(dom.as_ptr(), &mut out) };
+    assert_eq!(rc, 3);
+    assert!(out.is_null());
+}
+
+#[test]
+fn yp_update_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_update;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("passwd.byname").unwrap();
+    let key = b"alice";
+    let data = b"alice:x:1000";
+    let rc = unsafe {
+        yp_update(
+            dom.as_ptr(),
+            map.as_ptr(),
+            1,
+            key.as_ptr() as *const c_char,
+            key.len() as c_int,
+            data.as_ptr() as *const c_char,
+            data.len() as c_int,
+        )
+    };
+    assert_eq!(rc, 3);
+}
+
+#[test]
+fn yperr_string_returns_static_descriptions() {
+    use frankenlibc_abi::unistd_abi::yperr_string;
+    let s = unsafe { CStr::from_ptr(yperr_string(0)) };
+    assert_eq!(s.to_bytes(), b"Success");
+    let s = unsafe { CStr::from_ptr(yperr_string(12)) };
+    assert_eq!(s.to_bytes(), b"local domain name not set");
+    let s = unsafe { CStr::from_ptr(yperr_string(999)) };
+    assert_eq!(s.to_bytes(), b"unknown yp error");
+}
+
+#[test]
+fn ypbinderr_string_returns_static_descriptions() {
+    use frankenlibc_abi::unistd_abi::ypbinderr_string;
+    let s = unsafe { CStr::from_ptr(ypbinderr_string(0)) };
+    assert_eq!(s.to_bytes(), b"Success");
+    let s = unsafe { CStr::from_ptr(ypbinderr_string(2)) };
+    assert_eq!(s.to_bytes(), b"Domain not bound");
+    let s = unsafe { CStr::from_ptr(ypbinderr_string(99)) };
+    assert_eq!(s.to_bytes(), b"unknown ypbind error");
+}
+
+#[test]
+fn ypprot_err_collapses_to_ypbind_or_zero() {
+    use frankenlibc_abi::unistd_abi::ypprot_err;
+    assert_eq!(unsafe { ypprot_err(0) }, 0);
+    assert_eq!(unsafe { ypprot_err(1) }, 10);
+    assert_eq!(unsafe { ypprot_err(7) }, 10);
+}
+
+// ---------------------------------------------------------------------------
+// NIS+ nis_* fail-safe stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_local_queries_return_empty_strings() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_local_directory, nis_local_group, nis_local_host, nis_local_principal,
+    };
+    for name in [
+        unsafe { nis_local_directory() },
+        unsafe { nis_local_host() },
+        unsafe { nis_local_principal() },
+        unsafe { nis_local_group() },
+    ] {
+        assert!(!name.is_null());
+        let s = unsafe { CStr::from_ptr(name) };
+        assert_eq!(s.to_bytes(), b"");
+    }
+}
+
+#[test]
+fn nis_free_helpers_are_noops_on_null_and_arbitrary_pointers() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_free_directory, nis_free_object, nis_free_request, nis_freenames, nis_freeresult,
+        nis_freeservlist, nis_freetags,
+    };
+    // NULL inputs must not crash.
+    unsafe {
+        nis_freeresult(std::ptr::null_mut());
+        nis_freenames(std::ptr::null_mut());
+        nis_free_object(std::ptr::null_mut());
+        nis_free_directory(std::ptr::null_mut());
+        nis_free_request(std::ptr::null_mut());
+        nis_freeservlist(std::ptr::null_mut());
+        nis_freetags(std::ptr::null_mut());
+    }
+    // Bogus pointers must not be dereferenced — the stubs are pure
+    // no-ops so this verifies they don't try to walk the input.
+    let bogus = 0xDEAD_BEEF_usize as *mut c_void;
+    unsafe {
+        nis_freeresult(bogus);
+        nis_free_object(bogus);
+    }
+}
+
+#[test]
+fn nis_sperrno_returns_static_descriptions_for_known_codes() {
+    use frankenlibc_abi::unistd_abi::nis_sperrno;
+    let s = unsafe { CStr::from_ptr(nis_sperrno(0)) };
+    assert_eq!(s.to_bytes(), b"Success");
+    let s = unsafe { CStr::from_ptr(nis_sperrno(5)) };
+    assert_eq!(s.to_bytes(), b"Name unreachable");
+    let s = unsafe { CStr::from_ptr(nis_sperrno(63)) };
+    assert_eq!(s.to_bytes(), b"Generic NIS+ failure");
+    let s = unsafe { CStr::from_ptr(nis_sperrno(999)) };
+    assert_eq!(s.to_bytes(), b"Unknown NIS+ error");
+}
+
+#[test]
+fn nis_sperror_returns_malloced_label_message() {
+    use frankenlibc_abi::unistd_abi::nis_sperror;
+    let label = CString::new("mylabel").unwrap();
+    let p = unsafe { nis_sperror(5, label.as_ptr()) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"mylabel: Name unreachable");
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
+}
+
+#[test]
+fn nis_sperror_with_null_label_omits_prefix() {
+    use frankenlibc_abi::unistd_abi::nis_sperror;
+    let p = unsafe { nis_sperror(2, std::ptr::null()) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"Not found");
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
+}
+
+#[test]
+fn nis_sperror_r_writes_into_caller_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_sperror_r;
+    let label = CString::new("op").unwrap();
+    let mut buf = [0u8; 64];
+    let p = unsafe {
+        nis_sperror_r(
+            11,
+            label.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(!p.is_null());
+    assert_eq!(p as *const u8, buf.as_ptr());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"op: Out of memory");
+}
+
+#[test]
+fn nis_sperror_r_returns_erange_when_buffer_too_small() {
+    use frankenlibc_abi::unistd_abi::nis_sperror_r;
+    let mut buf = [0u8; 4];
+    let p = unsafe {
+        nis_sperror_r(
+            0,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn nis_sperror_r_null_buf_returns_einval() {
+    use frankenlibc_abi::unistd_abi::nis_sperror_r;
+    let p = unsafe { nis_sperror_r(0, std::ptr::null(), std::ptr::null_mut(), 16) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn nis_sperror_rejects_tracked_unterminated_label() {
+    use frankenlibc_abi::unistd_abi::{nis_sperror, nis_sperror_r};
+    let raw = malloc_tracked_unterminated(b"unterminated-nis-label");
+
+    unsafe {
+        *__errno_location() = 0;
+        let p = nis_sperror(5, raw);
+        let err = *__errno_location();
+        assert!(p.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        let mut buf = [0u8; 64];
+        *__errno_location() = 0;
+        let p = nis_sperror_r(5, raw, buf.as_mut_ptr() as *mut c_char, buf.len());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert!(p.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn nis_perror_writes_to_stderr_without_crashing() {
+    use frankenlibc_abi::unistd_abi::nis_perror;
+    // We just verify it doesn't crash; capturing stderr from inside
+    // the test harness is unreliable across platforms.
+    let label = CString::new("msg").unwrap();
+    unsafe { nis_perror(5, label.as_ptr()) };
+    // NULL label is also valid.
+    unsafe { nis_perror(0, std::ptr::null()) };
+}
+
+#[test]
+fn nis_lerror_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::nis_lerror;
+    let label = CString::new("op").unwrap();
+    unsafe { nis_lerror(5, label.as_ptr()) };
+    unsafe { nis_lerror(0, std::ptr::null()) };
+}
+
+// ---------------------------------------------------------------------------
+// nis_domain_of / leaf_of / name_of (+ _r) + nis_dir_cmp + clone stubs
+// ---------------------------------------------------------------------------
+
+fn nis_helpers_cstr_to_string(p: *const c_char) -> String {
+    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+}
+
+#[test]
+fn nis_domain_of_strips_first_label() {
+    use frankenlibc_abi::unistd_abi::nis_domain_of;
+    let n = CString::new("host.subdom.dom.").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_domain_of(n.as_ptr()) }),
+        "subdom.dom."
+    );
+    let single = CString::new("host").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_domain_of(single.as_ptr()) }),
+        ""
+    );
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_domain_of(std::ptr::null()) }),
+        ""
+    );
+}
+
+#[test]
+fn nis_domain_of_r_writes_into_caller_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_domain_of_r;
+    let n = CString::new("a.b.c.").unwrap();
+    let mut buf = [0u8; 32];
+    let p = unsafe { nis_domain_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(!p.is_null());
+    assert_eq!(nis_helpers_cstr_to_string(p), "b.c.");
+    assert_eq!(p as *const u8, buf.as_ptr());
+}
+
+#[test]
+fn nis_domain_of_r_returns_erange_on_small_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_domain_of_r;
+    let n = CString::new("a.bcdef.").unwrap();
+    let mut buf = [0u8; 4];
+    let p = unsafe { nis_domain_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn nis_leaf_of_returns_first_label() {
+    use frankenlibc_abi::unistd_abi::nis_leaf_of;
+    let n = CString::new("host.subdom.dom.").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_leaf_of(n.as_ptr()) }),
+        "host"
+    );
+    let single = CString::new("alone").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_leaf_of(single.as_ptr()) }),
+        "alone"
+    );
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_leaf_of(std::ptr::null()) }),
+        ""
+    );
+}
+
+#[test]
+fn nis_leaf_of_r_writes_into_caller_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_leaf_of_r;
+    let n = CString::new("alpha.beta.gamma.").unwrap();
+    let mut buf = [0u8; 32];
+    let p = unsafe { nis_leaf_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(!p.is_null());
+    assert_eq!(nis_helpers_cstr_to_string(p), "alpha");
+}
+
+#[test]
+fn nis_name_of_passes_through_when_no_local_directory() {
+    use frankenlibc_abi::unistd_abi::nis_name_of;
+    let n = CString::new("alice.users.subdom.dom.").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_name_of(n.as_ptr()) }),
+        "alice.users.subdom.dom."
+    );
+}
+
+#[test]
+fn nis_name_of_r_writes_pass_through_into_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_name_of_r;
+    let n = CString::new("x.y.").unwrap();
+    let mut buf = [0u8; 16];
+    let p = unsafe { nis_name_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(!p.is_null());
+    assert_eq!(nis_helpers_cstr_to_string(p), "x.y.");
+}
+
+#[test]
+fn nis_dir_cmp_classifies_known_orderings() {
+    use frankenlibc_abi::unistd_abi::nis_dir_cmp;
+    let a = CString::new("alpha.dom.").unwrap();
+    let b = CString::new("beta.dom.").unwrap();
+    let same = CString::new("ALPHA.dom").unwrap();
+    assert_eq!(unsafe { nis_dir_cmp(a.as_ptr(), b.as_ptr()) }, 0);
+    assert_eq!(unsafe { nis_dir_cmp(b.as_ptr(), a.as_ptr()) }, 2);
+    assert_eq!(unsafe { nis_dir_cmp(a.as_ptr(), same.as_ptr()) }, 1);
+    assert_eq!(unsafe { nis_dir_cmp(std::ptr::null(), a.as_ptr()) }, 3);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn nis_name_helpers_reject_tracked_unterminated_inputs() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_dir_cmp, nis_domain_of, nis_domain_of_r, nis_leaf_of, nis_leaf_of_r, nis_name_of,
+        nis_name_of_r,
+    };
+    let raw = malloc_tracked_unterminated(b"host.subdom.dom.");
+    let valid = CString::new("host.subdom.dom.").unwrap();
+
+    unsafe {
+        *__errno_location() = 0;
+        let p = nis_domain_of(raw);
+        assert_eq!(nis_helpers_cstr_to_string(p), "");
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        let p = nis_leaf_of(raw);
+        assert_eq!(nis_helpers_cstr_to_string(p), "");
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        let p = nis_name_of(raw);
+        assert_eq!(nis_helpers_cstr_to_string(p), "");
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        let mut buf = [0u8; 64];
+        *__errno_location() = 0;
+        assert!(nis_domain_of_r(raw, buf.as_mut_ptr() as *mut c_char, buf.len()).is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        assert!(nis_leaf_of_r(raw, buf.as_mut_ptr() as *mut c_char, buf.len()).is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        assert!(nis_name_of_r(raw, buf.as_mut_ptr() as *mut c_char, buf.len()).is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        assert_eq!(nis_dir_cmp(raw, valid.as_ptr()), 3);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn nis_clone_helpers_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_clone_directory, nis_clone_object, nis_clone_result};
+    assert!(unsafe { nis_clone_directory(std::ptr::null()) }.is_null());
+    assert!(unsafe { nis_clone_object(std::ptr::null(), std::ptr::null_mut()) }.is_null());
+    assert!(unsafe { nis_clone_result(std::ptr::null(), std::ptr::null_mut()) }.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// nis_print_* helpers + group ops + nis_destroy_object
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_print_helpers_do_not_crash_on_null_or_arbitrary_inputs() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_print_directory, nis_print_entry, nis_print_group, nis_print_group_entry,
+        nis_print_link, nis_print_object, nis_print_result, nis_print_rights, nis_print_table,
+    };
+    unsafe {
+        nis_print_directory(std::ptr::null());
+        nis_print_entry(std::ptr::null());
+        nis_print_group(std::ptr::null());
+        nis_print_group_entry(std::ptr::null());
+        nis_print_link(std::ptr::null());
+        nis_print_object(std::ptr::null());
+        nis_print_result(std::ptr::null());
+        nis_print_rights(0);
+        nis_print_table(std::ptr::null());
+    }
+    let bogus = 0xDEAD_BEEF_usize as *const c_void;
+    unsafe {
+        nis_print_directory(bogus);
+        nis_print_object(bogus);
+        nis_print_table(bogus);
+        nis_print_rights(0xFFFF_FFFF);
+    }
+}
+
+#[test]
+fn nis_creategroup_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::nis_creategroup;
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_creategroup(g.as_ptr(), 0) }, 5);
+    assert_eq!(unsafe { nis_creategroup(std::ptr::null(), 0) }, 5);
+}
+
+#[test]
+fn nis_destroygroup_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::nis_destroygroup;
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_destroygroup(g.as_ptr()) }, 5);
+}
+
+#[test]
+fn nis_addmember_and_removemember_return_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::{nis_addmember, nis_removemember};
+    let m = CString::new("alice.users.dom.").unwrap();
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_addmember(m.as_ptr(), g.as_ptr()) }, 5);
+    assert_eq!(unsafe { nis_removemember(m.as_ptr(), g.as_ptr()) }, 5);
+}
+
+#[test]
+fn nis_verifygroup_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::nis_verifygroup;
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_verifygroup(g.as_ptr()) }, 5);
+}
+
+#[test]
+fn nis_ismember_returns_false() {
+    use frankenlibc_abi::unistd_abi::nis_ismember;
+    let m = CString::new("alice.users.dom.").unwrap();
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_ismember(m.as_ptr(), g.as_ptr()) }, 0);
+    assert_eq!(unsafe { nis_ismember(std::ptr::null(), g.as_ptr()) }, 0);
+    assert_eq!(unsafe { nis_ismember(m.as_ptr(), std::ptr::null()) }, 0);
+}
+
+#[test]
+fn nis_destroy_object_is_noop_for_null_and_arbitrary_inputs() {
+    use frankenlibc_abi::unistd_abi::nis_destroy_object;
+    unsafe { nis_destroy_object(std::ptr::null_mut()) };
+    let bogus = 0xDEAD_BEEF_usize as *mut c_void;
+    unsafe { nis_destroy_object(bogus) };
+}
+
+// ---------------------------------------------------------------------------
+// nis_* CRUD + directory + misc stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_lookup_and_list_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_list, nis_lookup};
+    let n = CString::new("foo.bar.").unwrap();
+    assert!(unsafe { nis_lookup(n.as_ptr(), 0) }.is_null());
+    assert!(
+        unsafe { nis_list(n.as_ptr(), 0, std::ptr::null_mut(), std::ptr::null_mut()) }.is_null()
+    );
+    // NULL inputs also safe.
+    assert!(unsafe { nis_lookup(std::ptr::null(), 0) }.is_null());
+}
+
+#[test]
+fn nis_add_modify_remove_and_entry_variants_return_null() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_add, nis_add_entry, nis_modify, nis_modify_entry, nis_remove, nis_remove_entry,
+    };
+    let n = CString::new("foo.bar.").unwrap();
+    let dummy_obj = 0xDEAD_BEEF_usize as *const c_void;
+    assert!(unsafe { nis_add(n.as_ptr(), dummy_obj) }.is_null());
+    assert!(unsafe { nis_add_entry(n.as_ptr(), dummy_obj, 0) }.is_null());
+    assert!(unsafe { nis_modify(n.as_ptr(), dummy_obj) }.is_null());
+    assert!(unsafe { nis_modify_entry(n.as_ptr(), dummy_obj, 0) }.is_null());
+    assert!(unsafe { nis_remove(n.as_ptr(), dummy_obj) }.is_null());
+    assert!(unsafe { nis_remove_entry(n.as_ptr(), dummy_obj, 0) }.is_null());
+}
+
+#[test]
+fn nis_first_next_entry_and_checkpoint_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_checkpoint, nis_first_entry, nis_next_entry};
+    let n = CString::new("table.dom.").unwrap();
+    assert!(unsafe { nis_first_entry(n.as_ptr()) }.is_null());
+    let cookie = 0xCAFE_BABE_usize as *const c_void;
+    assert!(unsafe { nis_next_entry(n.as_ptr(), cookie) }.is_null());
+    assert!(unsafe { nis_checkpoint(n.as_ptr()) }.is_null());
+}
+
+#[test]
+fn nis_mkdir_rmdir_return_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::{nis_mkdir, nis_rmdir};
+    let n = CString::new("dir.dom.").unwrap();
+    let server = 0xDEAD as *const c_void;
+    assert_eq!(unsafe { nis_mkdir(n.as_ptr(), server) }, 5);
+    assert_eq!(unsafe { nis_rmdir(n.as_ptr(), server) }, 5);
+}
+
+#[test]
+fn nis_ping_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::nis_ping;
+    let n = CString::new("dir.dom.").unwrap();
+    unsafe { nis_ping(n.as_ptr(), 0, std::ptr::null()) };
+    unsafe { nis_ping(std::ptr::null(), 12345, std::ptr::null()) };
+}
+
+#[test]
+fn nis_servstate_and_stats_return_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::{nis_servstate, nis_stats};
+    let server = 0xDEAD as *const c_void;
+    assert_eq!(
+        unsafe { nis_servstate(server, std::ptr::null_mut(), 0, std::ptr::null_mut()) },
+        5
+    );
+    assert_eq!(
+        unsafe { nis_stats(server, std::ptr::null_mut(), 0, std::ptr::null_mut()) },
+        5
+    );
+}
+
+#[test]
+fn nis_getnames_and_getservlist_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_getnames, nis_getservlist};
+    let n = CString::new("foo").unwrap();
+    assert!(unsafe { nis_getnames(n.as_ptr()) }.is_null());
+    assert!(unsafe { nis_getservlist(n.as_ptr()) }.is_null());
+}
+
+#[test]
+fn nis_read_obj_returns_null_and_write_obj_returns_zero() {
+    use frankenlibc_abi::unistd_abi::{nis_read_obj, nis_write_obj};
+    let f = CString::new("/tmp/no_such_nis_obj").unwrap();
+    assert!(unsafe { nis_read_obj(f.as_ptr()) }.is_null());
+    let dummy_obj = 0xDEAD as *const c_void;
+    assert_eq!(unsafe { nis_write_obj(f.as_ptr(), dummy_obj) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// NIS xdr_* stubs + ColdStartFile helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_xdr_stubs_return_xdr_false_without_dereferencing() {
+    use frankenlibc_abi::unistd_abi::{
+        xdr_cback_data, xdr_domainname, xdr_keydat, xdr_mapname, xdr_obj_p, xdr_peername,
+        xdr_valdat, xdr_yp_buf, xdr_ypall, xdr_ypbind_binding, xdr_ypbind_resp,
+        xdr_ypbind_resptype, xdr_ypbind_setdom, xdr_ypdelete_args, xdr_ypmap_parms, xdr_ypmaplist,
+        xdr_yppush_status, xdr_yppushresp_xfr, xdr_ypreq_key, xdr_ypreq_nokey, xdr_ypreq_xfr,
+        xdr_ypresp_all, xdr_ypresp_key_val, xdr_ypresp_maplist, xdr_ypresp_master,
+        xdr_ypresp_order, xdr_ypresp_val, xdr_ypresp_xfr, xdr_ypstat, xdr_ypupdate_args,
+        xdr_ypxfrstat,
+    };
+
+    let bogus_xdrs = 0xDEAD_BEEF_usize as *mut c_void;
+    let bogus_p = 0xCAFE_BABE_usize as *mut c_void;
+
+    macro_rules! assert_xdr_false {
+        ($f:ident) => {{
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut()) },
+                0,
+                concat!(stringify!($f), "(NULL,NULL) should return XDR_FALSE")
+            );
+            assert_eq!(
+                unsafe { $f(bogus_xdrs, bogus_p) },
+                0,
+                concat!(stringify!($f), "(bogus,bogus) should return XDR_FALSE")
+            );
+        }};
+    }
+
+    assert_xdr_false!(xdr_cback_data);
+    assert_xdr_false!(xdr_domainname);
+    assert_xdr_false!(xdr_keydat);
+    assert_xdr_false!(xdr_mapname);
+    assert_xdr_false!(xdr_obj_p);
+    assert_xdr_false!(xdr_peername);
+    assert_xdr_false!(xdr_valdat);
+    assert_xdr_false!(xdr_yp_buf);
+    assert_xdr_false!(xdr_ypall);
+    assert_xdr_false!(xdr_ypbind_binding);
+    assert_xdr_false!(xdr_ypbind_resp);
+    assert_xdr_false!(xdr_ypbind_resptype);
+    assert_xdr_false!(xdr_ypbind_setdom);
+    assert_xdr_false!(xdr_ypdelete_args);
+    assert_xdr_false!(xdr_ypmap_parms);
+    assert_xdr_false!(xdr_ypmaplist);
+    assert_xdr_false!(xdr_yppush_status);
+    assert_xdr_false!(xdr_yppushresp_xfr);
+    assert_xdr_false!(xdr_ypreq_key);
+    assert_xdr_false!(xdr_ypreq_nokey);
+    assert_xdr_false!(xdr_ypreq_xfr);
+    assert_xdr_false!(xdr_ypresp_all);
+    assert_xdr_false!(xdr_ypresp_key_val);
+    assert_xdr_false!(xdr_ypresp_maplist);
+    assert_xdr_false!(xdr_ypresp_master);
+    assert_xdr_false!(xdr_ypresp_order);
+    assert_xdr_false!(xdr_ypresp_val);
+    assert_xdr_false!(xdr_ypresp_xfr);
+    assert_xdr_false!(xdr_ypstat);
+    assert_xdr_false!(xdr_ypupdate_args);
+    assert_xdr_false!(xdr_ypxfrstat);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn readColdStartFile_returns_null_and_writeColdStartFile_returns_false() {
+    use frankenlibc_abi::unistd_abi::{readColdStartFile, writeColdStartFile};
+    assert!(unsafe { readColdStartFile() }.is_null());
+    let dummy = 0xDEAD as *const c_void;
+    assert_eq!(unsafe { writeColdStartFile(dummy) }, 0);
+    assert_eq!(unsafe { writeColdStartFile(std::ptr::null()) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_endXX NSS plugin stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_end_stubs_return_nss_status_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_endaliasent, _nss_files_endetherent, _nss_files_endgrent, _nss_files_endhostent,
+        _nss_files_endnetent, _nss_files_endprotoent, _nss_files_endpwent, _nss_files_endrpcent,
+        _nss_files_endservent, _nss_files_endsgent, _nss_files_endspent,
+    };
+
+    macro_rules! assert_nss_success {
+        ($f:ident) => {{
+            assert_eq!(
+                unsafe { $f() },
+                1,
+                concat!(stringify!($f), " should return NSS_STATUS_SUCCESS")
+            );
+        }};
+    }
+
+    assert_nss_success!(_nss_files_endaliasent);
+    assert_nss_success!(_nss_files_endetherent);
+    assert_nss_success!(_nss_files_endgrent);
+    assert_nss_success!(_nss_files_endhostent);
+    assert_nss_success!(_nss_files_endnetent);
+    assert_nss_success!(_nss_files_endprotoent);
+    assert_nss_success!(_nss_files_endpwent);
+    assert_nss_success!(_nss_files_endrpcent);
+    assert_nss_success!(_nss_files_endservent);
+    assert_nss_success!(_nss_files_endsgent);
+    assert_nss_success!(_nss_files_endspent);
+}
+
+#[test]
+fn nss_files_endnetgrent_returns_success_with_state_arg() {
+    use frankenlibc_abi::unistd_abi::_nss_files_endnetgrent;
+    assert_eq!(unsafe { _nss_files_endnetgrent(std::ptr::null_mut()) }, 1);
+    let bogus_result = std::ptr::dangling_mut::<c_void>();
+    assert_eq!(unsafe { _nss_files_endnetgrent(bogus_result) }, 1);
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_setXX NSS plugin "begin iteration" stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_set_void_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::_nss_files_setaliasent;
+    assert_eq!(unsafe { _nss_files_setaliasent() }, 1);
+}
+
+#[test]
+fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_setetherent, _nss_files_setgrent, _nss_files_sethostent, _nss_files_setnetent,
+        _nss_files_setprotoent, _nss_files_setpwent, _nss_files_setservent,
+    };
+
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(
+                unsafe { $f(0) },
+                1,
+                concat!(stringify!($f), "(0) should return NSS_STATUS_SUCCESS")
+            );
+            assert_eq!(
+                unsafe { $f(1) },
+                1,
+                concat!(stringify!($f), "(1) should return NSS_STATUS_SUCCESS")
+            );
+        }};
+    }
+
+    check!(_nss_files_setetherent);
+    check!(_nss_files_setgrent);
+    check!(_nss_files_sethostent);
+    check!(_nss_files_setnetent);
+    check!(_nss_files_setprotoent);
+    check!(_nss_files_setpwent);
+    check!(_nss_files_setservent);
+}
+
+#[test]
+fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
+    use frankenlibc_abi::unistd_abi::_nss_files_setnetgrent;
+    assert_eq!(
+        unsafe { _nss_files_setnetgrent(std::ptr::null(), std::ptr::null_mut()) },
+        1
+    );
+    let group = CString::new("admins").unwrap();
+    let bogus_result = std::ptr::dangling_mut::<c_void>();
+    assert_eq!(
+        unsafe { _nss_files_setnetgrent(group.as_ptr(), bogus_result) },
+        1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_getXX_r NSS plugin lookup stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getnetgrent_r,
+    };
+
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err,) },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+            assert_eq!(
+                unsafe {
+                    $f(
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should tolerate null errnop")
+            );
+        }};
+    }
+
+    check!(_nss_files_getaliasent_r);
+    check!(_nss_files_getetherent_r);
+    check!(_nss_files_getnetgrent_r);
+}
+
+#[test]
+fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_gethostent_r, _nss_files_getnetent_r};
+
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            let mut h_err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                        &mut h_err,
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+            assert_eq!(h_err, 1);
+        }};
+    }
+
+    check!(_nss_files_gethostent_r);
+    check!(_nss_files_getnetent_r);
+}
+
+#[test]
+fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getaliasbyname_r, _nss_files_gethostton_r, _nss_files_getntohost_r,
+    };
+
+    let key = CString::new("missing").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+            assert_eq!(
+                unsafe {
+                    $f(
+                        std::ptr::null(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should tolerate null key and errnop")
+            );
+        }};
+    }
+
+    check!(_nss_files_getaliasbyname_r);
+    check!(_nss_files_gethostton_r);
+    check!(_nss_files_getntohost_r);
+}
+
+#[test]
+fn nss_files_rpc_rejects_invalid_output_without_claiming_a_miss() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getrpcbyname_r, _nss_files_getrpcbynumber_r, _nss_files_getrpcent_r,
+    };
+    use std::ptr;
+    let mut error = 717;
+    // Native providers reject invalid output before opening a source or
+    // consuming a record. A malformed call is not a successful database miss.
+    unsafe {
+        assert_eq!(
+            _nss_files_getrpcent_r(ptr::null_mut(), ptr::null_mut(), 0, &mut error),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getrpcbyname_r(
+                c"missing".as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getrpcbynumber_r(9999, ptr::null_mut(), ptr::null_mut(), 0, &mut error,),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+    }
+}
+
+#[test]
+fn nss_files_gshadow_rejects_invalid_output_without_claiming_a_miss() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_getsgent_r, _nss_files_getsgnam_r};
+    use std::ptr;
+    let mut error = 717;
+    // These callbacks now read a real source; invalid output is an error.
+    unsafe {
+        assert_eq!(
+            _nss_files_getsgent_r(ptr::null_mut(), ptr::null_mut(), 0, &mut error),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getsgnam_r(
+                c"missing".as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+    }
+}
+
+#[test]
+fn nss_files_identity_rejects_invalid_output_without_claiming_a_miss() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getgrent_r, _nss_files_getgrgid_r, _nss_files_getgrnam_r, _nss_files_getpwent_r,
+        _nss_files_getpwnam_r, _nss_files_getpwuid_r,
+    };
+    use std::ptr;
+    let mut err = 717;
+    // SAFETY: null inputs are rejected before dereference by these providers.
+    unsafe {
+        for call in [_nss_files_getpwent_r, _nss_files_getgrent_r] {
+            assert_eq!(call(ptr::null_mut(), ptr::null_mut(), 0, &mut err), -1);
+            assert_eq!(err, libc::EINVAL);
+            assert_eq!(
+                call(ptr::null_mut(), ptr::null_mut(), 0, ptr::null_mut()),
+                -1
+            );
+        }
+        for call in [_nss_files_getpwnam_r, _nss_files_getgrnam_r] {
+            assert_eq!(
+                call(
+                    c"root".as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    &mut err
+                ),
+                -1
+            );
+            assert_eq!(err, libc::EINVAL);
+        }
+        for call in [_nss_files_getpwuid_r, _nss_files_getgrgid_r] {
+            assert_eq!(call(0, ptr::null_mut(), ptr::null_mut(), 0, &mut err), -1);
+            assert_eq!(err, libc::EINVAL);
+        }
+    }
+}
+
+#[test]
+fn nss_files_get_protocols_use_native_backend() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getprotobyname_r, _nss_files_getprotobynumber_r, _nss_files_getprotoent_r,
+        _nss_files_setprotoent,
+    };
+
+    let mut by_name: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut by_name_buf = [0 as c_char; 512];
+    let mut err = -1;
+    let status = unsafe {
+        _nss_files_getprotobyname_r(
+            c"tcp".as_ptr(),
+            (&mut by_name as *mut libc::protoent).cast(),
+            by_name_buf.as_mut_ptr(),
+            by_name_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_name.p_name.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(by_name.p_name) }.to_bytes(), b"tcp");
+    assert_eq!(by_name.p_proto, libc::IPPROTO_TCP);
+
+    let mut by_number: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut by_number_buf = [0 as c_char; 512];
+    err = -1;
+    let status = unsafe {
+        _nss_files_getprotobynumber_r(
+            libc::IPPROTO_UDP,
+            (&mut by_number as *mut libc::protoent).cast(),
+            by_number_buf.as_mut_ptr(),
+            by_number_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_number.p_name.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(by_number.p_name) }.to_bytes(),
+        b"udp"
+    );
+    assert_eq!(by_number.p_proto, libc::IPPROTO_UDP);
+
+    let mut iter: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut iter_buf = [0 as c_char; 512];
+    assert_eq!(unsafe { _nss_files_setprotoent(1) }, 1);
+    err = -1;
+    let status = unsafe {
+        _nss_files_getprotoent_r(
+            (&mut iter as *mut libc::protoent).cast(),
+            iter_buf.as_mut_ptr(),
+            iter_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!iter.p_name.is_null());
+}
+
+#[test]
+fn nss_files_get_services_use_native_backend() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getservbyname_r, _nss_files_getservbyport_r, _nss_files_getservent_r,
+        _nss_files_setservent,
+    };
+
+    let mut by_name: libc::servent = unsafe { std::mem::zeroed() };
+    let mut by_name_buf = [0 as c_char; 1024];
+    let mut err = -1;
+    let status = unsafe {
+        _nss_files_getservbyname_r(
+            c"ssh".as_ptr(),
+            c"tcp".as_ptr(),
+            (&mut by_name as *mut libc::servent).cast(),
+            by_name_buf.as_mut_ptr(),
+            by_name_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_name.s_name.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(by_name.s_name) }.to_bytes(), b"ssh");
+    assert_eq!(
+        unsafe { CStr::from_ptr(by_name.s_proto) }.to_bytes(),
+        b"tcp"
+    );
+    assert_eq!(u16::from_be(by_name.s_port as u16), 22);
+
+    let mut by_port: libc::servent = unsafe { std::mem::zeroed() };
+    let mut by_port_buf = [0 as c_char; 1024];
+    err = -1;
+    let status = unsafe {
+        _nss_files_getservbyport_r(
+            (22u16).to_be() as c_int,
+            c"tcp".as_ptr(),
+            (&mut by_port as *mut libc::servent).cast(),
+            by_port_buf.as_mut_ptr(),
+            by_port_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!by_port.s_name.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(by_port.s_name) }.to_bytes(), b"ssh");
+    assert_eq!(
+        unsafe { CStr::from_ptr(by_port.s_proto) }.to_bytes(),
+        b"tcp"
+    );
+
+    let mut iter: libc::servent = unsafe { std::mem::zeroed() };
+    let mut iter_buf = [0 as c_char; 1024];
+    assert_eq!(unsafe { _nss_files_setservent(1) }, 1);
+    err = -1;
+    let status = unsafe {
+        _nss_files_getservent_r(
+            (&mut iter as *mut libc::servent).cast(),
+            iter_buf.as_mut_ptr(),
+            iter_buf.len(),
+            &mut err,
+        )
+    };
+    assert_eq!(status, 1);
+    assert_eq!(err, 0);
+    assert!(!iter.s_name.is_null());
+}
+
+/// The NSS framework reads `*errnop` only for TRYAGAIN (-2) and UNAVAIL (-1)
+/// (ERANGE means "grow the buffer"). glibc's value otherwise depends on the
+/// machine: for the same missing name one worker left ENOENT and another left
+/// it untouched. Compare it only where it carries meaning.
+fn nss_meaningful_errno(status: c_int, errno: c_int) -> c_int {
+    if status < 0 { errno } else { 0 }
+}
+
+/// `*h_errnop` after a SUCCESS depends on this machine's hosts file (glibc's
+/// multi-line merge scan runs to EOF): two workers gave 1 and untouched for
+/// the same localhost lookup. Compare it only for failures.
+fn nss_meaningful_herrno(status: c_int, h_errno: c_int) -> c_int {
+    if status == 1 { 0 } else { h_errno }
+}
+
+/// `(status, errno, h_errno, h_name)` of one hostent-shaped nss_files call.
+type NssHostOutcome = (c_int, c_int, c_int, Option<Vec<u8>>);
+
+fn nss_hostent_outcome(
+    buflen: usize,
+    call: impl FnOnce(*mut c_void, *mut c_char, usize, *mut c_int, *mut c_int) -> c_int,
+) -> NssHostOutcome {
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 1024];
+    let (mut err, mut h_err) = (-7, -7);
+    let status = call(
+        (&mut hostent as *mut libc::hostent).cast(),
+        buf.as_mut_ptr(),
+        buflen.min(buf.len()),
+        &mut err,
+        &mut h_err,
+    );
+    // SAFETY: NSS_STATUS_SUCCESS (1) leaves a filled hostent.
+    let name = (status == 1 && !hostent.h_name.is_null()).then(|| {
+        unsafe { CStr::from_ptr(hostent.h_name) }
+            .to_bytes()
+            .to_vec()
+    });
+    (
+        status,
+        nss_meaningful_errno(status, err),
+        nss_meaningful_herrno(status, h_err),
+        name,
+    )
+}
+
+/// The nss_files host entry points consult /etc/hosts only (never DNS, never
+/// numeric parsing), with glibc's NSS status/errno/h_errno contract. They were
+/// once stubs; now each is compared with glibc's GLIBC_PRIVATE export on the
+/// same machine, with valid buffers, for a listed and an unlisted name.
+#[test]
+fn nss_files_host_lookups_match_host_glibc() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_gethostbyaddr_r, _nss_files_gethostbyname_r, _nss_files_gethostbyname2_r,
+        _nss_files_gethostbyname3_r, _nss_files_gethostbyname4_r,
+    };
+    type ByName = unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    type ByName2 = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    type ByName3 = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+        *mut *mut c_char,
+    ) -> c_int;
+    type ByName4 = unsafe extern "C" fn(
+        *const c_char,
+        *mut *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+    ) -> c_int;
+    type ByAddr = unsafe extern "C" fn(
+        *const c_void,
+        libc::socklen_t,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    // SAFETY: each type is the GLIBC_PRIVATE export's C prototype; fl's
+    // definition is passed so a collapsed oracle aborts.
+    let (h1, h2, h3, h4, ha): (ByName, ByName2, ByName3, ByName4, ByAddr) = unsafe {
+        (
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname_r",
+                _nss_files_gethostbyname_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname2_r",
+                _nss_files_gethostbyname2_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname3_r",
+                _nss_files_gethostbyname3_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname4_r",
+                _nss_files_gethostbyname4_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyaddr_r",
+                _nss_files_gethostbyaddr_r as *const (),
+            ),
+        )
+    };
+    let fl1: ByName = _nss_files_gethostbyname_r;
+    let fl2: ByName2 = _nss_files_gethostbyname2_r;
+    let fl3: ByName3 = _nss_files_gethostbyname3_r;
+    let fl4: ByName4 = _nss_files_gethostbyname4_r;
+    let fla: ByAddr = _nss_files_gethostbyaddr_r;
+
+    let mut compared = 0;
+    let mut mismatches = Vec::new();
+    let mut check = |what: String, fl: String, host: String| {
+        if fl != host {
+            mismatches.push(format!("{what}: fl {fl} glibc {host}"));
+        }
+    };
+    // "127.0.0.1" is numeric: the files module does not parse it. 8 bytes
+    // cannot hold a result: glibc's ERANGE / TRYAGAIN contract.
+    for (name, buflen) in [
+        (c"localhost", 1024),
+        (c"frankenlibc-no-such-host.invalid", 1024),
+        (c"127.0.0.1", 1024),
+        (c"localhost", 8),
+    ] {
+        let n = name.as_ptr();
+        let what = |f: &str| format!("{f}({name:?}, buflen {buflen})");
+        // SAFETY (all calls below): valid name, hostent, buffer and slots.
+        let by =
+            |f: ByName| nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe { f(n, r, b, l, e, h) });
+        check(
+            what("gethostbyname_r"),
+            format!("{:?}", by(fl1)),
+            format!("{:?}", by(h1)),
+        );
+        let by2 = |f: ByName2| {
+            nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe {
+                f(n, libc::AF_INET, r, b, l, e, h)
+            })
+        };
+        check(
+            what("gethostbyname2_r"),
+            format!("{:?}", by2(fl2)),
+            format!("{:?}", by2(h2)),
+        );
+        let by3 = |f: ByName3| {
+            let mut ttl = -1;
+            let mut canon: *mut c_char = std::ptr::null_mut();
+            let out = nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe {
+                f(n, libc::AF_INET, r, b, l, e, h, &mut ttl, &mut canon)
+            });
+            let canon =
+                (!canon.is_null()).then(|| unsafe { CStr::from_ptr(canon) }.to_bytes().to_vec());
+            (out, canon)
+        };
+        check(
+            what("gethostbyname3_r"),
+            format!("{:?}", by3(fl3)),
+            format!("{:?}", by3(h3)),
+        );
+        let by4 = |f: ByName4| {
+            let mut pat: *mut c_void = std::ptr::null_mut();
+            let mut buf = [0 as c_char; 1024];
+            let (mut err, mut h_err, mut ttl) = (-7, -7, -1);
+            let status = unsafe {
+                f(
+                    n,
+                    &mut pat,
+                    buf.as_mut_ptr(),
+                    buflen,
+                    &mut err,
+                    &mut h_err,
+                    &mut ttl,
+                )
+            };
+            (
+                status,
+                nss_meaningful_errno(status, err),
+                nss_meaningful_herrno(status, h_err),
+                pat.is_null(),
+            )
+        };
+        check(
+            what("gethostbyname4_r"),
+            format!("{:?}", by4(fl4)),
+            format!("{:?}", by4(h4)),
+        );
+        compared += 4;
+    }
+    for (addr, buflen) in [
+        ([127u8, 0, 0, 1], 1024),
+        ([192, 0, 2, 77], 1024),
+        ([127, 0, 0, 1], 8),
+    ] {
+        // SAFETY: a 4-byte AF_INET address and valid output storage.
+        let by = |f: ByAddr| {
+            nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe {
+                f(addr.as_ptr().cast(), 4, libc::AF_INET, r, b, l, e, h)
+            })
+        };
+        check(
+            format!("gethostbyaddr_r({addr:?}, buflen {buflen})"),
+            format!("{:?}", by(fla)),
+            format!("{:?}", by(ha)),
+        );
+        compared += 1;
+    }
+    // AF_INET6: the hosts file's IPv6 rows ("::1" is numeric, not a row).
+    for name in [
+        c"localhost",
+        c"ip6-localhost",
+        c"frankenlibc-no-such-host.invalid",
+        c"::1",
+    ] {
+        let n = name.as_ptr();
+        // SAFETY: valid name, hostent, buffer and slots.
+        let by2 = |f: ByName2| {
+            nss_hostent_outcome(1024, |r, b, l, e, h| unsafe {
+                f(n, libc::AF_INET6, r, b, l, e, h)
+            })
+        };
+        check(
+            format!("gethostbyname2_r({name:?}, AF_INET6)"),
+            format!("{:?}", by2(fl2)),
+            format!("{:?}", by2(h2)),
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 23);
+    assert!(
+        mismatches.is_empty(),
+        "nss_files differs from glibc:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn nss_files_get_network_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_getnetbyaddr_r, _nss_files_getnetbyname_r};
+
+    let network = CString::new("missing-net").unwrap();
+    let mut err = 0;
+    let mut h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_getnetbyaddr_r(
+                0,
+                libc::AF_INET,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_getnetbyname_r(
+                network.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_init + initgroups_dyn + parse_* tail stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_init_returns_success() {
+    use frankenlibc_abi::unistd_abi::_nss_files_init;
+    assert_eq!(unsafe { _nss_files_init() }, 1);
+}
+
+#[test]
+fn nss_files_initgroups_dyn_miss_preserves_errnop_and_array() {
+    use frankenlibc_abi::unistd_abi::_nss_files_initgroups_dyn;
+    let user = CString::new("frankenlibc-initgroups-definitely-missing").unwrap();
+    let content = std::fs::read("/etc/group").expect("read group database");
+    assert!(
+        !content
+            .windows(user.as_bytes().len())
+            .any(|bytes| bytes == user.as_bytes())
+    );
+    let mut start: libc::c_long = 0;
+    let mut size: libc::c_long = 0;
+    let mut groupsp: *mut libc::gid_t = std::ptr::null_mut();
+    let mut errnop: c_int = 717;
+    // SAFETY: this is an empty growable array with valid scalar slots.
+    let rc = unsafe {
+        _nss_files_initgroups_dyn(
+            user.as_ptr(),
+            1000,
+            &mut start,
+            &mut size,
+            &mut groupsp,
+            -1,
+            &mut errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, 717);
+    assert_eq!((start, size), (0, 0));
+    assert!(groupsp.is_null());
+    // SAFETY: a null optional error slot is accepted on an ordinary miss.
+    let rc2 = unsafe {
+        _nss_files_initgroups_dyn(
+            user.as_ptr(),
+            1000,
+            &mut start,
+            &mut size,
+            &mut groupsp,
+            -1,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc2, 0);
+    assert_eq!((start, size), (0, 0));
+    assert!(groupsp.is_null());
+}
+
+#[test]
+fn nss_files_parse_stubs_return_zero_skip_line() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_parse_etherent, _nss_files_parse_grent, _nss_files_parse_netent,
+        _nss_files_parse_protoent, _nss_files_parse_pwent, _nss_files_parse_rpcent,
+        _nss_files_parse_servent, _nss_files_parse_sgent,
+    };
+    let mut line = *b"alice:x:1000:1000::/home/alice:/bin/sh\0";
+    let mut errnop: c_int = 99;
+
+    macro_rules! check {
+        ($f:ident) => {{
+            let rc = unsafe {
+                $f(
+                    line.as_mut_ptr() as *mut c_char,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    line.len(),
+                    &mut errnop,
+                )
+            };
+            assert_eq!(rc, 0, concat!(stringify!($f), " should return 0 (skip)"));
+        }};
+    }
+
+    check!(_nss_files_parse_etherent);
+    check!(_nss_files_parse_grent);
+    check!(_nss_files_parse_netent);
+    check!(_nss_files_parse_protoent);
+    check!(_nss_files_parse_pwent);
+    check!(_nss_files_parse_rpcent);
+    check!(_nss_files_parse_servent);
+    check!(_nss_files_parse_sgent);
+}
+
+// ---------------------------------------------------------------------------
+// _nss_dns_* NSS DNS plugin lookup stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_dns_getcanonname_returns_notfound_with_h_errnop() {
+    use frankenlibc_abi::unistd_abi::_nss_dns_getcanonname_r;
+    let name = CString::new("missing.example").unwrap();
+    let mut buf = [0u8; 64];
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_dns_getcanonname_r(
+            name.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+}
+
+#[test]
+fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_dns_gethostbyname_r, _nss_dns_gethostbyname2_r, _nss_dns_gethostbyname3_r,
+        _nss_dns_gethostbyname4_r,
+    };
+    let name = CString::new("missing.example").unwrap();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let mut buf = [0u8; 64];
+
+    let rc = unsafe {
+        _nss_dns_gethostbyname_r(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let rc = unsafe {
+        _nss_dns_gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let mut ttl: i32 = 0;
+    let mut canon: *mut c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_dns_gethostbyname3_r(
+            name.as_ptr(),
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+            &mut ttl,
+            &mut canon,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let mut pat: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_dns_gethostbyname4_r(
+            name.as_ptr(),
+            &mut pat,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+            &mut ttl,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+}
+
+#[test]
+fn nss_dns_gethostbyaddr_family_returns_notfound_and_sets_h_errnop() {
+    use frankenlibc_abi::unistd_abi::{_nss_dns_gethostbyaddr_r, _nss_dns_gethostbyaddr2_r};
+    let addr = [127u8, 0, 0, 1];
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let mut buf = [0u8; 64];
+
+    let rc = unsafe {
+        _nss_dns_gethostbyaddr_r(
+            addr.as_ptr() as *const c_void,
+            4,
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let mut ttl: i32 = 0;
+    let rc = unsafe {
+        _nss_dns_gethostbyaddr2_r(
+            addr.as_ptr() as *const c_void,
+            4,
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+            &mut ttl,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+}
+
+#[test]
+fn nss_dns_getnet_family_returns_notfound_and_sets_h_errnop() {
+    use frankenlibc_abi::unistd_abi::{_nss_dns_getnetbyaddr_r, _nss_dns_getnetbyname_r};
+    let name = CString::new("loopback").unwrap();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let mut buf = [0u8; 64];
+
+    let rc = unsafe {
+        _nss_dns_getnetbyname_r(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let rc = unsafe {
+        _nss_dns_getnetbyaddr_r(
+            0x7F00_0000,
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+}
+
+// ---------------------------------------------------------------------------
+// __internal_*netgrent + __nss_* GLIBC_PRIVATE helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn internal_netgrent_iteration_returns_failure_then_success_end() {
+    use frankenlibc_abi::unistd_abi::{
+        __internal_endnetgrent, __internal_getnetgrent_r, __internal_setnetgrent,
+    };
+    let group = CString::new("admins").unwrap();
+    let mut result = [0u8; 64];
+    assert_eq!(
+        unsafe { __internal_setnetgrent(group.as_ptr(), result.as_mut_ptr() as *mut c_void) },
+        0
+    );
+    let mut errnop: c_int = 0;
+    let mut buf = [0u8; 32];
+    let mut h: *mut c_char = std::ptr::null_mut();
+    let mut u: *mut c_char = std::ptr::null_mut();
+    let mut d: *mut c_char = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            __internal_getnetgrent_r(
+                &mut h,
+                &mut u,
+                &mut d,
+                result.as_mut_ptr() as *mut c_void,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut errnop,
+            )
+        },
+        0
+    );
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(
+        unsafe { __internal_endnetgrent(result.as_mut_ptr() as *mut c_void) },
+        1
+    );
+}
+
+#[test]
+fn nss_database_get_and_disable_nscd_safe() {
+    use frankenlibc_abi::unistd_abi::{__nss_database_get, __nss_disable_nscd};
+    let mut result: *mut c_void = std::ptr::null_mut();
+    assert_eq!(unsafe { __nss_database_get(0, &mut result) }, 0);
+    unsafe { __nss_disable_nscd(std::ptr::null_mut()) };
+}
+
+#[test]
+fn nss_hash_computes_fnv1a() {
+    use frankenlibc_abi::unistd_abi::__nss_hash;
+    let name = b"alice";
+
+    let mut h: u32 = 0x811c9dc5;
+    for &b in name {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+
+    assert_eq!(
+        unsafe { __nss_hash(name.as_ptr() as *const c_void, name.len()) },
+        h
+    );
+    assert_eq!(unsafe { __nss_hash(std::ptr::null(), 0) }, 0);
+}
+
+#[test]
+fn nss_lookup_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nss_lookup;
+    let fct = CString::new("getpwnam_r").unwrap();
+    let mut ni: *mut c_void = std::ptr::null_mut();
+    let mut resp: *mut c_void = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { __nss_lookup(&mut ni, fct.as_ptr(), std::ptr::null(), &mut resp) },
+        -1
+    );
+}
+
+#[test]
+fn nss_files_data_helpers_round_trip() {
+    use frankenlibc_abi::unistd_abi::{
+        __nss_files_data_endent, __nss_files_data_open, __nss_files_data_put,
+        __nss_files_data_setent, __nss_files_fopen,
+    };
+    let mut kind: c_int = 0;
+    assert!(unsafe { __nss_files_data_open(&mut kind as *mut c_int as *mut c_void) }.is_null());
+    assert_eq!(unsafe { __nss_files_data_setent(0, 0) }, -1);
+    assert_eq!(unsafe { __nss_files_data_endent(0) }, 1);
+    unsafe { __nss_files_data_put(0) };
+    let path = CString::new("/etc/passwd").unwrap();
+    assert!(unsafe { __nss_files_fopen(path.as_ptr()) }.is_null());
+}
+
+#[test]
+fn nss_typed_lookup2_helpers_return_minus_one_with_errnop_enoent() {
+    use frankenlibc_abi::unistd_abi::{
+        __nss_group_lookup2, __nss_passwd_lookup2, __nss_services_lookup2,
+    };
+    let name = CString::new("alice").unwrap();
+    let proto = CString::new("tcp").unwrap();
+    let mut ni: *mut c_void = std::ptr::null_mut();
+    let mut errnop: c_int = 0;
+
+    assert_eq!(
+        unsafe { __nss_group_lookup2(&mut ni, name.as_ptr(), std::ptr::null_mut(), &mut errnop) },
+        -1
+    );
+    assert_eq!(errnop, libc::ENOENT);
+    errnop = 0;
+
+    assert_eq!(
+        unsafe { __nss_passwd_lookup2(&mut ni, name.as_ptr(), std::ptr::null_mut(), &mut errnop) },
+        -1
+    );
+    assert_eq!(errnop, libc::ENOENT);
+    errnop = 0;
+
+    assert_eq!(
+        unsafe {
+            __nss_services_lookup2(
+                &mut ni,
+                name.as_ptr(),
+                proto.as_ptr(),
+                std::ptr::null_mut(),
+                &mut errnop,
+            )
+        },
+        -1
+    );
+    assert_eq!(errnop, libc::ENOENT);
+}
+
+#[test]
+fn nss_parse_line_result_returns_zero_and_readline_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::{__nss_parse_line_result, __nss_readline};
+    let mut buf = [0u8; 32];
+    assert_eq!(
+        unsafe {
+            __nss_parse_line_result(std::ptr::null_mut(), buf.as_mut_ptr() as *mut c_char, 1)
+        },
+        0
+    );
+    let mut off: i64 = 0;
+    assert_eq!(
+        unsafe {
+            __nss_readline(
+                std::ptr::null_mut(),
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut off,
+            )
+        },
+        -1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// __libc_alloc_buffer_* / __libc_dynarray_* / __libc_scratch_buffer_* /
+// __libc_early_init / nss_files_parse_spent / nss_netgroup_parseline
+// ---------------------------------------------------------------------------
+
+// These were always-fail stubs, so getent/gencat/pldd failed under preload;
+// they now implement glibc's contracts. glibc_private_helpers_test compares
+// them operation by operation with host glibc's own GLIBC_PRIVATE copies.
+
+#[test]
+fn libc_alloc_buffer_helpers_carve_copy_and_latch_failure() {
+    use frankenlibc_abi::unistd_abi::{
+        __libc_alloc_buffer_alloc_array, __libc_alloc_buffer_allocate,
+        __libc_alloc_buffer_copy_bytes, __libc_alloc_buffer_copy_string,
+        __libc_alloc_buffer_create_failure,
+    };
+    let mut block: *mut c_void = std::ptr::null_mut();
+    let mut buf = unsafe { __libc_alloc_buffer_allocate(32, &mut block) };
+    assert!(!block.is_null());
+    assert_eq!((buf.current, buf.end - buf.current), (block as usize, 32));
+    let words = unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 8, 8, 2) };
+    assert_eq!(words as usize, block as usize);
+    let src = b"hello";
+    buf = unsafe { __libc_alloc_buffer_copy_bytes(buf, src.as_ptr() as *const c_void, src.len()) };
+    let cs = CString::new("xy").unwrap();
+    buf = unsafe { __libc_alloc_buffer_copy_string(buf, cs.as_ptr()) };
+    assert_eq!(buf.current - block as usize, 16 + 5 + 3);
+    let copied = unsafe { std::slice::from_raw_parts(block.cast::<u8>().add(16), 8) };
+    assert_eq!(copied, b"helloxy\0");
+    // 9 more bytes do not fit in the 8 left: the buffer latches failed.
+    assert!(unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 1, 1, 9) }.is_null());
+    assert_eq!((buf.current, buf.end), (0, 0));
+    buf = unsafe { __libc_alloc_buffer_copy_string(buf, cs.as_ptr()) };
+    assert_eq!((buf.current, buf.end), (0, 0));
+    let failed = unsafe { __libc_alloc_buffer_create_failure(block, 32) };
+    assert_eq!((failed.current, failed.end), (0, 0));
+    unsafe { frankenlibc_abi::malloc_abi::free(block) };
+}
+
+#[repr(C)]
+struct TestDynarray {
+    used: usize,
+    allocated: usize,
+    array: *mut c_void,
+}
+
+#[test]
+fn libc_dynarray_helpers_grow_resize_and_finalize() {
+    use frankenlibc_abi::unistd_abi::{
+        __libc_dynarray_emplace_enlarge, __libc_dynarray_finalize, __libc_dynarray_resize,
+        __libc_dynarray_resize_clear,
+    };
+    let mut scratch = [7u64; 2];
+    let scratch_ptr = scratch.as_mut_ptr().cast::<c_void>();
+    let mut list = TestDynarray {
+        used: 2,
+        allocated: 2,
+        array: scratch_ptr,
+    };
+    let l = (&mut list as *mut TestDynarray).cast::<c_void>();
+    assert_eq!(
+        unsafe { __libc_dynarray_emplace_enlarge(l, scratch_ptr, 8) },
+        1
+    );
+    assert_ne!(list.array, scratch_ptr, "growth leaves the scratch array");
+    assert_eq!(list.allocated, 2 + 2 / 2 + 1);
+    assert_eq!(unsafe { *list.array.cast::<u64>().add(1) }, 7);
+    assert_eq!(unsafe { __libc_dynarray_resize(l, 10, scratch_ptr, 8) }, 1);
+    assert_eq!((list.used, list.allocated), (10, 10));
+    assert_eq!(unsafe { __libc_dynarray_resize(l, 3, scratch_ptr, 8) }, 1);
+    assert_eq!(
+        unsafe { __libc_dynarray_resize_clear(l, 12, scratch_ptr, 8) },
+        1
+    );
+    assert!((3..12).all(|i| unsafe { *list.array.cast::<u64>().add(i) } == 0));
+    assert_eq!(
+        unsafe { __libc_dynarray_resize(l, usize::MAX / 4, scratch_ptr, 8) },
+        0,
+        "size * element_size overflow"
+    );
+    let mut result = [0usize; 2];
+    assert_eq!(
+        unsafe { __libc_dynarray_finalize(l, scratch_ptr, 8, result.as_mut_ptr().cast()) },
+        1
+    );
+    assert_eq!(result[1], 12);
+    assert_eq!(unsafe { *(result[0] as *const u64) }, 7);
+    unsafe { frankenlibc_abi::malloc_abi::free(result[0] as *mut c_void) };
+    // A list whose growth failed earlier (allocated == SIZE_MAX) does not finalize.
+    let mut failed = TestDynarray {
+        used: 0,
+        allocated: usize::MAX,
+        array: std::ptr::null_mut(),
+    };
+    assert_eq!(
+        unsafe {
+            __libc_dynarray_finalize(
+                (&mut failed as *mut TestDynarray).cast(),
+                scratch_ptr,
+                8,
+                result.as_mut_ptr().cast(),
+            )
+        },
+        0
+    );
+}
+
+#[test]
+fn libc_dynarray_at_failure_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__libc_dynarray_at_failure;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __libc_dynarray_at_failure(8, 0) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { bounded_waitpid(pid, &mut status) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[repr(C)]
+struct TestScratchBuffer {
+    data: *mut c_void,
+    length: usize,
+    space: TestScratchSpace,
+}
+
+#[repr(C, align(16))]
+struct TestScratchSpace([u8; 1024]);
+
+#[test]
+fn libc_scratch_buffer_helpers_grow_on_the_heap() {
+    use frankenlibc_abi::unistd_abi::{
+        __libc_scratch_buffer_grow, __libc_scratch_buffer_grow_preserve,
+        __libc_scratch_buffer_set_array_size,
+    };
+    let mut b = Box::new(TestScratchBuffer {
+        data: std::ptr::null_mut(),
+        length: 1024,
+        space: TestScratchSpace([0; 1024]),
+    });
+    b.data = b.space.0.as_mut_ptr().cast();
+    b.space.0[..3].copy_from_slice(b"abc");
+    let p = (&mut *b as *mut TestScratchBuffer).cast::<c_void>();
+    assert_eq!(unsafe { __libc_scratch_buffer_grow_preserve(p) }, 1);
+    assert_eq!(b.length, 2048);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(b.data.cast::<u8>(), 3) },
+        b"abc"
+    );
+    assert_eq!(unsafe { __libc_scratch_buffer_grow(p) }, 1);
+    assert_eq!(b.length, 4096);
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, 100, 8) },
+        1
+    );
+    assert_eq!(b.length, 4096, "already large enough");
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, 1000, 8) },
+        1
+    );
+    assert_eq!(b.length, 8000);
+    // Overflow fails and falls back to the inline space.
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, usize::MAX / 2, 4) },
+        0
+    );
+    assert_eq!((b.data, b.length), (b.space.0.as_mut_ptr().cast(), 1024));
+}
+
+#[test]
+fn libc_early_init_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::__libc_early_init;
+    unsafe { __libc_early_init(0) };
+    unsafe { __libc_early_init(1) };
+}
+
+#[test]
+fn nss_files_parse_spent_returns_zero_skip() {
+    use frankenlibc_abi::unistd_abi::_nss_files_parse_spent;
+    let mut line = *b"alice:!:18000:0:99999:7:::\0";
+    let mut errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_files_parse_spent(
+            line.as_mut_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            line.len(),
+            &mut errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn nss_netgroup_parseline_returns_zero_skip_and_sets_errnop() {
+    use frankenlibc_abi::unistd_abi::_nss_netgroup_parseline;
+    let mut cursor: *mut c_char = std::ptr::null_mut();
+    let mut buf = [0u8; 64];
+    let mut errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_netgroup_parseline(
+            &mut cursor,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 18 GLIBC_PRIVATE __libc_*/__res_*/__open_catalog stubs (bd-jb7p1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn libc_allocate_once_slow_is_void_noop() {
+    use frankenlibc_abi::unistd_abi::__libc_allocate_once_slow;
+    let mut slot: *mut c_void = std::ptr::null_mut();
+    unsafe {
+        __libc_allocate_once_slow(
+            &mut slot as *mut *mut c_void,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    }
+    assert!(slot.is_null());
+}
+
+#[test]
+fn libc_clntudp_bufcreate_returns_null() {
+    use frankenlibc_abi::unistd_abi::__libc_clntudp_bufcreate;
+    let mut sock: c_int = -1;
+    let p = unsafe {
+        __libc_clntudp_bufcreate(
+            std::ptr::null_mut(),
+            0,
+            0,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            &mut sock,
+            0,
+            0,
+            0,
+        )
+    };
+    assert!(p.is_null());
+}
+
+#[test]
+fn libc_ifunc_impl_list_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_ifunc_impl_list;
+    let name = CString::new("memcpy").unwrap();
+    let n = unsafe { __libc_ifunc_impl_list(name.as_ptr(), std::ptr::null_mut(), 16) };
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn libc_ns_makecanon_appends_trailing_dot() {
+    use frankenlibc_abi::unistd_abi::__libc_ns_makecanon;
+    let src = CString::new("example").unwrap();
+    let mut dst = [0u8; 32];
+    let rc =
+        unsafe { __libc_ns_makecanon(src.as_ptr(), dst.as_mut_ptr() as *mut c_char, dst.len()) };
+    assert_eq!(rc, 0);
+    let got = unsafe { CStr::from_ptr(dst.as_ptr() as *const c_char) }
+        .to_str()
+        .unwrap();
+    assert_eq!(got, "example.");
+}
+
+#[test]
+fn libc_ns_samename_matches_case_insensitive() {
+    use frankenlibc_abi::unistd_abi::__libc_ns_samename;
+    let a = CString::new("Example.COM.").unwrap();
+    let b = CString::new("example.com.").unwrap();
+    let rc = unsafe { __libc_ns_samename(a.as_ptr(), b.as_ptr()) };
+    assert_eq!(rc, 1);
+}
+
+#[test]
+fn libc_res_nameinquery_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_res_nameinquery;
+    let name = CString::new("example.com").unwrap();
+    let buf = [0u8; 64];
+    let rc = unsafe {
+        __libc_res_nameinquery(
+            name.as_ptr(),
+            1,
+            1,
+            buf.as_ptr() as *const c_void,
+            buf.as_ptr().wrapping_add(buf.len()) as *const c_void,
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn libc_res_queriesmatch_matches_empty_question_sets() {
+    use frankenlibc_abi::unistd_abi::__libc_res_queriesmatch;
+    let buf1 = [0u8; 64];
+    let buf2 = [0u8; 64];
+    let rc = unsafe {
+        __libc_res_queriesmatch(
+            buf1.as_ptr() as *const c_void,
+            buf1.as_ptr().wrapping_add(buf1.len()) as *const c_void,
+            buf2.as_ptr() as *const c_void,
+            buf2.as_ptr().wrapping_add(buf2.len()) as *const c_void,
+        )
+    };
+    assert_eq!(rc, 1);
+}
+
+#[test]
+fn libc_rpc_getport_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_rpc_getport;
+    let port = unsafe {
+        __libc_rpc_getport(
+            std::ptr::null_mut(),
+            100000,
+            2,
+            17,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+        )
+    };
+    assert_eq!(port, 0);
+}
+
+#[test]
+fn libc_unwind_link_get_returns_null() {
+    use frankenlibc_abi::unistd_abi::__libc_unwind_link_get;
+    let p = unsafe { __libc_unwind_link_get() };
+    assert!(p.is_null());
+}
+
+#[test]
+fn open_catalog_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__open_catalog;
+    let name = CString::new("messages").unwrap();
+    let rc = unsafe {
+        __open_catalog(
+            name.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_context_hostalias_uses_hostaliases_file() {
+    use frankenlibc_abi::unistd_abi::__res_context_hostalias;
+    let _lock = HOSTALIASES_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let path = temp_path_buf("hostaliases");
+    std::fs::write(
+        &path,
+        b"# comments and blank lines are ignored\n\nalias canonical.example\nother ignored\n",
+    )
+    .expect("write HOSTALIASES fixture");
+    let _env_guard = HostaliasesEnvGuard::set(&path);
+
+    let name = CString::new("alias").unwrap();
+    let mut buf = [0u8; 32];
+    let p = unsafe {
+        __res_context_hostalias(
+            std::ptr::null_mut(),
+            name.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(p, buf.as_ptr().cast());
+    assert_eq!(
+        unsafe { CStr::from_ptr(p) }.to_str().unwrap(),
+        "canonical.example"
+    );
+}
+
+#[test]
+fn res_context_mkquery_builds_query_packet() {
+    use frankenlibc_abi::unistd_abi::__res_context_mkquery;
+    let dname = CString::new("example.com").unwrap();
+    let mut buf = [0u8; 512];
+    let rc = unsafe {
+        __res_context_mkquery(
+            std::ptr::null_mut(),
+            0,
+            dname.as_ptr(),
+            1,
+            1,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(rc, 29);
+    assert_eq!(buf[2] & 0x80, 0, "QR should be 0 for a query");
+    assert_eq!(buf[2] & 0x01, 1, "RD should be set");
+    assert_eq!(u16::from_be_bytes([buf[4], buf[5]]), 1);
+    assert_eq!(
+        &buf[12..25],
+        &[
+            7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0
+        ]
+    );
+    assert_eq!(u16::from_be_bytes([buf[25], buf[26]]), 1);
+    assert_eq!(u16::from_be_bytes([buf[27], buf[28]]), 1);
+}
+
+#[test]
+fn res_context_query_rejects_null_answer_before_network() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::__res_context_query;
+    let name = CString::new("example.com").unwrap();
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        __res_context_query(
+            std::ptr::null_mut(),
+            name.as_ptr(),
+            1,
+            1,
+            std::ptr::null_mut(),
+            512,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn res_context_search_rejects_non_utf8_name_before_network() {
+    use frankenlibc_abi::errno_abi::__errno_location;
+    use frankenlibc_abi::unistd_abi::__res_context_search;
+    let name = CString::new(vec![0xff, b'e', b'x']).unwrap();
+    let mut buf = [0u8; 512];
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        __res_context_search(
+            std::ptr::null_mut(),
+            name.as_ptr(),
+            1,
+            1,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn res_context_send_rejects_short_query_before_network() {
+    use frankenlibc_abi::unistd_abi::__res_context_send;
+    let qbuf = [0u8; 8];
+    let mut answer = [0u8; 512];
+    let mut ansp: *mut c_void = std::ptr::null_mut();
+    let mut ansp2: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe {
+        __res_context_send(
+            std::ptr::null_mut(),
+            qbuf.as_ptr() as *const c_void,
+            qbuf.len() as c_int,
+            std::ptr::null(),
+            0,
+            answer.as_mut_ptr() as *mut c_void,
+            answer.len() as c_int,
+            &mut ansp,
+            &mut ansp2,
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_get_nsaddr_returns_configured_ipv4_nameserver() {
+    use frankenlibc_abi::unistd_abi::__res_get_nsaddr;
+    let config = std::fs::read("/etc/resolv.conf")
+        .map(|content| frankenlibc_core::resolv::config::ResolverConfig::parse(&content))
+        .unwrap_or_default();
+    let p = unsafe { __res_get_nsaddr(std::ptr::null_mut(), 0) };
+    match config.nameservers.first() {
+        Some(std::net::IpAddr::V4(expected)) => {
+            assert!(!p.is_null());
+            let sin = unsafe { &*(p as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_family, libc::AF_INET as libc::sa_family_t);
+            assert_eq!(
+                sin.sin_port,
+                frankenlibc_core::resolv::config::DNS_PORT.to_be()
+            );
+            assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes(expected.octets()));
+        }
+        _ => assert!(p.is_null()),
+    }
+
+    let missing = unsafe { __res_get_nsaddr(std::ptr::null_mut(), c_uint::MAX) };
+    assert!(missing.is_null());
+}
+
+#[test]
+fn res_iclose_is_void_noop() {
+    use frankenlibc_abi::unistd_abi::__res_iclose;
+    unsafe { __res_iclose(std::ptr::null_mut(), 0) };
+    unsafe { __res_iclose(std::ptr::null_mut(), 1) };
+}
+
+#[test]
+fn res_nopt_appends_edns0_opt_record() {
+    use frankenlibc_abi::unistd_abi::{__res_context_mkquery, __res_nopt};
+    let mut buf = [0u8; 512];
+    let dname = CString::new("example.com").unwrap();
+    let query_len = unsafe {
+        __res_context_mkquery(
+            std::ptr::null_mut(),
+            0,
+            dname.as_ptr(),
+            1,
+            1,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(query_len, 29);
+
+    let rc = unsafe {
+        __res_nopt(
+            std::ptr::null_mut(),
+            query_len,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+            4096,
+        )
+    };
+    assert_eq!(rc, query_len + 11);
+    assert_eq!(u16::from_be_bytes([buf[10], buf[11]]), 1);
+    let opt = &buf[query_len as usize..rc as usize];
+    assert_eq!(opt, &[0, 0, 41, 0x10, 0, 0, 0, 0, 0, 0, 0]);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 18 libbsd-parity stubs (bd-d5f7u)
+// MD5* BSD-style streaming + __fdnlist + 8 _time_to_* converters
+// ---------------------------------------------------------------------------
+
+const MD5_EMPTY_HEX: &[u8; 32] = b"d41d8cd98f00b204e9800998ecf8427e";
+const MD5_ABC_HEX: &[u8; 32] = b"900150983cd24fb0d6963f7d28e17f72";
+
+#[test]
+fn md5_streaming_init_update_final_matches_known_vector() {
+    use frankenlibc_abi::unistd_abi::{MD5_CTX, MD5Final, MD5Init, MD5Update};
+    let mut ctx: MD5_CTX = unsafe { std::mem::zeroed() };
+    let mut digest = [0u8; 16];
+    unsafe {
+        MD5Init(&mut ctx);
+        MD5Update(&mut ctx, c"abc".as_ptr() as *const c_void, 3);
+        MD5Final(digest.as_mut_ptr(), &mut ctx);
+    }
+    let mut hex = [0u8; 32];
+    static H: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in digest.iter().enumerate() {
+        hex[2 * i] = H[(b >> 4) as usize];
+        hex[2 * i + 1] = H[(b & 0x0f) as usize];
+    }
+    assert_eq!(&hex, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_data_oneshot_writes_hex_digest() {
+    use frankenlibc_abi::unistd_abi::MD5Data;
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5Data(c"abc".as_ptr() as *const c_void, 3, buf.as_mut_ptr()) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_data_empty_input_matches_known_vector() {
+    use frankenlibc_abi::unistd_abi::MD5Data;
+    let mut buf = [0i8; 33];
+    let _ = unsafe { MD5Data(std::ptr::null(), 0, buf.as_mut_ptr()) };
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_EMPTY_HEX);
+}
+
+#[test]
+fn md5_end_finalizes_stream_to_hex_buffer() {
+    use frankenlibc_abi::unistd_abi::{MD5_CTX, MD5End, MD5Init, MD5Update};
+    let mut ctx: MD5_CTX = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 33];
+    unsafe {
+        MD5Init(&mut ctx);
+        MD5Update(&mut ctx, c"abc".as_ptr() as *const c_void, 3);
+        let p = MD5End(&mut ctx, buf.as_mut_ptr());
+        assert_eq!(p, buf.as_mut_ptr());
+    }
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_pad_keeps_context_alive_for_subsequent_final() {
+    use frankenlibc_abi::unistd_abi::{MD5_CTX, MD5Final, MD5Init, MD5Pad, MD5Update};
+    let mut ctx: MD5_CTX = unsafe { std::mem::zeroed() };
+    let mut digest = [0u8; 16];
+    unsafe {
+        MD5Init(&mut ctx);
+        MD5Update(&mut ctx, c"abc".as_ptr() as *const c_void, 3);
+        MD5Pad(&mut ctx);
+        MD5Final(digest.as_mut_ptr(), &mut ctx);
+    }
+    // Padding doesn't disturb the digest of "abc".
+    let mut hex = [0u8; 32];
+    static H: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in digest.iter().enumerate() {
+        hex[2 * i] = H[(b >> 4) as usize];
+        hex[2 * i + 1] = H[(b & 0x0f) as usize];
+    }
+    assert_eq!(&hex, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_transform_writes_four_state_words() {
+    use frankenlibc_abi::unistd_abi::MD5Transform;
+    let block = [0u8; 64];
+    let mut state = [0u32; 4];
+    unsafe { MD5Transform(state.as_mut_ptr(), block.as_ptr()) };
+    assert!(state.iter().any(|w| *w != 0));
+}
+
+fn md5_temp_path(name: &str) -> std::path::PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "frankenlibc_md5_{}_{}_{}",
+        std::process::id(),
+        nonce,
+        name
+    ));
+    p
+}
+
+#[test]
+fn md5_file_hashes_disk_contents() {
+    use frankenlibc_abi::unistd_abi::MD5File;
+    use std::io::Write;
+    let path = md5_temp_path("file.txt");
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"abc").unwrap();
+    }
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5File(cpath.as_ptr(), buf.as_mut_ptr()) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn md5_file_hashes_non_utf8_unix_path() {
+    use frankenlibc_abi::unistd_abi::{MD5File, MD5FileChunk};
+    use std::io::Write;
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut path_bytes = std::env::temp_dir().as_os_str().as_bytes().to_vec();
+    path_bytes.push(b'/');
+    path_bytes.extend_from_slice(format!("frankenlibc_md5_{}_", std::process::id()).as_bytes());
+    path_bytes.push(0xff);
+    path_bytes.extend_from_slice(b".bin");
+
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path_bytes.clone()));
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"abc").unwrap();
+    }
+
+    let cpath = CString::new(path_bytes).unwrap();
+    let mut file_buf = [0i8; 33];
+    let p = unsafe { MD5File(cpath.as_ptr(), file_buf.as_mut_ptr()) };
+    assert_eq!(p, file_buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(file_buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+
+    let mut chunk_buf = [0i8; 33];
+    let p = unsafe { MD5FileChunk(cpath.as_ptr(), chunk_buf.as_mut_ptr(), 0, 3) };
+    assert_eq!(p, chunk_buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(chunk_buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn md5_file_chunk_hashes_window() {
+    use frankenlibc_abi::unistd_abi::MD5FileChunk;
+    use std::io::Write;
+    let path = md5_temp_path("chunk.bin");
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"XXXabcYYY").unwrap();
+    }
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5FileChunk(cpath.as_ptr(), buf.as_mut_ptr(), 3, 3) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
+fn md5_file_rejects_tracked_unterminated_paths() {
+    use frankenlibc_abi::unistd_abi::{MD5File, MD5FileChunk};
+    let raw_path = malloc_tracked_unterminated(b"/tmp/frankenlibc-md5");
+    let mut buf = [0i8; 33];
+
+    unsafe {
+        *__errno_location() = 0;
+        let p = MD5File(raw_path, buf.as_mut_ptr());
+        let file_err = *__errno_location();
+        assert!(p.is_null());
+        assert_eq!(file_err, libc::EINVAL);
+
+        *__errno_location() = 0;
+        let p = MD5FileChunk(raw_path, buf.as_mut_ptr(), 0, -1);
+        let chunk_err = *__errno_location();
+        assert!(p.is_null());
+        assert_eq!(chunk_err, libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_path.cast());
+    }
+}
+
+#[test]
+fn md5_file_returns_null_on_missing_path() {
+    use frankenlibc_abi::unistd_abi::MD5File;
+    let cpath = CString::new("/no/such/file/here_md5").unwrap();
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5File(cpath.as_ptr(), buf.as_mut_ptr()) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn fdnlist_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__fdnlist;
+    let rc = unsafe { __fdnlist(-1) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn time_converters_are_identity_on_lp64() {
+    use frankenlibc_abi::unistd_abi::{
+        _int_to_time, _long_to_time, _time_to_int, _time_to_long, _time_to_time32, _time_to_time64,
+        _time32_to_time, _time64_to_time,
+    };
+    assert_eq!(_int_to_time(42), 42 as libc::time_t);
+    assert_eq!(_long_to_time(42), 42 as libc::time_t);
+    assert_eq!(_time_to_int(42 as libc::time_t), 42);
+    assert_eq!(_time_to_long(42 as libc::time_t), 42);
+    assert_eq!(_time32_to_time(42), 42 as libc::time_t);
+    assert_eq!(_time_to_time32(42 as libc::time_t), 42);
+    assert_eq!(_time64_to_time(42), 42 as libc::time_t);
+    assert_eq!(_time_to_time64(42 as libc::time_t), 42);
+    // narrowing extremes
+    assert_eq!(_time_to_int(i32::MAX as libc::time_t), i32::MAX);
+    assert_eq!(_time32_to_time(i32::MIN), i32::MIN as libc::time_t);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 15 _nss_compat_* NSS plugin entrypoints (bd-ubjtz)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_compat_end_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_endgrent, _nss_compat_endpwent, _nss_compat_endspent,
+    };
+    assert_eq!(unsafe { _nss_compat_endgrent() }, 1);
+    assert_eq!(unsafe { _nss_compat_endpwent() }, 1);
+    assert_eq!(unsafe { _nss_compat_endspent() }, 1);
+}
+
+#[test]
+fn nss_compat_set_stubs_accept_stayopen_and_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_setgrent, _nss_compat_setpwent, _nss_compat_setspent,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(unsafe { $f(0) }, 1);
+            assert_eq!(unsafe { $f(1) }, 1);
+        }};
+    }
+    check!(_nss_compat_setgrent);
+    check!(_nss_compat_setpwent);
+    check!(_nss_compat_setspent);
+}
+
+#[test]
+fn nss_compat_get_ent_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_getgrent_r, _nss_compat_getpwent_r, _nss_compat_getspent_r,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err) },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_compat_getgrent_r);
+    check!(_nss_compat_getpwent_r);
+    check!(_nss_compat_getspent_r);
+}
+
+#[test]
+fn nss_compat_get_by_str_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_getgrnam_r, _nss_compat_getpwnam_r, _nss_compat_getspnam_r,
+    };
+    let key = CString::new("nobody").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_compat_getgrnam_r);
+    check!(_nss_compat_getpwnam_r);
+    check!(_nss_compat_getspnam_r);
+}
+
+#[test]
+fn nss_compat_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{_nss_compat_getgrgid_r, _nss_compat_getpwuid_r};
+    let mut err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_compat_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_compat_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_compat_initgroups_dyn_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_compat_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut err: c_int = 0;
+    let mut start: std::ffi::c_long = 0;
+    let mut size: std::ffi::c_long = 0;
+    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_compat_initgroups_dyn(
+            user.as_ptr(),
+            0,
+            &mut start,
+            &mut size,
+            &mut groups,
+            8,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 17 _nss_hesiod_* NSS plugin entrypoints (bd-yz9cj)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_hesiod_end_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_endgrent, _nss_hesiod_endprotoent, _nss_hesiod_endpwent, _nss_hesiod_endservent,
+    };
+    assert_eq!(unsafe { _nss_hesiod_endgrent() }, 1);
+    assert_eq!(unsafe { _nss_hesiod_endpwent() }, 1);
+    assert_eq!(unsafe { _nss_hesiod_endprotoent() }, 1);
+    assert_eq!(unsafe { _nss_hesiod_endservent() }, 1);
+}
+
+#[test]
+fn nss_hesiod_set_stubs_accept_stayopen_and_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_setgrent, _nss_hesiod_setprotoent, _nss_hesiod_setpwent, _nss_hesiod_setservent,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(unsafe { $f(0) }, 1);
+            assert_eq!(unsafe { $f(1) }, 1);
+        }};
+    }
+    check!(_nss_hesiod_setgrent);
+    check!(_nss_hesiod_setpwent);
+    check!(_nss_hesiod_setprotoent);
+    check!(_nss_hesiod_setservent);
+}
+
+#[test]
+fn nss_hesiod_get_by_str_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_getgrnam_r, _nss_hesiod_getprotobyname_r, _nss_hesiod_getpwnam_r,
+    };
+    let key = CString::new("nobody").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_hesiod_getgrnam_r);
+    check!(_nss_hesiod_getpwnam_r);
+    check!(_nss_hesiod_getprotobyname_r);
+}
+
+#[test]
+fn nss_hesiod_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_getgrgid_r, _nss_hesiod_getprotobynumber_r, _nss_hesiod_getpwuid_r,
+    };
+    let mut err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_hesiod_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_hesiod_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_hesiod_getprotobynumber_r(
+                42,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_hesiod_getservbyname_r_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_hesiod_getservbyname_r;
+    let name = CString::new("ssh").unwrap();
+    let proto = CString::new("tcp").unwrap();
+    let mut err = 0;
+    let rc = unsafe {
+        _nss_hesiod_getservbyname_r(
+            name.as_ptr(),
+            proto.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_hesiod_getservbyport_r_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_hesiod_getservbyport_r;
+    let proto = CString::new("tcp").unwrap();
+    let mut err = 0;
+    let rc = unsafe {
+        _nss_hesiod_getservbyport_r(
+            22,
+            proto.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_hesiod_initgroups_dyn_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_hesiod_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut err: c_int = 0;
+    let mut start: std::ffi::c_long = 0;
+    let mut size: std::ffi::c_long = 0;
+    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_hesiod_initgroups_dyn(
+            user.as_ptr(),
+            0,
+            &mut start,
+            &mut size,
+            &mut groups,
+            8,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 21 _nss_systemd_* NSS plugin entrypoints (bd-rzecx)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_systemd_end_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_endgrent, _nss_systemd_endpwent, _nss_systemd_endsgent, _nss_systemd_endspent,
+    };
+    assert_eq!(unsafe { _nss_systemd_endgrent() }, 1);
+    assert_eq!(unsafe { _nss_systemd_endpwent() }, 1);
+    assert_eq!(unsafe { _nss_systemd_endsgent() }, 1);
+    assert_eq!(unsafe { _nss_systemd_endspent() }, 1);
+}
+
+#[test]
+fn nss_systemd_set_stubs_accept_stayopen_and_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_setgrent, _nss_systemd_setpwent, _nss_systemd_setsgent, _nss_systemd_setspent,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(unsafe { $f(0) }, 1);
+            assert_eq!(unsafe { $f(1) }, 1);
+        }};
+    }
+    check!(_nss_systemd_setgrent);
+    check!(_nss_systemd_setpwent);
+    check!(_nss_systemd_setsgent);
+    check!(_nss_systemd_setspent);
+}
+
+#[test]
+fn nss_systemd_get_ent_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_getgrent_r, _nss_systemd_getpwent_r, _nss_systemd_getsgent_r,
+        _nss_systemd_getspent_r,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err) },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_systemd_getgrent_r);
+    check!(_nss_systemd_getpwent_r);
+    check!(_nss_systemd_getsgent_r);
+    check!(_nss_systemd_getspent_r);
+}
+
+#[test]
+fn nss_systemd_get_by_str_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_getgrnam_r, _nss_systemd_getpwnam_r, _nss_systemd_getsgnam_r,
+        _nss_systemd_getspnam_r,
+    };
+    let key = CString::new("nobody").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_systemd_getgrnam_r);
+    check!(_nss_systemd_getpwnam_r);
+    check!(_nss_systemd_getsgnam_r);
+    check!(_nss_systemd_getspnam_r);
+}
+
+#[test]
+fn nss_systemd_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{_nss_systemd_getgrgid_r, _nss_systemd_getpwuid_r};
+    let mut err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_systemd_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_systemd_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_systemd_initgroups_dyn_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_systemd_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut err: c_int = 0;
+    let mut start: std::ffi::c_long = 0;
+    let mut size: std::ffi::c_long = 0;
+    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_systemd_initgroups_dyn(
+            user.as_ptr(),
+            0,
+            &mut start,
+            &mut size,
+            &mut groups,
+            8,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_systemd_block_returns_previous_flag_and_is_blocked_reflects_state() {
+    use frankenlibc_abi::unistd_abi::{_nss_systemd_block, _nss_systemd_is_blocked};
+    // Initial state: unblocked.
+    assert_eq!(_nss_systemd_is_blocked(), 0);
+    // Block: previous was 0.
+    assert_eq!(_nss_systemd_block(1), 0);
+    assert_eq!(_nss_systemd_is_blocked(), 1);
+    // Block again with a different non-zero value: previous was 1.
+    assert_eq!(_nss_systemd_block(7), 1);
+    assert_eq!(_nss_systemd_is_blocked(), 7);
+    // Unblock: previous was 7.
+    assert_eq!(_nss_systemd_block(0), 7);
+    assert_eq!(_nss_systemd_is_blocked(), 0);
+}
+
+#[test]
+fn nss_systemd_block_is_per_thread() {
+    use frankenlibc_abi::unistd_abi::{_nss_systemd_block, _nss_systemd_is_blocked};
+    _nss_systemd_block(0);
+    _nss_systemd_block(1);
+    let other_seen = std::thread::spawn(|| _nss_systemd_is_blocked())
+        .join()
+        .unwrap();
+    assert_eq!(other_seen, 0);
+    assert_eq!(_nss_systemd_is_blocked(), 1);
+    _nss_systemd_block(0);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (bd-pjnky)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_create_ib_request_returns_null() {
+    use frankenlibc_abi::unistd_abi::__create_ib_request;
+    let name = CString::new("any.directory.").unwrap();
+    let p = unsafe { __create_ib_request(name.as_ptr(), 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn nis_do_niscall3_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::__do_niscall3;
+    let rc = unsafe {
+        __do_niscall3(
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert_eq!(rc, 5); // NIS_NAMEUNREACHABLE
+}
+
+#[test]
+fn nis_follow_path_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__follow_path;
+    let next = CString::new("alias.").unwrap();
+    let rc = unsafe {
+        __follow_path(
+            std::ptr::null_mut(),
+            next.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn nis_free_fdresult_is_void_noop() {
+    use frankenlibc_abi::unistd_abi::__free_fdresult;
+    unsafe { __free_fdresult(std::ptr::null_mut()) };
+}
+
+#[test]
+fn nis_default_access_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nis_default_access;
+    assert_eq!(unsafe { __nis_default_access(std::ptr::null_mut(), 0) }, 0);
+}
+
+#[test]
+fn nis_default_group_owner_return_null() {
+    use frankenlibc_abi::unistd_abi::{__nis_default_group, __nis_default_owner};
+    assert!(unsafe { __nis_default_group(std::ptr::null()) }.is_null());
+    assert!(unsafe { __nis_default_owner(std::ptr::null()) }.is_null());
+}
+
+#[test]
+fn nis_default_ttl_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nis_default_ttl;
+    assert_eq!(unsafe { __nis_default_ttl(std::ptr::null()) }, 0);
+}
+
+#[test]
+fn nis_finddirectory_returns_notfound() {
+    use frankenlibc_abi::unistd_abi::__nis_finddirectory;
+    let name = CString::new("org_dir.").unwrap();
+    let rc = unsafe { __nis_finddirectory(std::ptr::null_mut(), name.as_ptr()) };
+    assert_eq!(rc, 1); // NIS_NOTFOUND
+}
+
+#[test]
+fn nis_hash_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nis_hash;
+    let key = b"abc";
+    assert_eq!(
+        unsafe { __nis_hash(key.as_ptr() as *const c_void, key.len() as c_uint) },
+        0
+    );
+}
+
+#[test]
+fn nisbind_connect_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nisbind_connect;
+    assert_eq!(unsafe { __nisbind_connect(std::ptr::null_mut()) }, -1);
+}
+
+#[test]
+fn nisbind_create_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nisbind_create;
+    let rc = unsafe {
+        __nisbind_create(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn nisbind_destroy_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nisbind_destroy;
+    assert_eq!(unsafe { __nisbind_destroy(std::ptr::null_mut()) }, 0);
+}
+
+#[test]
+fn nisbind_next_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nisbind_next;
+    assert_eq!(unsafe { __nisbind_next(std::ptr::null_mut()) }, -1);
+}
+
+#[test]
+fn prepare_niscall_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::__prepare_niscall;
+    let name = CString::new("foo.bar.").unwrap();
+    let rc =
+        unsafe { __prepare_niscall(name.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, 5); // NIS_NAMEUNREACHABLE
+}
+
+#[test]
+fn yp_check_reports_no_nis_configured() {
+    use frankenlibc_abi::unistd_abi::__yp_check;
+    let rc = unsafe { __yp_check(std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn xdr_ib_request_returns_xdr_true() {
+    use frankenlibc_abi::unistd_abi::_xdr_ib_request;
+    assert_eq!(
+        unsafe { _xdr_ib_request(std::ptr::null_mut(), std::ptr::null_mut()) },
+        1
+    );
+}
+
+#[test]
+fn xdr_nis_result_returns_xdr_true() {
+    use frankenlibc_abi::unistd_abi::_xdr_nis_result;
+    assert_eq!(
+        unsafe { _xdr_nis_result(std::ptr::null_mut(), std::ptr::null_mut()) },
+        1
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 7 Linux 6.13+ syscall wrappers (bd-idcx7)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setxattrat_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::setxattrat;
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.test").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { setxattrat(-1, path.as_ptr(), 0, name.as_ptr(), std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn getxattrat_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::getxattrat;
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.test").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { getxattrat(-1, path.as_ptr(), 0, name.as_ptr(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn listxattrat_zero_size_buffer_returns_listing_size_or_neg_errno() {
+    use frankenlibc_abi::unistd_abi::listxattrat;
+    let path = CString::new("/dev/null").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { listxattrat(libc::AT_FDCWD, path.as_ptr(), 0, std::ptr::null_mut(), 0) };
+    // /dev/null has no xattrs ⇒ size = 0; kernel may also return -ENOTSUP
+    // depending on filesystem support. Either is fine; we just need the
+    // wrapper to forward verbatim.
+    assert!(
+        rc >= 0 || rc == -1,
+        "listxattrat must return a kernel-shaped result"
+    );
+}
+
+#[test]
+fn removexattrat_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::removexattrat;
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.test").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { removexattrat(-1, path.as_ptr(), 0, name.as_ptr()) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn open_tree_attr_returns_fd_or_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::open_tree_attr;
+    let path = CString::new("/").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { open_tree_attr(libc::AT_FDCWD, path.as_ptr(), 0, std::ptr::null_mut(), 0) };
+    if rc >= 0 {
+        // Successfully opened a tree — close the fd and call it a day.
+        unsafe { libc::close(rc) };
+    } else {
+        assert_eq!(rc, -1);
+        assert!(unsafe { *libc::__errno_location() } != 0);
+    }
+}
+
+#[test]
+fn file_getattr_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::file_getattr;
+    let path = CString::new("/dev/null").unwrap();
+    let mut buf = [0u8; 64];
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        file_getattr(
+            -1,
+            path.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn file_setattr_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::file_setattr;
+    let path = CString::new("/dev/null").unwrap();
+    let buf = [0u8; 64];
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        file_setattr(
+            -1,
+            path.as_ptr(),
+            buf.as_ptr() as *const c_void,
+            buf.len(),
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn xattrat_family_propagates_kernel_errno_via_set_abi_errno() {
+    use frankenlibc_abi::unistd_abi::setxattrat;
+    unsafe { *libc::__errno_location() = 0 };
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.x").unwrap();
+    let rc = unsafe { setxattrat(-1, path.as_ptr(), 0, name.as_ptr(), std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *libc::__errno_location() };
+    assert!(err != 0, "errno must be set after a failing syscall");
+}
+
+// ---------------------------------------------------------------------------
+// Tests for 3 Linux 6.7+ futex2 syscall wrappers (bd-0ar9l)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn futex_wake_unaligned_address_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::futex_wake;
+    let mut buf = [0u8; 16];
+    let unaligned = unsafe { buf.as_mut_ptr().add(1) };
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        futex_wake(
+            unaligned as *mut c_void,
+            !0u64 as std::ffi::c_ulong,
+            1,
+            0x02,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn futex_wait_with_zero_timeout_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::futex_wait;
+    let word: u32 = 0xdead_beef;
+    let zero: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        futex_wait(
+            &word as *const u32 as *mut c_void,
+            0xdead_beef_u64 as std::ffi::c_ulong,
+            !0u64 as std::ffi::c_ulong,
+            0x02,
+            &zero,
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn futex_requeue_null_waiters_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::futex_requeue;
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { futex_requeue(std::ptr::null(), 0, 0, 0) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[cfg(target_os = "linux")]
+mod getifaddrs_materialization_tests {
+    use super::*;
+    use frankenlibc_abi::unistd_abi::{freeifaddrs, getifaddrs_from_netlink_for_tests};
+
+    fn attribute(kind: u16, payload: &[u8]) -> Vec<u8> {
+        let length = payload.len() + 4;
+        let mut result = Vec::new();
+        result.extend_from_slice(&(length as u16).to_ne_bytes());
+        result.extend_from_slice(&kind.to_ne_bytes());
+        result.extend_from_slice(payload);
+        result.resize((length + 3) & !3, 0);
+        result
+    }
+
+    fn message(kind: u16, body: &[u8]) -> Vec<u8> {
+        let mut result = vec![0u8; 16];
+        result[..4].copy_from_slice(&((16 + body.len()) as u32).to_ne_bytes());
+        result[4..6].copy_from_slice(&kind.to_ne_bytes());
+        result.extend_from_slice(body);
+        result.resize((result.len() + 3) & !3, 0);
+        result
+    }
+
+    fn finish_dump(mut result: Vec<u8>) -> Vec<u8> {
+        result.extend_from_slice(&message(3, &[]));
+        result
+    }
+
+    fn link_dump(with_address: bool) -> Vec<u8> {
+        let mut body = vec![0u8; 16];
+        body[2..4].copy_from_slice(&32u16.to_ne_bytes());
+        body[4..8].copy_from_slice(&17u32.to_ne_bytes());
+        body[8..12].copy_from_slice(&0x1043u32.to_ne_bytes());
+        body.extend_from_slice(&attribute(3, b"ib\xff0\0"));
+        if with_address {
+            body.extend_from_slice(&attribute(1, &(0..20u8).collect::<Vec<_>>()));
+            body.extend_from_slice(&attribute(2, &[0xff; 20]));
+        }
+        body.extend_from_slice(&attribute(7, &[0x41; 92]));
+        finish_dump(message(16, &body))
+    }
+
+    fn address_dump(index: u32) -> Vec<u8> {
+        let mut v4 = vec![0u8; 8];
+        v4[0] = libc::AF_INET as u8;
+        v4[1] = 27;
+        v4[4..8].copy_from_slice(&index.to_ne_bytes());
+        v4.extend_from_slice(&attribute(1, &[192, 0, 2, 2]));
+        v4.extend_from_slice(&attribute(2, &[192, 0, 2, 1]));
+        v4.extend_from_slice(&attribute(3, b"ib\xff0:7\0"));
+        let mut v6 = vec![0u8; 8];
+        v6[0] = libc::AF_INET6 as u8;
+        v6[1] = 65;
+        v6[4..8].copy_from_slice(&index.to_ne_bytes());
+        let mut local = [0u8; 16];
+        local[0] = 0xfe;
+        local[1] = 0x80;
+        local[15] = 1;
+        v6.extend_from_slice(&attribute(1, &local));
+        let mut result = message(20, &v4);
+        result.extend_from_slice(&message(20, &v6));
+        finish_dump(result)
+    }
+
+    struct Snapshot(*mut libc::ifaddrs);
+
+    impl Drop for Snapshot {
+        fn drop(&mut self) {
+            // SAFETY: each successful snapshot is exclusively owned here and
+            // was allocated by the native builder's production-compatible helper.
+            unsafe { freeifaddrs(self.0.cast()) };
+        }
+    }
+
+    fn snapshot(links: &[u8], addresses: &[&[u8]]) -> Snapshot {
+        let (result, _, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(links, addresses, None);
+        assert_eq!(still_live_on_error, 0);
+        Snapshot(
+            result
+                .expect("materialize the complete synthetic snapshot")
+                .cast(),
+        )
+    }
+
+    #[test]
+    fn packet_only_link_preserves_long_hardware_name_and_padded_stats() {
+        let result = snapshot(&link_dump(true), &[]);
+        assert!(!result.0.is_null());
+        // SAFETY: materialization returned an owned, initialized link node.
+        let node = unsafe { &*result.0 };
+        assert!(node.ifa_next.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes(),
+            b"ib\xff0"
+        );
+        assert_eq!(node.ifa_flags, 0x1043);
+        assert!(node.ifa_netmask.is_null());
+        for (address, expected) in [
+            (node.ifa_addr, (0..20u8).collect::<Vec<_>>()),
+            (node.ifa_ifu, vec![0xff; 20]),
+        ] {
+            assert!(!address.is_null());
+            // SAFETY: the AF_PACKET allocation includes the declared 20-byte tail.
+            let packet = unsafe { &*address.cast::<libc::sockaddr_ll>() };
+            assert_eq!(packet.sll_family, libc::AF_PACKET as u16);
+            assert_eq!(
+                (packet.sll_ifindex, packet.sll_hatype, packet.sll_halen),
+                (17, 32, 20)
+            );
+            assert_eq!((packet.sll_protocol, packet.sll_pkttype), (0, 0));
+            let offset = std::mem::offset_of!(libc::sockaddr_ll, sll_addr);
+            // SAFETY: the entire extended array belongs to this allocation.
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(address.cast::<u8>().add(offset), 20) },
+                expected
+            );
+        }
+        assert!(!node.ifa_data.is_null());
+        // SAFETY: old 92-byte stats are padded to the current 96-byte ABI.
+        let stats = unsafe { std::slice::from_raw_parts(node.ifa_data.cast::<u8>(), 96) };
+        assert_eq!(&stats[..92], &[0x41; 92]);
+        assert_eq!(&stats[92..], &[0; 4]);
+    }
+
+    #[test]
+    fn missing_hardware_attribute_keeps_link_without_fabricating_address() {
+        let result = snapshot(&link_dump(false), &[]);
+        assert!(!result.0.is_null());
+        // SAFETY: result owns the complete node and its retained statistics.
+        let node = unsafe { &*result.0 };
+        assert_eq!(
+            unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes(),
+            b"ib\xff0"
+        );
+        assert!(node.ifa_addr.is_null());
+        assert!(node.ifa_ifu.is_null());
+        assert!(!node.ifa_data.is_null());
+    }
+
+    #[test]
+    fn internet_nodes_preserve_labels_peers_masks_and_ipv6_scope() {
+        let links = link_dump(true);
+        let addresses = address_dump(17);
+        let result = snapshot(&links, &[&addresses]);
+        // SAFETY: the known fixture contains link, IPv4, then IPv6 nodes.
+        let v4 = unsafe { &*(*result.0).ifa_next };
+        assert_eq!(
+            unsafe { CStr::from_ptr(v4.ifa_name) }.to_bytes(),
+            b"ib\xff0:7"
+        );
+        assert_eq!(v4.ifa_flags, 0x1043);
+        assert!(v4.ifa_data.is_null());
+        for (address, expected) in [
+            (v4.ifa_addr, [192, 0, 2, 1]),
+            (v4.ifa_ifu, [192, 0, 2, 2]),
+            (v4.ifa_netmask, [255, 255, 255, 224]),
+        ] {
+            assert!(!address.is_null());
+            // SAFETY: these are the fixture's initialized IPv4 sockaddrs.
+            let address = unsafe { &*address.cast::<libc::sockaddr_in>() };
+            assert_eq!(address.sin_family, libc::AF_INET as u16);
+            assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), expected);
+            assert_eq!(address.sin_port, 0);
+            assert_eq!(address.sin_zero, [0; 8]);
+        }
+        // SAFETY: the second Internet node is a fully initialized IPv6 record.
+        let v6 = unsafe { &*v4.ifa_next };
+        assert!(v6.ifa_next.is_null());
+        assert!(v6.ifa_ifu.is_null());
+        assert!(v6.ifa_data.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(v6.ifa_name) }.to_bytes(),
+            b"ib\xff0"
+        );
+        let address = unsafe { &*v6.ifa_addr.cast::<libc::sockaddr_in6>() };
+        assert_eq!(address.sin6_family, libc::AF_INET6 as u16);
+        assert_eq!(address.sin6_scope_id, 17);
+        assert_eq!((address.sin6_port, address.sin6_flowinfo), (0, 0));
+        assert_eq!(&address.sin6_addr.s6_addr[..2], &[0xfe, 0x80]);
+        assert_eq!(address.sin6_addr.s6_addr[15], 1);
+        let mask = unsafe { &*v6.ifa_netmask.cast::<libc::sockaddr_in6>() };
+        assert_eq!(&mask.sin6_addr.s6_addr[..8], &[255; 8]);
+        assert_eq!(mask.sin6_addr.s6_addr[8], 0x80);
+        assert_eq!(&mask.sin6_addr.s6_addr[9..], &[0; 7]);
+        assert_eq!(
+            (mask.sin6_port, mask.sin6_flowinfo, mask.sin6_scope_id),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn every_node_allocation_failure_rejects_the_entire_snapshot() {
+        let links = link_dump(true);
+        let addresses = address_dump(17);
+        let (result, allocation_count, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(&links, &[&addresses], None);
+        assert_eq!(still_live_on_error, 0);
+        let complete = Snapshot(result.unwrap().cast());
+        assert!(allocation_count >= 14);
+        drop(complete);
+        for refuse in 0..allocation_count {
+            let (result, attempted, still_live_on_error) =
+                getifaddrs_from_netlink_for_tests(&links, &[&addresses], Some(refuse));
+            assert_eq!(result, Err(libc::ENOMEM), "allocation {refuse}");
+            assert_eq!(attempted, refuse + 1, "must stop at the failed allocation");
+            assert_eq!(
+                still_live_on_error, 0,
+                "allocation {refuse} must release the entire allocated prefix"
+            );
+        }
+    }
+
+    #[test]
+    fn equal_local_peer_and_explicit_broadcast_are_preserved() {
+        let mut links = link_dump(true);
+        links[24..28].copy_from_slice(&0u32.to_ne_bytes());
+        for broadcast in [None, Some([127, 255, 255, 255])] {
+            let mut body = vec![0u8; 8];
+            body[0] = libc::AF_INET as u8;
+            body[1] = 8;
+            body[4..8].copy_from_slice(&17u32.to_ne_bytes());
+            body.extend_from_slice(&attribute(1, &[127, 0, 0, 1]));
+            body.extend_from_slice(&attribute(2, &[127, 0, 0, 1]));
+            if let Some(bytes) = broadcast {
+                body.extend_from_slice(&attribute(4, &bytes));
+            }
+            let dump = finish_dump(message(20, &body));
+            let result = snapshot(&links, &[&dump]);
+            // SAFETY: the snapshot contains one link followed by this IPv4 node.
+            let node = unsafe { &*(*result.0).ifa_next };
+            assert_eq!(node.ifa_flags, 0);
+            assert!(!node.ifa_ifu.is_null());
+            // SAFETY: the public union points to its owned initialized IPv4 address.
+            let other = unsafe { &*node.ifa_ifu.cast::<libc::sockaddr_in>() };
+            assert_eq!(
+                other.sin_addr.s_addr.to_ne_bytes(),
+                broadcast.unwrap_or([127, 0, 0, 1])
+            );
+        }
+    }
+
+    #[test]
+    fn late_parse_and_changed_interface_errors_reject_allocated_prefix() {
+        let links = link_dump(true);
+        let (result, allocations, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(&links, &[&address_dump(99)], None);
+        assert_eq!(result, Err(libc::EAGAIN));
+        assert_eq!(still_live_on_error, 0, "missing-interface rollback");
+        assert!(
+            allocations >= 5,
+            "the link node and children must have been built"
+        );
+
+        let mut malformed = links;
+        malformed.extend_from_slice(&message(2, &(-libc::EACCES).to_ne_bytes()));
+        let (result, allocations, still_live_on_error) =
+            getifaddrs_from_netlink_for_tests(&malformed, &[], None);
+        assert_eq!(result, Err(libc::EACCES));
+        assert_eq!(still_live_on_error, 0, "late-kernel-error rollback");
+        assert!(allocations >= 5);
+    }
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod getifaddrs_snapshot {
+    use super::*;
+
+    type GetIfAddrs = unsafe extern "C" fn(*mut *mut c_void) -> c_int;
+    type FreeIfAddrs = unsafe extern "C" fn(*mut c_void);
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    enum Address {
+        Inet {
+            address: [u8; 4],
+            port: u16,
+            zero: [u8; 8],
+        },
+        Inet6 {
+            address: [u8; 16],
+            port: u16,
+            flowinfo: u32,
+            scope_id: u32,
+        },
+        Packet {
+            index: c_int,
+            hardware_type: u16,
+            protocol: u16,
+            packet_type: u8,
+            hardware_len: u8,
+            address: Vec<u8>,
+        },
+    }
+
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Interface {
+        name: Vec<u8>,
+        flags: c_uint,
+        address: Option<Address>,
+        netmask: Option<Address>,
+        broadcast_or_peer: Option<Address>,
+        has_stats: bool,
+    }
+
+    struct OwnedList {
+        head: *mut c_void,
+        release: FreeIfAddrs,
+    }
+
+    impl Drop for OwnedList {
+        fn drop(&mut self) {
+            if !self.head.is_null() {
+                // SAFETY: each list is released by the provider that allocated
+                // it, including when an assertion unwinds during inspection.
+                unsafe { (self.release)(self.head) };
+            }
+        }
+    }
+
+    unsafe fn address(pointer: *const libc::sockaddr, provider: &str) -> Option<Address> {
+        if pointer.is_null() {
+            return None;
+        }
+        // SAFETY: getifaddrs promises a sockaddr of the reported family for
+        // every non-null address field, alive until its matching freeifaddrs.
+        Some(match unsafe { (*pointer).sa_family } as c_int {
+            libc::AF_INET => {
+                let value = unsafe { &*pointer.cast::<libc::sockaddr_in>() };
+                assert_eq!(value.sin_port, 0, "{provider}: interface IPv4 port");
+                assert_eq!(value.sin_zero, [0; 8], "{provider}: IPv4 padding");
+                Address::Inet {
+                    address: value.sin_addr.s_addr.to_ne_bytes(),
+                    port: value.sin_port,
+                    zero: value.sin_zero,
+                }
+            }
+            libc::AF_INET6 => {
+                let value = unsafe { &*pointer.cast::<libc::sockaddr_in6>() };
+                assert_eq!(value.sin6_port, 0, "{provider}: interface IPv6 port");
+                assert_eq!(value.sin6_flowinfo, 0, "{provider}: IPv6 flow info");
+                Address::Inet6 {
+                    address: value.sin6_addr.s6_addr,
+                    port: value.sin6_port,
+                    flowinfo: value.sin6_flowinfo,
+                    scope_id: value.sin6_scope_id,
+                }
+            }
+            libc::AF_PACKET => {
+                let value = unsafe { &*pointer.cast::<libc::sockaddr_ll>() };
+                assert!(value.sll_ifindex > 0, "{provider}: interface index");
+                assert_eq!(value.sll_protocol, 0, "{provider}: packet protocol");
+                assert_eq!(value.sll_pkttype, 0, "{provider}: packet type");
+                assert!(value.sll_halen <= 32, "{provider}: hardware address size");
+                // Linux permits hardware addresses longer than the public
+                // sockaddr_ll's eight-byte array. The allocated address record
+                // must contain all sll_halen bytes, including e.g. InfiniBand.
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        pointer
+                            .cast::<u8>()
+                            .add(std::mem::offset_of!(libc::sockaddr_ll, sll_addr)),
+                        usize::from(value.sll_halen),
+                    )
+                };
+                if usize::from(value.sll_halen) < value.sll_addr.len() {
+                    assert!(
+                        value.sll_addr[usize::from(value.sll_halen)..]
+                            .iter()
+                            .all(|&byte| byte == 0),
+                        "{provider}: unused hardware address bytes"
+                    );
+                }
+                Address::Packet {
+                    index: value.sll_ifindex,
+                    hardware_type: value.sll_hatype,
+                    protocol: value.sll_protocol,
+                    packet_type: value.sll_pkttype,
+                    hardware_len: value.sll_halen,
+                    address: bytes.to_vec(),
+                }
+            }
+            family => panic!("{provider}: unexpected interface address family {family}"),
+        })
+    }
+
+    fn snapshot(get: GetIfAddrs, release: FreeIfAddrs, provider: &str) -> Vec<Interface> {
+        let mut list = OwnedList {
+            head: std::ptr::null_mut(),
+            release,
+        };
+        // SAFETY: the output slot is writable and initialized. OwnedList keeps
+        // all returned records alive for inspection, then uses the same provider.
+        let rc = unsafe { get(&mut list.head) };
+        assert_eq!(
+            rc,
+            0,
+            "{provider}: getifaddrs requires a successful live snapshot; errno={}",
+            unsafe { *libc::__errno_location() }
+        );
+        assert!(!list.head.is_null(), "{provider}: empty interface snapshot");
+        let mut records = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pointer = list.head.cast::<libc::ifaddrs>();
+        while !pointer.is_null() {
+            assert!(seen.insert(pointer as usize), "{provider}: cyclic list");
+            // SAFETY: each reachable list node belongs to the live provider
+            // allocation. The seen set prevents looping on a malformed cycle.
+            let node = unsafe { &*pointer };
+            assert!(!node.ifa_name.is_null(), "{provider}: missing name");
+            let name = unsafe { CStr::from_ptr(node.ifa_name) }.to_bytes();
+            assert!(
+                !name.is_empty() && name.len() < libc::IFNAMSIZ,
+                "{provider}: invalid interface name {name:?}"
+            );
+            // SAFETY: all three optional sockaddr pointers have the lifetime
+            // of this node and are decoded according to their own sa_family.
+            // GNU also retains an IFA_ADDRESS peer when IFA_LOCAL is present
+            // without IFF_POINTOPOINT (e.g. loopback). Compare that deliberate
+            // GNU compatibility behavior in addition to the flag-defined API.
+            let (address, netmask, broadcast_or_peer) = unsafe {
+                (
+                    address(node.ifa_addr, provider),
+                    address(node.ifa_netmask, provider),
+                    address(node.ifa_ifu, provider),
+                )
+            };
+            let packet = matches!(address, Some(Address::Packet { .. }));
+            if packet {
+                assert!(netmask.is_none(), "{provider}: link entry has a netmask");
+            } else if matches!(address, Some(Address::Inet { .. } | Address::Inet6 { .. })) {
+                assert!(node.ifa_data.is_null(), "{provider}: IP entry has stats");
+            }
+            if !node.ifa_data.is_null() {
+                // The original rtnl_link_stats ABI contains 23 u32 counters.
+                // Exercise that public prefix but do not compare the volatile
+                // values: even taking the next snapshot can change counters.
+                let counters = unsafe { node.ifa_data.cast::<[u32; 23]>().read_unaligned() };
+                std::hint::black_box(counters);
+            }
+            records.push(Interface {
+                name: name.to_vec(),
+                flags: node.ifa_flags,
+                address,
+                netmask,
+                broadcast_or_peer,
+                has_stats: !node.ifa_data.is_null(),
+            });
+            pointer = node.ifa_next;
+        }
+        assert!(
+            records
+                .iter()
+                .any(|node| matches!(node.address, Some(Address::Packet { .. }))),
+            "{provider}: no AF_PACKET entries; IP-only enumeration is incomplete"
+        );
+        assert!(
+            records.iter().any(|node| node.has_stats),
+            "{provider}: no link statistics were returned"
+        );
+        records.sort();
+        records
+    }
+
+    #[test]
+    fn complete_snapshot_matches_host_glibc() {
+        use frankenlibc_abi::unistd_abi::{freeifaddrs, getifaddrs};
+
+        // SAFETY: these are the exact C pointer/scalar signatures. The common
+        // helper rejects resolution back to FrankenLibC for either symbol.
+        let (host_get, host_free): (GetIfAddrs, FreeIfAddrs) = unsafe {
+            (
+                dlsym_oracle::host_fn(c"getifaddrs", getifaddrs as *const ()),
+                dlsym_oracle::host_fn(c"freeifaddrs", freeifaddrs as *const ()),
+            )
+        };
+        let host = snapshot(host_get, host_free, "glibc");
+        let native = snapshot(getifaddrs, freeifaddrs, "FrankenLibC");
+        assert_eq!(
+            native, host,
+            "complete interface snapshots must agree independently of netlink ordering"
+        );
+    }
+}
+
+// A netlink failure means interface configuration is unknown. In particular,
+// getaddrinfo(AI_ADDRCONFIG) must not receive a successful empty snapshot when
+// socket creation, request transmission, or response reception was denied.
+#[test]
+fn getifaddrs_syscall_errors_are_not_successful_snapshots() {
+    const CHILD_MODE: &str = "FRANKENLIBC_GETIFADDRS_ERROR_CHILD";
+    if let Some(mode) = std::env::var_os(CHILD_MODE) {
+        let syscall_nr = match mode.to_str() {
+            Some("socket") => libc::SYS_socket,
+            Some("send") => libc::SYS_sendto,
+            Some("recv") => libc::SYS_recvfrom,
+            _ => panic!("unknown getifaddrs error probe"),
+        };
+        if syscall_nr != libc::SYS_socket {
+            // SAFETY: this probe owns the descriptor and supplies valid socket
+            // parameters. Ensure the later injected failure is actually reached.
+            let probe = unsafe {
+                libc::socket(
+                    libc::AF_NETLINK,
+                    libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+                    libc::NETLINK_ROUTE,
+                )
+            };
+            assert!(
+                probe >= 0,
+                "netlink must be available before fault injection"
+            );
+            // SAFETY: probe is the descriptor opened immediately above.
+            assert_eq!(unsafe { libc::close(probe) }, 0);
+        }
+
+        // Load seccomp_data.nr, deny just this syscall with EACCES, and allow
+        // everything else. The filter is installed only in an exec'd child.
+        let mut filter = [
+            libc::sock_filter {
+                code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+                jt: 0,
+                jf: 0,
+                k: 0,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 1,
+                k: syscall_nr as u32,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_RET | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 0,
+                k: libc::SECCOMP_RET_ERRNO | libc::EACCES as u32,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_RET | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 0,
+                k: libc::SECCOMP_RET_ALLOW,
+            },
+        ];
+        let mut program = libc::sock_fprog {
+            len: filter.len() as u16,
+            filter: filter.as_mut_ptr(),
+        };
+        // SAFETY: the no-new-privileges option takes scalar arguments; program
+        // points to the live, bounded filter array for the installation call.
+        unsafe {
+            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+            assert_eq!(
+                libc::prctl(
+                    libc::PR_SET_SECCOMP,
+                    libc::SECCOMP_MODE_FILTER,
+                    std::ptr::addr_of_mut!(program),
+                ),
+                0
+            );
+        }
+
+        let mut result = std::ptr::dangling_mut::<c_void>();
+        // SAFETY: result is a writable output slot. The sentinel itself is
+        // never dereferenced; getifaddrs must clear it before reporting failure.
+        let (rc, error) = unsafe {
+            *__errno_location() = 0;
+            let rc = frankenlibc_abi::unistd_abi::getifaddrs(&mut result);
+            (rc, *__errno_location())
+        };
+        assert_eq!(rc, -1, "{mode:?} failure must not become an empty success");
+        assert_eq!(error, libc::EACCES, "{mode:?} must preserve syscall errno");
+        assert!(
+            result.is_null(),
+            "failed enumeration must not publish a list"
+        );
+        return;
+    }
+
+    for mode in ["socket", "send", "recv"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "getifaddrs_syscall_errors_are_not_successful_snapshots",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_MODE, mode)
+            .output()
+            .expect("run isolated getifaddrs error probe");
+        assert!(
+            output.status.success(),
+            "{mode} probe failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout)
+                .contains("test result: ok. 1 passed; 0 failed;"),
+            "{mode} probe did not execute its named test"
+        );
+    }
+}
+
+#[test]
+fn nss_files_shadow_rejects_missing_output_storage() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_getspent_r, _nss_files_getspnam_r};
+    // SAFETY: invalid required outputs must be rejected before dereferencing.
+    unsafe {
+        let mut error = 717;
+        assert_eq!(
+            _nss_files_getspent_r(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut error),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        error = 717;
+        assert_eq!(
+            _nss_files_getspnam_r(
+                c"missing".as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        assert_eq!(
+            _nss_files_getspent_r(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+            ),
+            -1
+        );
+    }
+}

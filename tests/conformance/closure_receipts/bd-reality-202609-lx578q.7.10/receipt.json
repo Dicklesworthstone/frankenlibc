@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.10",
+  "contract": {
+    "behavior": "Math ABI reports domain errno on invalid infinities while preserving NaN and valid-input errno; aliases share the correction",
+    "acceptance_sha256": "43595212539ea641f01fb907d8a8401391cd7639bb49d1fc5664aa4c87479444",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/math_abi.rs": "0621615d6db9b78510e6ca8ca47c15051594d10a6586ce7a7b66643a2e07741b",
+        "crates/frankenlibc-abi/tests/conformance_math_errno.rs": "3f040fb9a7696af1b096db28573a82e910d2773df8549bfc532c4644ecfee8c3",
+        "crates/frankenlibc-core/src/math/exp.rs": "2f4a55a9b3a0f722f84a08dff51239dd20e2967f65f4a1825fb52758805a3d3b",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/math_abi.rs",
+      "crates/frankenlibc-core/src/math/exp.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_math_errno.rs"
+    ],
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-02T00:11:00Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/86309c083c6e4e1d/out/conformance_math_errno-86309c083c6e4e1d",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_math_errno",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/86309c083c6e4e1d/out/conformance_math_errno-86309c083c6e4e1d"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "infinite_domain_errors_set_errno_in_both_widths",
+        "domain_controls_preserve_existing_errno",
+        "domain_aliases_share_infinity_errno",
+        "math_errno_matches_glibc"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_math_errno",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:20.050362+00:00",
+    "finished_at": "2026-11-12T04:59:20.266197+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "0964b0776c2d29384d0406b964eb99d194c4d2f67e143e26025af557b71f1e85",
+    "stderr_sha256": "8ce4c715145f8c162c0ffd04edd2c0f7ec745b76ed85d67c412c3b5ae8de8935",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/86309c083c6e4e1d/out/conformance_math_errno-86309c083c6e4e1d",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:20.272750+00:00",
+    "finished_at": "2026-11-12T04:59:20.282109+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "8b843e277df3dbe18b4f8bb2adb6df5245ad66892f77bb83552c0d994a459454",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 7
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/86309c083c6e4e1d/out/conformance_math_errno-86309c083c6e4e1d": "c1ac8a6e3c9a13094cda8bda18de9f513185a2810a3931fc0dbb97680698566b"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/86309c083c6e4e1d/out/conformance_math_errno-86309c083c6e4e1d": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/math_abi.rs": "0621615d6db9b78510e6ca8ca47c15051594d10a6586ce7a7b66643a2e07741b",
+    "crates/frankenlibc-abi/tests/conformance_math_errno.rs": "3f040fb9a7696af1b096db28573a82e910d2773df8549bfc532c4644ecfee8c3",
+    "crates/frankenlibc-core/src/math/exp.rs": "2f4a55a9b3a0f722f84a08dff51239dd20e2967f65f4a1825fb52758805a3d3b",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "c1ac8a6e3c9a13094cda8bda18de9f513185a2810a3931fc0dbb97680698566b"
+}

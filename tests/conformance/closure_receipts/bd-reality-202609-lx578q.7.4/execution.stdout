@@ -1,0 +1,7 @@
+
+running 2 tests
+test eventfd2_creates_fd_with_initval_and_round_trips ... ok
+test eventfd2_invalid_flags_return_einval ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 652 filtered out; finished in 0.00s
+

@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.7.40",
+  "contract": {
+    "behavior": "Preserve GNU internal line-read EOF/error status, delimiter extraction and putback, and zero-length byte orientation for native and foreign FILEs; preserve sticky host orientation",
+    "acceptance_sha256": "098849bb3acd9bce352473597512cdfb528da3f75d27a59e1f69d11c3890caa5",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/io_internal_abi.rs",
+      "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/conformance_diff_getline.rs",
+      "crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs",
+      "tests/integration/fixture_stdio.c"
+    ],
+    "source": {
+      "commit": "d6c563c1492fc581de9759eeb00611a0a50e2ab3",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs": "1088351fc2392a1c4481fe910759aef6f12bb43058d4fd1230d6399a665077c4",
+        "crates/frankenlibc-abi/src/io_internal_abi.rs": "fc7dd47d08058c96cb9142f71f30b971dfb7bd1092f7e60f783ea40837d8bf6d",
+        "crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs": "5e1af54856358e6851a68d8c53c9def6efea2f4ea03a406d2647356792deec63",
+        "crates/frankenlibc-abi/tests/conformance_diff_getline.rs": "d38837f4f59cdb4d745b634808f8c3f5f5e2746ab51d5c939ff132bbdac43b8f",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "tests/integration/fixture_stdio.c": "2535bf630955fedc6aca7ac7804b7792776c41361ac93aa4696b4ab0e6458c68"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "hardened",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-07T00:29:08.712628940Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/dde409025bebee07/out/conformance_diff_getline-dde409025bebee07",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "hardened"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--config",
+        "profile.bench.debug=0",
+        "--config",
+        "profile.bench.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "conformance_diff_getline",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/dde409025bebee07/out/conformance_diff_getline-dde409025bebee07"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "diff_getline_via_fmemopen",
+        "diff_getdelim_with_colon_delimiter",
+        "diff_getline_empty_input",
+        "diff_getline_single_long_line",
+        "host_getline_grows_a_frankenlibc_segment_buffer_safely",
+        "fd_line_input_preserves_pushback_until_error_is_cleared",
+        "getline_diff_coverage_report",
+        "internal_line_input_matches_gnu_status_and_orientation",
+        "fwide_preserves_foreign_stream_orientation"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--config",
+      "profile.bench.debug=0",
+      "--config",
+      "profile.bench.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "conformance_diff_getline",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:06.623887+00:00",
+    "finished_at": "2026-11-12T04:59:07.058297+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e0b83853187aacf662d907d135bb259c28813e54205d36ce5c81eaf417c80730",
+    "stderr_sha256": "472d3b2517cc2d45d0fb45d2c4890fd8699e5377261a381ab4bce382d84db702",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/dde409025bebee07/out/conformance_diff_getline-dde409025bebee07",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T04:59:07.065162+00:00",
+    "finished_at": "2026-11-12T04:59:07.101006+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "f3430d9d90b20c71855d7f72790d5a6c2c9c7e773b8827fbe6c9115275e3a66a",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 9
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/dde409025bebee07/out/conformance_diff_getline-dde409025bebee07": "87d6e683fe4c315cdc0cd6d2b5218beedf7fbbe93bfaf693ab6b04ae66606a0f"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/dde409025bebee07/out/conformance_diff_getline-dde409025bebee07": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/glibc_internal_abi.rs": "1088351fc2392a1c4481fe910759aef6f12bb43058d4fd1230d6399a665077c4",
+    "crates/frankenlibc-abi/src/io_internal_abi.rs": "fc7dd47d08058c96cb9142f71f30b971dfb7bd1092f7e60f783ea40837d8bf6d",
+    "crates/frankenlibc-abi/tests/conformance_diff_fopencookie.rs": "5e1af54856358e6851a68d8c53c9def6efea2f4ea03a406d2647356792deec63",
+    "crates/frankenlibc-abi/tests/conformance_diff_getline.rs": "d38837f4f59cdb4d745b634808f8c3f5f5e2746ab51d5c939ff132bbdac43b8f",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "tests/integration/fixture_stdio.c": "2535bf630955fedc6aca7ac7804b7792776c41361ac93aa4696b4ab0e6458c68"
+  },
+  "executable_sha256": "87d6e683fe4c315cdc0cd6d2b5218beedf7fbbe93bfaf693ab6b04ae66606a0f"
+}
