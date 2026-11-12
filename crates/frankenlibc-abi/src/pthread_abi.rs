@@ -11401,12 +11401,14 @@ unsafe extern "C-unwind" fn continue_native_thread_exit() -> ! {
 /// threads that chain is glibc's.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
-    if host_cancellation_thread()
-        && let Some(register) = resolved_thread_register_cancel_raw()
-    {
-        unsafe { register(buf) };
-    } else if !buf.is_null() {
-        unsafe { register_native_cleanup(buf, false) };
+    if !buf.is_null() {
+        if host_cancellation_thread()
+            && let Some(f) = resolved_thread_register_cancel_raw()
+        {
+            unsafe { f(buf) };
+        } else {
+            unsafe { register_native_cleanup(buf, false) };
+        }
     }
 }
 
@@ -11414,36 +11416,41 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
 /// [`__pthread_register_cancel`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
-    if host_cancellation_thread()
-        && let Some(unregister) = resolved_thread_unregister_cancel_raw()
-    {
-        unsafe { unregister(buf) };
-    } else if !buf.is_null() {
-        unsafe { unregister_native_cleanup(buf, false) };
+    if !buf.is_null() {
+        if host_cancellation_thread()
+            && let Some(f) = resolved_thread_unregister_cancel_raw()
+        {
+            unsafe { f(buf) };
+        } else {
+            unsafe { unregister_native_cleanup(buf, false) };
+        }
     }
 }
 
 /// `__pthread_register_cancel_defer` — `pthread_cleanup_push_defer_np`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void) {
-    if host_cancellation_thread()
-        && let Some(register) = resolved_thread_register_cancel_defer_raw()
-    {
-        unsafe { register(buf) };
-    } else if !buf.is_null() {
-        unsafe { register_native_cleanup(buf, true) };
+    if !buf.is_null() {
+        if host_cancellation_thread()
+            && let Some(f) = resolved_thread_register_cancel_defer_raw()
+        {
+            unsafe { f(buf) };
+        } else {
+            unsafe { register_native_cleanup(buf, true) };
+        }
     }
 }
 
 /// `__pthread_unregister_cancel_restore` — `pthread_cleanup_pop_restore_np`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unregister_cancel_restore(buf: *mut c_void) {
-    if host_cancellation_thread()
-        && let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()
-    {
-        unsafe { unregister(buf) };
-    } else if !buf.is_null() {
-        unsafe { unregister_native_cleanup(buf, true) };
+    if !buf.is_null() {
+        let f = resolved_thread_unregister_cancel_restore_raw();
+        if host_cancellation_thread() && f.is_some() {
+            unsafe { (f.unwrap_unchecked())(buf) };
+        } else {
+            unsafe { unregister_native_cleanup(buf, true) };
+        }
     }
 }
 
@@ -11485,11 +11492,12 @@ pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr
 /// removed before their jump transfer, so continuation uses the owned chain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unwind_next(buf: *mut c_void) {
-    if host_cancellation_thread()
+    if !buf.is_null()
+        && host_cancellation_thread()
         && let Some(unwind_next) = resolved_thread_unwind_next_raw()
     {
         unsafe { unwind_next(buf) };
-    } else if !host_cancellation_thread() {
+    } else if !buf.is_null() && !host_cancellation_thread() {
         unsafe { continue_native_thread_exit() };
     }
     std::process::abort();

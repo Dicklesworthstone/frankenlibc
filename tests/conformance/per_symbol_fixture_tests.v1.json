@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-10-19T22:15:25Z",
-  "report_hash": "fadd017d9cc9fc0d",
+  "generated_at": "2026-11-12T23:37:16Z",
+  "report_hash": "bbbe4059cc2e6ea9",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1190,
-    "symbols_without_fixtures": 2929,
-    "fixture_coverage_pct": 28.9,
-    "implemented_coverage_pct": 30.4,
+    "symbols_with_fixtures": 1205,
+    "symbols_without_fixtures": 2914,
+    "fixture_coverage_pct": 29.3,
+    "implemented_coverage_pct": 30.5,
     "total_fixture_files": 132,
-    "total_cases": 2851,
+    "total_cases": 2875,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 721,
-    "symbols_with_errno_checks": 1187,
-    "total_quality_issues": 2387,
-    "uncovered_action_count": 1937
+    "symbols_with_edge_cases": 729,
+    "symbols_with_errno_checks": 1202,
+    "total_quality_issues": 2395,
+    "uncovered_action_count": 1930
   },
   "fixture_file_analyses": [
     {
@@ -350,8 +350,8 @@
       "file": "printf_conformance.json",
       "family": "printf_conformance",
       "valid": true,
-      "total_cases": 186,
-      "unique_symbols": 2,
+      "total_cases": 192,
+      "unique_symbols": 8,
       "issues": []
     },
     {
@@ -510,8 +510,8 @@
       "file": "rpc_legacy_network.json",
       "family": "rpc/legacy-network",
       "valid": true,
-      "total_cases": 24,
-      "unique_symbols": 12,
+      "total_cases": 42,
+      "unique_symbols": 21,
       "issues": []
     },
     {
@@ -3633,12 +3633,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [
-        "negative",
-        "null_input"
-      ],
+      "edge_cases_covered": [],
       "has_errno_check": true,
-      "quality_issues": []
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "__asprintf_chk",
@@ -10684,7 +10683,7 @@
     },
     {
       "symbol": "__pthread_register_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10704,7 +10703,7 @@
     },
     {
       "symbol": "__pthread_register_cancel_defer",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10884,7 +10883,7 @@
     },
     {
       "symbol": "__pthread_unregister_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10904,7 +10903,7 @@
     },
     {
       "symbol": "__pthread_unregister_cancel_restore",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -15146,7 +15145,7 @@
         "strict"
       ],
       "edge_cases_covered": [
-        "zero_length"
+        "null_input"
       ],
       "has_errno_check": true,
       "quality_issues": []
@@ -18299,11 +18298,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [
-        "null_input"
-      ],
+      "edge_cases_covered": [],
       "has_errno_check": true,
-      "quality_issues": []
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "authunix_create_default",
@@ -19080,7 +19079,7 @@
         "strict"
       ],
       "edge_cases_covered": [
-        "zero_length"
+        "null_input"
       ],
       "has_errno_check": true,
       "quality_issues": []
@@ -20927,11 +20926,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [],
+      "edge_cases_covered": [
+        "null_input"
+      ],
       "has_errno_check": true,
-      "quality_issues": [
-        "no edge cases detected"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "clnt_create",
@@ -21087,11 +21086,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [
-        "null_input"
-      ],
+      "edge_cases_covered": [],
       "has_errno_check": true,
-      "quality_issues": []
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "clnttcp_create",
@@ -33025,7 +33024,7 @@
     },
     {
       "symbol": "fwide",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -33034,9 +33033,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "fwprintf",
@@ -33280,11 +33277,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
       "has_errno_check": true,
-      "quality_issues": [
-        "no edge cases detected"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "get_nprocs",
@@ -43006,7 +43003,7 @@
     },
     {
       "symbol": "mq_notify",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -46948,14 +46945,20 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "printf_conformance.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -46963,14 +46966,19 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "printf_conformance.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -50736,64 +50744,100 @@
       "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "printf_conformance.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "register_printf_modifier",
       "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "printf_conformance.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "register_printf_specifier",
       "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "printf_conformance.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "register_printf_type",
       "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "printf_conformance.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "registerrpc",
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59272,12 +59316,20 @@
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59285,25 +59337,39 @@
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "svctcp_create",
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59311,42 +59377,60 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "svcudp_create",
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "svcudp_enablecache",
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59354,12 +59438,19 @@
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -59367,12 +59458,20 @@
       "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "rpc_legacy_network.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -60649,7 +60748,7 @@
     },
     {
       "symbol": "timer_create",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "syscall",
       "has_fixtures": false,
@@ -71932,13 +72031,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fwide",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "gai_cancel",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -74543,13 +74635,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "mq_notify",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "mq_open",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -75764,20 +75849,6 @@
       "symbol": "preadv64",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "printf_size",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "printf_size_info",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -78106,20 +78177,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "svcudp_bufcreate",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "svcudp_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "swapcontext",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -78486,13 +78543,6 @@
     {
       "symbol": "timelocal",
       "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "timer_create",
-      "status": "RawSyscall",
       "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"

@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "rpc/legacy-network",
   "captured_at": "2026-05-14T02:05:00Z",
-  "description": "Third-wave fixtures for legacy Sun RPC compatibility symbols. The cases cover client construction, diagnostics, DES-unavailable behavior, native local interface structure, netname classification, publickey failure, and invalid portmapper requests. The get_myaddress case inspects local interfaces without exposing their addresses; independent GNU selection and failure checks live in the RPC integration runner. No ambient RPC or DNS request, privileged port binding, filesystem socket, ambient UID, or raw stderr text is needed for these structured outputs.",
+  "description": "Third-wave fixtures for legacy Sun RPC compatibility symbols without network access. The cases cover client constructor behavior, diagnostics, DES software fallback and parity helpers, native local interface structure, netname classification, publickey failure, and invalid portmapper requests. The get_myaddress case inspects local interfaces without exposing their addresses; independent GNU selection and failure checks live in the RPC integration runner. No ambient RPC or DNS request, privileged port binding, filesystem socket, ambient UID, or raw stderr text is needed for these structured outputs.",
   "spec_reference": "glibc Sun RPC compatibility surface; FrankenLibC rpc_abi deterministic safe-default contract for clnt_sperror, client constructor handles, DES helpers, get_myaddress, getnetname, getpublickey, and getrpcport",
   "campaign": {
     "bead": "bd-gmbqy.11",
@@ -73,15 +73,15 @@
       "spec_section": "glibc Sun RPC raw client creation compatibility",
       "inputs": {
         "symbol": "clntraw_create",
-        "expected_class": "safe-default-null-client",
-        "strict_behavior": "returns NULL because raw client creation is unsupported",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "raw client creation requires unsupported legacy RPC runtime state",
+        "expected_class": "native-raw-client",
+        "strict_behavior": "returns the caller-thread native in-memory CLIENT handle without opening sockets",
+        "hardened_behavior": "same deterministic native CLIENT handle; no repair path",
+        "safe_default_rationale": "in-memory raw client lives in caller-thread state without descriptors or network access",
         "oracle_kind": "native_safe_default",
         "divergence_policy": "intentional local contract; ambient host RPC state is not consulted",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=clntraw_create;mode=strict;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=clntraw_create;mode=strict;expected_class=native-raw-client;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -91,15 +91,15 @@
       "spec_section": "glibc Sun RPC raw client creation compatibility",
       "inputs": {
         "symbol": "clntraw_create",
-        "expected_class": "safe-default-null-client",
-        "strict_behavior": "returns NULL because raw client creation is unsupported",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "raw client creation requires unsupported legacy RPC runtime state",
+        "expected_class": "native-raw-client",
+        "strict_behavior": "returns the caller-thread native in-memory CLIENT handle without opening sockets",
+        "hardened_behavior": "same deterministic native CLIENT handle; no repair path",
+        "safe_default_rationale": "in-memory raw client lives in caller-thread state without descriptors or network access",
         "oracle_kind": "native_safe_default",
         "divergence_policy": "intentional local contract; ambient host RPC state is not consulted",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=clntraw_create;mode=hardened;expected_class=safe-default-null-client;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=clntraw_create;mode=hardened;expected_class=native-raw-client;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -254,14 +254,14 @@
       "inputs": {
         "symbol": "des_setparity",
         "expected_class": "deterministic-des-noop",
-        "strict_behavior": "leaves the key unchanged because DES support is intentionally unavailable",
-        "hardened_behavior": "same deterministic no-op result; no repair path",
-        "safe_default_rationale": "DES is deprecated and unsupported, so parity mutation is not meaningful",
+        "strict_behavior": "normalizes each byte of the 8-byte DES key to odd parity in place",
+        "hardened_behavior": "same deterministic odd-parity normalization; no repair path",
+        "safe_default_rationale": "pure bitwise odd-parity normalization runs locally without hardware or network state",
         "oracle_kind": "native_safe_default",
         "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=des_setparity;mode=strict;expected_class=deterministic-des-noop;actual=KEY_UNCHANGED=1;failure_signature=none",
+      "expected_output": "symbol=des_setparity;mode=strict;expected_class=deterministic-des-noop;actual=KEY_UNCHANGED=0;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -272,14 +272,14 @@
       "inputs": {
         "symbol": "des_setparity",
         "expected_class": "deterministic-des-noop",
-        "strict_behavior": "leaves the key unchanged because DES support is intentionally unavailable",
-        "hardened_behavior": "same deterministic no-op result; no repair path",
-        "safe_default_rationale": "DES is deprecated and unsupported, so parity mutation is not meaningful",
+        "strict_behavior": "normalizes each byte of the 8-byte DES key to odd parity in place",
+        "hardened_behavior": "same deterministic odd-parity normalization; no repair path",
+        "safe_default_rationale": "pure bitwise odd-parity normalization runs locally without hardware or network state",
         "oracle_kind": "native_safe_default",
         "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=des_setparity;mode=hardened;expected_class=deterministic-des-noop;actual=KEY_UNCHANGED=1;failure_signature=none",
+      "expected_output": "symbol=des_setparity;mode=hardened;expected_class=deterministic-des-noop;actual=KEY_UNCHANGED=0;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -290,14 +290,14 @@
       "inputs": {
         "symbol": "ecb_crypt",
         "expected_class": "deterministic-des-unavailable",
-        "strict_behavior": "returns DESERR_NOHWDEVICE because DES support is intentionally unavailable",
-        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE result; no repair path",
-        "safe_default_rationale": "DES hardware is unavailable and deprecated, so the API fails closed",
+        "strict_behavior": "returns DESERR_NOHWDEVICE (1) in hardware mode after software ECB transform",
+        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE (1) result; no repair path",
+        "safe_default_rationale": "native software DES ECB runs without consulting hardware devices",
         "oracle_kind": "native_safe_default",
         "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=ecb_crypt;mode=strict;expected_class=deterministic-des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_output": "symbol=ecb_crypt;mode=strict;expected_class=deterministic-des-unavailable;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -308,14 +308,14 @@
       "inputs": {
         "symbol": "ecb_crypt",
         "expected_class": "deterministic-des-unavailable",
-        "strict_behavior": "returns DESERR_NOHWDEVICE because DES support is intentionally unavailable",
-        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE result; no repair path",
-        "safe_default_rationale": "DES hardware is unavailable and deprecated, so the API fails closed",
+        "strict_behavior": "returns DESERR_NOHWDEVICE (1) in hardware mode after software ECB transform",
+        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE (1) result; no repair path",
+        "safe_default_rationale": "native software DES ECB runs without consulting hardware devices",
         "oracle_kind": "native_safe_default",
         "divergence_policy": "intentional local contract; DES hardware and host crypto state are not consulted",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=ecb_crypt;mode=hardened;expected_class=deterministic-des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_output": "symbol=ecb_crypt;mode=hardened;expected_class=deterministic-des-unavailable;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },

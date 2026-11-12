@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-10-19T22:14:10Z",
+  "generated_at": "2026-11-12T23:38:27Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1190,
+    "symbols_with_fixtures": 1205,
     "coverage_pct": 29,
     "total_fixture_files": 132,
-    "total_fixture_cases": 2852,
+    "total_fixture_cases": 2876,
     "total_families": 57
   },
   "module_coverage": {
@@ -53,8 +53,8 @@
     },
     "glibc_internal_abi": {
       "total": 568,
-      "covered": 40,
-      "pct": 7
+      "covered": 46,
+      "pct": 8
     },
     "grp_abi": {
       "total": 8,
@@ -138,8 +138,8 @@
     },
     "rpc_abi": {
       "total": 159,
-      "covered": 36,
-      "pct": 23
+      "covered": 45,
+      "pct": 28
     },
     "runtime_policy": {
       "total": 1,
@@ -704,8 +704,14 @@
       ]
     },
     "printf": {
-      "function_count": 2,
+      "function_count": 8,
       "functions": [
+        "printf_size",
+        "printf_size_info",
+        "register_printf_function",
+        "register_printf_modifier",
+        "register_printf_specifier",
+        "register_printf_type",
         "snprintf",
         "sprintf"
       ]
@@ -885,7 +891,7 @@
       ]
     },
     "rpc": {
-      "function_count": 36,
+      "function_count": 45,
       "functions": [
         "__rpc_thread_createerr",
         "__rpc_thread_svc_fdset",
@@ -922,7 +928,16 @@
         "get_myaddress",
         "getnetname",
         "getpublickey",
-        "getrpcport"
+        "getrpcport",
+        "registerrpc",
+        "svcfd_create",
+        "svcraw_create",
+        "svctcp_create",
+        "svcudp_bufcreate",
+        "svcudp_create",
+        "svcudp_enablecache",
+        "svcunix_create",
+        "svcunixfd_create"
       ]
     },
     "scanf": {
@@ -2069,7 +2084,7 @@
     },
     "glibc_internal_compat_wave02": {
       "file": "glibc_internal_compat_wave02.json",
-      "sha256": "fafc4478d405d5ea3336f388d5284e4c5eefbd6efeb9b1964d3e9bdfc543b23f",
+      "sha256": "58af31363cb3fd8cb99bf02dfac97a6722416aeececd7c56bf9fc23ed86f2562",
       "case_count": 24,
       "functions": [
         "_IO_enable_locks",
@@ -2490,9 +2505,15 @@
     },
     "printf_conformance": {
       "file": "printf_conformance.json",
-      "sha256": "38798c618ac6d12ee90175cc1cdace7bddc53a49ced5b7b1992d9c3d15dff890",
-      "case_count": 186,
+      "sha256": "30c24c4ce750e440fb76be9041ca9562f79d5d455adbcf81185b069716eb3945",
+      "case_count": 192,
       "functions": [
+        "printf_size",
+        "printf_size_info",
+        "register_printf_function",
+        "register_printf_modifier",
+        "register_printf_specifier",
+        "register_printf_type",
         "snprintf",
         "sprintf"
       ],
@@ -2836,8 +2857,8 @@
     },
     "rpc_legacy_network": {
       "file": "rpc_legacy_network.json",
-      "sha256": "07b1645afb30b9a304ab85b21a399dc71f3004358c5cec7423ee27ace9cf5247",
-      "case_count": 24,
+      "sha256": "ffc833f9f5995f4b26f9dcb17052ce5cdff85ca829a331e6b0f4d8e51847ee99",
+      "case_count": 42,
       "functions": [
         "__rpc_thread_createerr",
         "__rpc_thread_svc_fdset",
@@ -2850,7 +2871,16 @@
         "authdes_create",
         "authdes_getucred",
         "authdes_pk_create",
-        "authnone_create"
+        "authnone_create",
+        "registerrpc",
+        "svcfd_create",
+        "svcraw_create",
+        "svctcp_create",
+        "svcudp_bufcreate",
+        "svcudp_create",
+        "svcudp_enablecache",
+        "svcunix_create",
+        "svcunixfd_create"
       ],
       "families": [
         "rpc"
@@ -2858,7 +2888,7 @@
     },
     "rpc_legacy_network_wave02": {
       "file": "rpc_legacy_network_wave02.json",
-      "sha256": "517f8df381f747ee586269ef41283fcd83b31c526add678dbce3a17aa05dd063",
+      "sha256": "18e05a964ccb548ab12fed2c750a8cacdac35786e25c4faf7ee43121bde3632f",
       "case_count": 24,
       "functions": [
         "authunix_create",
@@ -2880,7 +2910,7 @@
     },
     "rpc_legacy_network_wave03": {
       "file": "rpc_legacy_network_wave03.json",
-      "sha256": "95a7b59bdee973b81e76861c4d5f3f9bb4c2ff81fb874d5642d9a1b6c5c98f49",
+      "sha256": "eb1baed68fe86fec713fe7ae19b8fe0791192fb839be96b965b45b1957c5c57f",
       "case_count": 24,
       "functions": [
         "clnt_sperror",

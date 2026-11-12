@@ -342,7 +342,7 @@ fn contract_binds_fixture_capture_completion_items() -> TestResult {
         required_golden
             .get("verify_suite_total")
             .and_then(Value::as_u64),
-        Some(3369)
+        Some(3475)
     );
     assert_eq!(
         required_golden
@@ -393,7 +393,7 @@ fn checker_accepts_fixture_capture_completion_contract() -> TestResult {
     let output = expect_checker_success(&root, &out_dir)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("PASS: fixture capture pipeline completion contract files=127"),
+        stdout.contains("PASS: fixture capture pipeline completion contract files=132"),
         "pass marker missing from stdout: {stdout}"
     );
 
@@ -404,15 +404,15 @@ fn checker_accepts_fixture_capture_completion_contract() -> TestResult {
     let summary = object_field(&report, "summary")?;
     assert_eq!(
         summary.get("total_fixture_files").and_then(Value::as_u64),
-        Some(127)
+        Some(132)
     );
     assert_eq!(
         summary.get("total_fixture_cases").and_then(Value::as_u64),
-        Some(2792)
+        Some(2880)
     );
     assert_eq!(
         summary.get("unit_total_cases").and_then(Value::as_u64),
-        Some(2797)
+        Some(2885)
     );
     assert_eq!(
         summary.get("golden_case_count").and_then(Value::as_u64),
@@ -420,7 +420,7 @@ fn checker_accepts_fixture_capture_completion_contract() -> TestResult {
     );
     assert_eq!(
         summary.get("suite_total").and_then(Value::as_u64),
-        Some(3369)
+        Some(3475)
     );
     assert_eq!(
         summary.get("binding_count").and_then(Value::as_u64),
@@ -454,13 +454,13 @@ fn completion_contract_generates_pipeline_and_unit_probes() -> TestResult {
         pipeline_summary
             .get("total_fixture_files")
             .and_then(Value::as_u64),
-        Some(127)
+        Some(132)
     );
     assert_eq!(
         pipeline_summary
             .get("total_fixture_cases")
             .and_then(Value::as_u64),
-        Some(2792)
+        Some(2880)
     );
 
     let unit = read_json(&generated_unit(&out_dir))?;
@@ -469,11 +469,11 @@ fn completion_contract_generates_pipeline_and_unit_probes() -> TestResult {
         unit_summary
             .get("total_fixture_files")
             .and_then(Value::as_u64),
-        Some(127)
+        Some(132)
     );
     assert_eq!(
         unit_summary.get("total_cases").and_then(Value::as_u64),
-        Some(2797)
+        Some(2885)
     );
 
     let unit_log = std::fs::read_to_string(generated_unit_log(&out_dir))?;

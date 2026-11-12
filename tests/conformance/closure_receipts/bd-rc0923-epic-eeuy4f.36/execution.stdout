@@ -1,0 +1,9 @@
+
+running 4 tests
+test rpc_legacy_network_cases_bind_expected_behavior_and_log_fields ... ok
+test rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes ... ok
+test rpc_legacy_network_fixture_exists_and_names_campaign ... ok
+test rpc_legacy_network_fixture_executes_via_isolated_harness ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+

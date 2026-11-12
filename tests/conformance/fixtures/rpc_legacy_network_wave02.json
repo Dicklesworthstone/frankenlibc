@@ -37,13 +37,13 @@
       "spec_section": "glibc Sun RPC UNIX auth creation compatibility",
       "inputs": {
         "symbol": "authunix_create",
-        "expected_class": "safe-default-null-handle",
-        "strict_behavior": "returns NULL because legacy RPC auth creation is unsupported",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "legacy UNIX auth creation is intentionally unsupported and fails closed without host RPC state",
+        "expected_class": "native-authunix-handle",
+        "strict_behavior": "constructs a native AUTH_SYS handle from caller-supplied parameters without network access",
+        "hardened_behavior": "same deterministic native AUTH_SYS handle; no repair path",
+        "safe_default_rationale": "native UNIX credential serialization uses caller inputs only and destroys cleanly",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=authunix_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=authunix_create;mode=strict;expected_class=native-authunix-handle;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -53,13 +53,13 @@
       "spec_section": "glibc Sun RPC UNIX auth creation compatibility",
       "inputs": {
         "symbol": "authunix_create",
-        "expected_class": "safe-default-null-handle",
-        "strict_behavior": "returns NULL because legacy RPC auth creation is unsupported",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "legacy UNIX auth creation is intentionally unsupported and fails closed without host RPC state",
+        "expected_class": "native-authunix-handle",
+        "strict_behavior": "constructs a native AUTH_SYS handle from caller-supplied parameters without network access",
+        "hardened_behavior": "same deterministic native AUTH_SYS handle; no repair path",
+        "safe_default_rationale": "native UNIX credential serialization uses caller inputs only and destroys cleanly",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=authunix_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=authunix_create;mode=hardened;expected_class=native-authunix-handle;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -69,13 +69,13 @@
       "spec_section": "glibc Sun RPC default UNIX auth creation compatibility",
       "inputs": {
         "symbol": "authunix_create_default",
-        "expected_class": "safe-default-null-handle",
-        "strict_behavior": "returns NULL because host identity and RPC auth runtime are not consulted",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "default UNIX auth would otherwise depend on ambient host identity and RPC state",
+        "expected_class": "native-authunix-handle",
+        "strict_behavior": "constructs a native AUTH_SYS handle from local process credentials without network access",
+        "hardened_behavior": "same deterministic native AUTH_SYS handle; no repair path",
+        "safe_default_rationale": "only non-null handle presence is logged so concrete UID/GID/hostname values never leak",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=authunix_create_default;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=authunix_create_default;mode=strict;expected_class=native-authunix-handle;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -85,13 +85,13 @@
       "spec_section": "glibc Sun RPC default UNIX auth creation compatibility",
       "inputs": {
         "symbol": "authunix_create_default",
-        "expected_class": "safe-default-null-handle",
-        "strict_behavior": "returns NULL because host identity and RPC auth runtime are not consulted",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "default UNIX auth would otherwise depend on ambient host identity and RPC state",
+        "expected_class": "native-authunix-handle",
+        "strict_behavior": "constructs a native AUTH_SYS handle from local process credentials without network access",
+        "hardened_behavior": "same deterministic native AUTH_SYS handle; no repair path",
+        "safe_default_rationale": "only non-null handle presence is logged so concrete UID/GID/hostname values never leak",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=authunix_create_default;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=authunix_create_default;mode=hardened;expected_class=native-authunix-handle;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -134,12 +134,12 @@
       "inputs": {
         "symbol": "callrpc",
         "expected_class": "safe-default-failure",
-        "strict_behavior": "returns 0 without contacting portmapper or host RPC services",
-        "hardened_behavior": "same deterministic failure result; no repair path",
-        "safe_default_rationale": "one-shot RPC calls are intentionally unsupported and fail closed without network access",
+        "strict_behavior": "returns RPC_CANTENCODEARGS (1) for null XDR encoder before contacting portmapper",
+        "hardened_behavior": "same deterministic RPC_CANTENCODEARGS (1) result; no repair path",
+        "safe_default_rationale": "missing encoder callback is rejected locally without network access",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=callrpc;mode=strict;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_output": "symbol=callrpc;mode=strict;expected_class=safe-default-failure;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -150,12 +150,12 @@
       "inputs": {
         "symbol": "callrpc",
         "expected_class": "safe-default-failure",
-        "strict_behavior": "returns 0 without contacting portmapper or host RPC services",
-        "hardened_behavior": "same deterministic failure result; no repair path",
-        "safe_default_rationale": "one-shot RPC calls are intentionally unsupported and fail closed without network access",
+        "strict_behavior": "returns RPC_CANTENCODEARGS (1) for null XDR encoder before contacting portmapper",
+        "hardened_behavior": "same deterministic RPC_CANTENCODEARGS (1) result; no repair path",
+        "safe_default_rationale": "missing encoder callback is rejected locally without network access",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=callrpc;mode=hardened;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_output": "symbol=callrpc;mode=hardened;expected_class=safe-default-failure;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -166,12 +166,12 @@
       "inputs": {
         "symbol": "cbc_crypt",
         "expected_class": "des-unavailable",
-        "strict_behavior": "returns DESERR_NOHWDEVICE because DES RPC crypto is unsupported",
-        "hardened_behavior": "same deterministic unavailable result; no repair path",
-        "safe_default_rationale": "DES is deprecated and no hardware/device state is consulted",
+        "strict_behavior": "returns DESERR_NOHWDEVICE (1) in hardware mode after software CBC transform",
+        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE (1) result; no repair path",
+        "safe_default_rationale": "native software DES CBC runs without consulting hardware devices",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=cbc_crypt;mode=strict;expected_class=des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_output": "symbol=cbc_crypt;mode=strict;expected_class=des-unavailable;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -182,12 +182,12 @@
       "inputs": {
         "symbol": "cbc_crypt",
         "expected_class": "des-unavailable",
-        "strict_behavior": "returns DESERR_NOHWDEVICE because DES RPC crypto is unsupported",
-        "hardened_behavior": "same deterministic unavailable result; no repair path",
-        "safe_default_rationale": "DES is deprecated and no hardware/device state is consulted",
+        "strict_behavior": "returns DESERR_NOHWDEVICE (1) in hardware mode after software CBC transform",
+        "hardened_behavior": "same deterministic DESERR_NOHWDEVICE (1) result; no repair path",
+        "safe_default_rationale": "native software DES CBC runs without consulting hardware devices",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=cbc_crypt;mode=hardened;expected_class=des-unavailable;actual=RETURN=4;failure_signature=none",
+      "expected_output": "symbol=cbc_crypt;mode=hardened;expected_class=des-unavailable;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -198,12 +198,12 @@
       "inputs": {
         "symbol": "clnt_broadcast",
         "expected_class": "unsupported-broadcast",
-        "strict_behavior": "returns RPC_UNKNOWNPROTO without broadcasting on any interface",
-        "hardened_behavior": "same deterministic unsupported result; no repair path",
-        "safe_default_rationale": "broadcast RPC requires ambient network and portmapper state, so it fails closed",
+        "strict_behavior": "returns RPC_CANTENCODEARGS (1) for null encoder without broadcasting on any interface",
+        "hardened_behavior": "same deterministic RPC_CANTENCODEARGS (1) result; no repair path",
+        "safe_default_rationale": "null XDR encoder fails closed before interface discovery or network sockets",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=clnt_broadcast;mode=strict;expected_class=unsupported-broadcast;actual=RETURN=17;failure_signature=none",
+      "expected_output": "symbol=clnt_broadcast;mode=strict;expected_class=unsupported-broadcast;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -214,12 +214,12 @@
       "inputs": {
         "symbol": "clnt_broadcast",
         "expected_class": "unsupported-broadcast",
-        "strict_behavior": "returns RPC_UNKNOWNPROTO without broadcasting on any interface",
-        "hardened_behavior": "same deterministic unsupported result; no repair path",
-        "safe_default_rationale": "broadcast RPC requires ambient network and portmapper state, so it fails closed",
+        "strict_behavior": "returns RPC_CANTENCODEARGS (1) for null encoder without broadcasting on any interface",
+        "hardened_behavior": "same deterministic RPC_CANTENCODEARGS (1) result; no repair path",
+        "safe_default_rationale": "null XDR encoder fails closed before interface discovery or network sockets",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=clnt_broadcast;mode=hardened;expected_class=unsupported-broadcast;actual=RETURN=17;failure_signature=none",
+      "expected_output": "symbol=clnt_broadcast;mode=hardened;expected_class=unsupported-broadcast;actual=RETURN=1;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },

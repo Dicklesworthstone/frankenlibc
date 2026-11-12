@@ -366,32 +366,43 @@ fn checker_accepts_remaining_symbols_contract() -> TestResult {
         EXPECTED_REPORT_SCHEMA
     );
 
+    let symbol_matrix = read_json(&root.join("tests/conformance/symbol_fixture_coverage.v1.json"))?;
+    let symbol_summary = object_field(&symbol_matrix, "summary")?;
+    let per_symbol = read_json(&root.join(PER_SYMBOL_REPORT_REL))?;
+    let per_symbol_summary = object_field(&per_symbol, "summary")?;
+
     let summary = object_field(&report, "summary")?;
     assert_eq!(
         summary
             .get("total_exported_symbols")
             .and_then(Value::as_u64),
-        Some(4119)
+        symbol_summary
+            .get("total_exported_symbols")
+            .and_then(Value::as_u64)
     );
     assert_eq!(
         summary
             .get("covered_exported_symbols")
             .and_then(Value::as_u64),
-        Some(1166)
+        symbol_summary
+            .get("covered_exported_symbols")
+            .and_then(Value::as_u64)
     );
     assert_eq!(
         summary
             .get("uncovered_action_count")
             .and_then(Value::as_u64),
-        Some(1952)
+        per_symbol_summary
+            .get("uncovered_action_count")
+            .and_then(Value::as_u64)
     );
     assert_eq!(
         summary.get("total_cases").and_then(Value::as_u64),
-        Some(2787)
+        Some(2875)
     );
     assert_eq!(
         summary.get("golden_total").and_then(Value::as_u64),
-        Some(3369)
+        Some(3475)
     );
     assert_eq!(
         summary.get("binding_count").and_then(Value::as_u64),
@@ -429,25 +440,34 @@ fn checker_generates_per_symbol_probe() -> TestResult {
     let out_dir = unique_output_dir(&root, "probe")?;
     expect_checker_success(&root, &out_dir)?;
 
+    let per_symbol = read_json(&root.join(PER_SYMBOL_REPORT_REL))?;
+    let per_symbol_summary = object_field(&per_symbol, "summary")?;
+
     let generated = read_json(&generated_per_symbol(&out_dir))?;
     let summary = object_field(&generated, "summary")?;
     assert_eq!(
         summary.get("total_symbols").and_then(Value::as_u64),
-        Some(4119)
+        per_symbol_summary
+            .get("total_symbols")
+            .and_then(Value::as_u64)
     );
     assert_eq!(
         summary.get("symbols_with_fixtures").and_then(Value::as_u64),
-        Some(1164)
+        per_symbol_summary
+            .get("symbols_with_fixtures")
+            .and_then(Value::as_u64)
     );
     assert_eq!(
         summary.get("total_cases").and_then(Value::as_u64),
-        Some(2787)
+        Some(2875)
     );
     assert_eq!(
         summary
             .get("uncovered_action_count")
             .and_then(Value::as_u64),
-        Some(1952)
+        per_symbol_summary
+            .get("uncovered_action_count")
+            .and_then(Value::as_u64)
     );
 
     Ok(())
@@ -484,7 +504,7 @@ fn checker_rejects_understated_fixture_case_inventory() -> TestResult {
         .get_mut("summary")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "summary missing"))?;
-    summary.insert("total_cases".to_string(), json!(2786));
+    summary.insert("total_cases".to_string(), json!(2874));
     write_json(&report_path, &report)?;
 
     let output = run_checker(
@@ -509,7 +529,7 @@ fn checker_rejects_golden_suite_failure_drift() -> TestResult {
     let suite_obj = suite
         .as_object_mut()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "golden suite must be object"))?;
-    suite_obj.insert("passed".to_string(), json!(3368));
+    suite_obj.insert("passed".to_string(), json!(3474));
     suite_obj.insert("failed".to_string(), json!(1));
     write_json(&suite_path, &suite)?;
 

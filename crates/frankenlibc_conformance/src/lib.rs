@@ -147,6 +147,24 @@ unsafe extern "C" {
     fn host_vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int;
     #[link_name = "vasprintf"]
     fn host_vasprintf(strp: *mut *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "register_printf_specifier"]
+    fn host_register_printf_specifier(
+        spec: c_int,
+        render: *mut c_void,
+        arginfo: *mut c_void,
+    ) -> c_int;
+    #[link_name = "register_printf_modifier"]
+    fn host_register_printf_modifier(str_mod: *const libc::wchar_t) -> c_int;
+    #[link_name = "register_printf_type"]
+    fn host_register_printf_type(fct: *mut c_void) -> c_int;
+    #[link_name = "register_printf_function"]
+    fn host_register_printf_function(
+        spec: c_int,
+        render: *mut c_void,
+        arginfo: *mut c_void,
+    ) -> c_int;
+    #[link_name = "printf_size_info"]
+    fn host_printf_size_info(info: *const c_void, n: usize, argtypes: *mut c_int) -> c_int;
     #[link_name = "dlvsym"]
     fn host_dlvsym_direct(
         handle: *mut c_void,
@@ -160,6 +178,8 @@ unsafe extern "C" {
 // Host glibc search oracles, declared C-unwind to match fl's: both let a
 // comparator or walk action unwind through them.
 unsafe extern "C-unwind" {
+    #[link_name = "printf_size"]
+    fn host_printf_size(fp: *mut c_void, info: *const c_void, args: *const *const c_void) -> c_int;
     #[link_name = "tsearch"]
     fn host_tsearch(
         key: *const c_void,
@@ -744,7 +764,16 @@ pub fn execute_fixture_case(
         | "get_myaddress"
         | "getnetname"
         | "getpublickey"
-        | "getrpcport" => execute_rpc_legacy_network_case(function, inputs, mode),
+        | "getrpcport"
+        | "registerrpc"
+        | "svcfd_create"
+        | "svcraw_create"
+        | "svctcp_create"
+        | "svcudp_bufcreate"
+        | "svcudp_create"
+        | "svcudp_enablecache"
+        | "svcunix_create"
+        | "svcunixfd_create" => execute_rpc_legacy_network_case(function, inputs, mode),
         "_Exit"
         | "_Fork"
         | "__cxa_atexit"
@@ -1002,6 +1031,12 @@ pub fn execute_fixture_case(
         "ferror" => execute_ferror_case(inputs, mode),
         "fileno" => execute_fileno_case(inputs, mode),
         "sscanf" => execute_sscanf_case(inputs, mode),
+        "register_printf_specifier"
+        | "register_printf_modifier"
+        | "register_printf_type"
+        | "register_printf_function"
+        | "printf_size"
+        | "printf_size_info" => execute_gnu_printf_extension_case(function, inputs, mode),
         // ctype
         "isalpha" => execute_ctype_classify_case("isalpha", inputs, mode),
         "isdigit" => execute_ctype_classify_case("isdigit", inputs, mode),
@@ -1671,7 +1706,7 @@ fn execute_rpc_legacy_network_case(
     if function == "get_myaddress" {
         let mut execution = non_host_execution(impl_output);
         execution.note = Some(String::from(
-            "Native local interface structure only; provider-pinned GNU comparison, empty interfaces and discovery failures run in the RPC integration fixture",
+            "Native local interface structure only; ambient host RPC state is intentionally not consulted and provider-pinned GNU comparison, empty interfaces and discovery failures run in the RPC integration fixture",
         ));
         return Ok(execution);
     }
@@ -1849,6 +1884,7 @@ fn glibc_internal_compat_wave02_actual(function: &str) -> Result<String, String>
             let out_state = if out.is_null() {
                 "OUT_NULL"
             } else {
+                unsafe { frankenlibc_abi::malloc_abi::free(out.cast()) };
                 "OUT_PRESENT"
             };
             Ok(format!("ASPRINTF_RC_{rc}_ERRNO_{errno}_{out_state}"))
@@ -2253,7 +2289,7 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
         "authunix_create" => {
             let machname = CString::new("franken").map_err(|err| err.to_string())?;
             let mut groups = [0 as c_int; 1];
-            // SAFETY: the safe-default ABI path ignores all inputs and returns NULL.
+            // SAFETY: local hostname and single-group slice are valid for this constructor.
             let ptr = unsafe {
                 frankenlibc_abi::rpc_abi::authunix_create(
                     machname.as_ptr().cast_mut(),
@@ -2263,17 +2299,27 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                     groups.as_mut_ptr(),
                 )
             };
+            let nonnull = !ptr.is_null();
+            if nonnull {
+                // SAFETY: ptr is a freshly allocated native AUTH handle.
+                unsafe { rpc_legacy_network_destroy_auth(ptr) };
+            }
             Ok(format!(
                 "RETURN_PTR={}",
-                if ptr.is_null() { "NULL" } else { "NONNULL" }
+                if nonnull { "NONNULL" } else { "NULL" }
             ))
         }
         "authunix_create_default" => {
-            // SAFETY: this safe-default ABI path takes no arguments and returns NULL.
+            // SAFETY: native constructor reads local process credentials without network access.
             let ptr = unsafe { frankenlibc_abi::rpc_abi::authunix_create_default() };
+            let nonnull = !ptr.is_null();
+            if nonnull {
+                // SAFETY: ptr is a freshly allocated native AUTH handle.
+                unsafe { rpc_legacy_network_destroy_auth(ptr) };
+            }
             Ok(format!(
                 "RETURN_PTR={}",
-                if ptr.is_null() { "NULL" } else { "NONNULL" }
+                if nonnull { "NONNULL" } else { "NULL" }
             ))
         }
         "bindresvport" => {
@@ -2284,8 +2330,9 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
             Ok(format!("BINDRESVPORT_INVALID_FD_RC_{rc}_ERRNO_{errno}"))
         }
         "callrpc" => {
-            let host = CString::new("localhost").map_err(|err| err.to_string())?;
-            // SAFETY: the safe-default ABI path ignores procedure pointers and buffers.
+            let host = CString::new("127.0.0.1").map_err(|err| err.to_string())?;
+            // SAFETY: null encoder callback is rejected immediately with RPC_CANTENCODEARGS (1)
+            // before constructing a client or opening a socket.
             let rc = unsafe {
                 frankenlibc_abi::rpc_abi::callrpc(
                     host.as_ptr(),
@@ -2298,13 +2345,14 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                     core::ptr::null_mut(),
                 )
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!("RETURN={rc}"))
         }
         "cbc_crypt" => {
             let mut key = [0 as c_char; 8];
             let mut buf = [0 as c_char; 8];
             let mut ivec = [0 as c_char; 8];
-            // SAFETY: local fixed-size buffers are valid; ABI returns DES unavailable.
+            // SAFETY: local fixed-size buffers are valid; hardware mode (0) returns DESERR_NOHWDEVICE (1).
             let rc = unsafe {
                 frankenlibc_abi::rpc_abi::cbc_crypt(
                     key.as_mut_ptr(),
@@ -2317,7 +2365,8 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
             Ok(format!("RETURN={rc}"))
         }
         "clnt_broadcast" => {
-            // SAFETY: this deterministic ABI path ignores all RPC callback pointers.
+            // SAFETY: null encoder callback fails closed with RPC_CANTENCODEARGS (1)
+            // before discovering interfaces or opening a socket.
             let rc = unsafe {
                 frankenlibc_abi::rpc_abi::clnt_broadcast(
                     0,
@@ -2330,21 +2379,25 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                     core::ptr::null_mut(),
                 )
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!("RETURN={rc}"))
         }
         "clnt_create" => {
-            let host = CString::new("localhost").map_err(|err| err.to_string())?;
+            let host = CString::new("127.0.0.1").map_err(|err| err.to_string())?;
             let proto = CString::new("udp").map_err(|err| err.to_string())?;
-            // SAFETY: the safe-default ABI path ignores host/proto and returns NULL.
+            // SAFETY: numeric IPv4 host avoids DNS and program 1<<32 is rejected
+            // before opening a socket or contacting portmapper.
             let ptr = unsafe {
-                frankenlibc_abi::rpc_abi::clnt_create(host.as_ptr(), 0, 0, proto.as_ptr())
+                frankenlibc_abi::rpc_abi::clnt_create(host.as_ptr(), 1u64 << 32, 0, proto.as_ptr())
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!(
                 "RETURN_PTR={}",
                 if ptr.is_null() { "NULL" } else { "NONNULL" }
             ))
         }
         "clnt_pcreateerror" => {
+            rpc_legacy_network_reset_thread_errors();
             let prefix = CString::new("franken").map_err(|err| err.to_string())?;
             let captured = rpc_legacy_network_capture_stderr(|| {
                 // SAFETY: prefix is a valid C string; stderr is captured through local fds.
@@ -2373,12 +2426,14 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                     frankenlibc_abi::rpc_abi::clnt_perror(core::ptr::null_mut(), prefix.as_ptr())
                 }
             })?;
+            rpc_legacy_network_reset_errno();
             Ok(format!(
                 "STDERR_CLASS={}",
                 rpc_legacy_network_stderr_class(&captured)
             ))
         }
         "clnt_spcreateerror" => {
+            rpc_legacy_network_reset_thread_errors();
             let prefix = CString::new("franken").map_err(|err| err.to_string())?;
             // SAFETY: prefix is a valid C string; returned pointer is TLS-backed.
             let ptr = unsafe { frankenlibc_abi::rpc_abi::clnt_spcreateerror(prefix.as_ptr()) };
@@ -2402,6 +2457,7 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
             let ptr = unsafe {
                 frankenlibc_abi::rpc_abi::clnt_sperror(core::ptr::null_mut(), prefix.as_ptr())
             };
+            rpc_legacy_network_reset_errno();
             Ok(format!(
                 "RETURN_CSTR_CLASS={}",
                 rpc_legacy_network_cstr_class(ptr)
@@ -2410,26 +2466,31 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
         "clntraw_create" => {
             // The native in-memory constructor has no caller-owned pointer arguments.
             let ptr = frankenlibc_abi::rpc_abi::clntraw_create(0, 0);
+            let nonnull = !ptr.is_null();
+            if nonnull {
+                // SAFETY: ptr is the caller-thread raw CLIENT handle; clnt_destroy is a GNU no-op.
+                unsafe { rpc_legacy_network_destroy_client(ptr) };
+            }
             Ok(format!(
                 "RETURN_PTR={}",
-                if ptr.is_null() { "NULL" } else { "NONNULL" }
+                if nonnull { "NONNULL" } else { "NULL" }
             ))
         }
         "clnttcp_create" => {
             let mut addr = rpc_legacy_network_loopback_sockaddr();
             let mut sock = -1 as c_int;
-            // SAFETY: local sockaddr and sock slot are valid; the safe-default
-            // constructor returns NULL without opening a socket.
+            // SAFETY: unrepresentable LP64 program 1<<32 is rejected before opening a socket.
             let ptr = unsafe {
                 frankenlibc_abi::rpc_abi::clnttcp_create(
                     (&mut addr as *mut libc::sockaddr_in).cast(),
-                    0,
+                    1u64 << 32,
                     0,
                     &mut sock,
                     0,
                     0,
                 )
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!(
                 "RETURN_PTR={}",
                 if ptr.is_null() { "NULL" } else { "NONNULL" }
@@ -2442,12 +2503,11 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                 tv_usec: 0,
             };
             let mut sock = -1 as c_int;
-            // SAFETY: local sockaddr and sock slot are valid; the safe-default
-            // constructor returns NULL without querying portmapper or network state.
+            // SAFETY: unrepresentable LP64 program 1<<32 is rejected before opening a socket.
             let ptr = unsafe {
                 frankenlibc_abi::rpc_abi::clntudp_bufcreate(
                     (&mut addr as *mut libc::sockaddr_in).cast(),
-                    0,
+                    1u64 << 32,
                     0,
                     wait,
                     &mut sock,
@@ -2455,6 +2515,7 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                     0,
                 )
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!(
                 "RETURN_PTR={}",
                 if ptr.is_null() { "NULL" } else { "NONNULL" }
@@ -2467,17 +2528,17 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                 tv_usec: 0,
             };
             let mut sock = -1 as c_int;
-            // SAFETY: local sockaddr and sock slot are valid; the safe-default
-            // constructor returns NULL without querying portmapper or network state.
+            // SAFETY: unrepresentable LP64 program 1<<32 is rejected before opening a socket.
             let ptr = unsafe {
                 frankenlibc_abi::rpc_abi::clntudp_create(
                     (&mut addr as *mut libc::sockaddr_in).cast(),
-                    0,
+                    1u64 << 32,
                     0,
                     wait,
                     &mut sock,
                 )
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!(
                 "RETURN_PTR={}",
                 if ptr.is_null() { "NULL" } else { "NONNULL" }
@@ -2485,7 +2546,7 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
         }
         "clntunix_create" => {
             let mut sock = -1 as c_int;
-            // SAFETY: null address selects the deterministic safe-default path
+            // SAFETY: null address selects the deterministic rejection path
             // and avoids touching the filesystem or opening a UNIX socket.
             let ptr = unsafe {
                 frankenlibc_abi::rpc_abi::clntunix_create(
@@ -2497,6 +2558,7 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
                     0,
                 )
             };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!(
                 "RETURN_PTR={}",
                 if ptr.is_null() { "NULL" } else { "NONNULL" }
@@ -2505,15 +2567,15 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
         "des_setparity" => {
             let mut key = *b"Franken!";
             let before = key;
-            // SAFETY: key references a valid eight-byte DES key buffer; the ABI
-            // no-ops because DES support is intentionally unavailable.
+            // SAFETY: key references a valid eight-byte DES key buffer; native
+            // odd-parity normalization updates non-odd-parity bytes in place.
             unsafe { frankenlibc_abi::rpc_abi::des_setparity(key.as_mut_ptr().cast()) };
             Ok(format!("KEY_UNCHANGED={}", bool01(key == before)))
         }
         "ecb_crypt" => {
             let mut key = [0 as c_char; 8];
             let mut buf = [0 as c_char; 8];
-            // SAFETY: local fixed-size buffers are valid; ABI returns DES unavailable.
+            // SAFETY: local fixed-size buffers are valid; hardware mode (0) returns DESERR_NOHWDEVICE (1).
             let rc = unsafe {
                 frankenlibc_abi::rpc_abi::ecb_crypt(
                     key.as_mut_ptr(),
@@ -2566,10 +2628,194 @@ fn rpc_legacy_network_actual(function: &str) -> Result<String, String> {
             // by the provider-pinned RPC integration fixture.
             let rc =
                 unsafe { frankenlibc_abi::rpc_abi::getrpcport(host.as_ptr(), 1u64 << 32, 1, 17) };
+            rpc_legacy_network_reset_thread_errors();
             Ok(format!("RETURN={rc}"))
+        }
+        "registerrpc" => {
+            // SAFETY: null callback/XDR pointers are rejected locally without opening sockets.
+            let rc = unsafe {
+                frankenlibc_abi::rpc_abi::registerrpc(
+                    0,
+                    0,
+                    1,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!("RETURN={rc}"))
+        }
+        "svcfd_create" => {
+            // SAFETY: invalid fd -1 is rejected without adopting or opening any descriptor.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::svcfd_create(-1, 0, 0) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "svcraw_create" => {
+            let ptr = frankenlibc_abi::rpc_abi::svcraw_create();
+            let nonnull = !ptr.is_null();
+            if nonnull {
+                // SAFETY: ptr is the caller-thread raw SVCXPRT handle; svc_destroy is a GNU no-op.
+                unsafe { rpc_legacy_network_destroy_svcxprt(ptr) };
+            }
+            Ok(format!(
+                "RETURN_PTR={}",
+                if nonnull { "NONNULL" } else { "NULL" }
+            ))
+        }
+        "svctcp_create" => {
+            // SAFETY: negative descriptor != RPC_ANYSOCK (-1) is rejected without opening a socket.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::svctcp_create(-2, 0, 0) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "svcudp_bufcreate" => {
+            // SAFETY: negative descriptor != RPC_ANYSOCK (-1) is rejected without opening a socket.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::svcudp_bufcreate(-2, 0, 0) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "svcudp_create" => {
+            // SAFETY: negative descriptor != RPC_ANYSOCK (-1) is rejected without opening a socket.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::svcudp_create(-2) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "svcudp_enablecache" => {
+            // SAFETY: null transport handle is rejected deterministically without network access.
+            let rc =
+                unsafe { frankenlibc_abi::rpc_abi::svcudp_enablecache(core::ptr::null_mut(), 0) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!("RETURN={rc}"))
+        }
+        "svcunix_create" => {
+            // SAFETY: null pathname and invalid fd -2 fail closed without filesystem or socket side effects.
+            let ptr =
+                unsafe { frankenlibc_abi::rpc_abi::svcunix_create(-2, 0, 0, core::ptr::null()) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
+        }
+        "svcunixfd_create" => {
+            // SAFETY: invalid fd -1 is rejected without adopting or opening any descriptor.
+            let ptr = unsafe { frankenlibc_abi::rpc_abi::svcunixfd_create(-1, 0, 0) };
+            rpc_legacy_network_reset_thread_errors();
+            Ok(format!(
+                "RETURN_PTR={}",
+                if ptr.is_null() { "NULL" } else { "NONNULL" }
+            ))
         }
         other => Err(format!("unsupported RPC legacy fixture symbol: {other}")),
     }
+}
+
+#[repr(C)]
+struct ConformanceOpaqueAuth {
+    oa_flavor: c_int,
+    oa_base: *mut c_char,
+    oa_length: c_uint,
+}
+
+#[repr(C)]
+struct ConformanceAuthOps {
+    ah_nextverf: usize,
+    ah_marshal: usize,
+    ah_validate: usize,
+    ah_refresh: usize,
+    ah_destroy: unsafe extern "C" fn(*mut c_void),
+}
+
+#[repr(C)]
+struct ConformanceAuth {
+    ah_cred: ConformanceOpaqueAuth,
+    ah_verf: ConformanceOpaqueAuth,
+    ah_key: [u8; 8],
+    ah_ops: *const ConformanceAuthOps,
+    ah_private: *mut c_void,
+}
+
+#[repr(C)]
+struct ConformanceClientOps {
+    cl_call: usize,
+    cl_abort: usize,
+    cl_geterr: usize,
+    cl_freeres: usize,
+    cl_destroy: unsafe extern "C" fn(*mut c_void),
+    cl_control: usize,
+}
+
+#[repr(C)]
+struct ConformanceClient {
+    cl_auth: *mut c_void,
+    cl_ops: *const ConformanceClientOps,
+    cl_private: *mut c_void,
+}
+
+#[repr(C)]
+struct ConformanceSvcOps {
+    xp_recv: usize,
+    xp_stat: usize,
+    xp_getargs: usize,
+    xp_reply: usize,
+    xp_freeargs: usize,
+    xp_destroy: unsafe extern "C" fn(*mut c_void),
+}
+
+#[repr(C)]
+struct ConformanceSvcXprt {
+    xp_sock: c_int,
+    xp_port: u16,
+    xp_ops: *const ConformanceSvcOps,
+}
+
+unsafe fn rpc_legacy_network_destroy_auth(ptr: *mut c_void) {
+    let auth = ptr.cast::<ConformanceAuth>();
+    let ops = unsafe { (*auth).ah_ops };
+    if !ops.is_null() {
+        unsafe { ((*ops).ah_destroy)(ptr) };
+    }
+}
+
+unsafe fn rpc_legacy_network_destroy_client(ptr: *mut c_void) {
+    let client = ptr.cast::<ConformanceClient>();
+    let ops = unsafe { (*client).cl_ops };
+    if !ops.is_null() {
+        unsafe { ((*ops).cl_destroy)(ptr) };
+    }
+}
+
+unsafe fn rpc_legacy_network_destroy_svcxprt(ptr: *mut c_void) {
+    let xprt = ptr.cast::<ConformanceSvcXprt>();
+    let ops = unsafe { (*xprt).xp_ops };
+    if !ops.is_null() {
+        unsafe { ((*ops).xp_destroy)(ptr) };
+    }
+}
+
+fn rpc_legacy_network_reset_thread_errors() {
+    // SAFETY: __rpc_thread_createerr owns 32 writable TLS bytes on this thread.
+    unsafe {
+        let createerr = frankenlibc_abi::rpc_abi::__rpc_thread_createerr();
+        if !createerr.is_null() {
+            core::ptr::write_bytes(createerr.cast::<u8>(), 0, 32);
+        }
+    }
+    rpc_legacy_network_reset_errno();
 }
 
 fn rpc_legacy_network_zero_sockaddr() -> libc::sockaddr_in {
@@ -2659,8 +2905,8 @@ fn rpc_legacy_network_capture_stderr(emit: impl FnOnce()) -> Result<String, Stri
 fn rpc_legacy_network_stderr_class(captured: &str) -> &'static str {
     match captured {
         "" => "EMPTY",
-        "RPC: Success\n" => "RPC_SUCCESS_LINE",
-        "franken: Success\n" => "PREFIX_SUCCESS_LINE",
+        "RPC: Success" | "RPC: Success\n" => "RPC_SUCCESS_LINE",
+        "franken: RPC: Success\n" | "franken: Success\n" => "PREFIX_SUCCESS_LINE",
         _ => "OTHER",
     }
 }
@@ -2672,8 +2918,8 @@ fn rpc_legacy_network_cstr_class(ptr: *mut c_char) -> &'static str {
     // SAFETY: RPC diagnostic ABI functions return stable NUL-terminated TLS strings.
     let value = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
     match value.as_ref() {
-        "Success" => "SUCCESS",
-        "franken: Success" => "PREFIX_SUCCESS",
+        "RPC: Success" | "Success" => "SUCCESS",
+        "franken: RPC: Success\n" | "franken: Success" => "PREFIX_SUCCESS",
         _ => "OTHER",
     }
 }
@@ -6821,6 +7067,533 @@ fn execute_printf_case(
     }
 
     Ok(non_host_execution(impl_output))
+}
+
+#[repr(C)]
+struct ConformancePrintfInfo {
+    precision: c_int,
+    width: c_int,
+    spec: libc::wchar_t,
+    flags: u16,
+    user: u16,
+    pad: libc::wchar_t,
+}
+
+static IMPL_MOD_Q_BIT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+static HOST_MOD_Q_BIT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+static IMPL_USER_TYPE_ID: std::sync::OnceLock<c_int> = std::sync::OnceLock::new();
+static HOST_USER_TYPE_ID: std::sync::OnceLock<c_int> = std::sync::OnceLock::new();
+
+unsafe fn write_printf_callback_bytes(stream: *mut c_void, bytes: &[u8], use_host: bool) -> c_int {
+    let written = if use_host {
+        unsafe { libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream.cast()) }
+    } else {
+        unsafe { frankenlibc_abi::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) }
+    };
+    if written == bytes.len() {
+        bytes.len() as c_int
+    } else {
+        -1
+    }
+}
+
+unsafe extern "C" fn gnu_printf_j_arginfo(
+    _info: *const ConformancePrintfInfo,
+    n: usize,
+    argtypes: *mut c_int,
+    sizes: *mut c_int,
+) -> c_int {
+    if n > 0 {
+        unsafe {
+            *argtypes = 0; // PA_INT
+            if !sizes.is_null() {
+                *sizes = 0;
+            }
+        }
+    }
+    1
+}
+
+unsafe fn gnu_printf_j_render_common(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+    use_host: bool,
+) -> c_int {
+    let val = unsafe { *(*args).cast::<c_int>() };
+    let width = unsafe { (*info).width.max(0) as usize };
+    let body = format!("<{val}>");
+    let rendered = format!("{body:>width$}");
+    unsafe { write_printf_callback_bytes(stream, rendered.as_bytes(), use_host) }
+}
+
+unsafe extern "C" fn impl_gnu_printf_j_render(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    unsafe { gnu_printf_j_render_common(stream, info, args, false) }
+}
+
+unsafe extern "C" fn host_gnu_printf_j_render(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    unsafe { gnu_printf_j_render_common(stream, info, args, true) }
+}
+
+unsafe extern "C" fn gnu_printf_k_arginfo(
+    _info: *const ConformancePrintfInfo,
+    n: usize,
+    argtypes: *mut c_int,
+) -> c_int {
+    if n > 0 {
+        unsafe { *argtypes = 0 }; // PA_INT
+    }
+    1
+}
+
+unsafe fn gnu_printf_k_render_common(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+    use_host: bool,
+) -> c_int {
+    let val = unsafe { *(*args).cast::<c_int>() };
+    let width = unsafe { (*info).width.max(0) as usize };
+    let left = unsafe { ((*info).flags & (1 << 5)) != 0 };
+    let body = format!("[{val}]");
+    let rendered = if left {
+        format!("{body:<width$}")
+    } else {
+        format!("{body:>width$}")
+    };
+    unsafe { write_printf_callback_bytes(stream, rendered.as_bytes(), use_host) }
+}
+
+unsafe extern "C" fn impl_gnu_printf_k_render(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    unsafe { gnu_printf_k_render_common(stream, info, args, false) }
+}
+
+unsafe extern "C" fn host_gnu_printf_k_render(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    unsafe { gnu_printf_k_render_common(stream, info, args, true) }
+}
+
+unsafe fn gnu_printf_w_render_common(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+    mod_bit: u16,
+    use_host: bool,
+) -> c_int {
+    let val = unsafe { *(*args).cast::<c_int>() };
+    let has_mod = unsafe { ((*info).user & mod_bit) != 0 };
+    let rendered = if has_mod {
+        format!("Q:{val}")
+    } else {
+        format!("N:{val}")
+    };
+    unsafe { write_printf_callback_bytes(stream, rendered.as_bytes(), use_host) }
+}
+
+unsafe extern "C" fn impl_gnu_printf_w_render(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    let bit = *IMPL_MOD_Q_BIT.get().unwrap_or(&0);
+    unsafe { gnu_printf_w_render_common(stream, info, args, bit, false) }
+}
+
+unsafe extern "C" fn host_gnu_printf_w_render(
+    stream: *mut c_void,
+    info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    let bit = *HOST_MOD_Q_BIT.get().unwrap_or(&0);
+    unsafe { gnu_printf_w_render_common(stream, info, args, bit, true) }
+}
+
+unsafe extern "C" fn gnu_printf_sentinel_type_reader(mem: *mut c_void, _ap: *mut c_void) {
+    unsafe { *mem.cast::<u64>() = 0x5eed_cafe };
+}
+
+unsafe extern "C" fn impl_gnu_printf_v_arginfo(
+    _info: *const ConformancePrintfInfo,
+    n: usize,
+    argtypes: *mut c_int,
+    sizes: *mut c_int,
+) -> c_int {
+    if n > 0 {
+        unsafe {
+            *argtypes = *IMPL_USER_TYPE_ID.get().unwrap_or(&0);
+            if !sizes.is_null() {
+                *sizes = core::mem::size_of::<u64>() as c_int;
+            }
+        }
+    }
+    1
+}
+
+unsafe extern "C" fn host_gnu_printf_v_arginfo(
+    _info: *const ConformancePrintfInfo,
+    n: usize,
+    argtypes: *mut c_int,
+    sizes: *mut c_int,
+) -> c_int {
+    if n > 0 {
+        unsafe {
+            *argtypes = *HOST_USER_TYPE_ID.get().unwrap_or(&0);
+            if !sizes.is_null() {
+                *sizes = core::mem::size_of::<u64>() as c_int;
+            }
+        }
+    }
+    1
+}
+
+unsafe fn gnu_printf_v_render_common(
+    stream: *mut c_void,
+    args: *const *const c_void,
+    use_host: bool,
+) -> c_int {
+    let ptr_to_val = unsafe { *(*args).cast::<*const u64>() };
+    let val = unsafe { *ptr_to_val };
+    let rendered = format!("T:{val:x}");
+    unsafe { write_printf_callback_bytes(stream, rendered.as_bytes(), use_host) }
+}
+
+unsafe extern "C" fn impl_gnu_printf_v_render(
+    stream: *mut c_void,
+    _info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    unsafe { gnu_printf_v_render_common(stream, args, false) }
+}
+
+unsafe extern "C" fn host_gnu_printf_v_render(
+    stream: *mut c_void,
+    _info: *const ConformancePrintfInfo,
+    args: *const *const c_void,
+) -> c_int {
+    unsafe { gnu_printf_v_render_common(stream, args, true) }
+}
+
+fn run_gnu_printf_extension_arm(function: &str, use_host: bool) -> Result<String, String> {
+    let mut buf = [0 as c_char; 64];
+    match function {
+        "register_printf_specifier" => {
+            let rc = unsafe {
+                if use_host {
+                    host_register_printf_specifier(
+                        b'J' as c_int,
+                        host_gnu_printf_j_render as *const () as *mut c_void,
+                        gnu_printf_j_arginfo as *const () as *mut c_void,
+                    )
+                } else {
+                    frankenlibc_abi::glibc_internal_abi::register_printf_specifier(
+                        b'J' as c_int,
+                        impl_gnu_printf_j_render as *const () as *mut c_void,
+                        gnu_printf_j_arginfo as *const () as *mut c_void,
+                    )
+                }
+            };
+            let len = unsafe {
+                if use_host {
+                    libc::snprintf(buf.as_mut_ptr(), buf.len(), c"J=%6J".as_ptr(), 42 as c_int)
+                } else {
+                    frankenlibc_abi::stdio_abi::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"J=%6J".as_ptr(),
+                        42 as c_int,
+                    )
+                }
+            };
+            let out = render_printf_buffer(&buf, buf.len(), len);
+            Ok(format!("rc={rc};out={out};len={len}"))
+        }
+        "register_printf_modifier" => {
+            let mod_wstr: [libc::wchar_t; 2] = [b'Q' as libc::wchar_t, 0];
+            let bit = if use_host {
+                *HOST_MOD_Q_BIT.get_or_init(|| {
+                    let b = unsafe { host_register_printf_modifier(mod_wstr.as_ptr()) };
+                    if b > 0 { b as u16 } else { 0 }
+                })
+            } else {
+                *IMPL_MOD_Q_BIT.get_or_init(|| {
+                    let b = unsafe {
+                        frankenlibc_abi::glibc_internal_abi::register_printf_modifier(
+                            mod_wstr.as_ptr(),
+                        )
+                    };
+                    if b > 0 { b as u16 } else { 0 }
+                })
+            };
+            let reg_rc = unsafe {
+                if use_host {
+                    host_register_printf_specifier(
+                        b'W' as c_int,
+                        host_gnu_printf_w_render as *const () as *mut c_void,
+                        gnu_printf_j_arginfo as *const () as *mut c_void,
+                    )
+                } else {
+                    frankenlibc_abi::glibc_internal_abi::register_printf_specifier(
+                        b'W' as c_int,
+                        impl_gnu_printf_w_render as *const () as *mut c_void,
+                        gnu_printf_j_arginfo as *const () as *mut c_void,
+                    )
+                }
+            };
+            let len = unsafe {
+                if use_host {
+                    libc::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%QW|%W".as_ptr(),
+                        9 as c_int,
+                        9 as c_int,
+                    )
+                } else {
+                    frankenlibc_abi::stdio_abi::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%QW|%W".as_ptr(),
+                        9 as c_int,
+                        9 as c_int,
+                    )
+                }
+            };
+            let out = render_printf_buffer(&buf, buf.len(), len);
+            let pow2 = u8::from(bit > 0 && bit.is_power_of_two() && reg_rc == 0);
+            Ok(format!("bit_pow2={pow2};out={out};len={len}"))
+        }
+        "register_printf_type" => {
+            let ty = if use_host {
+                *HOST_USER_TYPE_ID.get_or_init(|| unsafe {
+                    host_register_printf_type(
+                        gnu_printf_sentinel_type_reader as *const () as *mut c_void,
+                    )
+                })
+            } else {
+                *IMPL_USER_TYPE_ID.get_or_init(|| unsafe {
+                    frankenlibc_abi::glibc_internal_abi::register_printf_type(
+                        gnu_printf_sentinel_type_reader as *const () as *mut c_void,
+                    )
+                })
+            };
+            let reg_rc = unsafe {
+                if use_host {
+                    host_register_printf_specifier(
+                        b'V' as c_int,
+                        host_gnu_printf_v_render as *const () as *mut c_void,
+                        host_gnu_printf_v_arginfo as *const () as *mut c_void,
+                    )
+                } else {
+                    frankenlibc_abi::glibc_internal_abi::register_printf_specifier(
+                        b'V' as c_int,
+                        impl_gnu_printf_v_render as *const () as *mut c_void,
+                        impl_gnu_printf_v_arginfo as *const () as *mut c_void,
+                    )
+                }
+            };
+            let len = unsafe {
+                if use_host {
+                    libc::snprintf(buf.as_mut_ptr(), buf.len(), c"%V".as_ptr(), 0usize)
+                } else {
+                    frankenlibc_abi::stdio_abi::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%V".as_ptr(),
+                        0usize,
+                    )
+                }
+            };
+            let out = render_printf_buffer(&buf, buf.len(), len);
+            let valid = u8::from(ty >= 8 && reg_rc == 0);
+            Ok(format!("type_valid={valid};out={out};len={len}"))
+        }
+        "register_printf_function" => {
+            let rc = unsafe {
+                if use_host {
+                    host_register_printf_function(
+                        b'K' as c_int,
+                        host_gnu_printf_k_render as *const () as *mut c_void,
+                        gnu_printf_k_arginfo as *const () as *mut c_void,
+                    )
+                } else {
+                    frankenlibc_abi::glibc_internal_abi::register_printf_function(
+                        b'K' as c_int,
+                        impl_gnu_printf_k_render as *const () as *mut c_void,
+                        gnu_printf_k_arginfo as *const () as *mut c_void,
+                    )
+                }
+            };
+            let len = unsafe {
+                if use_host {
+                    libc::snprintf(buf.as_mut_ptr(), buf.len(), c"%-5K".as_ptr(), 7 as c_int)
+                } else {
+                    frankenlibc_abi::stdio_abi::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%-5K".as_ptr(),
+                        7 as c_int,
+                    )
+                }
+            };
+            let out = render_printf_buffer(&buf, buf.len(), len);
+            Ok(format!("rc={rc};out={out};len={len}"))
+        }
+        "printf_size" => {
+            let (rc_lower, rc_upper) = unsafe {
+                if use_host {
+                    (
+                        host_register_printf_function(
+                            b'y' as c_int,
+                            host_printf_size as *const () as *mut c_void,
+                            host_printf_size_info as *const () as *mut c_void,
+                        ),
+                        host_register_printf_function(
+                            b'Y' as c_int,
+                            host_printf_size as *const () as *mut c_void,
+                            host_printf_size_info as *const () as *mut c_void,
+                        ),
+                    )
+                } else {
+                    (
+                        frankenlibc_abi::glibc_internal_abi::register_printf_function(
+                            b'y' as c_int,
+                            frankenlibc_abi::glibc_internal_abi::printf_size as *const ()
+                                as *mut c_void,
+                            frankenlibc_abi::glibc_internal_abi::printf_size_info as *const ()
+                                as *mut c_void,
+                        ),
+                        frankenlibc_abi::glibc_internal_abi::register_printf_function(
+                            b'Y' as c_int,
+                            frankenlibc_abi::glibc_internal_abi::printf_size as *const ()
+                                as *mut c_void,
+                            frankenlibc_abi::glibc_internal_abi::printf_size_info as *const ()
+                                as *mut c_void,
+                        ),
+                    )
+                }
+            };
+            let len = unsafe {
+                if use_host {
+                    libc::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%.1y|%.1Y".as_ptr(),
+                        1536.0_f64,
+                        1500.0_f64,
+                    )
+                } else {
+                    frankenlibc_abi::stdio_abi::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%.1y|%.1Y".as_ptr(),
+                        1536.0_f64,
+                        1500.0_f64,
+                    )
+                }
+            };
+            let out = render_printf_buffer(&buf, buf.len(), len);
+            let rc = if rc_lower == 0 && rc_upper == 0 {
+                0
+            } else {
+                -1
+            };
+            Ok(format!("rc={rc};out={out};len={len}"))
+        }
+        "printf_size_info" => {
+            let info_double = ConformancePrintfInfo {
+                precision: -1,
+                width: 0,
+                spec: b'Y' as libc::wchar_t,
+                flags: 0,
+                user: 0,
+                pad: b' ' as libc::wchar_t,
+            };
+            let info_ldouble = ConformancePrintfInfo {
+                flags: 1,
+                ..info_double
+            };
+            let mut arg0 = -1 as c_int;
+            let mut arg1 = -1 as c_int;
+            let (rc0, rc1) = unsafe {
+                if use_host {
+                    (
+                        host_printf_size_info(
+                            (&info_double as *const ConformancePrintfInfo).cast(),
+                            1,
+                            &mut arg0,
+                        ),
+                        host_printf_size_info(
+                            (&info_ldouble as *const ConformancePrintfInfo).cast(),
+                            1,
+                            &mut arg1,
+                        ),
+                    )
+                } else {
+                    (
+                        frankenlibc_abi::glibc_internal_abi::printf_size_info(
+                            (&info_double as *const ConformancePrintfInfo).cast(),
+                            1,
+                            &mut arg0,
+                        ),
+                        frankenlibc_abi::glibc_internal_abi::printf_size_info(
+                            (&info_ldouble as *const ConformancePrintfInfo).cast(),
+                            1,
+                            &mut arg1,
+                        ),
+                    )
+                }
+            };
+            Ok(format!("rc0={rc0};arg0={arg0};rc1={rc1};arg1={arg1}"))
+        }
+        other => Err(format!("unsupported GNU printf extension symbol: {other}")),
+    }
+}
+
+fn execute_gnu_printf_extension_case(
+    function: &str,
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let impl_output = run_gnu_printf_extension_arm(function, false)?;
+    if strict {
+        let host_output = run_gnu_printf_extension_arm(function, true)?;
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| format!("strict {function} host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
 }
 
 fn execute_dprintf_case(
@@ -16689,9 +17462,17 @@ fn pthread_sync_wave01_actual(function: &str) -> Result<String, String> {
             }
         }
         "__pthread_register_cancel" => {
+            #[repr(C, align(16))]
+            struct ConformanceUnwindBuf([u8; 256]);
+            let mut buf = ConformanceUnwindBuf([0; 256]);
             unsafe {
-                frankenlibc_abi::pthread_abi::__pthread_register_cancel(std::ptr::null_mut())
-            };
+                frankenlibc_abi::pthread_abi::__pthread_register_cancel(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+                frankenlibc_abi::pthread_abi::__pthread_unregister_cancel(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+            }
             Ok(String::from("REGISTER_CANCEL_NOOP"))
         }
         other => Err(format!("unsupported pthread sync fixture: {other}")),
@@ -16723,11 +17504,19 @@ fn execute_pthread_sync_wave02_case(
 }
 
 fn pthread_sync_wave02_actual(function: &str) -> Result<String, String> {
+    #[repr(C, align(16))]
+    struct ConformanceUnwindBuf([u8; 256]);
     match function {
         "__pthread_register_cancel_defer" => {
+            let mut buf = ConformanceUnwindBuf([0; 256]);
             unsafe {
-                frankenlibc_abi::pthread_abi::__pthread_register_cancel_defer(std::ptr::null_mut())
-            };
+                frankenlibc_abi::pthread_abi::__pthread_register_cancel_defer(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+                frankenlibc_abi::pthread_abi::__pthread_unregister_cancel_restore(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+            }
             Ok(String::from("REGISTER_CANCEL_DEFER_NOOP"))
         }
         "__pthread_rwlock_destroy" => {
@@ -16905,17 +17694,27 @@ fn pthread_sync_wave02_actual(function: &str) -> Result<String, String> {
             }
         }
         "__pthread_unregister_cancel" => {
+            let mut buf = ConformanceUnwindBuf([0; 256]);
             unsafe {
-                frankenlibc_abi::pthread_abi::__pthread_unregister_cancel(std::ptr::null_mut())
-            };
+                frankenlibc_abi::pthread_abi::__pthread_register_cancel(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+                frankenlibc_abi::pthread_abi::__pthread_unregister_cancel(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+            }
             Ok(String::from("UNREGISTER_CANCEL_NOOP"))
         }
         "__pthread_unregister_cancel_restore" => {
+            let mut buf = ConformanceUnwindBuf([0; 256]);
             unsafe {
+                frankenlibc_abi::pthread_abi::__pthread_register_cancel_defer(
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
                 frankenlibc_abi::pthread_abi::__pthread_unregister_cancel_restore(
-                    std::ptr::null_mut(),
-                )
-            };
+                    buf.0.as_mut_ptr().cast::<c_void>(),
+                );
+            }
             Ok(String::from("UNREGISTER_CANCEL_RESTORE_NOOP"))
         }
         "__pthread_unwind_next" => classify_pthread_unwind_next_abort(),
@@ -21244,16 +22043,27 @@ fn addmntent_fixture_actual() -> Result<String, String> {
 }
 
 fn aio_cancel_fixture_actual(function: &str) -> Result<String, String> {
+    let mut fds = [-1, -1];
+    let pipe_rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+    if pipe_rc != 0 {
+        return Err(format!("aio_cancel fixture pipe2 failed: {pipe_rc}"));
+    }
+    let fd = fds[0];
     let mut cb = completed_aiocb(0);
-    // SAFETY: The fixture aiocb buffer uses the field offsets consumed by the ABI
-    // implementation and is kept live for the whole call.
+    cb.write_i32(FixtureAiocb::FILDES, fd);
+    // SAFETY: `fd` is a valid open descriptor and `cb` uses the field offsets
+    // consumed by the ABI implementation and is kept live for the whole call.
     let rc = unsafe {
         match function {
-            "aio_cancel" => frankenlibc_abi::unistd_abi::aio_cancel(-1, cb.as_mut_c_void()),
-            "aio_cancel64" => frankenlibc_abi::unistd_abi::aio_cancel64(-1, cb.as_mut_c_void()),
+            "aio_cancel" => frankenlibc_abi::unistd_abi::aio_cancel(fd, cb.as_mut_c_void()),
+            "aio_cancel64" => frankenlibc_abi::unistd_abi::aio_cancel64(fd, cb.as_mut_c_void()),
             _ => unreachable!("validated aio_cancel function"),
         }
     };
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
     Ok(format!(
         "{}_COMPLETED_RC_{rc}",
         function.to_ascii_uppercase()
@@ -22650,8 +23460,18 @@ fn fdatasync_fixture_actual() -> Result<String, String> {
 fn fexecve_fixture_actual() -> Result<String, String> {
     let argv = exec_null_argv();
     let envp = exec_null_envp();
+    let mut fds = [-1, -1];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err("fexecve fixture pipe2 failed".to_string());
+    }
+    let closed_fd = fds[0];
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
     poll_event_loop_reset_errno();
-    let rc = unsafe { frankenlibc_abi::unistd_abi::fexecve(-1, argv.as_ptr(), envp.as_ptr()) };
+    let rc =
+        unsafe { frankenlibc_abi::unistd_abi::fexecve(closed_fd, argv.as_ptr(), envp.as_ptr()) };
     Ok(invalid_fd_error_result("FEXECVE_INVALID_FD", rc))
 }
 
@@ -23542,8 +24362,16 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             Ok(format!("FGETS_UNLOCKED_LEN_{len}_NEWLINE_{newline}"))
         }),
         "fgetwc_unlocked" => stdio_libio_tmpfile(|stream| {
-            write_controlled_stream_bytes(stream, b"A")?;
-            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let fd = unsafe { frankenlibc_abi::stdio_abi::fileno_unlocked(stream) };
+            if fd < 0 {
+                return Err("fgetwc_unlocked tmpfile missing fd".to_string());
+            }
+            if unsafe { libc::write(fd, b"A".as_ptr().cast(), 1) } != 1 {
+                return Err("fgetwc_unlocked fd seed write failed".to_string());
+            }
+            if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+                return Err("fgetwc_unlocked fd lseek failed".to_string());
+            }
             let got =
                 unsafe { frankenlibc_abi::wchar_abi::fgetwc_unlocked(stream.cast::<libc::FILE>()) };
             if got == u32::from(b'A') {
@@ -23553,8 +24381,16 @@ fn stdio_libio_symbol_actual(function: &str, inputs: &serde_json::Value) -> Resu
             }
         }),
         "fgetws_unlocked" => stdio_libio_tmpfile(|stream| {
-            write_controlled_stream_bytes(stream, b"wide\n")?;
-            unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
+            let fd = unsafe { frankenlibc_abi::stdio_abi::fileno_unlocked(stream) };
+            if fd < 0 {
+                return Err("fgetws_unlocked tmpfile missing fd".to_string());
+            }
+            if unsafe { libc::write(fd, b"wide\n".as_ptr().cast(), 5) } != 5 {
+                return Err("fgetws_unlocked fd seed write failed".to_string());
+            }
+            if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+                return Err("fgetws_unlocked fd lseek failed".to_string());
+            }
             let mut buf = [0 as libc::wchar_t; 8];
             let ptr = unsafe {
                 frankenlibc_abi::wchar_abi::fgetws_unlocked(
@@ -25410,20 +26246,57 @@ fn time_clock_clock_settime_actual() -> String {
     format!("CLOCK_SETTIME_INVALID_RC_{rc}")
 }
 
+static CONFORMANCE_UTC_TZ_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn with_conformance_utc_tz<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = CONFORMANCE_UTC_TZ_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let prev = unsafe {
+        let p = frankenlibc_abi::stdlib_abi::getenv(c"TZ".as_ptr());
+        if p.is_null() {
+            None
+        } else {
+            Some(CStr::from_ptr(p).to_owned())
+        }
+    };
+    unsafe {
+        frankenlibc_abi::stdlib_abi::setenv(c"TZ".as_ptr(), c"UTC0".as_ptr(), 1);
+        frankenlibc_abi::time_abi::tzset();
+    }
+    let out = f();
+    unsafe {
+        match prev {
+            Some(val) => {
+                frankenlibc_abi::stdlib_abi::setenv(c"TZ".as_ptr(), val.as_ptr(), 1);
+            }
+            None => {
+                frankenlibc_abi::stdlib_abi::unsetenv(c"TZ".as_ptr());
+            }
+        }
+        frankenlibc_abi::time_abi::tzset();
+    }
+    out
+}
+
 fn time_clock_ctime_actual(inputs: &serde_json::Value) -> Result<String, String> {
     let epoch = time_clock_epoch(inputs);
-    // SAFETY: epoch points at a fixture-owned time_t value.
-    let ptr = unsafe { frankenlibc_abi::time_abi::ctime(&epoch) };
-    Ok(time_clock_classify_asctime_ptr(ptr, "CTIME"))
+    Ok(with_conformance_utc_tz(|| {
+        // SAFETY: epoch points at a fixture-owned time_t value.
+        let ptr = unsafe { frankenlibc_abi::time_abi::ctime(&epoch) };
+        time_clock_classify_asctime_ptr(ptr, "CTIME")
+    }))
 }
 
 fn time_clock_ctime_r_actual(inputs: &serde_json::Value) -> Result<String, String> {
     let epoch = time_clock_epoch(inputs);
-    let mut buf = [0 as c_char; 26];
-    // SAFETY: epoch points at a fixture-owned time_t and buf is the
-    // POSIX-required 26-byte output buffer for ctime_r.
-    let ptr = unsafe { frankenlibc_abi::time_abi::ctime_r(&epoch, buf.as_mut_ptr()) };
-    Ok(time_clock_classify_asctime_ptr(ptr, "CTIME_R"))
+    Ok(with_conformance_utc_tz(|| {
+        let mut buf = [0 as c_char; 26];
+        // SAFETY: epoch points at a fixture-owned time_t and buf is the
+        // POSIX-required 26-byte output buffer for ctime_r.
+        let ptr = unsafe { frankenlibc_abi::time_abi::ctime_r(&epoch, buf.as_mut_ptr()) };
+        time_clock_classify_asctime_ptr(ptr, "CTIME_R")
+    }))
 }
 
 fn time_clock_difftime_actual(inputs: &serde_json::Value) -> String {
@@ -25561,14 +26434,16 @@ fn time_clock_calendar_gmtime_r_actual(inputs: &serde_json::Value) -> Result<Str
 
 fn time_clock_calendar_localtime_actual(inputs: &serde_json::Value) -> Result<String, String> {
     let epoch = time_clock_epoch(inputs);
-    // SAFETY: epoch points at a fixture-owned time_t value.
-    let ptr = unsafe { frankenlibc_abi::time_abi::localtime(&epoch) };
-    if ptr.is_null() {
-        return Ok(String::from("LOCALTIME_NULL"));
-    }
-    // SAFETY: ptr is non-null and points at the time ABI thread-local tm buffer.
-    let tm = unsafe { *ptr };
-    Ok(time_clock_calendar_format_utc_tm("LOCALTIME", tm))
+    Ok(with_conformance_utc_tz(|| {
+        // SAFETY: epoch points at a fixture-owned time_t value.
+        let ptr = unsafe { frankenlibc_abi::time_abi::localtime(&epoch) };
+        if ptr.is_null() {
+            return String::from("LOCALTIME_NULL");
+        }
+        // SAFETY: ptr is non-null and points at the time ABI thread-local tm buffer.
+        let tm = unsafe { *ptr };
+        time_clock_calendar_format_utc_tm("LOCALTIME", tm)
+    }))
 }
 
 fn time_clock_calendar_tm_for_epoch() -> libc::tm {
@@ -25576,22 +26451,24 @@ fn time_clock_calendar_tm_for_epoch() -> libc::tm {
 }
 
 fn time_clock_calendar_mktime_actual() -> String {
-    let mut tm = time_clock_calendar_tm_for_epoch();
-    // SAFETY: tm is a fixture-owned broken-down UTC calendar value; mktime
-    // normalizes it in place and returns the corresponding epoch.
-    let epoch = unsafe { frankenlibc_abi::time_abi::mktime(&mut tm) };
-    if epoch == TIME_CLOCK_LEAP_EPOCH
-        && tm.tm_year == 100
-        && tm.tm_mon == 1
-        && tm.tm_mday == 29
-        && tm.tm_hour == 0
-        && tm.tm_min == 0
-        && tm.tm_sec == 0
-    {
-        String::from("MKTIME_LEAP_DAY_EPOCH")
-    } else {
-        format!("MKTIME_EPOCH_{epoch}")
-    }
+    with_conformance_utc_tz(|| {
+        let mut tm = time_clock_calendar_tm_for_epoch();
+        // SAFETY: tm is a fixture-owned broken-down UTC calendar value; mktime
+        // normalizes it in place and returns the corresponding epoch under TZ=UTC0.
+        let epoch = unsafe { frankenlibc_abi::time_abi::mktime(&mut tm) };
+        if epoch == TIME_CLOCK_LEAP_EPOCH
+            && tm.tm_year == 100
+            && tm.tm_mon == 1
+            && tm.tm_mday == 29
+            && tm.tm_hour == 0
+            && tm.tm_min == 0
+            && tm.tm_sec == 0
+        {
+            String::from("MKTIME_LEAP_DAY_EPOCH")
+        } else {
+            format!("MKTIME_EPOCH_{epoch}")
+        }
+    })
 }
 
 fn time_clock_calendar_nanosleep_actual() -> String {
@@ -25685,21 +26562,30 @@ fn time_clock_calendar_timespec_getres_actual() -> String {
 }
 
 fn time_clock_calendar_timezone_actual() -> String {
-    // SAFETY: reading the exported timezone offset global does not capture the
-    // timezone database, raw TZ environment text, or wall-clock time.
-    let offset = unsafe { frankenlibc_abi::glibc_internal_abi::timezone };
-    if offset == 0 {
-        String::from("TIMEZONE_GLOBAL_ZERO")
-    } else {
-        format!("TIMEZONE_GLOBAL_NONZERO_{offset}")
-    }
+    with_conformance_utc_tz(|| {
+        // SAFETY: reading the exported timezone offset global under hermetic TZ=UTC0
+        // avoids leaking ambient host /etc/localtime configuration.
+        let offset = unsafe { frankenlibc_abi::glibc_internal_abi::timezone };
+        if offset == 0 {
+            String::from("TIMEZONE_GLOBAL_ZERO")
+        } else {
+            format!("TIMEZONE_GLOBAL_NONZERO_{offset}")
+        }
+    })
 }
 
 fn time_clock_calendar_tzset_actual() -> String {
-    // SAFETY: tzset is a process-global timezone initialization hook with no
-    // pointer inputs; FrankenLibC's current implementation is UTC-only.
-    unsafe { frankenlibc_abi::time_abi::tzset() };
-    time_clock_calendar_timezone_actual().replace("TIMEZONE_", "TZSET_")
+    with_conformance_utc_tz(|| {
+        // SAFETY: tzset is evaluated under hermetic TZ=UTC0 so host /etc/localtime
+        // cannot skew the fixture classification.
+        unsafe { frankenlibc_abi::time_abi::tzset() };
+        let offset = unsafe { frankenlibc_abi::glibc_internal_abi::timezone };
+        if offset == 0 {
+            String::from("TZSET_GLOBAL_ZERO")
+        } else {
+            format!("TZSET_GLOBAL_NONZERO_{offset}")
+        }
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27961,38 +28847,36 @@ fn fortify_checked_wrapper_wave01_actual(
         ) => fortify_fgets_actual(function),
         ("__fgetws_chk", "wide_request_exceeds_destlen_abort_without_stream_capture") => {
             Ok(fortify_classify_abort_signal(|| unsafe {
-                // (buf, buflen, n, stream): the DESTINATION is second and the
-                // REQUEST is third, in both fl's signature and glibc's. These
-                // arguments were (buflen=4, n=2) -- a request SMALLER than the
-                // destination -- under a case named
-                // wide_request_exceeds_destlen, so the case asserted an abort
-                // that correctly never came. Measured: fl aborts for
-                // (buflen=2, n=8) and passes through for (buflen=4, n=2), so
-                // the check works and the arguments were transposed. bd-ud2wq0.
-                frankenlibc_abi::fortify_abi::__fgetws_chk(
-                    std::ptr::null_mut::<c_int>(),
-                    2,
-                    4,
-                    std::ptr::null_mut(),
-                );
+                // glibc and FrankenLibC (bd-917hzv) abort in __fgetws_chk when
+                // n > buflen AND read content fills `buflen` without a newline
+                // (proving truncation against the caller's destination bound).
+                let stream = frankenlibc_abi::stdio_abi::tmpfile();
+                if !stream.is_null() {
+                    let fd = frankenlibc_abi::stdio_abi::fileno_unlocked(stream);
+                    let _ = libc::write(fd, b"abcdef".as_ptr().cast(), 6);
+                    let _ = libc::lseek(fd, 0, libc::SEEK_SET);
+                    let mut buf = [0 as c_int; 8];
+                    frankenlibc_abi::fortify_abi::__fgetws_chk(buf.as_mut_ptr(), 2, 4, stream);
+                    let _ = frankenlibc_abi::stdio_abi::fclose(stream);
+                }
             }))
         }
         ("__fgetws_unlocked_chk", "wide_request_exceeds_destlen_abort_without_stream_capture") => {
             Ok(fortify_classify_abort_signal(|| unsafe {
-                // (buf, buflen, n, stream): the DESTINATION is second and the
-                // REQUEST is third, in both fl's signature and glibc's. These
-                // arguments were (buflen=4, n=2) -- a request SMALLER than the
-                // destination -- under a case named
-                // wide_request_exceeds_destlen, so the case asserted an abort
-                // that correctly never came. Measured: fl aborts for
-                // (buflen=2, n=8) and passes through for (buflen=4, n=2), so
-                // the check works and the arguments were transposed. bd-ud2wq0.
-                frankenlibc_abi::fortify_abi::__fgetws_unlocked_chk(
-                    std::ptr::null_mut::<c_int>(),
-                    2,
-                    4,
-                    std::ptr::null_mut(),
-                );
+                let stream = frankenlibc_abi::stdio_abi::tmpfile();
+                if !stream.is_null() {
+                    let fd = frankenlibc_abi::stdio_abi::fileno_unlocked(stream);
+                    let _ = libc::write(fd, b"abcdef".as_ptr().cast(), 6);
+                    let _ = libc::lseek(fd, 0, libc::SEEK_SET);
+                    let mut buf = [0 as c_int; 8];
+                    frankenlibc_abi::fortify_abi::__fgetws_unlocked_chk(
+                        buf.as_mut_ptr(),
+                        2,
+                        4,
+                        stream,
+                    );
+                    let _ = frankenlibc_abi::stdio_abi::fclose(stream);
+                }
             }))
         }
         ("__fortify_fail", "fork_isolated_fortify_fail_abort_without_stderr_capture") => {
@@ -28792,11 +29676,16 @@ fn fortify_vfwprintf_tmpfile_actual() -> Result<String, String> {
     // SAFETY: impl_fn is fl's own __vfwprintf_chk (correct for the fl-native
     // stream); the %d argument matches the wide format.
     let rc = unsafe { shim_drive_vfwprintf(impl_fn, stream, 0, fmt.as_ptr(), 9_i32) };
-    // Read back the multibyte rendering for the marker.
+    // Read back the multibyte rendering via the underlying descriptor so C11
+    // wide stream orientation on `stream` is respected.
     let mut back = [0u8; 32];
-    unsafe { frankenlibc_abi::stdio_abi::rewind(stream) };
-    let got = unsafe {
-        frankenlibc_abi::stdio_abi::fread(back.as_mut_ptr().cast(), 1, back.len(), stream)
+    unsafe { frankenlibc_abi::stdio_abi::fflush(stream) };
+    let fd = unsafe { frankenlibc_abi::stdio_abi::fileno_unlocked(stream) };
+    let got = if fd >= 0 && unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } >= 0 {
+        let n = unsafe { libc::read(fd, back.as_mut_ptr().cast(), back.len()) };
+        usize::try_from(n.max(0)).unwrap_or(0)
+    } else {
+        0
     };
     unsafe { frankenlibc_abi::stdio_abi::fclose(stream) };
     let content =

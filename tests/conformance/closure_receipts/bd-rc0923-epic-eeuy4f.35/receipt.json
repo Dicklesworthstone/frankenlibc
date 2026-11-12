@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.35",
+  "contract": {
+    "behavior": "All fourteen formerly stubbed SunRPC client/service/cache/auth contracts execute native/raw-syscall transports, diagnostics, replay caching, and teardown without stub relabeling.",
+    "acceptance_sha256": "ffee9e8a25129aa04d5a908009a5c1ec5fa5052b085d71577b05ac219cd75865",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/rpc_abi.rs",
+      "crates/frankenlibc-abi/src/rpc_svc.rs",
+      "crates/frankenlibc-abi/src/rpc_svc_cache.rs",
+      "crates/frankenlibc-abi/src/rpc_client_create.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs"
+    ],
+    "source": {
+      "commit": "b598324db100944bcef257271e6e7286e1e5efdd",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/rpc_abi.rs": "4eaef1ba96a54b8cac83be5e66330afc4f6af36e6151f0a190c20d25779053c8",
+        "crates/frankenlibc-abi/src/rpc_client_create.rs": "52b04e07ac1ccfd6e3f939a953d13e07932401bf63a334f604aff31be951cc43",
+        "crates/frankenlibc-abi/src/rpc_svc.rs": "3986482df0601ae181844ca173e01160db3cb2065e8aa136b0e2a5938107c40e",
+        "crates/frankenlibc-abi/src/rpc_svc_cache.rs": "81a61a34993b72753a609921453072bbc2311ccaa39a3aaf7ab60f1b7a5dfe2e",
+        "crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs": "cffaf42d3c5bb12507649f72152b97841ee703034fcf15cf1eac4e8c02982b30",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-20T22:14:20.457002Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-abi",
+        "--test",
+        "rpc_svc_cache_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "replay_owns_request_and_reply_bytes",
+        "service_generation_invalidates_cached_results",
+        "staged_identity_survives_decoder_mutation",
+        "staged_reply_updates_reuse_a_single_fifo_entry"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-abi",
+      "--test",
+      "rpc_svc_cache_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T23:43:08.796831+00:00",
+    "finished_at": "2026-11-12T23:43:09.012633+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "f49b1570734df8037184e09e7664054172fdd54964d370b43b2c50f47f529e64",
+    "stderr_sha256": "e7b124f5ea0d47395dc8127f014c14ae88d8d18b6c258c7f495accec37c70de8",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T23:43:09.014907+00:00",
+    "finished_at": "2026-11-12T23:43:09.024712+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "7f83d727508dc621c4168ffa36794c725ae5d1b72a6136cb36dee0abdf8ff176",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 11
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4": "4c44a2d99910209a179583c531267e7565b3087091077342e4a5ddec1a39af56"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/rpc_abi.rs": "4eaef1ba96a54b8cac83be5e66330afc4f6af36e6151f0a190c20d25779053c8",
+    "crates/frankenlibc-abi/src/rpc_client_create.rs": "52b04e07ac1ccfd6e3f939a953d13e07932401bf63a334f604aff31be951cc43",
+    "crates/frankenlibc-abi/src/rpc_svc.rs": "3986482df0601ae181844ca173e01160db3cb2065e8aa136b0e2a5938107c40e",
+    "crates/frankenlibc-abi/src/rpc_svc_cache.rs": "81a61a34993b72753a609921453072bbc2311ccaa39a3aaf7ab60f1b7a5dfe2e",
+    "crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs": "cffaf42d3c5bb12507649f72152b97841ee703034fcf15cf1eac4e8c02982b30",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+  },
+  "executable_sha256": "4c44a2d99910209a179583c531267e7565b3087091077342e4a5ddec1a39af56"
+}

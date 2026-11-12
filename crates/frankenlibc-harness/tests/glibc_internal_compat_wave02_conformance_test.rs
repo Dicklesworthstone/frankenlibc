@@ -22,13 +22,12 @@ const FIRST_WAVE_SYMBOLS: &[&str] = &[
     "__bsd_getpgrp",
 ];
 
-const SUPPORTED_SYMBOLS: &[&str] = &["_IO_enable_locks", "__b64_ntop", "__b64_pton"];
+const SUPPORTED_SYMBOLS: &[&str] = &["_IO_enable_locks", "__asprintf", "__b64_ntop", "__b64_pton"];
 const DETERMINISTIC_FALLBACK_SYMBOLS: &[&str] = &[
     "__abort_msg",
     "__adjtimex",
     "__after_morecore_hook",
     "__arch_prctl",
-    "__asprintf",
     "__backtrace",
     "__backtrace_symbols",
     "__backtrace_symbols_fd",

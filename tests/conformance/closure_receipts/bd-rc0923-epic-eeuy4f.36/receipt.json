@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.36",
+  "contract": {
+    "behavior": "SunRPC client/service/auth/XDR and GNU custom printf conformance fixtures, isolated conformance matrix (3475/3475), and golden strict+hardened verification suites pass with zero failures.",
+    "acceptance_sha256": "47a1696554ea1203a263d615232e0219a6045b82616f00a4af55263d99e5b306",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc_conformance/src/lib.rs",
+      "tests/conformance/fixtures/rpc_legacy_network.json",
+      "tests/conformance/fixtures/rpc_legacy_network_wave02.json",
+      "tests/conformance/fixtures/rpc_legacy_network_wave03.json"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs"
+    ],
+    "source": {
+      "commit": "b598324db100944bcef257271e6e7286e1e5efdd",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs": "af54e6aad80c41c00f663ac90ddd6999dd9052d3394f76d7045fe54973fc7d8b",
+        "crates/frankenlibc_conformance/src/lib.rs": "20fd99caaf669f19174df8a79525a0bb79b123e8ef90fd18eda18c5a457f4328",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "tests/conformance/fixtures/rpc_legacy_network.json": "ffc833f9f5995f4b26f9dcb17052ce5cdff85ca829a331e6b0f4d8e51847ee99",
+        "tests/conformance/fixtures/rpc_legacy_network_wave02.json": "18e05a964ccb548ab12fed2c750a8cacdac35786e25c4faf7ee43121bde3632f",
+        "tests/conformance/fixtures/rpc_legacy_network_wave03.json": "eb1baed68fe86fec713fe7ae19b8fe0791192fb839be96b965b45b1957c5c57f"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-20T22:14:20.859612Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "rpc_legacy_network_conformance_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "rpc_legacy_network_fixture_exists_and_names_campaign",
+        "rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes",
+        "rpc_legacy_network_cases_bind_expected_behavior_and_log_fields",
+        "rpc_legacy_network_fixture_executes_via_isolated_harness"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "rpc_legacy_network_conformance_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T23:51:12.388316+00:00",
+    "finished_at": "2026-11-12T23:51:12.702831+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "fe393303ad98f2e20669b6a214f35545266897a1024f4eea59bd77339a402e5b",
+    "stderr_sha256": "a1991aff33e3ff38eddde7689c3b6e716c1a91166b5734aa7197e45314cc0296",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T23:51:12.705739+00:00",
+    "finished_at": "2026-11-12T23:51:13.120414+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "381a66ab74de4b0b951fd2a909ea0ad5d82c9ad9a60a077951ecbf7f927da372",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 4
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87": "8cef815d8faa75d8a66aeeacc401dfca171748add59d578a1144d71950833305"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs": "af54e6aad80c41c00f663ac90ddd6999dd9052d3394f76d7045fe54973fc7d8b",
+    "crates/frankenlibc_conformance/src/lib.rs": "20fd99caaf669f19174df8a79525a0bb79b123e8ef90fd18eda18c5a457f4328",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "tests/conformance/fixtures/rpc_legacy_network.json": "ffc833f9f5995f4b26f9dcb17052ce5cdff85ca829a331e6b0f4d8e51847ee99",
+    "tests/conformance/fixtures/rpc_legacy_network_wave02.json": "18e05a964ccb548ab12fed2c750a8cacdac35786e25c4faf7ee43121bde3632f",
+    "tests/conformance/fixtures/rpc_legacy_network_wave03.json": "eb1baed68fe86fec713fe7ae19b8fe0791192fb839be96b965b45b1957c5c57f"
+  },
+  "executable_sha256": "8cef815d8faa75d8a66aeeacc401dfca171748add59d578a1144d71950833305"
+}

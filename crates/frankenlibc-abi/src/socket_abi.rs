@@ -95,7 +95,7 @@ pub unsafe extern "C" fn bind(sockfd: c_int, addr: *const libc::sockaddr, addrle
         return -1;
     }
 
-    if addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize) {
+    if sockfd >= 0 && (addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize)) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -245,7 +245,7 @@ pub(crate) unsafe fn connect_cp(sockfd: c_int, addr: *const libc::sockaddr, addr
         return -1;
     }
 
-    if addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize) {
+    if sockfd >= 0 && (addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize)) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;

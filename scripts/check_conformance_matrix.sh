@@ -18,7 +18,7 @@ if [[ ! -f "${BASELINE}" ]]; then
 fi
 
 echo "--- generating conformance matrix ---"
-cargo run -p frankenlibc-harness --bin harness -- conformance-matrix \
+TZ=UTC0 cargo run -p frankenlibc-harness --bin harness -- conformance-matrix \
   --fixture "${ROOT}/tests/conformance/fixtures" \
   --isolate \
   --case-timeout-ms 5000 \

@@ -3,12 +3,12 @@
   "campaigns": [
     {
       "campaign_id": "fcq-unistd-process-filesystem",
-      "current_coverage_pct": 27.51,
+      "current_coverage_pct": 27.6,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 29.29,
+      "expected_coverage_after_first_wave_pct": 29.38,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "fanotify_init",
@@ -47,8 +47,8 @@
       "structured_log_fields": "required_log_fields",
       "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
       "target_covered": 186,
-      "target_total": 676,
-      "target_uncovered": 490,
+      "target_total": 674,
+      "target_uncovered": 488,
       "title": "unistd/process/filesystem syscall fixture wave",
       "workload_domains": [
         "shell_coreutils",
@@ -107,12 +107,12 @@
     },
     {
       "campaign_id": "fcq-pthread-sync",
-      "current_coverage_pct": 64.6,
+      "current_coverage_pct": 63.3,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh",
         "scripts/e2e_suite.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 75.22,
+      "expected_coverage_after_first_wave_pct": 74.31,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "pthread_condattr_init",
@@ -153,8 +153,8 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
-      "target_covered": 73,
-      "target_total": 113,
+      "target_covered": 69,
+      "target_total": 109,
       "target_uncovered": 40,
       "title": "pthread synchronization and cancellation fixture wave",
       "workload_domains": [
@@ -332,11 +332,11 @@
     },
     {
       "campaign_id": "fcq-glibc-internal-compat",
-      "current_coverage_pct": 8.68,
+      "current_coverage_pct": 9.27,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 12.04,
+      "expected_coverage_after_first_wave_pct": 12.64,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "__ctype32_toupper",
@@ -374,9 +374,9 @@
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
-      "target_covered": 31,
-      "target_total": 357,
-      "target_uncovered": 326,
+      "target_covered": 33,
+      "target_total": 356,
+      "target_uncovered": 323,
       "title": "glibc internal compatibility triage fixture wave",
       "workload_domains": [
         "startup_linking",
@@ -386,11 +386,11 @@
     },
     {
       "campaign_id": "fcq-rpc-legacy-network",
-      "current_coverage_pct": 22.69,
+      "current_coverage_pct": 24.37,
       "deterministic_e2e_scripts": [
         "scripts/check_fixture_coverage_prioritizer.sh"
       ],
-      "expected_coverage_after_first_wave_pct": 32.77,
+      "expected_coverage_after_first_wave_pct": 34.45,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
         "getsecretkey",
@@ -417,20 +417,20 @@
         "unsupported_claim"
       ],
       "scores": {
-        "coverage_gap_score": 92,
+        "coverage_gap_score": 90,
         "feature_gap_risk_score": 0,
         "hard_parts_risk_tags": [],
         "implementation_complexity_score": 4,
         "parity_risk_score": 3,
-        "priority_score": 1092,
+        "priority_score": 1090,
         "semantic_risk_score": 0,
         "workload_risk_score": 2
       },
       "structured_log_fields": "required_log_fields",
       "symbol_family": "sunrpc/auth/xdr compatibility and deterministic unsupported behavior",
-      "target_covered": 27,
+      "target_covered": 29,
       "target_total": 119,
-      "target_uncovered": 92,
+      "target_uncovered": 90,
       "title": "legacy RPC compatibility fixture wave",
       "workload_domains": [
         "resolver_nss",
@@ -786,7 +786,7 @@
       ]
     }
   ],
-  "generated_at_utc": "2026-10-19T21:41:00Z",
+  "generated_at_utc": "2026-11-12T04:05:00Z",
   "inputs": {
     "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
     "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
@@ -858,7 +858,7 @@
     ]
   },
   "summary": {
-    "all_uncovered_target_symbols": 1930,
+    "all_uncovered_target_symbols": 1923,
     "campaign_count": 8,
     "covered_modules": [
       "fortify_abi",
@@ -887,7 +887,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "selected_target_uncovered_symbols": 1724,
+    "selected_target_uncovered_symbols": 1717,
     "total_first_wave_fixture_count": 88
   }
 }

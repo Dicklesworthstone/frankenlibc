@@ -1765,6 +1765,60 @@
       "expected_output": "       hel",
       "expected_errno": 0,
       "mode": "strict"
+    },
+    {
+      "name": "gnu_register_printf_specifier_custom_j",
+      "function": "register_printf_specifier",
+      "spec_section": "POSIX / GNU printf.h register_printf_specifier",
+      "inputs": { "symbol": "register_printf_specifier", "spec": "J", "value": 42 },
+      "expected_output": "rc=0;out=J=  <42>;len=8",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "gnu_register_printf_modifier_custom_q",
+      "function": "register_printf_modifier",
+      "spec_section": "POSIX / GNU printf.h register_printf_modifier",
+      "inputs": { "symbol": "register_printf_modifier", "modifier": "Q", "value": 9 },
+      "expected_output": "bit_pow2=1;out=Q:9|N:9;len=7",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "gnu_register_printf_type_custom_v",
+      "function": "register_printf_type",
+      "spec_section": "POSIX / GNU printf.h register_printf_type",
+      "inputs": { "symbol": "register_printf_type", "spec": "V" },
+      "expected_output": "type_valid=1;out=T:5eedcafe;len=10",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "gnu_register_printf_function_custom_k",
+      "function": "register_printf_function",
+      "spec_section": "POSIX / GNU printf.h register_printf_function",
+      "inputs": { "symbol": "register_printf_function", "spec": "K", "value": 7 },
+      "expected_output": "rc=0;out=[7]  ;len=5",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "gnu_printf_size_binary_and_si_units",
+      "function": "printf_size",
+      "spec_section": "POSIX / GNU printf.h printf_size",
+      "inputs": { "symbol": "printf_size", "values": [1536.0, 1500.0] },
+      "expected_output": "rc=0;out=1.5k|1.5K;len=9",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "gnu_printf_size_info_argtypes",
+      "function": "printf_size_info",
+      "spec_section": "POSIX / GNU printf.h printf_size_info",
+      "inputs": { "symbol": "printf_size_info" },
+      "expected_output": "rc0=1;arg0=7;rc1=1;arg1=263",
+      "expected_errno": 0,
+      "mode": "both"
     }
   ]
 }

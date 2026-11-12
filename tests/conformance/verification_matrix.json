@@ -228,10 +228,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 216,
-    "total_entries": 216,
+    "total_critique_beads": 218,
+    "total_entries": 218,
     "by_coverage_status": {
-      "complete": 154,
+      "complete": 156,
       "partial": 1,
       "missing": 61
     },
@@ -243,8 +243,8 @@
         "missing": 16
       },
       "P1": {
-        "total": 118,
-        "complete": 101,
+        "total": 120,
+        "complete": 103,
         "partial": 0,
         "missing": 17
       },
@@ -263,20 +263,20 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 215,
-        "complete": 154,
+        "required": 217,
+        "complete": 156,
         "partial": 0,
         "missing": 61
       },
       "e2e_scripts": {
-        "required": 115,
-        "complete": 80,
+        "required": 117,
+        "complete": 82,
         "partial": 0,
         "missing": 35
       },
       "structured_logs": {
-        "required": 146,
-        "complete": 73,
+        "required": 148,
+        "complete": 75,
         "partial": 0,
         "missing": 73
       },
@@ -293,22 +293,22 @@
         "missing": 36
       },
       "golden_artifacts": {
-        "required": 136,
-        "complete": 62,
+        "required": 138,
+        "complete": 64,
         "partial": 0,
         "missing": 74
       }
     },
     "by_stream": {
       "abi": {
-        "total": 28,
-        "complete": 28,
+        "total": 29,
+        "complete": 29,
         "partial": 0,
         "missing": 0
       },
       "conformance": {
-        "total": 1,
-        "complete": 1,
+        "total": 2,
+        "complete": 2,
         "partial": 0,
         "missing": 0
       },
@@ -548,8 +548,8 @@
       "bead_id": "bd-11nb",
       "title": "bd-qwm subtask: Phase-0 startup hardening and host delegation boundary correctness",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "PurplePond",
       "labels": [
         "critique",
         "implementation",
@@ -651,7 +651,7 @@
       "bead_id": "bd-122j",
       "title": "bd-1gh subtask: pthread_getspecific/pthread_setspecific thread-local correctness",
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -752,8 +752,8 @@
       "bead_id": "bd-13ya",
       "title": "bd-3bg subtask: Deterministic iconv table generation pipeline with checksum provenance",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CoralLion",
       "labels": [
         "build",
         "critique",
@@ -850,7 +850,7 @@
       "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase",
       "priority": 2,
       "status": "closed",
-      "assignee": null,
+      "assignee": "JadeOtter",
       "labels": [
         "critique",
         "e2e",
@@ -949,8 +949,8 @@
       "bead_id": "bd-146t",
       "title": "bd-2ry subtask: Phase-1 core non-local jump implementation with invariant guards",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCoast",
       "labels": [
         "critique",
         "implementation",
@@ -1046,7 +1046,7 @@
       "bead_id": "bd-14gj",
       "title": "bd-1gh subtask: Deterministic destructor pass policy and bounded teardown",
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -1147,7 +1147,7 @@
       "bead_id": "bd-15n",
       "title": "Conformance expansion v2: full-family strict/hardened fixture coverage",
       "priority": 0,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "conformance",
@@ -1251,8 +1251,8 @@
       "bead_id": "bd-182",
       "title": "Anytime-valid monitor standard: e-process thresholds + alert budget contracts",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BrownCompass",
       "labels": [
         "alien",
         "critique",
@@ -1346,7 +1346,7 @@
       "title": "EPIC: Testing and Fault Injection Campaign",
       "priority": 1,
       "status": "closed",
-      "assignee": null,
+      "assignee": "cc-libc",
       "labels": [
         "critique",
         "e2e",
@@ -1547,8 +1547,8 @@
       "bead_id": "bd-18rq",
       "title": "bd-yos subtask: Threading hotspot optimization loop with behavior proofs",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RedMaple",
       "labels": [
         "critique",
         "optimization",
@@ -1648,8 +1648,8 @@
       "bead_id": "bd-19j",
       "title": "bd-z84 subtask: Futex mutex fast/slow path stabilization with deterministic state invariants",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCastle",
       "labels": [
         "critique",
         "futex",
@@ -1749,8 +1749,8 @@
       "bead_id": "bd-1ah8",
       "title": "bd-qwm subtask: LD_PRELOAD startup non-regression smoke coverage with failure signatures",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "SwiftLark",
       "labels": [
         "critique",
         "diagnostics",
@@ -1852,8 +1852,8 @@
       "bead_id": "bd-1f35",
       "title": "bd-yos subtask: Deterministic thread stress suite (strict+hardened)",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RedMaple",
       "labels": [
         "critique",
         "e2e",
@@ -1953,8 +1953,8 @@
       "bead_id": "bd-1ff3",
       "title": "bd-25n subtask: Hard-parts unit packs (startup/NSS/iconv/setjmp)",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RedMaple",
       "labels": [
         "critique",
         "hard-parts",
@@ -2160,8 +2160,8 @@
       "bead_id": "bd-1gh",
       "title": "Stub wave 5: TLS key APIs (pthread_key_* + destructors)",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "Codex",
       "labels": [
         "critique",
         "pthread",
@@ -2262,8 +2262,8 @@
       "bead_id": "bd-1ik",
       "title": "Opportunity matrix workflow: score hotspots and enforce score>=2.0 before implementation",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "perf",
@@ -2458,7 +2458,7 @@
       "bead_id": "bd-1j2u",
       "title": "bd-1gh subtask: pthread_key registry architecture and lifecycle semantics",
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -2556,7 +2556,7 @@
       "title": "EPIC: Hard Parts Roadmap (rtld/CRT + NSS/locale/resolver)",
       "priority": 2,
       "status": "closed",
-      "assignee": null,
+      "assignee": "cc-libc",
       "labels": [
         "critique",
         "locale",
@@ -2759,8 +2759,8 @@
       "bead_id": "bd-1p5v",
       "title": "bd-1x3 subtask: Stub regression prevention gate with explicit waiver policy",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BoldFox",
       "labels": [
         "ci",
         "critique",
@@ -2858,8 +2858,8 @@
       "bead_id": "bd-1pbw",
       "title": "bd-1x3 subtask: Unified stub/TODO debt census (exported + critical non-exported)",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BoldFox",
       "labels": [
         "critique",
         "docs",
@@ -2955,7 +2955,7 @@
       "bead_id": "bd-1qy",
       "title": "bd-z84 subtask: Strict+hardened mutex fixture suite with failure artifact capture",
       "priority": 1,
-      "status": "open",
+      "status": "closed",
       "assignee": "RusticCastle",
       "labels": [
         "critique",
@@ -3057,7 +3057,7 @@
       "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
       "priority": 2,
       "status": "closed",
-      "assignee": "SageCreek",
+      "assignee": null,
       "labels": [
         "critique",
         "nss",
@@ -3147,8 +3147,8 @@
       "bead_id": "bd-1rxj",
       "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
       "priority": 0,
-      "status": "in_progress",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "SnowyWaterfall",
       "labels": [
         "alien",
         "critique",
@@ -3252,8 +3252,8 @@
       "bead_id": "bd-1uc",
       "title": "bd-z84 subtask: ABI routing/callthrough eradication guard for pthread_mutex_* replacement paths",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCastle",
       "labels": [
         "ci",
         "critique",
@@ -3636,8 +3636,8 @@
       "bead_id": "bd-21k",
       "title": "bd-c1x subtask: Deterministic condvar integration fixtures (strict+hardened)",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "PurpleHawk",
       "labels": [
         "critique",
         "e2e",
@@ -3740,7 +3740,7 @@
       "title": "Full release rehearsal: clean-checkout gate run + complete artifact dossier",
       "priority": 0,
       "status": "closed",
-      "assignee": null,
+      "assignee": "cc-libc",
       "labels": [
         "critique",
         "e2e",
@@ -3938,8 +3938,8 @@
       "bead_id": "bd-24b6",
       "title": "bd-2ry subtask: ABI wiring for setjmp family with mode-aware behavior gates",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCoast",
       "labels": [
         "abi",
         "critique",
@@ -4138,7 +4138,7 @@
       "bead_id": "bd-25n",
       "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
       "priority": 0,
-      "status": "open",
+      "status": "closed",
       "assignee": "BronzeTower",
       "labels": [
         "critique",
@@ -4238,8 +4238,8 @@
       "bead_id": "bd-25pf",
       "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
       "priority": 0,
-      "status": "in_progress",
-      "assignee": "IcyCat",
+      "status": "closed",
+      "assignee": "SnowyWaterfall",
       "labels": [
         "ci",
         "critique",
@@ -4439,8 +4439,8 @@
       "bead_id": "bd-27kh",
       "title": "bd-h5x subtask: replacement-profile zero-unapproved-callthrough gate + fixtures",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "callthrough",
         "ci",
@@ -4542,8 +4542,8 @@
       "bead_id": "bd-28s",
       "title": "Guard: automated drift check (support matrix vs code + harness)",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "ci",
         "critique",
@@ -4636,8 +4636,8 @@
       "bead_id": "bd-29b",
       "title": "Docs/Runtime config truth pass: env knob semantics + drift gate",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "config",
         "critique",
@@ -4736,8 +4736,8 @@
       "bead_id": "bd-2bd",
       "title": "Isomorphism proof protocol: required checklist for each optimization lever",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "perf",
@@ -4832,8 +4832,8 @@
       "bead_id": "bd-2bu",
       "title": "Replacement levels model: L0 Interpose, L1 Hardened Interpose, L2 Partial Replace, L3 Full Replace",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BrownCompass",
       "labels": [
         "critique",
         "docs",
@@ -4925,8 +4925,8 @@
       "bead_id": "bd-2cr",
       "title": "E2E: LD_PRELOAD smoke harness (real programs; strict + hardened)",
       "priority": 0,
-      "status": "in_progress",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "e2e"
@@ -5216,8 +5216,8 @@
       "bead_id": "bd-2mwc",
       "title": "bd-1j4 subtask: Cross-boundary hard-parts e2e mega-suite (strict+hardened)",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RedMaple",
       "labels": [
         "critique",
         "e2e",
@@ -5317,7 +5317,7 @@
       "bead_id": "bd-2nzx",
       "title": "bd-c1x subtask: Condvar performance validation and focused optimization pass",
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -5418,8 +5418,8 @@
       "bead_id": "bd-2r0",
       "title": "Perf budget CI: enforce strict<20ns and hardened<200ns targets on selected hot APIs",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "ci",
         "critique",
@@ -5514,8 +5514,8 @@
       "bead_id": "bd-2ry",
       "title": "Stub wave 4: setjmp/longjmp control-transfer strategy + safety constraints",
       "priority": 2,
-      "status": "in_progress",
-      "assignee": "OliveBeacon",
+      "status": "closed",
+      "assignee": "RusticCoast",
       "labels": [
         "critique",
         "setjmp",
@@ -5616,8 +5616,8 @@
       "bead_id": "bd-2wp",
       "title": "Perf baseline suite: hyperfine + criterion for strict/hardened critical paths",
       "priority": 0,
-      "status": "in_progress",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "baseline",
         "critique",
@@ -5712,8 +5712,8 @@
       "bead_id": "bd-2xp3",
       "title": "bd-2ry subtask: Clean-room setjmp/sigsetjmp semantics contract + scope ledger",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCoast",
       "labels": [
         "critique",
         "setjmp",
@@ -5809,8 +5809,8 @@
       "bead_id": "bd-2yhf",
       "title": "bd-1rf subtask: passwd/group files backend implementation + reentrant semantics",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CloudyRobin",
       "labels": [
         "critique",
         "implementation",
@@ -5908,8 +5908,8 @@
       "bead_id": "bd-2yx",
       "title": "Math governance: classify existing runtime_math/RaptorQ beads as Production vs Research",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "alien",
         "critique",
@@ -6002,8 +6002,8 @@
       "bead_id": "bd-300",
       "title": "bd-z84 subtask: Mutex hot-path optimization loop with isomorphism proof artifacts",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BoldFox",
       "labels": [
         "critique",
         "optimization",
@@ -6200,8 +6200,8 @@
       "bead_id": "bd-30o",
       "title": "Extreme optimization campaign v2: profile-driven hotspot closure with behavior proofs",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "critique",
         "optimization",
@@ -6304,8 +6304,8 @@
       "bead_id": "bd-320s",
       "title": "bd-qwm subtask: Startup fixture expansion (argv/envp/auxv/secure-mode) with goldens",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "PurplePond",
       "labels": [
         "critique",
         "e2e",
@@ -6407,8 +6407,8 @@
       "bead_id": "bd-327",
       "title": "bd-z84 subtask: Clean-room mutex semantics contract (NORMAL/ERRORCHECK/RECURSIVE + errno matrix)",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCastle",
       "labels": [
         "critique",
         "futex",
@@ -6508,8 +6508,8 @@
       "bead_id": "bd-33p",
       "title": "Evidence/logging unification v2: schema, joins, and artifact index integrity",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "critique",
         "diagnostics",
@@ -6614,8 +6614,8 @@
       "bead_id": "bd-33zg",
       "title": "bd-h5x subtask: dlfcn boundary policy (replace vs explicit fallback) with guard rails",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "callthrough",
         "critique",
@@ -6813,7 +6813,7 @@
       "title": "Verification matrix dashboard export: operator-friendly progress and gaps",
       "priority": 1,
       "status": "closed",
-      "assignee": null,
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "logging",
@@ -7002,8 +7002,8 @@
       "bead_id": "bd-3bvo",
       "title": "bd-qwm subtask: Startup DAG + secure-mode automaton spec and invariants",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "HazyMink",
       "labels": [
         "critique",
         "spec",
@@ -7103,8 +7103,8 @@
       "bead_id": "bd-3cco",
       "title": "bd-25n subtask: Coverage dashboard + automatic closure blocker extraction",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "SnowyWaterfall",
       "labels": [
         "ci",
         "critique",
@@ -7204,8 +7204,8 @@
       "bead_id": "bd-3ehb",
       "title": "bd-1rf subtask: NSS files parser/cache architecture + invalidation policy",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CloudyRobin",
       "labels": [
         "critique",
         "nss",
@@ -7302,7 +7302,7 @@
       "title": "EPIC: Extreme Optimization Loop (baselines + profiles + goldens)",
       "priority": 0,
       "status": "closed",
-      "assignee": "SageCreek",
+      "assignee": null,
       "labels": [
         "critique",
         "perf"
@@ -7398,7 +7398,7 @@
       "bead_id": "bd-3hud",
       "title": "bd-yos subtask: Join/detach lifecycle state machine and error semantics",
       "priority": 1,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -7495,8 +7495,8 @@
       "bead_id": "bd-3jh",
       "title": "Integration: C compile/link/run fixture suite under LD_PRELOAD",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "conformance",
         "critique",
@@ -7590,8 +7590,8 @@
       "bead_id": "bd-3mam",
       "title": "bd-1x3 subtask: Workload-ranked top-N API enablement wave planning",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "critique",
         "e2e",
@@ -7788,8 +7788,8 @@
       "bead_id": "bd-3ot",
       "title": "Runtime math production admission policy: value proofs, retirement, and annex routing",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AzureBluff",
       "labels": [
         "alien",
         "critique",
@@ -7993,7 +7993,7 @@
       "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
       "priority": 0,
       "status": "closed",
-      "assignee": "CrimsonCove",
+      "assignee": "cc-libc",
       "labels": [
         "critique"
       ],
@@ -8088,8 +8088,8 @@
       "bead_id": "bd-3rag",
       "title": "bd-1rf subtask: NSS concurrency and cache-coherence stress validation",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CloudyRobin",
       "labels": [
         "critique",
         "logging",
@@ -8276,8 +8276,8 @@
       "bead_id": "bd-3tc",
       "title": "Change-point drift policy: BOCPD integration for regime-shift-aware control routing",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BrownCompass",
       "labels": [
         "alien",
         "critique",
@@ -8370,8 +8370,8 @@
       "bead_id": "bd-3tp",
       "title": "Math value proof: A/B benchmark each kept module against simpler baseline",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "alien",
         "critique",
@@ -8467,8 +8467,8 @@
       "bead_id": "bd-3u0",
       "title": "Hard-parts workload matrix: map real binaries to required subsystems",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "e2e",
@@ -8561,8 +8561,8 @@
       "bead_id": "bd-3vtx",
       "title": "bd-1rf subtask: hosts files lookup subset implementation + explicit scope boundaries",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CloudyRobin",
       "labels": [
         "critique",
         "implementation",
@@ -8660,8 +8660,8 @@
       "bead_id": "bd-4ia",
       "title": "Stub priority ranking: dynamic call-frequency traces from LD_PRELOAD smoke runs",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "e2e",
@@ -8937,8 +8937,8 @@
       "bead_id": "bd-4rl",
       "title": "Closure gate: block bead completion without test commands, logs, and evidence links",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "ci",
         "critique",
@@ -9034,8 +9034,8 @@
       "bead_id": "bd-545",
       "title": "Math retirement gate: deprecate unused/non-beneficial modules with CI enforcement",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "alien",
         "ci",
@@ -9128,7 +9128,7 @@
       "bead_id": "bd-5fw",
       "title": "Completion Program: Final release-exit contract + deterministic closure protocol",
       "priority": 0,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -9234,8 +9234,8 @@
       "bead_id": "bd-5fw.4",
       "title": "Proof Obligations Binder: theorem -> evidence -> gate mapping",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticWolf",
       "labels": [
         "critique",
         "proof",
@@ -9444,7 +9444,7 @@
       "bead_id": "bd-66wz",
       "title": "bd-25n subtask: Allocator+membrane invariant/property/adversarial test expansion",
       "priority": 0,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "allocator",
@@ -9541,8 +9541,8 @@
       "bead_id": "bd-6yd",
       "title": "Crash bundle: deterministic evidence + backtrace capture on failure",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "alien",
         "critique",
@@ -9634,8 +9634,8 @@
       "bead_id": "bd-747",
       "title": "Stub wave 1: getenv/setenv/unsetenv + environment invariants",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "env",
@@ -9725,8 +9725,8 @@
       "bead_id": "bd-7cba",
       "title": "bd-3bg subtask: Minimal codec scope/exclusion ledger + compatibility intent",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "HazyMink",
       "labels": [
         "critique",
         "iconv",
@@ -9927,8 +9927,8 @@
       "bead_id": "bd-7ef9",
       "title": "bd-h5x subtask: Callthrough census + decommission sequencing by symbol family",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AmberStone",
       "labels": [
         "callthrough",
         "critique",
@@ -10025,7 +10025,7 @@
       "title": "qsort: tie order of equal keys differs from glibc 2.43 for n >= 31",
       "priority": 3,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [],
       "obligations": {
         "unit_tests": {
@@ -10188,8 +10188,8 @@
       "bead_id": "bd-8sho",
       "title": "bd-1j4 subtask: Hard-parts docs/parity/support-matrix truth reconciliation",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RedMaple",
       "labels": [
         "critique",
         "docs",
@@ -10287,8 +10287,8 @@
       "bead_id": "bd-ahjd",
       "title": "bd-2ry subtask: Deterministic fixture pack for nested/edge non-local jump scenarios",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RusticCoast",
       "labels": [
         "critique",
         "e2e",
@@ -10390,7 +10390,7 @@
       "bead_id": "bd-b5a",
       "title": "Deterministic E2E suite v2: smoke/stress/fault/stability with replay",
       "priority": 0,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -10496,8 +10496,8 @@
       "bead_id": "bd-blg",
       "title": "bd-c1x subtask: Condvar semantics spec (spurious wakeups, timeout clocks, errno rules)",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "PurpleHawk",
       "labels": [
         "critique",
         "futex",
@@ -10852,7 +10852,7 @@
       "bead_id": "bd-c1x",
       "title": "Futex condvar core: implement pthread_cond_* with clock/timeout semantics",
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -10953,8 +10953,8 @@
       "bead_id": "bd-cj0",
       "title": "Syscall core: introduce raw Linux x86_64 syscall veneer (no libc::syscall)",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "p0-path",
@@ -11044,8 +11044,8 @@
       "bead_id": "bd-ef2",
       "title": "I/O migration wave: route core unistd/io ABI entrypoints through raw veneer",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "io",
@@ -11136,7 +11136,7 @@
       "title": "[perf][math] cos/tan ~2x slower than glibc after the CORE-MATH correctly-rounded port",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [],
       "obligations": {
         "unit_tests": {
@@ -11465,7 +11465,7 @@
       "title": "Full abi test sweep 2026-09-26: remaining failing binaries after the silent-gate repairs (triage)",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [],
       "obligations": {
         "unit_tests": {
@@ -11624,8 +11624,8 @@
       "bead_id": "bd-gcy",
       "title": "bd-c1x subtask: Futex condvar core implementation (wait/signal/broadcast/timedwait)",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "PurpleHawk",
       "labels": [
         "critique",
         "futex",
@@ -11721,7 +11721,7 @@
       "bead_id": "bd-gtid",
       "title": "bd-1gh subtask: Strict+hardened verification pack and stub-retirement gate",
       "priority": 2,
-      "status": "open",
+      "status": "closed",
       "assignee": null,
       "labels": [
         "critique",
@@ -12016,8 +12016,8 @@
       "bead_id": "bd-kan",
       "title": "EPIC: Math Kernel Rebuild (production vs research; alien artifact but relevant)",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "AzureBluff",
       "labels": [
         "alien",
         "critique",
@@ -12121,8 +12121,8 @@
       "bead_id": "bd-mjon",
       "title": "bd-yos subtask: Thread bootstrap trampoline finalization for pthread_create",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonForge",
       "labels": [
         "critique",
         "implementation",
@@ -12219,7 +12219,7 @@
       "title": "EPIC: E2E Reality Gate (build + LD_PRELOAD smoke + ABI surface)",
       "priority": 0,
       "status": "closed",
-      "assignee": "SageCreek",
+      "assignee": null,
       "labels": [
         "abi",
         "critique",
@@ -12317,7 +12317,7 @@
       "title": "stdio: locked putc/fputc 2.8x glibc (8.0 vs 2.9 ns/char)",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [],
       "obligations": {
         "unit_tests": {
@@ -12477,7 +12477,7 @@
       "bead_id": "bd-qwm",
       "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures",
       "priority": 2,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "SwiftLark",
       "labels": [
         "critique",
@@ -12579,7 +12579,7 @@
       "title": "[RC-0923] robust / process-shared / PI mutexes return EINVAL; pthread_mutex_consistent always EINVAL",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "pthread",
         "rc-20260923",
@@ -12913,7 +12913,7 @@
       "title": "[RC-0923] make CVE, healing, completion-contract and closure evidence executable (several classes cannot fail)",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "evidence",
         "gate",
@@ -13083,7 +13083,7 @@
       "title": "[RC-0923] hosts_policy.rs never compiled; gethostbyname* files-only while getaddrinfo uses DNS",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "nss",
         "rc-20260923",
@@ -13249,7 +13249,7 @@
       "title": "[RC-0923] fork is 4x (strict) / 7x (hardened) slower than glibc: eager malloc segments, RO header VMA splits, 256MiB bss",
       "priority": 1,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [],
       "obligations": {
         "unit_tests": {
@@ -13414,7 +13414,7 @@
       "title": "[RC-0923] pathname dlopen of libc-linked DSOs fails with no host fallback \u2014 python C extensions cannot import",
       "priority": 0,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "dlfcn",
         "loader",
@@ -13579,7 +13579,7 @@
       "bead_id": "bd-rc0923-epic-eeuy4f.33",
       "title": "[RC-1020] Implement remaining GNU printf registration and size formatter semantics",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [],
       "dependencies": [],
@@ -14401,7 +14401,7 @@
       "bead_id": "bd-rc0923-epic-eeuy4f.34",
       "title": "[RC-1020 tests] Verify custom printf callbacks, registration and size formatter behavior",
       "priority": 1,
-      "status": "open",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [],
       "dependencies": [
@@ -14572,6 +14572,358 @@
               "register_printf_type_rejects_null",
               "printf_size_info_counts_without_storage",
               "printf_fp_wide_concurrent_wmemstream_preserves_errno"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.35",
+      "title": "[RC-1020] Implement the remaining fourteen SunRPC contracts without relabeling unsupported behavior",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "All fourteen formerly stubbed SunRPC client/service/cache/auth contracts execute native/raw-syscall transports, diagnostics, replay caching, and teardown without stub relabeling."
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "python3 scripts/check_rpc_svc.py; python3 scripts/check_rpc_svc_cache.py; python3 scripts/check_rpc_svc_unwind.py; python3 scripts/check_rpc_client_create.py"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.35/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-abi --test rpc_svc_cache_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "python3 scripts/check_rpc_svc.py"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.35/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.35/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.35",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-abi --test rpc_svc_cache_test"
+        ],
+        "e2e_cmds": [
+          "python3 scripts/check_rpc_svc.py",
+          "python3 scripts/check_rpc_svc_cache.py",
+          "python3 scripts/check_rpc_svc_unwind.py",
+          "python3 scripts/check_rpc_client_create.py"
+        ],
+        "expected_assertions": [
+          "All fourteen formerly stubbed SunRPC client/service/cache/auth contracts execute native/raw-syscall transports, diagnostics, replay caching, and teardown without stub relabeling."
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/rpc_abi.rs",
+          "crates/frankenlibc-abi/src/rpc_svc.rs",
+          "crates/frankenlibc-abi/src/rpc_svc_cache.rs",
+          "crates/frankenlibc-abi/src/rpc_client_create.rs",
+          "crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.35/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit b598324db100944bcef257271e6e7286e1e5efdd.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.35/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "All fourteen formerly stubbed SunRPC client/service/cache/auth contracts execute native/raw-syscall transports, diagnostics, replay caching, and teardown without stub relabeling.",
+          "acceptance_sha256": "ffee9e8a25129aa04d5a908009a5c1ec5fa5052b085d71577b05ac219cd75865",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/rpc_abi.rs",
+            "crates/frankenlibc-abi/src/rpc_svc.rs",
+            "crates/frankenlibc-abi/src/rpc_svc_cache.rs",
+            "crates/frankenlibc-abi/src/rpc_client_create.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs"
+          ],
+          "source": {
+            "commit": "b598324db100944bcef257271e6e7286e1e5efdd",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/src/rpc_abi.rs": "4eaef1ba96a54b8cac83be5e66330afc4f6af36e6151f0a190c20d25779053c8",
+              "crates/frankenlibc-abi/src/rpc_client_create.rs": "52b04e07ac1ccfd6e3f939a953d13e07932401bf63a334f604aff31be951cc43",
+              "crates/frankenlibc-abi/src/rpc_svc.rs": "3986482df0601ae181844ca173e01160db3cb2065e8aa136b0e2a5938107c40e",
+              "crates/frankenlibc-abi/src/rpc_svc_cache.rs": "81a61a34993b72753a609921453072bbc2311ccaa39a3aaf7ab60f1b7a5dfe2e",
+              "crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs": "cffaf42d3c5bb12507649f72152b97841ee703034fcf15cf1eac4e8c02982b30",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:20.457002Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-abi",
+              "--test",
+              "rpc_svc_cache_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1156319-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-abi/f995fc2ba94dd4a4/out/rpc_svc_cache_test-f995fc2ba94dd4a4"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "replay_owns_request_and_reply_bytes",
+              "service_generation_invalidates_cached_results",
+              "staged_identity_survives_decoder_mutation",
+              "staged_reply_updates_reuse_a_single_fifo_entry"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.36",
+      "title": "[RC-1020 tests] Verify SunRPC positive, error and transport behavior",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f.35"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "SunRPC client/service/auth/XDR and GNU custom printf conformance fixtures, isolated conformance matrix (3475/3475), and golden strict+hardened verification suites pass with zero failures."
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_conformance_matrix.sh; python3 scripts/check_rpc_svc.py"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.36/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test rpc_legacy_network_conformance_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_conformance_matrix.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.36/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.36/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.36",
+        "stream": "conformance",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test rpc_legacy_network_conformance_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_conformance_matrix.sh",
+          "python3 scripts/check_rpc_svc.py"
+        ],
+        "expected_assertions": [
+          "SunRPC client/service/auth/XDR and GNU custom printf conformance fixtures, isolated conformance matrix (3475/3475), and golden strict+hardened verification suites pass with zero failures."
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc_conformance/src/lib.rs",
+          "tests/conformance/fixtures/rpc_legacy_network.json",
+          "tests/conformance/fixtures/rpc_legacy_network_wave02.json",
+          "tests/conformance/fixtures/rpc_legacy_network_wave03.json",
+          "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.36/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit b598324db100944bcef257271e6e7286e1e5efdd.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.36/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "SunRPC client/service/auth/XDR and GNU custom printf conformance fixtures, isolated conformance matrix (3475/3475), and golden strict+hardened verification suites pass with zero failures.",
+          "acceptance_sha256": "47a1696554ea1203a263d615232e0219a6045b82616f00a4af55263d99e5b306",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc_conformance/src/lib.rs",
+            "tests/conformance/fixtures/rpc_legacy_network.json",
+            "tests/conformance/fixtures/rpc_legacy_network_wave02.json",
+            "tests/conformance/fixtures/rpc_legacy_network_wave03.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs"
+          ],
+          "source": {
+            "commit": "b598324db100944bcef257271e6e7286e1e5efdd",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/tests/rpc_legacy_network_conformance_test.rs": "af54e6aad80c41c00f663ac90ddd6999dd9052d3394f76d7045fe54973fc7d8b",
+              "crates/frankenlibc_conformance/src/lib.rs": "20fd99caaf669f19174df8a79525a0bb79b123e8ef90fd18eda18c5a457f4328",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "tests/conformance/fixtures/rpc_legacy_network.json": "ffc833f9f5995f4b26f9dcb17052ce5cdff85ca829a331e6b0f4d8e51847ee99",
+              "tests/conformance/fixtures/rpc_legacy_network_wave02.json": "18e05a964ccb548ab12fed2c750a8cacdac35786e25c4faf7ee43121bde3632f",
+              "tests/conformance/fixtures/rpc_legacy_network_wave03.json": "eb1baed68fe86fec713fe7ae19b8fe0791192fb839be96b965b45b1957c5c57f"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:20.859612Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "rpc_legacy_network_conformance_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-hz4-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/c9ebc3e320c7bc87/out/rpc_legacy_network_conformance_test-c9ebc3e320c7bc87"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "rpc_legacy_network_fixture_exists_and_names_campaign",
+              "rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes",
+              "rpc_legacy_network_cases_bind_expected_behavior_and_log_fields",
+              "rpc_legacy_network_fixture_executes_via_isolated_harness"
             ]
           }
         }
@@ -14913,7 +15265,7 @@
       "title": "[RC-1020 tests] Reject contradictory L0, safety and build claims across operator guides",
       "priority": 1,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [],
       "obligations": {
         "unit_tests": {
@@ -18005,7 +18357,7 @@
       "title": "[SQ M1-M2: S08-S11,S13-S17] Execute confined 4-arm libarchive ZIP-writer and RAR-reader H/S/F/P counterfactuals, benign corpus, and staging lifecycle",
       "priority": 1,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "libarchive",
         "m1",
@@ -18573,7 +18925,7 @@
       "title": "[RC-202609 tests] Verify deterministic seeded Lab schedule replay, minimal-witness CodeFailure, and default frankentui snapshot regressions",
       "priority": 2,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "asupersync",
         "frankentui",
@@ -18758,7 +19110,7 @@
       "title": "[RC-202609] Replace policy-derived healing observations with deployed ABI fault execution",
       "priority": 0,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "reality-check",
         "vision-gap"
@@ -20019,7 +20371,7 @@
       "bead_id": "bd-reality-202609-lx578q.7",
       "title": "[RC-202609] Close high-risk deployed conformance gaps with independent differential and repair tests",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [
         "reality-check",
@@ -24478,7 +24830,7 @@
       "bead_id": "bd-reality-202609-lx578q.7.28",
       "title": "Connect native tree walks and honor callback working directories",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "CodexGapCloser",
       "labels": [
         "conformance",
@@ -27804,7 +28156,7 @@
       "title": "Preserve line-input stop state, native buffer ownership and host errno",
       "priority": 1,
       "status": "closed",
-      "assignee": "CodexGapCloser",
+      "assignee": null,
       "labels": [
         "conformance",
         "runtime"
@@ -29140,7 +29492,7 @@
       "bead_id": "bd-reality-202609-lx578q.8",
       "title": "[RC-202609] Define and test the membrane temporal and spatial guarantee boundary",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [
         "reality-check",
@@ -29319,7 +29671,7 @@
       "title": "Restore full-width hardened canary integrity after 32-bit XOR-fold collapse",
       "priority": 1,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "canary",
         "membrane",
@@ -29487,7 +29839,7 @@
       "title": "Independently qualify hardened canary width and deployed corruption detection",
       "priority": 1,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "membrane",
         "security",
@@ -30040,8 +30392,8 @@
       "bead_id": "bd-rqn",
       "title": "Production kernel manifest: minimal required math set + compile-time gates",
       "priority": 0,
-      "status": "in_progress",
-      "assignee": "WhiteMeadow",
+      "status": "closed",
+      "assignee": "AzureBluff",
       "labels": [
         "alien",
         "critique",
@@ -30135,8 +30487,8 @@
       "bead_id": "bd-rth1",
       "title": "bd-yos subtask: TLS handoff and teardown correctness for spawned threads",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "Codex",
       "labels": [
         "critique",
         "implementation",
@@ -30237,7 +30589,7 @@
       "title": "wordexp: fl refuses ALL command substitution with WRDE_CMDSUB even without WRDE_NOCMD, so $(cmd) and $(($(cmd)+1)) diverge from glibc",
       "priority": 3,
       "status": "closed",
-      "assignee": "antigravity",
+      "assignee": null,
       "labels": [
         "parity",
         "stdlib",
@@ -30404,8 +30756,8 @@
       "bead_id": "bd-wud",
       "title": "Mode semantics matrix: strict vs hardened behavior table per API family",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "CrimsonCove",
       "labels": [
         "critique",
         "docs",
@@ -30596,8 +30948,8 @@
       "bead_id": "bd-xxd9",
       "title": "bd-25n subtask: Threading/futex lifecycle exhaustive unit+stress test packs",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "DustyRiver",
       "labels": [
         "critique",
         "pthread",
@@ -30693,8 +31045,8 @@
       "bead_id": "bd-y45u",
       "title": "bd-1j4 subtask: Hard-parts integration dependency matrix and risk register",
       "priority": 2,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "RedMaple",
       "labels": [
         "critique",
         "docs",
@@ -30790,8 +31142,8 @@
       "bead_id": "bd-yos",
       "title": "Thread bootstrap: minimal pthread_create/join/detach path with TLS handoff",
       "priority": 1,
-      "status": "in_progress",
-      "assignee": "WhiteMeadow",
+      "status": "closed",
+      "assignee": "Codex",
       "labels": [
         "critique",
         "pthread",
@@ -30892,7 +31244,7 @@
       "title": "bd-3bg subtask: Iconv conformance+reproducibility gates with structured evidence",
       "priority": 2,
       "status": "closed",
-      "assignee": null,
+      "assignee": "Codex",
       "labels": [
         "critique",
         "e2e",
@@ -30990,8 +31342,8 @@
       "bead_id": "bd-z84",
       "title": "Futex mutex core: implement pthread_mutex_* state machine without glibc call-through",
       "priority": 1,
-      "status": "in_progress",
-      "assignee": "WhiteMeadow",
+      "status": "closed",
+      "assignee": "SnowyCat",
       "labels": [
         "critique",
         "futex",

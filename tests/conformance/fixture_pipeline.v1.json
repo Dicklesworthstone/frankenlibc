@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-06-05T17:26:09Z",
+  "generated_at": "2026-11-12T23:37:15Z",
   "summary": {
-    "total_fixture_files": 127,
-    "total_fixture_cases": 2792,
-    "unique_symbols_in_fixtures": 1182,
-    "implemented_symbols": 2809,
-    "symbols_with_fixtures": 857,
-    "symbols_at_threshold": 6,
-    "symbols_below_threshold": 2803,
-    "symbols_with_zero_fixtures": 1952,
-    "coverage_pct": 30.5,
+    "total_fixture_files": 132,
+    "total_fixture_cases": 2880,
+    "unique_symbols_in_fixtures": 1223,
+    "implemented_symbols": 2822,
+    "symbols_with_fixtures": 892,
+    "symbols_at_threshold": 7,
+    "symbols_below_threshold": 2815,
+    "symbols_with_zero_fixtures": 1930,
+    "coverage_pct": 31.6,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -74,20 +74,20 @@
     },
     {
       "module": "fortify_abi",
-      "total_symbols": 25,
-      "covered_symbols": 8,
+      "total_symbols": 78,
+      "covered_symbols": 61,
       "at_threshold": 0,
-      "total_cases": 16,
-      "coverage_pct": 32.0,
+      "total_cases": 122,
+      "coverage_pct": 78.2,
       "threshold_pct": 0.0
     },
     {
       "module": "glibc_internal_abi",
-      "total_symbols": 359,
-      "covered_symbols": 32,
+      "total_symbols": 356,
+      "covered_symbols": 33,
       "at_threshold": 0,
       "total_cases": 64,
-      "coverage_pct": 8.9,
+      "coverage_pct": 9.3,
       "threshold_pct": 0.0
     },
     {
@@ -110,11 +110,11 @@
     },
     {
       "module": "inet_abi",
-      "total_symbols": 9,
+      "total_symbols": 7,
       "covered_symbols": 5,
       "at_threshold": 0,
       "total_cases": 10,
-      "coverage_pct": 55.6,
+      "coverage_pct": 71.4,
       "threshold_pct": 0.0
     },
     {
@@ -164,7 +164,7 @@
     },
     {
       "module": "math_abi",
-      "total_symbols": 756,
+      "total_symbols": 755,
       "covered_symbols": 52,
       "at_threshold": 0,
       "total_cases": 93,
@@ -191,20 +191,20 @@
     },
     {
       "module": "process_abi",
-      "total_symbols": 27,
-      "covered_symbols": 27,
+      "total_symbols": 24,
+      "covered_symbols": 24,
       "at_threshold": 0,
-      "total_cases": 62,
+      "total_cases": 56,
       "coverage_pct": 100.0,
       "threshold_pct": 0.0
     },
     {
       "module": "pthread_abi",
-      "total_symbols": 113,
-      "covered_symbols": 73,
+      "total_symbols": 109,
+      "covered_symbols": 69,
       "at_threshold": 0,
-      "total_cases": 164,
-      "coverage_pct": 64.6,
+      "total_cases": 156,
+      "coverage_pct": 63.3,
       "threshold_pct": 0.0
     },
     {
@@ -218,10 +218,10 @@
     },
     {
       "module": "resolv_abi",
-      "total_symbols": 6,
-      "covered_symbols": 6,
+      "total_symbols": 4,
+      "covered_symbols": 4,
       "at_threshold": 0,
-      "total_cases": 12,
+      "total_cases": 8,
       "coverage_pct": 100.0,
       "threshold_pct": 0.0
     },
@@ -236,11 +236,11 @@
     },
     {
       "module": "rpc_abi",
-      "total_symbols": 133,
-      "covered_symbols": 34,
+      "total_symbols": 119,
+      "covered_symbols": 29,
       "at_threshold": 0,
-      "total_cases": 68,
-      "coverage_pct": 25.6,
+      "total_cases": 58,
+      "coverage_pct": 24.4,
       "threshold_pct": 0.0
     },
     {
@@ -299,12 +299,12 @@
     },
     {
       "module": "stdio_abi",
-      "total_symbols": 10,
-      "covered_symbols": 6,
-      "at_threshold": 1,
-      "total_cases": 116,
-      "coverage_pct": 60.0,
-      "threshold_pct": 10.0
+      "total_symbols": 13,
+      "covered_symbols": 9,
+      "at_threshold": 2,
+      "total_cases": 134,
+      "coverage_pct": 69.2,
+      "threshold_pct": 15.4
     },
     {
       "module": "stdlib_abi",
@@ -344,11 +344,11 @@
     },
     {
       "module": "unistd_abi",
-      "total_symbols": 688,
-      "covered_symbols": 192,
+      "total_symbols": 674,
+      "covered_symbols": 184,
       "at_threshold": 0,
-      "total_cases": 385,
-      "coverage_pct": 27.9,
+      "total_cases": 369,
+      "coverage_pct": 27.3,
       "threshold_pct": 0.0
     },
     {
@@ -963,6 +963,14 @@
       "gap": 8
     },
     {
+      "symbol": "__asprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__atan2_finite",
       "module": "math_abi",
       "status": "Implemented",
@@ -1371,6 +1379,14 @@
       "gap": 10
     },
     {
+      "symbol": "__dprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__duplocale",
       "module": "glibc_internal_abi",
       "status": "Implemented",
@@ -1539,6 +1555,38 @@
       "gap": 10
     },
     {
+      "symbol": "__fgets_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__fgets_unlocked_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__fgetws_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__fgetws_unlocked_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__file_change_detection_for_path",
       "module": "glibc_internal_abi",
       "status": "Implemented",
@@ -1635,6 +1683,14 @@
       "gap": 10
     },
     {
+      "symbol": "__fortify_fail",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__fpclassify",
       "module": "math_abi",
       "status": "Implemented",
@@ -1667,6 +1723,14 @@
       "gap": 10
     },
     {
+      "symbol": "__fprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__fpu_control",
       "module": "glibc_internal_abi",
       "status": "Implemented",
@@ -1681,6 +1745,22 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__fread_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__fread_unlocked_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__freadable",
@@ -1729,6 +1809,14 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__fwprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__fwritable",
@@ -1835,6 +1923,38 @@
       "gap": 10
     },
     {
+      "symbol": "__getcwd_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__getdomainname_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__getgroups_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__gethostname_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__getlogin_r_chk",
       "module": "fortify_abi",
       "status": "Implemented",
@@ -1865,6 +1985,22 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__gets_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__getwd_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__gmtime_r",
@@ -2131,12 +2267,28 @@
       "gap": 8
     },
     {
+      "symbol": "__isoc99_sscanf",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__isoc99_swscanf",
       "module": "isoc_abi",
       "status": "Implemented",
       "fixture_cases": 1,
       "meets_threshold": false,
       "gap": 9
+    },
+    {
+      "symbol": "__isoc99_vsscanf",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__isoc99_vswscanf",
@@ -2691,6 +2843,14 @@
       "gap": 10
     },
     {
+      "symbol": "__longjmp_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__lxstat",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -2745,6 +2905,30 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__mbsnrtowcs_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__mbsrtowcs_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__mbstowcs_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__memalign_hook",
@@ -3003,6 +3187,14 @@
       "gap": 10
     },
     {
+      "symbol": "__open64_2",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__open64_nocancel",
       "module": "glibc_internal_abi",
       "status": "RawSyscall",
@@ -3011,12 +3203,44 @@
       "gap": 10
     },
     {
+      "symbol": "__open_2",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__open_nocancel",
       "module": "glibc_internal_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__openat64_2",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__openat_2",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__poll_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__pow_finite",
@@ -3051,12 +3275,44 @@
       "gap": 10
     },
     {
+      "symbol": "__ppoll_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__pread64_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__pread64_nocancel",
       "module": "glibc_internal_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__pread_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__printf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__printf_fp",
@@ -3195,22 +3451,6 @@
       "gap": 8
     },
     {
-      "symbol": "__pthread_register_cancel",
-      "module": "pthread_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "__pthread_register_cancel_defer",
-      "module": "pthread_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "__pthread_rwlock_destroy",
       "module": "pthread_abi",
       "status": "Implemented",
@@ -3251,22 +3491,6 @@
       "gap": 8
     },
     {
-      "symbol": "__pthread_unregister_cancel",
-      "module": "pthread_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "__pthread_unregister_cancel_restore",
-      "module": "pthread_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "__ptsname_r_chk",
       "module": "fortify_abi",
       "status": "Implemented",
@@ -3291,12 +3515,36 @@
       "gap": 10
     },
     {
+      "symbol": "__read_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__read_nocancel",
       "module": "glibc_internal_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__readlink_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__readlinkat_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__realloc_hook",
@@ -3307,12 +3555,36 @@
       "gap": 10
     },
     {
+      "symbol": "__realpath_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__recv",
       "module": "glibc_internal_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__recv_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__recvfrom_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__register_atfork",
@@ -3715,12 +3987,28 @@
       "gap": 10
     },
     {
+      "symbol": "__snprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__socket",
       "module": "glibc_internal_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__sprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__sqrt_finite",
@@ -4075,6 +4363,14 @@
       "gap": 10
     },
     {
+      "symbol": "__syslog_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__sysv_signal",
       "module": "glibc_internal_abi",
       "status": "Implemented",
@@ -4211,6 +4507,62 @@
       "gap": 10
     },
     {
+      "symbol": "__vasprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vdprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vfprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vfwprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vsnprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vsprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__vsscanf",
       "module": "glibc_internal_abi",
       "status": "Implemented",
@@ -4225,6 +4577,22 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__vsyslog_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__vwprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__wcscasecmp_l",
@@ -4291,6 +4659,22 @@
       "gap": 10
     },
     {
+      "symbol": "__wcsnrtombs_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
+      "symbol": "__wcsrtombs_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__wcstod_internal",
       "module": "wchar_abi",
       "status": "Implemented",
@@ -4347,12 +4731,28 @@
       "gap": 10
     },
     {
+      "symbol": "__wcstombs_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
+    },
+    {
       "symbol": "__wcsxfrm_l",
       "module": "wchar_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__wctomb_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__wctrans_l",
@@ -4393,6 +4793,14 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "__wprintf_chk",
+      "module": "fortify_abi",
+      "status": "Implemented",
+      "fixture_cases": 2,
+      "meets_threshold": false,
+      "gap": 8
     },
     {
       "symbol": "__write_nocancel",
@@ -4501,22 +4909,6 @@
     {
       "symbol": "__y1l_finite",
       "module": "math_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "_authenticate",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "_dl_find_object",
-      "module": "glibc_internal_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -5683,14 +6075,6 @@
       "gap": 8
     },
     {
-      "symbol": "callrpc",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "canonicalize",
       "module": "math_abi",
       "status": "Implemented",
@@ -6163,14 +6547,6 @@
       "gap": 8
     },
     {
-      "symbol": "clnt_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "clnt_pcreateerror",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -6187,14 +6563,6 @@
       "gap": 8
     },
     {
-      "symbol": "clnt_perror",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "clnt_spcreateerror",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -6204,22 +6572,6 @@
     },
     {
       "symbol": "clnt_sperrno",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "clnt_sperror",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "clntraw_create",
       "module": "rpc_abi",
       "status": "Implemented",
       "fixture_cases": 2,
@@ -6244,14 +6596,6 @@
     },
     {
       "symbol": "clntudp_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "clntunix_create",
       "module": "rpc_abi",
       "status": "Implemented",
       "fixture_cases": 2,
@@ -6309,14 +6653,6 @@
     {
       "symbol": "clock_settime",
       "module": "time_abi",
-      "status": "RawSyscall",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "clone",
-      "module": "process_abi",
       "status": "RawSyscall",
       "fixture_cases": 2,
       "meets_threshold": false,
@@ -6835,14 +7171,6 @@
       "gap": 8
     },
     {
-      "symbol": "crypt",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "crypt_checksalt",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -6876,38 +7204,6 @@
     },
     {
       "symbol": "crypt_gensalt_rn",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "crypt_preferred_method",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "crypt_r",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "crypt_ra",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "crypt_rn",
       "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 2,
@@ -6953,14 +7249,6 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
-    },
-    {
-      "symbol": "daemon",
-      "module": "unistd_abi",
-      "status": "RawSyscall",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
     },
     {
       "symbol": "daylight",
@@ -8355,14 +8643,6 @@
       "gap": 8
     },
     {
-      "symbol": "fcrypt",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "fcvt",
       "module": "stdlib_abi",
       "status": "Implemented",
@@ -8844,14 +9124,6 @@
     },
     {
       "symbol": "fmaf",
-      "module": "math_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "fmaf128",
       "module": "math_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -9707,22 +9979,6 @@
       "gap": 8
     },
     {
-      "symbol": "fork",
-      "module": "process_abi",
-      "status": "RawSyscall",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "forkpty",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "freeifaddrs",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -10227,14 +10483,6 @@
       "gap": 10
     },
     {
-      "symbol": "fwide",
-      "module": "glibc_internal_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
       "symbol": "gai_cancel",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -10515,46 +10763,6 @@
       "gap": 10
     },
     {
-      "symbol": "gethostbyaddr",
-      "module": "resolv_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
-      "symbol": "gethostbyaddr_r",
-      "module": "inet_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "gethostbyname2",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "gethostbyname2_r",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "gethostbyname_r",
-      "module": "inet_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
       "symbol": "gethostent",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -10641,14 +10849,6 @@
       "fixture_cases": 3,
       "meets_threshold": false,
       "gap": 7
-    },
-    {
-      "symbol": "getnameinfo",
-      "module": "resolv_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
     },
     {
       "symbol": "getnetbyaddr",
@@ -13915,14 +14115,6 @@
       "gap": 10
     },
     {
-      "symbol": "mq_notify",
-      "module": "unistd_abi",
-      "status": "RawSyscall",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
       "symbol": "mq_open",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -15542,17 +15734,17 @@
       "symbol": "printf_size",
       "module": "glibc_internal_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "printf_size_info",
       "module": "glibc_internal_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "prlimit",
@@ -15601,14 +15793,6 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
-    },
-    {
-      "symbol": "profil",
-      "module": "glibc_internal_abi",
-      "status": "Implemented",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
     },
     {
       "symbol": "program_invocation_name",
@@ -16913,14 +17097,6 @@
       "fixture_cases": 2,
       "meets_threshold": false,
       "gap": 8
-    },
-    {
-      "symbol": "registerrpc",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
     },
     {
       "symbol": "remap_file_pages",
@@ -20035,68 +20211,20 @@
       "gap": 10
     },
     {
-      "symbol": "svcfd_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "svcraw_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "svctcp_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
       "symbol": "svcudp_bufcreate",
       "module": "rpc_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "svcudp_create",
       "module": "rpc_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "svcudp_enablecache",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "svcunix_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "svcunixfd_create",
-      "module": "rpc_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "swab",
@@ -20614,14 +20742,6 @@
       "symbol": "timelocal",
       "module": "unistd_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "timer_create",
-      "module": "unistd_abi",
-      "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
@@ -21459,20 +21579,20 @@
       "gap": 10
     },
     {
-      "symbol": "vfork",
-      "module": "process_abi",
-      "status": "RawSyscall",
-      "fixture_cases": 2,
-      "meets_threshold": false,
-      "gap": 8
-    },
-    {
       "symbol": "vmsplice",
       "module": "io_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "vsscanf",
+      "module": "stdio_abi",
+      "status": "Implemented",
+      "fixture_cases": 14,
+      "meets_threshold": true,
+      "gap": 0
     },
     {
       "symbol": "vswprintf",
@@ -22035,14 +22155,6 @@
       "gap": 10
     },
     {
-      "symbol": "xcrypt",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
       "symbol": "xcrypt_gensalt",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -22052,14 +22164,6 @@
     },
     {
       "symbol": "xcrypt_gensalt_r",
-      "module": "unistd_abi",
-      "status": "Implemented",
-      "fixture_cases": 0,
-      "meets_threshold": false,
-      "gap": 10
-    },
-    {
-      "symbol": "xcrypt_r",
       "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -23082,6 +23186,67 @@
       "issues": []
     },
     {
+      "file": "fortify_checked_wrapper_wave04.json",
+      "total_cases": 18,
+      "symbols_covered": 9,
+      "symbols": {
+        "__snprintf_chk": 2,
+        "__sprintf_chk": 2,
+        "__read_chk": 2,
+        "__pread_chk": 2,
+        "__readlink_chk": 2,
+        "__readlinkat_chk": 2,
+        "__recv_chk": 2,
+        "__recvfrom_chk": 2,
+        "__realpath_chk": 2
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave05.json",
+      "total_cases": 12,
+      "symbols_covered": 6,
+      "symbols": {
+        "__printf_chk": 2,
+        "__wprintf_chk": 2,
+        "__wcstombs_chk": 2,
+        "__wcsrtombs_chk": 2,
+        "__wcsnrtombs_chk": 2,
+        "__wctomb_chk": 2
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave06.json",
+      "total_cases": 14,
+      "symbols_covered": 7,
+      "symbols": {
+        "__vasprintf_chk": 2,
+        "__vdprintf_chk": 2,
+        "__vfprintf_chk": 2,
+        "__vprintf_chk": 2,
+        "__vsnprintf_chk": 2,
+        "__vsprintf_chk": 2,
+        "__vwprintf_chk": 2
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave07.json",
+      "total_cases": 6,
+      "symbols_covered": 3,
+      "symbols": {
+        "__syslog_chk": 2,
+        "__vsyslog_chk": 2,
+        "__vfwprintf_chk": 2
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
       "file": "glibc_internal_bootstrap_wave01.json",
       "total_cases": 22,
       "symbols_covered": 11,
@@ -23501,11 +23666,17 @@
     },
     {
       "file": "printf_conformance.json",
-      "total_cases": 186,
-      "symbols_covered": 2,
+      "total_cases": 192,
+      "symbols_covered": 8,
       "symbols": {
         "sprintf": 177,
-        "snprintf": 9
+        "snprintf": 9,
+        "register_printf_specifier": 1,
+        "register_printf_modifier": 1,
+        "register_printf_type": 1,
+        "register_printf_function": 1,
+        "printf_size": 1,
+        "printf_size_info": 1
       },
       "valid": true,
       "issues": []
@@ -23827,8 +23998,8 @@
     },
     {
       "file": "rpc_legacy_network.json",
-      "total_cases": 24,
-      "symbols_covered": 12,
+      "total_cases": 42,
+      "symbols_covered": 21,
       "symbols": {
         "__rpc_thread_createerr": 2,
         "__rpc_thread_svc_fdset": 2,
@@ -23841,7 +24012,16 @@
         "authdes_create": 2,
         "authdes_getucred": 2,
         "authdes_pk_create": 2,
-        "authnone_create": 2
+        "authnone_create": 2,
+        "registerrpc": 2,
+        "svcfd_create": 2,
+        "svcraw_create": 2,
+        "svctcp_create": 2,
+        "svcudp_bufcreate": 2,
+        "svcudp_create": 2,
+        "svcudp_enablecache": 2,
+        "svcunix_create": 2,
+        "svcunixfd_create": 2
       },
       "valid": true,
       "issues": []
@@ -24227,8 +24407,8 @@
     },
     {
       "file": "stdio_libio_wave02.json",
-      "total_cases": 24,
-      "symbols_covered": 12,
+      "total_cases": 26,
+      "symbols_covered": 13,
       "symbols": {
         "__isoc99_sscanf": 2,
         "__isoc99_vfscanf": 2,
@@ -24241,7 +24421,8 @@
         "fdopen": 2,
         "feof_unlocked": 2,
         "ferror_unlocked": 2,
-        "fflush_unlocked": 2
+        "fflush_unlocked": 2,
+        "vsscanf": 2
       },
       "valid": true,
       "issues": []
@@ -25064,6 +25245,16 @@
         "munmap": 1,
         "mprotect": 1,
         "madvise": 1
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
+      "file": "vsscanf_conformance.json",
+      "total_cases": 12,
+      "symbols_covered": 1,
+      "symbols": {
+        "vsscanf": 12
       },
       "valid": true,
       "issues": []

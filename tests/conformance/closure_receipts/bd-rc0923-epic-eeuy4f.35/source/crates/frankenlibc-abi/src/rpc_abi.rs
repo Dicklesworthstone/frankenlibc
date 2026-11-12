@@ -1,0 +1,4356 @@
+//! ABI layer for Sun RPC / XDR / SVC functions.
+//!
+//! These are legacy ONC RPC functions from glibc's `<rpc/rpc.h>`, `<rpc/xdr.h>`,
+//! `<rpc/svc.h>`, `<rpc/clnt.h>`, `<rpc/auth.h>`, `<rpc/pmap_clnt.h>`, and
+//! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
+//! pure Rust. Native clients/services cover IPv4 UDP/TCP, Unix streams and
+//! synchronous memory RPC with AUTH_NONE/AUTH_SYS and legacy AUTH_DES. DES
+//! clients and services use native cryptography/keyserver operations, bounded
+//! replay caches, and native NSS mapping for authenticated UNIX credentials.
+
+#![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
+
+use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::mem::size_of;
+
+use frankenlibc_core::syscall as raw_syscall;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+
+use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
+use crate::runtime_policy;
+use crate::util::scan_c_string;
+
+#[path = "rpc_client_create.rs"]
+mod rpc_client_create;
+#[path = "rpc_svc.rs"]
+mod rpc_svc;
+#[path = "rpc_svc_cache.rs"]
+mod rpc_svc_cache;
+#[path = "rpc_svc_des.rs"]
+mod rpc_svc_des;
+#[path = "rpc_udp.rs"]
+mod rpc_udp;
+pub use rpc_client_create::{callrpc, clnt_create};
+pub use rpc_svc::{
+    _authenticate, registerrpc, svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll,
+    svc_getreqset, svc_register, svc_run, svc_sendreply, svc_unregister, svcerr_auth,
+    svcerr_decode, svcerr_noproc, svcerr_noprog, svcerr_progvers, svcerr_systemerr,
+    svcerr_weakauth, svcfd_create, svctcp_create, svcudp_bufcreate, svcudp_create,
+    svcudp_enablecache, svcunix_create, svcunixfd_create,
+};
+
+/// Read a user-supplied C string pointer with a known-region bound so a
+/// non-NUL-terminated argument cannot walk arbitrary process memory through
+/// `CStr::from_ptr`. Returns `None` for null or unterminated input.
+/// (REVIEW round 5 — same defense class as bd-z4k96 / iconv_open / dlopen /
+/// inet_pton / execvp.)
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    Some(bytes.to_vec())
+}
+
+type c_ulong = u64;
+#[allow(dead_code)]
+type c_long = i64;
+
+/// `struct timeval` for by-value parameters in clntudp_create / pmap_rmtcall.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Timeval {
+    pub tv_sec: c_long,
+    pub tv_usec: c_long,
+}
+
+// ===========================================================================
+// Native XDR Implementation (RFC 4506 / RFC 1832)
+//
+// Replaces all 68 dlsym-delegated XDR symbols with pure Rust.
+// Three stream backends: Memory, Stdio, Record (TCP).
+// ===========================================================================
+
+// --- XDR constants ---
+const XDR_ENCODE: c_int = 0;
+const XDR_DECODE: c_int = 1;
+const XDR_FREE: c_int = 2;
+const XDR_TRUE: c_int = 1;
+const XDR_FALSE: c_int = 0;
+
+// Type alias for XDR procedure (element serializers, union procs, etc.)
+type XdrProc = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
+
+// --- XDR vtable and handle (ABI-compatible with glibc's struct XDR) ---
+
+#[repr(C)]
+pub struct Xdr {
+    x_op: c_int,
+    x_ops: *const XdrOps,
+    x_public: *mut c_char,
+    x_private: *mut c_void,
+    x_base: *mut c_char,
+    x_handy: c_uint,
+}
+
+#[repr(C)]
+struct XdrOps {
+    x_getlong: unsafe extern "C" fn(*mut Xdr, *mut c_long) -> c_int,
+    x_putlong: unsafe extern "C" fn(*mut Xdr, *const c_long) -> c_int,
+    x_getbytes: unsafe extern "C" fn(*mut Xdr, *mut c_char, c_uint) -> c_int,
+    x_putbytes: unsafe extern "C" fn(*mut Xdr, *const c_char, c_uint) -> c_int,
+    x_getpostn: unsafe extern "C" fn(*const Xdr) -> c_uint,
+    x_setpostn: unsafe extern "C" fn(*mut Xdr, c_uint) -> c_int,
+    x_inline: unsafe extern "C" fn(*mut Xdr, c_uint) -> *mut i32,
+    x_destroy: unsafe extern "C" fn(*mut Xdr),
+    x_getint32: unsafe extern "C" fn(*mut Xdr, *mut i32) -> c_int,
+    x_putint32: unsafe extern "C" fn(*mut Xdr, *const i32) -> c_int,
+}
+
+// --- Vtable dispatch helpers ---
+#[inline]
+unsafe fn xg32(x: *mut Xdr, ip: *mut i32) -> c_int {
+    unsafe { ((*(*x).x_ops).x_getint32)(x, ip) }
+}
+#[inline]
+unsafe fn xp32(x: *mut Xdr, ip: *const i32) -> c_int {
+    unsafe { ((*(*x).x_ops).x_putint32)(x, ip) }
+}
+#[inline]
+unsafe fn xgb(x: *mut Xdr, a: *mut c_char, n: c_uint) -> c_int {
+    unsafe { ((*(*x).x_ops).x_getbytes)(x, a, n) }
+}
+#[inline]
+unsafe fn xpb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int {
+    unsafe { ((*(*x).x_ops).x_putbytes)(x, a, n) }
+}
+#[inline]
+const fn rndup(n: usize) -> usize {
+    (n + 3) & !3
+}
+
+static ZERO_PAD: [u8; 4] = [0; 4];
+
+// ===================== Memory stream backend =====================
+
+unsafe extern "C" fn mem_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
+    let x = unsafe { &mut *x };
+    if x.x_handy < 4 {
+        return XDR_FALSE;
+    }
+    x.x_handy -= 4;
+    let s = x.x_private as *const u8;
+    unsafe {
+        *ip = i32::from_be_bytes([*s, *s.add(1), *s.add(2), *s.add(3)]);
+        x.x_private = s.add(4) as *mut c_void;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn mem_pi32(x: *mut Xdr, ip: *const i32) -> c_int {
+    let x = unsafe { &mut *x };
+    if x.x_handy < 4 {
+        return XDR_FALSE;
+    }
+    x.x_handy -= 4;
+    let b = unsafe { (*ip).to_be_bytes() };
+    let d = x.x_private as *mut u8;
+    unsafe {
+        std::ptr::copy_nonoverlapping(b.as_ptr(), d, 4);
+        x.x_private = d.add(4) as *mut c_void;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn mem_glong(x: *mut Xdr, lp: *mut c_long) -> c_int {
+    let mut t: i32 = 0;
+    if unsafe { mem_gi32(x, &mut t) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe {
+        *lp = t as c_long;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn mem_plong(x: *mut Xdr, lp: *const c_long) -> c_int {
+    let t = unsafe { *lp } as i32;
+    unsafe { mem_pi32(x, &t) }
+}
+unsafe extern "C" fn mem_gb(x: *mut Xdr, a: *mut c_char, n: c_uint) -> c_int {
+    let x = unsafe { &mut *x };
+    if x.x_handy < n {
+        return XDR_FALSE;
+    }
+    x.x_handy -= n;
+    unsafe {
+        std::ptr::copy_nonoverlapping(x.x_private as *const u8, a as *mut u8, n as usize);
+        x.x_private = (x.x_private as *mut u8).add(n as usize) as *mut c_void;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn mem_pb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int {
+    let x = unsafe { &mut *x };
+    if x.x_handy < n {
+        return XDR_FALSE;
+    }
+    x.x_handy -= n;
+    unsafe {
+        std::ptr::copy_nonoverlapping(a as *const u8, x.x_private as *mut u8, n as usize);
+        x.x_private = (x.x_private as *mut u8).add(n as usize) as *mut c_void;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn mem_pos(x: *const Xdr) -> c_uint {
+    let x = unsafe { &*x };
+    (x.x_private as usize - x.x_base as usize) as c_uint
+}
+unsafe extern "C" fn mem_setpos(x: *mut Xdr, pos: c_uint) -> c_int {
+    let x = unsafe { &mut *x };
+    let total = (x.x_private as usize - x.x_base as usize) as c_uint + x.x_handy;
+    if pos > total {
+        return XDR_FALSE;
+    }
+    x.x_private = unsafe { x.x_base.add(pos as usize) as *mut c_void };
+    x.x_handy = total - pos;
+    XDR_TRUE
+}
+unsafe extern "C" fn mem_inline(x: *mut Xdr, len: c_uint) -> *mut i32 {
+    let x = unsafe { &mut *x };
+    if x.x_handy < len {
+        return std::ptr::null_mut();
+    }
+    x.x_handy -= len;
+    let p = x.x_private as *mut i32;
+    x.x_private = unsafe { (x.x_private as *mut u8).add(len as usize) as *mut c_void };
+    p
+}
+unsafe extern "C" fn mem_destroy(_x: *mut Xdr) {}
+
+static XDRMEM_OPS: XdrOps = XdrOps {
+    x_getlong: mem_glong,
+    x_putlong: mem_plong,
+    x_getbytes: mem_gb,
+    x_putbytes: mem_pb,
+    x_getpostn: mem_pos,
+    x_setpostn: mem_setpos,
+    x_inline: mem_inline,
+    x_destroy: mem_destroy,
+    x_getint32: mem_gi32,
+    x_putint32: mem_pi32,
+};
+
+/// Create a memory-backed XDR stream. Native implementation (RFC 4506).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdrmem_create(
+    xdrs: *mut c_void,
+    addr: *mut c_char,
+    size: c_uint,
+    op: c_int,
+) {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        addr as usize,
+        size as usize,
+        true,
+        true,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return;
+    }
+
+    let x = xdrs as *mut Xdr;
+    unsafe {
+        (*x).x_op = op;
+        (*x).x_ops = &XDRMEM_OPS;
+        (*x).x_private = addr as *mut c_void;
+        (*x).x_base = addr;
+        (*x).x_handy = size;
+        (*x).x_public = std::ptr::null_mut();
+    }
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+}
+
+// ===================== Stdio stream backend =====================
+
+unsafe extern "C" fn stdio_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
+    let f = unsafe { (*x).x_private };
+    let mut buf = [0u8; 4];
+    if unsafe { crate::stdio_abi::fread(buf.as_mut_ptr().cast(), 1, 4, f.cast()) } != 4 {
+        return XDR_FALSE;
+    }
+    unsafe {
+        *ip = i32::from_be_bytes(buf);
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn stdio_pi32(x: *mut Xdr, ip: *const i32) -> c_int {
+    let f = unsafe { (*x).x_private };
+    let buf = unsafe { (*ip).to_be_bytes() };
+    if unsafe { crate::stdio_abi::fwrite(buf.as_ptr().cast(), 1, 4, f.cast()) } != 4 {
+        return XDR_FALSE;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn stdio_glong(x: *mut Xdr, lp: *mut c_long) -> c_int {
+    let mut t: i32 = 0;
+    if unsafe { stdio_gi32(x, &mut t) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe {
+        *lp = t as c_long;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn stdio_plong(x: *mut Xdr, lp: *const c_long) -> c_int {
+    let t = unsafe { *lp } as i32;
+    unsafe { stdio_pi32(x, &t) }
+}
+unsafe extern "C" fn stdio_gb(x: *mut Xdr, a: *mut c_char, n: c_uint) -> c_int {
+    if n == 0 {
+        return XDR_TRUE;
+    }
+    let f = unsafe { (*x).x_private };
+    if unsafe { crate::stdio_abi::fread(a.cast(), 1, n as usize, f.cast()) } as c_uint != n {
+        return XDR_FALSE;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn stdio_pb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int {
+    if n == 0 {
+        return XDR_TRUE;
+    }
+    let f = unsafe { (*x).x_private };
+    if unsafe { crate::stdio_abi::fwrite(a.cast(), 1, n as usize, f.cast()) } as c_uint != n {
+        return XDR_FALSE;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn stdio_pos(x: *const Xdr) -> c_uint {
+    unsafe { crate::stdio_abi::ftell((*x).x_private.cast()) as c_uint }
+}
+unsafe extern "C" fn stdio_setpos(x: *mut Xdr, pos: c_uint) -> c_int {
+    if unsafe { crate::stdio_abi::fseek((*x).x_private.cast(), pos as c_long, libc::SEEK_SET) } == 0
+    {
+        XDR_TRUE
+    } else {
+        XDR_FALSE
+    }
+}
+unsafe extern "C" fn stdio_inline(_x: *mut Xdr, _n: c_uint) -> *mut i32 {
+    std::ptr::null_mut()
+}
+unsafe extern "C" fn stdio_destroy(x: *mut Xdr) {
+    if !unsafe { (*x).x_private.is_null() } {
+        unsafe {
+            crate::stdio_abi::fflush((*x).x_private.cast());
+        }
+    }
+}
+
+static XDRSTDIO_OPS: XdrOps = XdrOps {
+    x_getlong: stdio_glong,
+    x_putlong: stdio_plong,
+    x_getbytes: stdio_gb,
+    x_putbytes: stdio_pb,
+    x_getpostn: stdio_pos,
+    x_setpostn: stdio_setpos,
+    x_inline: stdio_inline,
+    x_destroy: stdio_destroy,
+    x_getint32: stdio_gi32,
+    x_putint32: stdio_pi32,
+};
+
+/// Create a stdio-backed XDR stream. Native implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdrstdio_create(xdrs: *mut c_void, file: *mut c_void, op: c_int) {
+    let x = xdrs as *mut Xdr;
+    unsafe {
+        (*x).x_op = op;
+        (*x).x_ops = &XDRSTDIO_OPS;
+        (*x).x_private = file;
+        (*x).x_base = std::ptr::null_mut();
+        (*x).x_handy = 0;
+        (*x).x_public = std::ptr::null_mut();
+    }
+}
+
+// ===================== Record stream backend (TCP) =====================
+
+/// Bounded RFC 5531 record-marker state. Input callbacks may split any byte of
+/// a marker or payload. Completed records stay in the output buffer until a
+/// requested flush, buffer pressure, or an already-sent fragment requires it.
+struct RecStream {
+    out_base: *mut u8,
+    out_finger: *mut u8,
+    out_boundry: *mut u8,
+    frag_header: *mut u32,
+    in_base: *mut u8,
+    in_finger: *mut u8,
+    in_boundry: *mut u8,
+    fbtbc: i64,
+    last_frag: bool,
+    recvsize: c_uint,
+    tcp_handle: *mut c_void,
+    readit: *mut c_void,  // fn(*mut c_void, *mut c_void, c_int) -> c_int
+    writeit: *mut c_void, // fn(*mut c_void, *mut c_void, c_int) -> c_int
+    fragment_sent: bool,
+}
+
+type RecIo = unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int;
+
+impl RecStream {
+    fn input_available(&self) -> usize {
+        self.in_boundry as usize - self.in_finger as usize
+    }
+
+    fn output_available(&self) -> usize {
+        self.out_boundry as usize - self.out_finger as usize
+    }
+
+    unsafe fn mark_output(&mut self, last: bool) {
+        let len = self.out_finger as usize - self.frag_header as usize - 4;
+        let marker = len as u32 | if last { 0x8000_0000 } else { 0 };
+        // SAFETY: each fragment reserves four bytes in the owned output buffer.
+        // Raw byte writes can leave a batched marker unaligned.
+        unsafe { std::ptr::write_unaligned(self.frag_header, marker.to_be()) };
+    }
+
+    unsafe fn flush_out(&mut self, eor: bool) -> bool {
+        // SAFETY: the output cursor and reserved header belong to this stream.
+        unsafe { self.mark_output(eor) };
+        let total = self.out_finger as usize - self.out_base as usize;
+        // The legacy callback contract requires one complete write. A short
+        // write is failure, not permission to duplicate or retry a prefix.
+        // SAFETY: xdrrec_create's caller supplies a valid synchronous callback.
+        let wfn: RecIo = unsafe { std::mem::transmute(self.writeit) };
+        let n = unsafe { wfn(self.tcp_handle, self.out_base.cast(), total as c_int) };
+        if n < 0 || n as usize != total {
+            return false;
+        }
+        self.frag_header = self.out_base as *mut u32;
+        // SAFETY: normalized output buffers always have room for a marker.
+        self.out_finger = unsafe { self.out_base.add(4) };
+        self.fragment_sent = !eor;
+        true
+    }
+
+    unsafe fn fill_input(&mut self) -> bool {
+        debug_assert_eq!(self.input_available(), 0);
+        // Preserve the wire cursor's alignment across short callback reads so
+        // an aligned payload can still use XDR_INLINE after a split marker.
+        let offset = self.in_finger as usize & 3;
+        let want = self.recvsize as usize - offset;
+        // SAFETY: offset is at most three and normalized buffers are >=100.
+        let destination = unsafe { self.in_base.add(offset) };
+        // SAFETY: xdrrec_create's caller supplies a valid synchronous callback.
+        let rfn: RecIo = unsafe { std::mem::transmute(self.readit) };
+        let n = unsafe { rfn(self.tcp_handle, destination.cast(), want as c_int) };
+        if n <= 0 || n as usize > want {
+            return false;
+        }
+        self.in_finger = destination;
+        // SAFETY: the validated callback count fits the owned input buffer.
+        self.in_boundry = unsafe { destination.add(n as usize) };
+        true
+    }
+
+    unsafe fn get_frag_header(&mut self) -> bool {
+        let mut marker = [0u8; 4];
+        let mut copied = 0;
+        while copied < marker.len() {
+            if self.input_available() == 0 && !unsafe { self.fill_input() } {
+                // Like GNU, a failed partial marker is not resumable: bytes
+                // already consumed are not replayed as a new wire message.
+                return false;
+            }
+            let take = self.input_available().min(marker.len() - copied);
+            // SAFETY: both ranges have `take` bytes and are disjoint; consume
+            // buffered bytes before refilling, including partial markers.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.in_finger,
+                    marker.as_mut_ptr().add(copied),
+                    take,
+                );
+                self.in_finger = self.in_finger.add(take);
+            }
+            copied += take;
+        }
+        let marker = u32::from_be_bytes(marker);
+        // GNU rejects an empty nonterminal fragment; an empty final record
+        // (0x8000_0000) remains valid and participates in normal navigation.
+        if marker == 0 {
+            return false;
+        }
+        self.last_frag = marker & 0x8000_0000 != 0;
+        self.fbtbc = i64::from(marker & 0x7fff_ffff);
+        true
+    }
+
+    unsafe fn skip_input_record(&mut self) -> bool {
+        loop {
+            while self.fbtbc > 0 {
+                if self.input_available() == 0 && !unsafe { self.fill_input() } {
+                    return false;
+                }
+                let take = self.input_available().min(self.fbtbc as usize);
+                // SAFETY: `take` stays inside the current buffered fragment.
+                self.in_finger = unsafe { self.in_finger.add(take) };
+                self.fbtbc -= take as i64;
+            }
+            if self.last_frag {
+                return true;
+            }
+            if !unsafe { self.get_frag_header() } {
+                return false;
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn rec_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    let mut buf = [0u8; 4];
+    let mut got: usize = 0;
+    while got < 4 {
+        if rs.fbtbc <= 0 {
+            if rs.last_frag {
+                return XDR_FALSE;
+            }
+            if !unsafe { rs.get_frag_header() } {
+                return XDR_FALSE;
+            }
+        }
+        // An empty final record ends here without discarding buffered bytes
+        // belonging to the following record.
+        if rs.fbtbc == 0 {
+            continue;
+        }
+        let avail = rs.input_available().min(rs.fbtbc as usize);
+        if avail == 0 {
+            if !unsafe { rs.fill_input() } {
+                return XDR_FALSE;
+            }
+            continue;
+        }
+        let take = avail.min(4 - got);
+        unsafe {
+            std::ptr::copy_nonoverlapping(rs.in_finger, buf.as_mut_ptr().add(got), take);
+        }
+        rs.in_finger = unsafe { rs.in_finger.add(take) };
+        rs.fbtbc -= take as i64;
+        got += take;
+    }
+    unsafe {
+        *ip = i32::from_be_bytes(buf);
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn rec_pi32(x: *mut Xdr, ip: *const i32) -> c_int {
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    if rs.output_available() < 4 && !unsafe { rs.flush_out(false) } {
+        return XDR_FALSE;
+    }
+    let buf = unsafe { (*ip).to_be_bytes() };
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), rs.out_finger, 4);
+        rs.out_finger = rs.out_finger.add(4);
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn rec_glong(x: *mut Xdr, lp: *mut c_long) -> c_int {
+    let mut t: i32 = 0;
+    if unsafe { rec_gi32(x, &mut t) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe {
+        *lp = t as c_long;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn rec_plong(x: *mut Xdr, lp: *const c_long) -> c_int {
+    let t = unsafe { *lp } as i32;
+    unsafe { rec_pi32(x, &t) }
+}
+unsafe extern "C" fn rec_gb(x: *mut Xdr, a: *mut c_char, n: c_uint) -> c_int {
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    let mut out = a as *mut u8;
+    let mut rem = n as usize;
+    while rem > 0 {
+        if rs.fbtbc <= 0 {
+            if rs.last_frag {
+                return XDR_FALSE;
+            }
+            if !unsafe { rs.get_frag_header() } {
+                return XDR_FALSE;
+            }
+        }
+        if rs.fbtbc == 0 {
+            continue;
+        }
+        let avail = rs.input_available().min(rs.fbtbc as usize);
+        if avail == 0 {
+            if !unsafe { rs.fill_input() } {
+                return XDR_FALSE;
+            }
+            continue;
+        }
+        let take = avail.min(rem);
+        unsafe {
+            std::ptr::copy_nonoverlapping(rs.in_finger, out, take);
+            rs.in_finger = rs.in_finger.add(take);
+            out = out.add(take);
+        }
+        rs.fbtbc -= take as i64;
+        rem -= take;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn rec_pb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int {
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    let mut src = a as *const u8;
+    let mut rem = n as usize;
+    while rem > 0 {
+        let avail = rs.output_available();
+        if avail == 0 {
+            if !unsafe { rs.flush_out(false) } {
+                return XDR_FALSE;
+            }
+            continue;
+        }
+        let take = avail.min(rem);
+        unsafe {
+            std::ptr::copy_nonoverlapping(src, rs.out_finger, take);
+            rs.out_finger = rs.out_finger.add(take);
+            src = src.add(take);
+        }
+        rem -= take;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn rec_pos(x: *const Xdr) -> c_uint {
+    // SAFETY: the operation table is only published with a live RecStream.
+    let rs = unsafe { &*((*x).x_private as *const RecStream) };
+    // GNU's seekable record-stream convention interprets the opaque handle as
+    // an fd. Other callback handles and sockets return the failure sentinel.
+    let offset = match raw_syscall::sys_lseek(rs.tcp_handle as usize as c_int, 0, libc::SEEK_CUR) {
+        Ok(offset) => offset,
+        Err(error) => {
+            // SAFETY: this ABI call reports its error in the current thread's errno.
+            unsafe { set_abi_errno(error) };
+            return c_uint::MAX;
+        }
+    };
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            offset.wrapping_add((rs.out_finger as usize - rs.out_base as usize) as i64) as c_uint
+        }
+        XDR_DECODE => offset.wrapping_sub(rs.input_available() as i64) as c_uint,
+        _ => c_uint::MAX,
+    }
+}
+unsafe extern "C" fn rec_setpos(x: *mut Xdr, pos: c_uint) -> c_int {
+    // SAFETY: x is the caller's live record stream.
+    let current = unsafe { rec_pos(x) };
+    if current == c_uint::MAX {
+        return XDR_FALSE;
+    }
+    // GNU positions and their difference are 32-bit, including wraparound.
+    let delta = i64::from(current.wrapping_sub(pos) as i32);
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            let index = (rs.out_finger as usize - rs.out_base as usize) as i64 - delta;
+            let header = (rs.frag_header as usize - rs.out_base as usize) as i64;
+            let end = (rs.out_boundry as usize - rs.out_base as usize) as i64;
+            // Positions supplied to xdr_setpos must have come from getpos.
+            // No valid payload position can point inside its reserved marker.
+            if index < header + 4 || index >= end {
+                return XDR_FALSE;
+            }
+            // SAFETY: integer admission precedes pointer arithmetic, and keeps
+            // the new cursor in this fragment's owned output buffer.
+            rs.out_finger = unsafe { rs.out_base.add(index as usize) };
+        }
+        XDR_DECODE => {
+            let index = (rs.in_finger as usize - rs.in_base as usize) as i64 - delta;
+            let end = (rs.in_boundry as usize - rs.in_base as usize) as i64;
+            if delta >= rs.fbtbc || index < 0 || index > end {
+                return XDR_FALSE;
+            }
+            // Retain GNU's observable fragment-count adjustment, including its
+            // asymmetric rewind restriction; only buffered positions qualify.
+            rs.in_finger = unsafe { rs.in_base.add(index as usize) };
+            rs.fbtbc -= delta;
+        }
+        _ => return XDR_FALSE,
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn rec_inline(x: *mut Xdr, len: c_uint) -> *mut i32 {
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    // XDR_INLINE may decline an optimization. Odd byte-oriented cursors use
+    // the copying operations instead of exposing an unaligned i32 pointer.
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE if rs.output_available() >= len as usize && rs.out_finger as usize & 3 == 0 => {
+            let p = rs.out_finger.cast::<i32>();
+            // SAFETY: the requested contiguous range fits the output buffer.
+            rs.out_finger = unsafe { rs.out_finger.add(len as usize) };
+            p
+        }
+        XDR_DECODE
+            if rs.input_available() >= len as usize
+                && rs.fbtbc >= i64::from(len)
+                && rs.in_finger as usize & 3 == 0 =>
+        {
+            let p = rs.in_finger.cast::<i32>();
+            // SAFETY: both the input allocation and current fragment contain
+            // the requested range; no callback or refill invalidates it here.
+            rs.in_finger = unsafe { rs.in_finger.add(len as usize) };
+            rs.fbtbc -= i64::from(len);
+            p
+        }
+        _ => std::ptr::null_mut(),
+    }
+}
+unsafe extern "C" fn rec_destroy(x: *mut Xdr) {
+    let rs = unsafe { (*x).x_private as *mut RecStream };
+    if !rs.is_null() {
+        let r = unsafe { &*rs };
+        if !r.out_base.is_null() {
+            unsafe {
+                crate::malloc_abi::raw_free(r.out_base.cast());
+            }
+        }
+        if !r.in_base.is_null() {
+            unsafe {
+                crate::malloc_abi::raw_free(r.in_base.cast());
+            }
+        }
+        unsafe {
+            let _ = Box::from_raw(rs);
+        }
+    }
+}
+
+static XDRREC_OPS: XdrOps = XdrOps {
+    x_getlong: rec_glong,
+    x_putlong: rec_plong,
+    x_getbytes: rec_gb,
+    x_putbytes: rec_pb,
+    x_getpostn: rec_pos,
+    x_setpostn: rec_setpos,
+    x_inline: rec_inline,
+    x_destroy: rec_destroy,
+    x_getint32: rec_gi32,
+    x_putint32: rec_pi32,
+};
+
+fn rec_buffer_size(requested: c_uint) -> Option<usize> {
+    let size = if requested < 100 { 4000 } else { requested };
+    let aligned = size.checked_add(3)? & !3;
+    // Callback lengths and record-fragment lengths must both remain positive
+    // signed ints. Reject overflow before allocating or publishing any state.
+    (aligned <= c_int::MAX as c_uint).then_some(aligned as usize)
+}
+
+/// Create a record-stream XDR (TCP record marking). Native implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdrrec_create(
+    xdrs: *mut c_void,
+    sendsize: c_uint,
+    recvsize: c_uint,
+    handle: *mut c_void,
+    readit: *mut c_void,
+    writeit: *mut c_void,
+) {
+    let (Some(ss), Some(rs_val)) = (rec_buffer_size(sendsize), rec_buffer_size(recvsize)) else {
+        // SAFETY: this ABI call reports its error in the current thread's errno.
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return;
+    };
+    // SAFETY: normalized lengths reserve space for markers and fit callbacks.
+    let out_buf = unsafe { crate::malloc_abi::raw_alloc(ss) as *mut u8 };
+    let in_buf = unsafe { crate::malloc_abi::raw_alloc(rs_val) as *mut u8 };
+    if out_buf.is_null() || in_buf.is_null() {
+        if !out_buf.is_null() {
+            unsafe {
+                crate::malloc_abi::raw_free(out_buf.cast());
+            }
+        }
+        if !in_buf.is_null() {
+            unsafe {
+                crate::malloc_abi::raw_free(in_buf.cast());
+            }
+        }
+        return;
+    }
+    let rs = Box::new(RecStream {
+        out_base: out_buf,
+        out_finger: unsafe { out_buf.add(4) },
+        out_boundry: unsafe { out_buf.add(ss) },
+        frag_header: out_buf as *mut u32,
+        in_base: in_buf,
+        in_finger: in_buf,
+        in_boundry: in_buf,
+        fbtbc: 0,
+        // The stream begins at a record boundary. The caller must first use
+        // xdrrec_skiprecord to enter the first record, as on GNU libc.
+        last_frag: true,
+        recvsize: rs_val as c_uint,
+        tcp_handle: handle,
+        readit,
+        writeit,
+        fragment_sent: false,
+    });
+    let x = xdrs as *mut Xdr;
+    unsafe {
+        // The operation, public data and unrelated user fields belong to the
+        // caller. Creation changes only the backend and its private storage.
+        (*x).x_ops = &XDRREC_OPS;
+        (*x).x_private = Box::into_raw(rs) as *mut c_void;
+    }
+}
+
+/// Mark end of a record in an XDR record stream. Native implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdrrec_endofrecord(xdrs: *mut c_void, sendnow: c_int) -> c_int {
+    let x = xdrs as *mut Xdr;
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    if sendnow != 0 || rs.fragment_sent || rs.output_available() <= 4 {
+        // SAFETY: the owned output region includes its current fragment marker.
+        return c_int::from(unsafe { rs.flush_out(true) });
+    }
+    // SAFETY: the pending record's marker is reserved, and the condition above
+    // leaves room for the next record's marker without flushing the batch.
+    unsafe {
+        rs.mark_output(true);
+        rs.frag_header = rs.out_finger.cast();
+        rs.out_finger = rs.out_finger.add(4);
+    }
+    XDR_TRUE
+}
+
+/// Consume this record and report whether the input buffer contains more data.
+/// No speculative read is issued at the next record boundary.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdrrec_eof(xdrs: *mut c_void) -> c_int {
+    let x = xdrs as *mut Xdr;
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    // SAFETY: only the live stream's buffered fragments are consumed.
+    c_int::from(!unsafe { rs.skip_input_record() } || rs.input_available() == 0)
+}
+
+/// Skip to end of current record in an XDR record stream. Native implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdrrec_skiprecord(xdrs: *mut c_void) -> c_int {
+    let x = xdrs as *mut Xdr;
+    let rs = unsafe { &mut *((*x).x_private as *mut RecStream) };
+    // SAFETY: the record cursor and buffer ranges belong to this live stream.
+    if !unsafe { rs.skip_input_record() } {
+        return XDR_FALSE;
+    }
+    rs.last_frag = false;
+    XDR_TRUE
+}
+
+// ===================== Counting stream (for xdr_sizeof) =====================
+
+unsafe extern "C" fn cnt_gi32(_x: *mut Xdr, _ip: *mut i32) -> c_int {
+    XDR_FALSE
+}
+unsafe extern "C" fn cnt_pi32(x: *mut Xdr, _ip: *const i32) -> c_int {
+    unsafe {
+        (*x).x_handy += 4;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn cnt_glong(_x: *mut Xdr, _lp: *mut c_long) -> c_int {
+    XDR_FALSE
+}
+unsafe extern "C" fn cnt_plong(x: *mut Xdr, _lp: *const c_long) -> c_int {
+    unsafe {
+        (*x).x_handy += 4;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn cnt_gb(_x: *mut Xdr, _a: *mut c_char, _n: c_uint) -> c_int {
+    XDR_FALSE
+}
+unsafe extern "C" fn cnt_pb(x: *mut Xdr, _a: *const c_char, n: c_uint) -> c_int {
+    unsafe {
+        (*x).x_handy += n;
+    }
+    XDR_TRUE
+}
+unsafe extern "C" fn cnt_pos(x: *const Xdr) -> c_uint {
+    unsafe { (*x).x_handy }
+}
+unsafe extern "C" fn cnt_setpos(_x: *mut Xdr, _p: c_uint) -> c_int {
+    XDR_FALSE
+}
+unsafe extern "C" fn cnt_inline(_x: *mut Xdr, _n: c_uint) -> *mut i32 {
+    std::ptr::null_mut()
+}
+unsafe extern "C" fn cnt_destroy(_x: *mut Xdr) {}
+
+static XDRCNT_OPS: XdrOps = XdrOps {
+    x_getlong: cnt_glong,
+    x_putlong: cnt_plong,
+    x_getbytes: cnt_gb,
+    x_putbytes: cnt_pb,
+    x_getpostn: cnt_pos,
+    x_setpostn: cnt_setpos,
+    x_inline: cnt_inline,
+    x_destroy: cnt_destroy,
+    x_getint32: cnt_gi32,
+    x_putint32: cnt_pi32,
+};
+
+// ===================== XDR primitive serializers =====================
+
+// --- Void ---
+
+/// XDR void serializer — always returns TRUE (1).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_void() -> c_int {
+    XDR_TRUE
+}
+
+// --- 32-bit types (use putint32/getint32 directly) ---
+
+macro_rules! xdr_i32_prim {
+    ($name:ident, $ty:ty) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(xdrs: *mut c_void, ip: *mut $ty) -> c_int {
+            let x = xdrs as *mut Xdr;
+            match unsafe { (*x).x_op } {
+                XDR_ENCODE => unsafe { xp32(x, ip as *const i32) },
+                XDR_DECODE => unsafe { xg32(x, ip as *mut i32) },
+                _ => XDR_TRUE,
+            }
+        }
+    };
+}
+
+xdr_i32_prim!(xdr_int, c_int);
+xdr_i32_prim!(xdr_u_int, c_uint);
+xdr_i32_prim!(xdr_int32_t, i32);
+xdr_i32_prim!(xdr_uint32_t, u32);
+xdr_i32_prim!(xdr_enum, c_int);
+
+/// XDR bool: normalizes to 0/1 on both encode and decode (matches glibc).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_bool(xdrs: *mut c_void, bp: *mut c_int) -> c_int {
+    let x = xdrs as *mut Xdr;
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            let v: i32 = if unsafe { *bp } != 0 { 1 } else { 0 };
+            unsafe { xp32(x, &v) }
+        }
+        XDR_DECODE => {
+            let mut v: i32 = 0;
+            if unsafe { xg32(x, &mut v) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe {
+                *bp = if v != 0 { 1 } else { 0 };
+            }
+            XDR_TRUE
+        }
+        _ => XDR_TRUE,
+    }
+}
+
+// --- Narrowing types (widen to i32 for XDR, narrow on decode) ---
+
+macro_rules! xdr_narrow_prim {
+    ($name:ident, $ty:ty) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(xdrs: *mut c_void, sp: *mut $ty) -> c_int {
+            let x = xdrs as *mut Xdr;
+            match unsafe { (*x).x_op } {
+                XDR_ENCODE => {
+                    let v = unsafe { *sp } as i32;
+                    unsafe { xp32(x, &v) }
+                }
+                XDR_DECODE => {
+                    let mut v: i32 = 0;
+                    if unsafe { xg32(x, &mut v) } != XDR_TRUE {
+                        return XDR_FALSE;
+                    }
+                    unsafe {
+                        *sp = v as $ty;
+                    }
+                    XDR_TRUE
+                }
+                _ => XDR_TRUE,
+            }
+        }
+    };
+}
+
+xdr_narrow_prim!(xdr_short, i16);
+xdr_narrow_prim!(xdr_u_short, u16);
+xdr_narrow_prim!(xdr_char, c_char);
+xdr_narrow_prim!(xdr_u_char, u8);
+xdr_narrow_prim!(xdr_int8_t, i8);
+xdr_narrow_prim!(xdr_int16_t, i16);
+xdr_narrow_prim!(xdr_uint8_t, u8);
+xdr_narrow_prim!(xdr_uint16_t, u16);
+
+// --- Long types (64-bit C long → 32-bit XDR) ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_long(xdrs: *mut c_void, lp: *mut c_long) -> c_int {
+    let x = xdrs as *mut Xdr;
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            let v = unsafe { *lp } as i32;
+            unsafe { xp32(x, &v) }
+        }
+        XDR_DECODE => {
+            let mut v: i32 = 0;
+            if unsafe { xg32(x, &mut v) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe {
+                *lp = v as c_long;
+            }
+            XDR_TRUE
+        }
+        _ => XDR_TRUE,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_u_long(xdrs: *mut c_void, lp: *mut c_ulong) -> c_int {
+    let x = xdrs as *mut Xdr;
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            let v = unsafe { *lp } as i32;
+            unsafe { xp32(x, &v) }
+        }
+        XDR_DECODE => {
+            let mut v: i32 = 0;
+            if unsafe { xg32(x, &mut v) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe {
+                // XDR unsigned longs are 32-bit wire values even on LP64.
+                *lp = v as u32 as c_ulong;
+            }
+            XDR_TRUE
+        }
+        _ => XDR_TRUE,
+    }
+}
+
+// --- 64-bit types (two 32-bit XDR units, high word first) ---
+
+macro_rules! xdr_i64_prim {
+    ($name:ident, $ty:ty) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(xdrs: *mut c_void, hp: *mut $ty) -> c_int {
+            let x = xdrs as *mut Xdr;
+            match unsafe { (*x).x_op } {
+                XDR_ENCODE => {
+                    let v = unsafe { *hp } as u64;
+                    let hi = (v >> 32) as i32;
+                    let lo = v as i32;
+                    if unsafe { xp32(x, &hi) } != XDR_TRUE {
+                        return XDR_FALSE;
+                    }
+                    unsafe { xp32(x, &lo) }
+                }
+                XDR_DECODE => {
+                    let (mut hi, mut lo): (i32, i32) = (0, 0);
+                    if unsafe { xg32(x, &mut hi) } != XDR_TRUE {
+                        return XDR_FALSE;
+                    }
+                    if unsafe { xg32(x, &mut lo) } != XDR_TRUE {
+                        return XDR_FALSE;
+                    }
+                    unsafe {
+                        *hp = (((hi as u32 as u64) << 32) | (lo as u32 as u64)) as $ty;
+                    }
+                    XDR_TRUE
+                }
+                _ => XDR_TRUE,
+            }
+        }
+    };
+}
+
+xdr_i64_prim!(xdr_hyper, i64);
+xdr_i64_prim!(xdr_u_hyper, u64);
+xdr_i64_prim!(xdr_longlong_t, i64);
+xdr_i64_prim!(xdr_u_longlong_t, u64);
+xdr_i64_prim!(xdr_quad_t, i64);
+xdr_i64_prim!(xdr_u_quad_t, u64);
+xdr_i64_prim!(xdr_int64_t, i64);
+xdr_i64_prim!(xdr_uint64_t, u64);
+
+// --- Float/double: IEEE 754 bit pattern as 32/64-bit XDR ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_float(xdrs: *mut c_void, fp: *mut f32) -> c_int {
+    // Float shares the same 32-bit big-endian encoding as int
+    unsafe { xdr_int(xdrs, fp as *mut c_int) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_double(xdrs: *mut c_void, dp: *mut f64) -> c_int {
+    // Double shares the same 64-bit big-endian encoding as hyper
+    unsafe { xdr_hyper(xdrs, dp as *mut i64) }
+}
+
+// ===================== XDR composite serializers =====================
+
+/// Serialize fixed-length opaque data with padding to 4-byte boundary.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_opaque(xdrs: *mut c_void, cp: *mut c_char, cnt: c_uint) -> c_int {
+    if cnt == 0 {
+        return XDR_TRUE;
+    }
+    let x = xdrs as *mut Xdr;
+    let pad = (rndup(cnt as usize) - cnt as usize) as c_uint;
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            if unsafe { xpb(x, cp, cnt) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            if pad > 0 && unsafe { xpb(x, ZERO_PAD.as_ptr().cast(), pad) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            XDR_TRUE
+        }
+        XDR_DECODE => {
+            if unsafe { xgb(x, cp, cnt) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            if pad > 0 {
+                let mut d = [0u8; 4];
+                if unsafe { xgb(x, d.as_mut_ptr().cast(), pad) } != XDR_TRUE {
+                    return XDR_FALSE;
+                }
+            }
+            XDR_TRUE
+        }
+        _ => XDR_TRUE,
+    }
+}
+
+/// Return the remaining unread byte count for an `xdrmem` stream, or
+/// `None` if the stream uses a different backend (rec/stdio) where the
+/// remaining length is not directly observable.
+///
+/// Used by xdr_string / xdr_bytes / xdr_array DECODE paths to bound
+/// caller-supplied lengths against the actual stream size BEFORE
+/// allocating, defending against attacker-supplied 4 GiB length lies
+/// that pass `maxsize` checks (bd-bhqcn, CVE-2017-17807 / -2020-25645
+/// / -2022-23219 family).
+#[inline]
+fn xdrmem_remaining_bytes(xdrs: *mut c_void) -> Option<c_uint> {
+    let x = xdrs as *mut Xdr;
+    if x.is_null() {
+        return None;
+    }
+    // SAFETY: xdrs is a caller-owned Xdr handle; we read the immutable
+    // ops vtable pointer and the length-of-remaining-bytes counter.
+    let ops = unsafe { (*x).x_ops };
+    if std::ptr::eq(ops, &XDRMEM_OPS as *const XdrOps) {
+        Some(unsafe { (*x).x_handy })
+    } else {
+        None
+    }
+}
+
+/// Round `n` up to the next multiple of 4 (XDR's natural unit), saturating
+/// at u32::MAX so we never wrap around. The decoded payload of a length-
+/// prefixed XDR opaque is always 4-byte padded.
+#[inline]
+fn xdr_padded_len(n: c_uint) -> c_uint {
+    n.saturating_add(3) & !3
+}
+
+/// Serialize counted bytes (length-prefixed, malloc on decode).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_bytes(
+    xdrs: *mut c_void,
+    sp: *mut *mut c_char,
+    lp: *mut c_uint,
+    maxsize: c_uint,
+) -> c_int {
+    let x = xdrs as *mut Xdr;
+    match unsafe { (*x).x_op } {
+        XDR_ENCODE => {
+            let len = unsafe { *lp };
+            if len > maxsize {
+                return XDR_FALSE;
+            }
+            if unsafe { xdr_u_int(xdrs, lp) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe { xdr_opaque(xdrs, *sp, len) }
+        }
+        XDR_DECODE => {
+            if unsafe { xdr_u_int(xdrs, lp) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            let len = unsafe { *lp };
+            if len > maxsize {
+                return XDR_FALSE;
+            }
+            if len == 0 {
+                return XDR_TRUE;
+            }
+            // Defense in depth (bd-bhqcn): for xdrmem streams, refuse a
+            // decoded length whose padded payload cannot fit in the
+            // remaining stream. xdr_opaque would later catch this via
+            // xgb, but only after we've already malloc'd the
+            // attacker-supplied size — a 4 GiB length lie would OOM
+            // before reaching the stream check.
+            if let Some(remaining) = xdrmem_remaining_bytes(xdrs)
+                && xdr_padded_len(len) > remaining
+            {
+                return XDR_FALSE;
+            }
+            if unsafe { (*sp).is_null() } {
+                // Caller frees via free per RFC 1832 mem_free contract.
+                let buf = unsafe { crate::malloc_abi::malloc(len as usize) as *mut c_char };
+                if buf.is_null() {
+                    return XDR_FALSE;
+                }
+                unsafe {
+                    *sp = buf;
+                }
+            }
+            unsafe { xdr_opaque(xdrs, *sp, len) }
+        }
+        XDR_FREE => {
+            let p = unsafe { *sp };
+            if !p.is_null() {
+                unsafe {
+                    crate::malloc_abi::free(p.cast());
+                    *sp = std::ptr::null_mut();
+                }
+            }
+            XDR_TRUE
+        }
+        _ => XDR_FALSE,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_string(
+    xdrs: *mut c_void,
+    sp: *mut *mut c_char,
+    maxsize: c_uint,
+) -> c_int {
+    if sp.is_null() {
+        return XDR_FALSE;
+    }
+
+    let x = xdrs as *mut Xdr;
+    let op = unsafe { (*x).x_op };
+    let mut size: c_uint = match op {
+        XDR_ENCODE | XDR_FREE => {
+            let s = unsafe { *sp };
+            if s.is_null() {
+                return if op == XDR_FREE { XDR_TRUE } else { XDR_FALSE };
+            }
+            // Validate the string pointer before reading length.
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, true, false, 0);
+            if matches!(decision.action, MembraneAction::Deny) {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return XDR_FALSE;
+            }
+            (unsafe { crate::string_abi::strlen(s) }) as c_uint
+        }
+        _ => 0,
+    };
+    if unsafe { xdr_u_int(xdrs, &mut size) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if size > maxsize {
+        return XDR_FALSE;
+    }
+    // Defense in depth (bd-bhqcn): refuse a decoded length whose
+    // padded payload would overrun the xdrmem stream. xdr_wrapstring
+    // passes maxsize=u32::MAX per RFC contract, so the maxsize check
+    // alone leaves a 4 GiB allocation primitive for attackers.
+    if op == XDR_DECODE
+        && let Some(remaining) = xdrmem_remaining_bytes(xdrs)
+        && xdr_padded_len(size) > remaining
+    {
+        return XDR_FALSE;
+    }
+    if op == XDR_DECODE && unsafe { (*sp).is_null() } {
+        // mem_alloc semantics: caller frees via free.
+        let buf = unsafe { crate::malloc_abi::malloc(size as usize + 1) as *mut c_char };
+        if buf.is_null() {
+            return XDR_FALSE;
+        }
+        unsafe {
+            *sp = buf;
+        }
+    }
+
+    // Validate the buffer for the actual data transfer.
+    if op == XDR_ENCODE || op == XDR_DECODE {
+        let s = unsafe { *sp };
+        let (_, decision) =
+            runtime_policy::decide(ApiFamily::Stdio, s as usize, size as usize, true, true, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return XDR_FALSE;
+        }
+    }
+
+    let result = unsafe { xdr_opaque(xdrs, *sp, size) };
+    if result == XDR_TRUE && op == XDR_DECODE {
+        let p = unsafe { *sp };
+        if !p.is_null() {
+            unsafe {
+                *p.add(size as usize) = 0;
+            }
+        }
+    }
+    if op == XDR_FREE {
+        let p = unsafe { *sp };
+        if !p.is_null() {
+            unsafe {
+                crate::malloc_abi::free(p.cast());
+                *sp = std::ptr::null_mut();
+            }
+        }
+    }
+    result
+}
+
+/// Serialize a string with no maximum length limit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_wrapstring(xdrs: *mut c_void, sp: *mut *mut c_char) -> c_int {
+    unsafe { xdr_string(xdrs, sp, c_uint::MAX) }
+}
+
+/// Minimum encoded bytes for array elements with a known native serializer.
+/// The C object stride is not a wire bound: an LP64 long takes eight bytes in
+/// memory and four on the wire, and custom serializers may consume no bytes.
+/// An unrecognized callback therefore leaves admission to the caller's maximum
+/// count, the allocation-overflow checks, and the callback's stream checks.
+fn xdr_array_min_wire_bytes(elproc: *mut c_void) -> Option<c_uint> {
+    if [
+        xdr_int as *mut c_void,
+        xdr_u_int as *mut c_void,
+        xdr_int32_t as *mut c_void,
+        xdr_uint32_t as *mut c_void,
+        xdr_enum as *mut c_void,
+        xdr_bool as *mut c_void,
+        xdr_short as *mut c_void,
+        xdr_u_short as *mut c_void,
+        xdr_char as *mut c_void,
+        xdr_u_char as *mut c_void,
+        xdr_int8_t as *mut c_void,
+        xdr_uint8_t as *mut c_void,
+        xdr_int16_t as *mut c_void,
+        xdr_uint16_t as *mut c_void,
+        xdr_long as *mut c_void,
+        xdr_u_long as *mut c_void,
+        xdr_float as *mut c_void,
+        xdr_wrapstring as *mut c_void,
+    ]
+    .contains(&elproc)
+    {
+        Some(4)
+    } else if [
+        xdr_hyper as *mut c_void,
+        xdr_u_hyper as *mut c_void,
+        xdr_longlong_t as *mut c_void,
+        xdr_u_longlong_t as *mut c_void,
+        xdr_quad_t as *mut c_void,
+        xdr_u_quad_t as *mut c_void,
+        xdr_int64_t as *mut c_void,
+        xdr_uint64_t as *mut c_void,
+        xdr_double as *mut c_void,
+    ]
+    .contains(&elproc)
+    {
+        Some(8)
+    } else {
+        None
+    }
+}
+
+/// Serialize a variable-length array (count + elements).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_array(
+    xdrs: *mut c_void,
+    arrp: *mut *mut c_char,
+    sizep: *mut c_uint,
+    maxsize: c_uint,
+    elsize: c_uint,
+    elproc: *mut c_void,
+) -> c_int {
+    let x = xdrs as *mut Xdr;
+    let op = unsafe { (*x).x_op };
+    if unsafe { xdr_u_int(xdrs, sizep) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    let c = unsafe { *sizep };
+    if c > maxsize && op != XDR_FREE {
+        return XDR_FALSE;
+    }
+    // A null allocation has nothing to release, even if a failed decoder
+    // already published a nonzero element count. Conversely, an empty array
+    // can still have caller-owned storage that XDR_FREE must release.
+    if (c == 0 && op != XDR_FREE) || (op == XDR_FREE && unsafe { (*arrp).is_null() }) {
+        return XDR_TRUE;
+    }
+    // Reject elsize=0 outright: an array of zero-size elements is
+    // nonsensical, but a caller (or attacker who controls a
+    // generated-stub call site) supplying elsize=0 with a non-zero
+    // count drops the overflow check below and ends up calling the
+    // per-element proc on a 1-byte malloc, causing the element proc
+    // to write past the allocation. Found by fuzz_xdr (bd-bhqcn).
+    if elsize == 0 && c != 0 && op != XDR_FREE {
+        return XDR_FALSE;
+    }
+    if elsize > 0 && c > u32::MAX / elsize && op != XDR_FREE {
+        return XDR_FALSE;
+    }
+    // Reject impossible known-codec counts before allocating (bd-bhqcn),
+    // using their actual wire widths rather than their in-memory strides.
+    if op == XDR_DECODE
+        && let Some(remaining) = xdrmem_remaining_bytes(xdrs)
+        && let Some(minimum) = xdr_array_min_wire_bytes(elproc)
+        && c > remaining / minimum
+    {
+        return XDR_FALSE;
+    }
+    let target = if op == XDR_DECODE && unsafe { (*arrp).is_null() } {
+        let total_bytes = match (c as usize).checked_mul(elsize as usize) {
+            Some(b) => b,
+            None => return XDR_FALSE,
+        };
+        // Nested serializers treat null pointer members as allocation requests.
+        // Zero all elements, including ones not reached after a partial decode,
+        // so a later XDR_FREE can safely visit the entire published count.
+        // SAFETY: the checked product is the complete caller-declared array;
+        // calloc returns initialized storage owned by this XDR result.
+        let buf = unsafe { crate::malloc_abi::calloc(1, total_bytes) as *mut c_char };
+        if buf.is_null() {
+            return XDR_FALSE;
+        }
+        unsafe {
+            *arrp = buf;
+        }
+        buf
+    } else {
+        unsafe { *arrp }
+    };
+    let mut result = XDR_TRUE;
+    let mut ptr = target;
+    for _ in 0..c {
+        // SAFETY: nonempty arrays require a live element serializer. Do not
+        // materialize a function pointer for an empty array's unused callback.
+        let pf: XdrProc = unsafe { std::mem::transmute(elproc) };
+        if unsafe { pf(xdrs, ptr.cast()) } != XDR_TRUE {
+            result = XDR_FALSE;
+            break;
+        }
+        ptr = unsafe { ptr.add(elsize as usize) };
+    }
+    if op == XDR_FREE {
+        let p = unsafe { *arrp };
+        if !p.is_null() {
+            unsafe {
+                crate::malloc_abi::free(p.cast());
+                *arrp = std::ptr::null_mut();
+            }
+        }
+    }
+    result
+}
+
+/// Serialize a fixed-length array (no count on wire).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_vector(
+    xdrs: *mut c_void,
+    arrp: *mut c_char,
+    size: c_uint,
+    elsize: c_uint,
+    elproc: *mut c_void,
+) -> c_int {
+    let pf: XdrProc = unsafe { std::mem::transmute(elproc) };
+    let mut ptr = arrp;
+    for _ in 0..size {
+        if unsafe { pf(xdrs, ptr.cast()) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        ptr = unsafe { ptr.add(elsize as usize) };
+    }
+    XDR_TRUE
+}
+
+// Per-thread recursion-depth counter for xdr_reference. Caps the
+// nesting depth a wire stream can drive through caller-supplied
+// recursive procs (e.g., generated stubs for self-referential XDR
+// types like `struct tree { tree *left; tree *right; }`). Without
+// this cap, a malicious stream of repeated `more=1` flags walks
+// xdr_pointer → xdr_reference → user_proc → xdr_pointer recursion
+// arbitrarily deep and exhausts the thread stack. (bd-xpgak)
+//
+// 256 is a generous practical ceiling — real RPC schemas rarely
+// nest more than a handful of pointers deep. `Cell<u32>` has a
+// trivial drop so this thread_local does NOT register through
+// __cxa_thread_atexit_impl (avoids the bd-yf86e init-array
+// deadlock class).
+const XDR_REFERENCE_DEPTH_LIMIT: u32 = 256;
+
+#[cfg(feature = "owned-tls-cache")]
+static XDR_REFERENCE_DEPTH_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_u32);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_u32() -> u32 {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static XDR_REFERENCE_DEPTH: std::cell::Cell<u32> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[inline]
+fn try_enter_xdr_reference_depth() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
+            if *depth >= XDR_REFERENCE_DEPTH_LIMIT {
+                false
+            } else {
+                *depth += 1;
+                true
+            }
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        XDR_REFERENCE_DEPTH
+            .try_with(|cell| {
+                let current = cell.get();
+                if current >= XDR_REFERENCE_DEPTH_LIMIT {
+                    false
+                } else {
+                    cell.set(current + 1);
+                    true
+                }
+            })
+            .unwrap_or(false)
+    }
+}
+
+#[inline]
+fn leave_xdr_reference_depth() {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
+            *depth = depth.saturating_sub(1);
+        });
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = XDR_REFERENCE_DEPTH.try_with(|cell| cell.set(cell.get() - 1));
+    }
+}
+
+/// Serialize a non-null pointer to an object (allocate on decode).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_reference(
+    xdrs: *mut c_void,
+    pp: *mut *mut c_char,
+    size: c_uint,
+    proc_: *mut c_void,
+) -> c_int {
+    // Bounded recursion depth: caller-supplied procs may recursively
+    // invoke xdr_pointer/xdr_reference; cap at 256 to prevent
+    // wire-controlled stack exhaustion. (bd-xpgak)
+    if !try_enter_xdr_reference_depth() {
+        return XDR_FALSE;
+    }
+
+    let x = xdrs as *mut Xdr;
+    let op = unsafe { (*x).x_op };
+    if unsafe { (*pp).is_null() } {
+        if op != XDR_DECODE {
+            leave_xdr_reference_depth();
+            // A null reference has no remaining ownership to release. Do not
+            // invoke (or even materialize) its unused serializer in FREE mode.
+            return if op == XDR_FREE { XDR_TRUE } else { XDR_FALSE };
+        }
+        // mem_alloc semantics: caller frees via libc free (bd-zgifl).
+        // Use calloc not malloc so recursive procs that read inner
+        // pointer fields (e.g., a `next` link in a self-referential
+        // struct) see a well-defined NULL — otherwise the caller's
+        // first xdr_pointer call on `&buf->next` reads uninitialized
+        // memory as a "pointer" and tries to use it. Mirrors glibc's
+        // xdr_reference + memset(buf, 0, size) idiom.
+        let buf = unsafe { crate::malloc_abi::calloc(1, size as usize) as *mut c_char };
+        if buf.is_null() {
+            leave_xdr_reference_depth();
+            return XDR_FALSE;
+        }
+        unsafe {
+            *pp = buf;
+        }
+    }
+    let pf: XdrProc = unsafe { std::mem::transmute(proc_) };
+    let result = unsafe { pf(xdrs, (*pp).cast()) };
+    if op == XDR_FREE {
+        let p = unsafe { *pp };
+        if !p.is_null() {
+            unsafe {
+                crate::malloc_abi::free(p.cast());
+                *pp = std::ptr::null_mut();
+            }
+        }
+    }
+    leave_xdr_reference_depth();
+    result
+}
+
+/// Serialize an optional pointer (bool + reference if present).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_pointer(
+    xdrs: *mut c_void,
+    pp: *mut *mut c_char,
+    size: c_uint,
+    proc_: *mut c_void,
+) -> c_int {
+    let mut more: c_int = if unsafe { !(*pp).is_null() } { 1 } else { 0 };
+    if unsafe { xdr_bool(xdrs, &mut more) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if more == 0 {
+        unsafe {
+            *pp = std::ptr::null_mut();
+        }
+        return XDR_TRUE;
+    }
+    unsafe { xdr_reference(xdrs, pp, size, proc_) }
+}
+
+#[repr(C)]
+struct XdrDiscrim {
+    value: c_int,
+    proc_: XdrProc,
+}
+
+/// Serialize a discriminated union.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_union(
+    xdrs: *mut c_void,
+    dscmp: *mut c_int,
+    unp: *mut c_char,
+    choices: *const c_void,
+    dfault: *mut c_void,
+) -> c_int {
+    if unsafe { xdr_enum(xdrs, dscmp) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    let dscm = unsafe { *dscmp };
+
+    // Walk xdr_discrim array. Per glibc ABI, the array is terminated by an
+    // entry with a null proc_ function pointer.
+    let mut entry = choices as *const XdrDiscrim;
+    if !entry.is_null() {
+        loop {
+            // SAFETY: choices array is terminated by a null proc_ field.
+            // We must be careful not to overshoot if the caller provided a bad pointer.
+            let e = unsafe { &*entry };
+            let p = e.proc_ as *mut c_void;
+            if p.is_null() {
+                break;
+            }
+            if e.value == dscm {
+                let pf: XdrProc = unsafe { std::mem::transmute(p) };
+                return unsafe { pf(xdrs, unp.cast()) };
+            }
+            entry = unsafe { entry.add(1) };
+        }
+    }
+
+    if dfault.is_null() {
+        return XDR_FALSE;
+    }
+    let pf: XdrProc = unsafe { std::mem::transmute(dfault) };
+    unsafe { pf(xdrs, unp.cast()) }
+}
+
+/// Serialize a netobj (length-prefixed opaque, max 1024).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_netobj(xdrs: *mut c_void, np: *mut c_void) -> c_int {
+    // struct netobj { u_int n_len; [4pad]; char *n_bytes; } — 16 bytes on LP64
+    let len_ptr = np as *mut c_uint;
+    let bytes_ptr = unsafe { (np as *mut u8).add(8) as *mut *mut c_char };
+    unsafe { xdr_bytes(xdrs, bytes_ptr, len_ptr, 1024) }
+}
+
+/// Call an XDR proc in FREE mode to release allocated memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_free(proc_: *mut c_void, objp: *mut c_char) {
+    let mut xh: Xdr = unsafe { std::mem::zeroed() };
+    xh.x_op = XDR_FREE;
+    let pf: XdrProc = unsafe { std::mem::transmute(proc_) };
+    unsafe {
+        pf((&mut xh as *mut Xdr).cast(), objp.cast());
+    }
+}
+
+/// Calculate the XDR-encoded size of data without writing.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_sizeof(func: *mut c_void, data: *mut c_void) -> c_ulong {
+    let mut xh: Xdr = unsafe { std::mem::zeroed() };
+    xh.x_op = XDR_ENCODE;
+    xh.x_ops = &XDRCNT_OPS;
+    xh.x_handy = 0;
+    let pf: XdrProc = unsafe { std::mem::transmute(func) };
+    if unsafe { pf((&mut xh as *mut Xdr).cast(), data) } == XDR_TRUE {
+        xh.x_handy as c_ulong
+    } else {
+        0
+    }
+}
+
+// ===================== RPC type serializers =====================
+
+// --- RPC struct layouts (glibc ABI-compatible, LP64) ---
+
+const MAX_AUTH_BYTES: c_uint = 400;
+const RPC_MSG_VERSION: c_ulong = 2;
+const MSG_CALL: c_int = 0;
+const MSG_REPLY: c_int = 1;
+
+#[repr(C)]
+struct OpaqueAuth {
+    oa_flavor: c_int,
+    oa_base: *mut c_char,
+    oa_length: c_uint,
+}
+
+#[repr(C)]
+struct Pmap {
+    pm_prog: c_ulong,
+    pm_vers: c_ulong,
+    pm_prot: c_ulong,
+    pm_port: c_ulong,
+}
+
+#[repr(C)]
+struct PmapList {
+    pml_map: Pmap,
+    pml_next: *mut PmapList,
+}
+
+#[repr(C)]
+struct AuthUnixParms {
+    aup_time: c_ulong,
+    aup_machname: *mut c_char,
+    aup_uid: u32,
+    aup_gid: u32,
+    aup_len: c_uint,
+    aup_gids: *mut u32,
+}
+
+// AcceptedReply: { verf(24), stat(4+4pad), union(16) } = 48 bytes
+#[repr(C)]
+struct AcceptedReply {
+    ar_verf: OpaqueAuth,
+    ar_stat: c_int,
+    ar_u1: c_ulong,
+    ar_u2: c_ulong,
+}
+
+// RejectedReply: { stat(4+4pad), union(16) } = 24 bytes
+#[repr(C)]
+struct RejectedReply {
+    rj_stat: c_int,
+    rj_u1: c_ulong,
+    rj_u2: c_ulong,
+}
+
+// RmtCallArgs/Res for portmapper remote call
+#[repr(C)]
+struct RmtCallArgs {
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    arglen: c_ulong,
+    args_ptr: *mut c_char,
+    xdr_args: *mut c_void,
+}
+#[repr(C)]
+struct RmtCallRes {
+    port_ptr: *mut c_ulong,
+    resultslen: c_ulong,
+    results_ptr: *mut c_char,
+    xdr_results: *mut c_void,
+}
+
+// key_prot.x's unixcred contains an XDR array, whose count is unsigned int.
+// This is distinct from authdes_getucred's short * output parameter.
+#[repr(C)]
+struct UnixCred {
+    uid: u32,
+    gid: u32,
+    gidlen: c_uint,
+    gids: *mut u32,
+}
+
+const HEXKEYBYTES: c_uint = 48;
+
+#[repr(C)]
+struct NetObj {
+    len: c_uint,
+    bytes: *mut c_char,
+}
+
+#[repr(C)]
+struct CryptKeyArg {
+    remotename: *mut c_char,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct CryptKeyArg2 {
+    remotename: *mut c_char,
+    remotekey: NetObj,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct CryptKeyRes {
+    status: c_int,
+    deskey: [u8; 8],
+}
+
+#[repr(C)]
+struct GetCredRes {
+    status: c_int,
+    cred: UnixCred,
+}
+
+#[repr(C)]
+struct KeyNetStArg {
+    priv_key: [u8; HEXKEYBYTES as usize],
+    pub_key: [u8; HEXKEYBYTES as usize],
+    netname: *mut c_char,
+}
+
+#[repr(C)]
+struct KeyNetStRes {
+    status: c_int,
+    knet: KeyNetStArg,
+}
+
+// --- RPC type XDR functions ---
+
+/// Serialize opaque_auth: flavor(enum) + body(counted bytes).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_opaque_auth(xdrs: *mut c_void, ap: *mut c_void) -> c_int {
+    let a = ap as *mut OpaqueAuth;
+    if unsafe { xdr_enum(xdrs, &mut (*a).oa_flavor) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe { xdr_bytes(xdrs, &mut (*a).oa_base, &mut (*a).oa_length, MAX_AUTH_BYTES) }
+}
+
+/// Serialize accepted_reply: verf + stat + union(results|versions).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_accepted_reply(xdrs: *mut c_void, ar: *mut c_void) -> c_int {
+    let a = ar as *mut AcceptedReply;
+    if unsafe { xdr_opaque_auth(xdrs, (&mut (*a).ar_verf as *mut OpaqueAuth).cast()) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_enum(xdrs, &mut (*a).ar_stat) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    match unsafe { (*a).ar_stat } {
+        0 => {
+            // SUCCESS: call user proc (ar_u2) on ar_u1
+            let proc_p = unsafe { (*a).ar_u2 } as *mut c_void;
+            if proc_p.is_null() {
+                return XDR_TRUE;
+            }
+            let pf: XdrProc = unsafe { std::mem::transmute(proc_p) };
+            unsafe { pf(xdrs, (*a).ar_u1 as *mut c_void) }
+        }
+        2 => {
+            // PROG_MISMATCH: version range (low, high)
+            if unsafe { xdr_u_long(xdrs, &mut (*a).ar_u1) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe { xdr_u_long(xdrs, &mut (*a).ar_u2) }
+        }
+        _ => XDR_TRUE,
+    }
+}
+
+/// Serialize rejected_reply: stat + union(versions|auth_error).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_rejected_reply(xdrs: *mut c_void, rr: *mut c_void) -> c_int {
+    let r = rr as *mut RejectedReply;
+    if unsafe { xdr_enum(xdrs, &mut (*r).rj_stat) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    match unsafe { (*r).rj_stat } {
+        0 => {
+            // RPC_MISMATCH
+            if unsafe { xdr_u_long(xdrs, &mut (*r).rj_u1) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe { xdr_u_long(xdrs, &mut (*r).rj_u2) }
+        }
+        1 => {
+            // AUTH_ERROR: auth_stat stored in first 4 bytes of union
+            unsafe { xdr_enum(xdrs, (&mut (*r).rj_u1 as *mut c_ulong).cast()) }
+        }
+        _ => XDR_FALSE,
+    }
+}
+
+/// Serialize reply message: xid + direction + reply_stat + body.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_replymsg(xdrs: *mut c_void, rmsg: *mut c_void) -> c_int {
+    // rpc_msg offsets: xid(0,8), direction(8,4+4pad), union(16)
+    // reply_body in union: rp_stat(+0,4+4pad), body(+8)
+    let b = rmsg as *mut u8;
+    if unsafe { xdr_u_long(xdrs, b.add(0) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE
+        || unsafe { *(b.add(8) as *const c_int) } != MSG_REPLY
+    {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_enum(xdrs, b.add(16) as *mut c_int) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    match unsafe { *(b.add(16) as *const c_int) } {
+        0 => unsafe { xdr_accepted_reply(xdrs, b.add(24).cast()) },
+        1 => unsafe { xdr_rejected_reply(xdrs, b.add(24).cast()) },
+        _ => XDR_FALSE,
+    }
+}
+
+/// Serialize call header (ENCODE only): xid + CALL + rpcvers + prog + vers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_callhdr(xdrs: *mut c_void, cmsg: *mut c_void) -> c_int {
+    let x = xdrs as *mut Xdr;
+    if unsafe { (*x).x_op } != XDR_ENCODE {
+        return XDR_FALSE;
+    }
+    let b = cmsg as *mut u8;
+    unsafe {
+        *(b.add(8) as *mut c_int) = MSG_CALL;
+        *(b.add(16) as *mut c_ulong) = RPC_MSG_VERSION;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(0) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(16) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(24) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe { xdr_u_long(xdrs, b.add(32) as *mut c_ulong) }
+}
+
+/// Serialize full call message: header + proc + cred + verf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_callmsg(xdrs: *mut c_void, cmsg: *mut c_void) -> c_int {
+    let b = cmsg as *mut u8;
+    // Unlike xdr_callhdr, this codec validates the supplied message. Reject
+    // an invalid header before visiting credentials or other body storage,
+    // and never turn a malformed caller-owned message into a valid request.
+    // xid(0) + direction(8) + rpcvers(16) + prog(24) + vers(32) + proc(40) + cred(48) + verf(72)
+    if unsafe { xdr_u_long(xdrs, b.add(0) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_enum(xdrs, b.add(8) as *mut c_int) } != XDR_TRUE
+        || unsafe { *(b.add(8) as *const c_int) } != MSG_CALL
+    {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(16) as *mut c_ulong) } != XDR_TRUE
+        || unsafe { *(b.add(16) as *const c_ulong) } != RPC_MSG_VERSION
+    {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(24) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(32) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, b.add(40) as *mut c_ulong) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_opaque_auth(xdrs, b.add(48).cast()) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe { xdr_opaque_auth(xdrs, b.add(72).cast()) }
+}
+
+/// Serialize AUTH_UNIX parameters: time + machname + uid + gid + gids.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_authunix_parms(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let a = p as *mut AuthUnixParms;
+    if unsafe { xdr_u_long(xdrs, &mut (*a).aup_time) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_string(xdrs, &mut (*a).aup_machname, 255) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_int(xdrs, (&mut (*a).aup_uid as *mut u32).cast()) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_int(xdrs, (&mut (*a).aup_gid as *mut u32).cast()) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe {
+        xdr_array(
+            xdrs,
+            (&mut (*a).aup_gids as *mut *mut u32).cast(),
+            &mut (*a).aup_len,
+            16,
+            4,
+            xdr_u_int as *mut c_void,
+        )
+    }
+}
+
+/// Serialize portmap entry: prog + vers + prot + port.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_pmap(xdrs: *mut c_void, regs: *mut c_void) -> c_int {
+    let p = regs as *mut Pmap;
+    if unsafe { xdr_u_long(xdrs, &mut (*p).pm_prog) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, &mut (*p).pm_vers) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, &mut (*p).pm_prot) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe { xdr_u_long(xdrs, &mut (*p).pm_port) }
+}
+
+/// Helper: serialize one PmapList entry.
+/// Serialize a linked list of portmap entries.
+///
+/// Iterative implementation mirroring glibc's `xdr_pmaplist`
+/// (sunrpc/pmap_prot2.c). The previous recursion-via-xdr_pointer
+/// implementation was vulnerable to unbounded stack growth on
+/// attacker-controlled wire streams (bd-lc5ss).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_int {
+    let x = xdrs as *mut Xdr;
+    let op = unsafe { (*x).x_op };
+
+    // XDR_FREE walks the list using only the in-memory pml_next chain,
+    // freeing each entry directly. We can't use the same cursor pattern
+    // as ENCODE/DECODE because xdr_reference (in XDR_FREE mode) frees
+    // the entry pointed to by `*cursor` then sets `*cursor = null`,
+    // dangling any reference into the just-freed entry's pml_next
+    // field that we'd want to use as the next cursor. Iterate by
+    // copying the pml_next VALUE into a local before the free.
+    if op == XDR_FREE {
+        let head_slot: *mut *mut PmapList = rp.cast();
+        let mut node = unsafe { *head_slot };
+        unsafe {
+            *head_slot = std::ptr::null_mut();
+        }
+        while !node.is_null() {
+            // SAFETY: node is a valid PmapList pointer we're about to free.
+            let next = unsafe { (*node).pml_next };
+            unsafe { crate::malloc_abi::free(node.cast()) };
+            node = next;
+        }
+        return XDR_TRUE;
+    }
+
+    // ENCODE/DECODE share the cursor pattern. Walk via xdr_bool more-
+    // flag + xdr_reference per entry, advancing through pml_next.
+    let mut cursor: *mut *mut PmapList = rp.cast();
+    loop {
+        let mut more: c_int = if unsafe { !(*cursor).is_null() } {
+            1
+        } else {
+            0
+        };
+        if unsafe { xdr_bool(xdrs, &mut more) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if more == 0 {
+            unsafe {
+                *cursor = std::ptr::null_mut();
+            }
+            return XDR_TRUE;
+        }
+        if unsafe {
+            xdr_reference(
+                xdrs,
+                cursor as *mut *mut c_char,
+                std::mem::size_of::<PmapList>() as c_uint,
+                xdr_pmap as *mut c_void,
+            )
+        } != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        // xdr_reference allocates `sizeof(PmapList)` (40) but xdr_pmap
+        // only initializes the first 32 (pm_prog..pm_port). Explicitly
+        // null pml_next so the next iteration's `(*cursor).is_null()`
+        // peek and the tail-of-list `*cursor = null` write target
+        // initialized memory.
+        unsafe {
+            if op == XDR_DECODE {
+                (**cursor).pml_next = std::ptr::null_mut();
+            }
+            // ENCODE must retain the caller's next link and serialize the
+            // complete list, including lists returned by pmap_getmaps.
+            cursor = &mut (**cursor).pml_next as *mut *mut PmapList;
+        }
+    }
+}
+
+/// Serialize remote call arguments with arglen fixup.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_rmtcall_args(xdrs: *mut c_void, cap: *mut c_void) -> c_int {
+    let a = cap as *mut RmtCallArgs;
+    let x = xdrs as *mut Xdr;
+    if unsafe { xdr_u_long(xdrs, &mut (*a).prog) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, &mut (*a).vers) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, &mut (*a).proc_) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { (*x).x_op } == XDR_ENCODE {
+        let lpos = unsafe { ((*(*x).x_ops).x_getpostn)(x as *const Xdr) };
+        if unsafe { xdr_u_long(xdrs, &mut (*a).arglen) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        let apos = unsafe { ((*(*x).x_ops).x_getpostn)(x as *const Xdr) };
+        let pf: XdrProc = unsafe { std::mem::transmute((*a).xdr_args) };
+        if unsafe { pf(xdrs, (*a).args_ptr.cast()) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        let epos = unsafe { ((*(*x).x_ops).x_getpostn)(x as *const Xdr) };
+        unsafe {
+            (*a).arglen = (epos - apos) as c_ulong;
+        }
+        let _ = unsafe { ((*(*x).x_ops).x_setpostn)(x, lpos) };
+        if unsafe { xdr_u_long(xdrs, &mut (*a).arglen) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        let _ = unsafe { ((*(*x).x_ops).x_setpostn)(x, epos) };
+        XDR_TRUE
+    } else {
+        if unsafe { xdr_u_long(xdrs, &mut (*a).arglen) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        let pf: XdrProc = unsafe { std::mem::transmute((*a).xdr_args) };
+        unsafe { pf(xdrs, (*a).args_ptr.cast()) }
+    }
+}
+
+/// Serialize remote call results.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_rmtcallres(xdrs: *mut c_void, crp: *mut c_void) -> c_int {
+    let r = crp as *mut RmtCallRes;
+    if unsafe {
+        xdr_reference(
+            xdrs,
+            (&mut (*r).port_ptr as *mut *mut c_ulong).cast(),
+            std::mem::size_of::<c_ulong>() as c_uint,
+            xdr_u_long as *mut c_void,
+        )
+    } != XDR_TRUE
+    {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_long(xdrs, &mut (*r).resultslen) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    let pf: XdrProc = unsafe { std::mem::transmute((*r).xdr_results) };
+    unsafe { pf(xdrs, (*r).results_ptr.cast()) }
+}
+
+/// Serialize a DES block (8 bytes opaque).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_des_block(xdrs: *mut c_void, blkp: *mut c_void) -> c_int {
+    unsafe { xdr_opaque(xdrs, blkp as *mut c_char, 8) }
+}
+
+/// Serialize UNIX credentials: uid + gid + gidlen + gids.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_unixcred(xdrs: *mut c_void, ucp: *mut c_void) -> c_int {
+    let u = ucp as *mut UnixCred;
+    if unsafe { xdr_u_int(xdrs, (&mut (*u).uid as *mut u32).cast()) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    if unsafe { xdr_u_int(xdrs, (&mut (*u).gid as *mut u32).cast()) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    // SAFETY: the caller supplies a live unixcred. xdr_array serializes its
+    // count exactly once and owns any allocation made during DECODE.
+    unsafe {
+        xdr_array(
+            xdrs,
+            (&mut (*u).gids as *mut *mut u32).cast(),
+            &mut (*u).gidlen,
+            16,
+            4,
+            xdr_u_int as *mut c_void,
+        )
+    }
+}
+
+/// Serialize the public GNU DES credential layout and RFC 1057 union.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_authdes_cred(xdrs: *mut c_void, cred: *mut c_void) -> c_int {
+    // DES auth is cryptographically broken. Provide wire-format support for
+    // the discriminated union: namekind(enum) + fullname{name,key,window} or nickname.
+    let b = cred as *mut u8;
+    let nk = b as *mut c_int;
+    if unsafe { xdr_enum(xdrs, nk) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    match unsafe { *nk } {
+        0 => {
+            // ADN_FULLNAME: name(string) + key(8 opaque) + window(4 opaque)
+            if unsafe { xdr_string(xdrs, b.add(8) as *mut *mut c_char, 255) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            if unsafe { xdr_opaque(xdrs, b.add(16) as *mut c_char, 8) } != XDR_TRUE {
+                return XDR_FALSE;
+            }
+            unsafe { xdr_opaque(xdrs, b.add(24) as *mut c_char, 4) }
+        }
+        1 => {
+            // GNU's C record stores the nickname after the complete fullname,
+            // rather than overlaying it with that struct as a C union would.
+            unsafe { xdr_opaque(xdrs, b.add(32) as *mut c_char, 4) }
+        }
+        _ => XDR_FALSE,
+    }
+}
+
+/// Serialize DES auth verifier (deprecated — minimal implementation).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_authdes_verf(xdrs: *mut c_void, verf: *mut c_void) -> c_int {
+    // DES verifier: timestamp_sec(4) + timestamp_usec(4) + nickname(4) = 12 bytes
+    // Stored as opaque in the wire format within the verifier body.
+    // Since verifier data is already in opaque_auth body, this just serializes the raw fields.
+    let b = verf as *mut u8;
+    if unsafe { xdr_opaque(xdrs, b as *mut c_char, 8) } != XDR_TRUE {
+        return XDR_FALSE;
+    }
+    unsafe { xdr_opaque(xdrs, b.add(8) as *mut c_char, 4) }
+}
+
+// --- Key server XDR types (Secure RPC / keyserv protocol) ---
+// Layouts and discriminants follow the public key_prot.x protocol. A failed
+// result has no union payload, including during XDR_FREE.
+
+/// Serialize a classic Secure RPC key (48 hexadecimal bytes, no terminator).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_keybuf(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    // SAFETY: keybuf is a fixed-size opaque array supplied by the caller.
+    unsafe { xdr_opaque(xdrs, p.cast(), HEXKEYBYTES) }
+}
+
+/// Serialize key status enum.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_keystatus(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    unsafe { xdr_enum(xdrs, p as *mut c_int) }
+}
+
+/// Serialize a netname string (max 255 chars).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_netnamestr(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    unsafe { xdr_string(xdrs, p as *mut *mut c_char, 255) }
+}
+
+/// Serialize cryptkeyarg: remotename(string) + deskey(des_block=8).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_cryptkeyarg(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let arg = p.cast::<CryptKeyArg>();
+    // SAFETY: arg has the public cryptkeyarg layout, and its fields remain
+    // live for the selected XDR operation.
+    unsafe {
+        if xdr_netnamestr(xdrs, (&mut (*arg).remotename as *mut *mut c_char).cast()) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        xdr_des_block(xdrs, (*arg).deskey.as_mut_ptr().cast())
+    }
+}
+
+/// Serialize cryptkeyarg2: remote name, counted binary public key, DES block.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_cryptkeyarg2(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let arg = p.cast::<CryptKeyArg2>();
+    // SAFETY: arg has the public cryptkeyarg2 layout. The netobj codec
+    // preserves embedded NUL bytes and enforces the protocol's 1024-byte cap.
+    unsafe {
+        if xdr_netnamestr(xdrs, (&mut (*arg).remotename as *mut *mut c_char).cast()) != XDR_TRUE
+            || xdr_netobj(xdrs, (&mut (*arg).remotekey as *mut NetObj).cast()) != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        xdr_des_block(xdrs, (*arg).deskey.as_mut_ptr().cast())
+    }
+}
+
+/// Serialize cryptkeyres, including a DES block only for KEY_SUCCESS.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_cryptkeyres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let result = p.cast::<CryptKeyRes>();
+    // SAFETY: only the selected union arm is visited; failure replies need
+    // neither initialized nor accessible success-payload storage.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_des_block(xdrs, (*result).deskey.as_mut_ptr().cast())
+        } else {
+            XDR_TRUE
+        }
+    }
+}
+
+/// Serialize getcredres, including UNIX credentials only for KEY_SUCCESS.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_getcredres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let result = p.cast::<GetCredRes>();
+    // SAFETY: result has the public union layout, including the alignment
+    // padding before unixcred on LP64. The inactive arm is never touched.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_unixcred(xdrs, (&mut (*result).cred as *mut UnixCred).cast())
+        } else {
+            XDR_TRUE
+        }
+    }
+}
+
+/// Serialize key_netstarg: priv_key(keybuf) + pub_key(keybuf) + netname(string).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_key_netstarg(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let arg = p.cast::<KeyNetStArg>();
+    // SAFETY: the two fixed key buffers and following netname pointer match
+    // key_netstarg from the public protocol, without guessed byte offsets.
+    unsafe {
+        if xdr_keybuf(xdrs, (*arg).priv_key.as_mut_ptr().cast()) != XDR_TRUE
+            || xdr_keybuf(xdrs, (*arg).pub_key.as_mut_ptr().cast()) != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        xdr_netnamestr(xdrs, (&mut (*arg).netname as *mut *mut c_char).cast())
+    }
+}
+
+/// Serialize key_netstres, including both keys and netname on KEY_SUCCESS.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let result = p.cast::<KeyNetStRes>();
+    // SAFETY: visit the complete successful union arm, including its owned
+    // string during XDR_FREE; failed arms contain only the status word.
+    unsafe {
+        if xdr_keystatus(xdrs, p) != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if (*result).status == 0 {
+            xdr_key_netstarg(xdrs, (&mut (*result).knet as *mut KeyNetStArg).cast())
+        } else {
+            XDR_TRUE
+        }
+    }
+}
+
+// ===========================================================================
+// RPC authentication (7 symbols)
+// ===========================================================================
+
+/// Return the process-lifetime native AUTH_NONE authenticator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authnone_create() -> *mut c_void {
+    rpc_udp::authnone()
+}
+
+/// Create owned AUTH_SYS credentials (not cryptographic authentication).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authunix_create(
+    machname: *mut c_char,
+    uid: c_int,
+    gid: c_int,
+    len: c_int,
+    aup_gids: *mut c_int,
+) -> *mut c_void {
+    unsafe { rpc_udp::authunix_create(machname, uid, gid, len, aup_gids) }
+}
+
+/// Create AUTH_SYS credentials from the effective process identity.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authunix_create_default() -> *mut c_void {
+    unsafe { rpc_udp::authunix_create_default() }
+}
+
+/// Create a legacy AUTH_DES client using the server's public-key NSS entry.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn authdes_create(
+    servername: *mut c_char,
+    window: c_uint,
+    syncaddr: *mut c_void,
+    ckey: *mut c_void,
+) -> *mut c_void {
+    unsafe { rpc_udp::authdes_create(servername, window, syncaddr, ckey) }
+}
+
+/// Create an owned legacy AUTH_DES client with a supplied server public key.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn authdes_pk_create(
+    servername: *mut c_char,
+    pkey: *mut c_void,
+    window: c_uint,
+    syncaddr: *mut c_void,
+    ckey: *mut c_void,
+) -> *mut c_void {
+    unsafe { rpc_udp::authdes_pk_create(servername, pkey, window, syncaddr, ckey) }
+}
+
+/// Map an authenticated server-side DES credential through the native publickey
+/// NSS database, caching the result for its authenticated conversation.
+///
+/// # Safety
+/// adc is the cooked authdes_cred from a successful server authentication. The
+/// scalar outputs are writable, and groups has the public NGROUPS capacity or
+/// a tracked extent sufficient for the returned group list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authdes_getucred(
+    adc: *mut c_void,
+    uid: *mut u32,
+    gid: *mut u32,
+    grouplen: *mut i16,
+    groups: *mut c_int,
+) -> c_int {
+    unsafe { rpc_svc_des::getucred(adc, uid, gid, grouplen, groups.cast()) }
+}
+
+// ===========================================================================
+// RPC client creation and error handling (14 symbols)
+// ===========================================================================
+
+/// Return the caller-thread memory RPC client; construction reuses its handle
+/// and resets AUTH_NONE. No socket or descriptor is created. The handle remains
+/// live until thread exit; its destroy/geterr operations are GNU no-ops.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void {
+    rpc_udp::create_raw(prog, vers)
+}
+
+/// Create a native IPv4 TCP RPC client with bounded record framing.
+/// Borrowed descriptors must already be connected and remain caller-owned.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clnttcp_create(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
+) -> *mut c_void {
+    unsafe { rpc_udp::create_tcp(raddr, prog, vers, sockp, sendsz, recvsz) }
+}
+
+/// Create an IPv4 UDP RPC client with native XDR and retransmission handling.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntudp_create(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    wait: Timeval,
+    sockp: *mut c_int,
+) -> *mut c_void {
+    unsafe { rpc_udp::create(raddr, prog, vers, wait, sockp, 0, 0) }
+}
+
+/// Create an IPv4 UDP RPC client with explicit bounded transport buffers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntudp_bufcreate(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    wait: Timeval,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
+) -> *mut c_void {
+    unsafe { rpc_udp::create(raddr, prog, vers, wait, sockp, sendsz, recvsz) }
+}
+
+/// Create a native Unix RPC stream client with credential-bearing records.
+///
+/// # Safety
+/// raddr and sockp point to live public sockaddr_un/int objects. A supplied
+/// connected descriptor must have no competing consumer. It stays caller-owned
+/// unless CLSET_FD_CLOSE transfers ownership; Unix I/O enables SO_PASSCRED.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntunix_create(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
+) -> *mut c_void {
+    // SAFETY: native construction imports all user structures with fault checks.
+    unsafe { rpc_udp::create_unix(raddr, prog, vers, sockp, sendsz, recvsz) }
+}
+
+/// Broadcast a portmapper CALLIT request on active IPv4 broadcast networks.
+/// Each accepted reply is decoded and delivered until the callback requests
+/// completion. A null eachresult sends once without waiting for replies.
+///
+/// # Safety
+/// Codecs and result storage follow the public XDR ABI and remain live through
+/// all callbacks. Result codecs must support XDR_FREE, including partial decode.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_broadcast(
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    xargs: *mut c_void,
+    argsp: *mut c_void,
+    xresults: *mut c_void,
+    resultsp: *mut c_void,
+    eachresult: *mut c_void,
+) -> c_int {
+    // SAFETY: the native implementation retains all resources across the
+    // application's unwind-capable callbacks and bounds every network packet.
+    unsafe {
+        rpc_udp::broadcast(
+            prog, vers, proc_, xargs, argsp, xresults, resultsp, eachresult,
+        )
+    }
+}
+
+/// Print RPC error number description to stderr. Native implementation.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
+    write_rpc_diagnostic(rpc_errstr(stat).to_bytes());
+}
+
+fn write_rpc_diagnostic(bytes: &[u8]) {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        // SAFETY: the complete byte range remains live during each raw write.
+        // These reporting functions introduce no cancellation point in C frames.
+        let written = unsafe {
+            crate::unistd_abi::sys_write_fd(
+                2,
+                bytes.as_ptr().add(offset).cast(),
+                bytes.len() - offset,
+            )
+        };
+        // SAFETY: __errno_location provides this thread's live errno slot.
+        if written > 0 {
+            offset += written as usize;
+        } else if written < 0 && unsafe { *crate::errno_abi::__errno_location() } == libc::EINTR {
+            continue;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Print the CLIENT's last error using its own geterr callback. The rendered
+/// message already has the status-specific newline, if any.
+///
+/// # Safety
+/// The CLIENT/table/callback and optional C prefix must remain live for the call.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_perror(clnt: *mut c_void, s: *const c_char) {
+    // SAFETY: the caller supplies the same CLIENT and prefix contract.
+    let message = unsafe { clnt_sperror(clnt, s) };
+    if !message.is_null() {
+        // SAFETY: clnt_sperror published an owned NUL-terminated thread buffer.
+        write_rpc_diagnostic(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes());
+    }
+}
+
+/// Print RPC client creation error to stderr. Native implementation.
+/// Reads from thread-local rpc_createerr (via __rpc_thread_createerr).
+///
+/// # Safety
+/// ABI boundary function. `s` must be a valid C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clnt_pcreateerror(s: *const c_char) {
+    let msg = unsafe { clnt_spcreateerror(s) };
+    if !msg.is_null() {
+        // SAFETY: the creation formatter published a complete terminated buffer.
+        write_rpc_diagnostic(unsafe { std::ffi::CStr::from_ptr(msg) }.to_bytes());
+    }
+}
+
+/// Return a string describing an RPC error status code. Native implementation.
+/// Uses RPC_* status codes from glibc's <rpc/clnt_stat.h>.
+///
+/// # Safety
+/// The returned pointer refers to immutable process-lifetime C-locale storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
+    rpc_errstr(stat).as_ptr().cast_mut()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_DIAGNOSTIC_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+fn init_rpc_diagnostic_buf() -> std::cell::UnsafeCell<Vec<u8>> {
+    std::cell::UnsafeCell::new(Vec::new())
+}
+
+// GNU client/creation diagnostics share one per-thread allocation. Build the
+// next message before replacing it, including when the prefix aliases it.
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RPC_DIAGNOSTIC_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn with_rpc_diagnostic_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_DIAGNOSTIC_BUF_OWNED_TLS.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        // SAFETY: only this thread accesses the cell; callers replace the Vec
+        // without invoking application callbacks while the borrow is held.
+        RPC_DIAGNOSTIC_BUF.with(|slot| {
+            slot.with_init(init_rpc_diagnostic_buf, |cell| {
+                f(unsafe { &mut *cell.get() })
+            })
+        })
+    }
+}
+
+unsafe fn rpc_diagnostic_prefix(prefix: *const c_char) -> Vec<u8> {
+    if prefix.is_null() {
+        b"(null)".to_vec()
+    } else {
+        // SAFETY: the caller supplies a live C string; the existing bounded
+        // reader applies the mode-specific checked-prefix policy.
+        unsafe { read_bounded_cstr(prefix) }.unwrap_or_default()
+    }
+}
+
+fn rpc_errno_description(number: c_int) -> Option<&'static [u8]> {
+    let message = crate::string_abi::strerrordesc_np(number);
+    if message.is_null() {
+        None
+    } else {
+        // SAFETY: strerrordesc_np returns immutable NUL-terminated static data.
+        Some(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes())
+    }
+}
+
+fn publish_rpc_diagnostic(
+    message: Result<Vec<u8>, std::collections::TryReserveError>,
+) -> *mut c_char {
+    match message {
+        Ok(message) => with_rpc_diagnostic_buf(|previous| {
+            *previous = message;
+            previous.as_mut_ptr().cast()
+        }),
+        Err(_) => {
+            // SAFETY: setting errno accesses only the current thread's slot.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Render a live CLIENT's last error. Prefix bytes are copied before calling
+/// application geterr code; no diagnostic storage borrow/lock crosses it.
+///
+/// # Safety
+/// The CLIENT/table/callback must be live. A non-null prefix must be a valid C
+/// string. The result lasts until the next client/creation diagnostic on this thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char {
+    // SAFETY: the public prefix contract is forwarded to the bounded reader.
+    let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    // SAFETY: the caller keeps the CLIENT/table/geterr callback live.
+    let (status, words) = match unsafe { rpc_udp::client_error(clnt) } {
+        Ok(error) => error,
+        Err(error) => {
+            // SAFETY: setting errno accesses only the current thread's slot.
+            unsafe { set_abi_errno(error) };
+            return std::ptr::null_mut();
+        }
+    };
+    publish_rpc_diagnostic(frankenlibc_core::rpc::client_error_message(
+        &prefix,
+        status,
+        words,
+        rpc_errno_description(words[0] as c_int),
+    ))
+}
+
+/// Return a string describing the RPC client creation error. Native implementation.
+/// Reads from thread-local rpc_createerr (cf_stat field at offset 0).
+///
+/// # Safety
+/// ABI boundary function. `s` must be a valid C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
+    // SAFETY: the public prefix contract is forwarded to the bounded reader.
+    let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    let (status, nested_status, words) = rpc_udp::creation_error_details();
+    let error_number = words[0] as c_int;
+    publish_rpc_diagnostic(frankenlibc_core::rpc::creation_error_message(
+        &prefix,
+        status,
+        nested_status,
+        error_number,
+        rpc_errno_description(error_number),
+    ))
+}
+
+use frankenlibc_core::rpc::status_message as rpc_errstr;
+
+// ===========================================================================
+// RPC server / SVC (24 symbols; 18 UDP service symbols provided by rpc_svc)
+// ===========================================================================
+
+/// Return a caller-thread memory RPC service with a logical descriptor of zero.
+/// It never owns stdin and is excluded from socket readiness sets. Register
+/// dispatch with svc_register(..., 0); the native raw client invokes it directly.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn svcraw_create() -> *mut c_void {
+    rpc_svc::create_raw()
+}
+
+// ===========================================================================
+// RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)
+// ===========================================================================
+
+/// Returns the file descriptor table size (same as getdtablesize).
+/// Uses getrlimit(RLIMIT_NOFILE) with a fallback to FD_SETSIZE (1024).
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
+    // SAFETY: zero-init rlimit struct, then getrlimit fills it.
+    let mut rl: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { crate::resource_abi::getrlimit(libc::RLIMIT_NOFILE as c_int, &mut rl) };
+    const FD_SETSIZE: c_int = libc::FD_SETSIZE as c_int;
+    if rc == 0 && rl.rlim_cur > 0 {
+        // Clamp to FD_SETSIZE to match glibc _rpc_dtablesize behavior.
+        let limit = rl.rlim_cur as c_int;
+        if limit > FD_SETSIZE {
+            FD_SETSIZE
+        } else {
+            limit
+        }
+    } else {
+        FD_SETSIZE
+    }
+}
+
+// --- Thread-local RPC state accessors (native TLS) ---
+//
+// In glibc these return pointers to thread-local structs. We provide native
+// TLS storage for the rpc_createerr, svc_fdset, svc_max_pollfd, and
+// svc_pollfd thread-local variables. Programs that use these accessors will
+// get per-thread storage without needing to call into glibc.
+
+// rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
+// This is 32 bytes on x86_64 (4 + padding + 24 for rpc_err).
+// We allocate exactly 32 bytes — and, since callers receive this
+// address as a `struct rpc_createerr *` and write `cf_stat`/`cf_error` fields
+// through it, for ALIGNMENT too: a bare `[u8; 32]` has align 1, which is the
+// class that aborted `re_comp` and `getmntent` with misaligned pointer
+// dereference. `#[repr(C, align(8))]` is what actually makes the cast safe.
+#[repr(C, align(8))]
+struct RpcCreateErrBuf([u8; 32]);
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_CREATEERR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcCreateErrBuf> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_createerr);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_rpc_createerr() -> RpcCreateErrBuf {
+    RpcCreateErrBuf([0u8; 32])
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RPC_CREATEERR_TLS: std::cell::UnsafeCell<RpcCreateErrBuf> =
+        const { std::cell::UnsafeCell::new(RpcCreateErrBuf([0u8; 32])) };
+}
+
+#[inline]
+fn rpc_createerr_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_CREATEERR_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_CREATEERR_TLS.with(|cell| cell.get().cast::<u8>().cast())
+    }
+}
+
+/// Returns pointer to thread-local rpc_createerr struct.
+///
+/// # Safety
+/// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rpc_thread_createerr() -> *mut c_void {
+    rpc_createerr_ptr()
+}
+
+// fd_set size derived from FD_SETSIZE (1024 on Linux → 128 bytes).
+const RPC_FD_SET_BYTES: usize = libc::FD_SETSIZE / 8;
+
+// ALIGNMENT IS LOAD-BEARING. `fd_set` is an array of `__fd_mask` (`long`), and
+// `__rpc_thread_svc_fdset()` hands this address to C code whose FD_SET/FD_ISSET/
+// FD_CLR write pointer-width words through it — and whose `select()` is handed the
+// same pointer, so the kernel reads it as `unsigned long[]` too. A bare
+// `[u8; N]` has align 1 and the TLS block can place it anywhere, which is the
+// class that aborted `re_comp` and `getmntent` with `misaligned pointer
+// dereference`. `#[repr(C, align(8))]` pins offset 0 and the alignment.
+#[repr(C, align(8))]
+struct RpcSvcFdSetBuf([u8; RPC_FD_SET_BYTES]);
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_SVC_FDSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcSvcFdSetBuf> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_svc_fdset);
+
+#[cfg(feature = "owned-tls-cache")]
+fn empty_rpc_svc_fdset() -> RpcSvcFdSetBuf {
+    RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RPC_SVC_FDSET_TLS: crate::util::TlsHeapCell<std::cell::UnsafeCell<RpcSvcFdSetBuf>> =
+        const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn rpc_svc_fdset_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_SVC_FDSET_TLS.with(|slot| slot.with_zeroed(None, |cell| cell.get().cast::<u8>().cast()))
+    }
+}
+
+/// Returns pointer to thread-local svc_fdset (fd_set).
+///
+/// # Safety
+/// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rpc_thread_svc_fdset() -> *mut c_void {
+    rpc_svc::refresh();
+    rpc_svc_fdset_ptr()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_SVC_MAX_POLLFD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_c_int);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_c_int() -> c_int {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RPC_SVC_MAX_POLLFD_TLS: std::cell::UnsafeCell<c_int> =
+        const { std::cell::UnsafeCell::new(0) };
+}
+
+#[inline]
+fn rpc_svc_max_pollfd_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_SVC_MAX_POLLFD_OWNED_TLS.with(|value| (value as *mut c_int).cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_SVC_MAX_POLLFD_TLS.with(|cell| cell.get().cast())
+    }
+}
+
+/// Returns pointer to thread-local svc_max_pollfd (int).
+///
+/// # Safety
+/// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rpc_thread_svc_max_pollfd() -> *mut c_void {
+    rpc_svc::refresh();
+    rpc_svc_max_pollfd_ptr()
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RPC_SVC_POLLFD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
+    crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
+
+#[cfg(feature = "owned-tls-cache")]
+fn zero_usize() -> usize {
+    0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RPC_SVC_POLLFD_TLS: std::cell::UnsafeCell<*mut c_void> =
+        const { std::cell::UnsafeCell::new(std::ptr::null_mut()) };
+}
+
+#[inline]
+fn rpc_svc_pollfd_ptr() -> *mut c_void {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RPC_SVC_POLLFD_OWNED_TLS.with(|value| (value as *mut usize).cast())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RPC_SVC_POLLFD_TLS.with(|cell| cell.get().cast())
+    }
+}
+
+/// Returns pointer to thread-local svc_pollfd (struct pollfd *).
+///
+/// # Safety
+/// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rpc_thread_svc_pollfd() -> *mut c_void {
+    rpc_svc::refresh();
+    rpc_svc_pollfd_ptr()
+}
+
+// --- _seterr_reply (native) ---
+
+/// Extract error information from an RPC reply message into an rpc_err struct.
+/// This parses msg->rm_reply.rp_stat to determine accept/reject status and
+/// populates the error struct accordingly.
+///
+/// struct rpc_msg layout at field rm_reply (offset ~12):
+///   rp_stat (enum reply_stat): 0=MSG_ACCEPTED, 1=MSG_DENIED
+///
+/// For MSG_ACCEPTED (rp_stat==0):
+///   ar_stat (enum accept_stat): acceptance status at offset +4
+///   ar_vers.low/high (u32,u32): if PROG_MISMATCH, at +8/+12
+///
+/// For MSG_DENIED (rp_stat==1):
+///   rj_stat (enum reject_stat): 0=RPC_MISMATCH, 1=AUTH_ERROR
+///   rj_vers.low/high or rj_why: at +4/+8/+12
+///
+/// rpc_err layout: re_status(enum, 4 bytes), then union (rpc_err_union).
+///
+/// Since the exact struct layouts are ABI-dependent and complex, we provide a
+/// minimal implementation that just zeroes the error struct (success case).
+/// Programs needing full RPC error parsing will work via host delegation for
+/// the actual RPC calls themselves.
+///
+/// # Safety
+/// ABI boundary function. Both pointers must be valid or null.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _seterr_reply(msg: *mut c_void, error: *mut c_void) {
+    if msg.is_null() || error.is_null() {
+        return;
+    }
+    // Zero out the error struct (24 bytes for rpc_err on x86_64).
+    // This is safe because rpc_err is a C struct with only integer/enum fields.
+    unsafe {
+        std::ptr::write_bytes(error.cast::<u8>(), 0, 24);
+    }
+
+    // Read reply stat from the message. The rm_reply union starts after
+    // rm_xid(u32) + rm_direction(enum=4 bytes) = offset 8 in struct rpc_msg.
+    // rm_reply.rp_stat is the first field.
+    let msg_bytes = msg.cast::<u8>();
+    let rp_stat = unsafe { std::ptr::read_unaligned(msg_bytes.add(8).cast::<u32>()) };
+
+    // error->re_status: map RPC reply status
+    let error_bytes = error.cast::<u8>();
+    if rp_stat == 0 {
+        // MSG_ACCEPTED — read ar_stat at offset +12 in rpc_msg
+        let ar_stat = unsafe { std::ptr::read_unaligned(msg_bytes.add(12).cast::<u32>()) };
+        // Map accept_stat to clnt_stat: SUCCESS=0, PROG_UNAVAIL=8, etc.
+        let re_status: u32 = match ar_stat {
+            0 => 0,  // SUCCESS
+            1 => 8,  // PROG_UNAVAIL → RPC_PROGUNAVAIL
+            2 => 9,  // PROG_MISMATCH → RPC_PROGVERSMISMATCH
+            3 => 10, // PROC_UNAVAIL → RPC_PROCUNAVAIL
+            4 => 11, // GARBAGE_ARGS → RPC_CANTDECODEARGS
+            5 => 12, // SYSTEM_ERR → RPC_SYSTEMERROR
+            _ => 16, // RPC_FAILED
+        };
+        unsafe {
+            std::ptr::write_unaligned(error_bytes.cast::<u32>(), re_status);
+        }
+        // If PROG_MISMATCH, copy version range
+        if ar_stat == 2 {
+            let low = unsafe { std::ptr::read_unaligned(msg_bytes.add(16).cast::<u32>()) };
+            let high = unsafe { std::ptr::read_unaligned(msg_bytes.add(20).cast::<u32>()) };
+            unsafe {
+                std::ptr::write_unaligned(error_bytes.add(4).cast::<u32>(), low);
+                std::ptr::write_unaligned(error_bytes.add(8).cast::<u32>(), high);
+            }
+        }
+    } else {
+        // MSG_DENIED — read rj_stat at offset +12
+        let rj_stat = unsafe { std::ptr::read_unaligned(msg_bytes.add(12).cast::<u32>()) };
+        if rj_stat == 0 {
+            // RPC_MISMATCH
+            unsafe {
+                std::ptr::write_unaligned(error_bytes.cast::<u32>(), 6); // RPC_VERSMISMATCH
+            }
+            let low = unsafe { std::ptr::read_unaligned(msg_bytes.add(16).cast::<u32>()) };
+            let high = unsafe { std::ptr::read_unaligned(msg_bytes.add(20).cast::<u32>()) };
+            unsafe {
+                std::ptr::write_unaligned(error_bytes.add(4).cast::<u32>(), low);
+                std::ptr::write_unaligned(error_bytes.add(8).cast::<u32>(), high);
+            }
+        } else {
+            // AUTH_ERROR
+            unsafe {
+                std::ptr::write_unaligned(error_bytes.cast::<u32>(), 7); // RPC_AUTHERROR
+            }
+            let why = unsafe { std::ptr::read_unaligned(msg_bytes.add(16).cast::<u32>()) };
+            unsafe {
+                std::ptr::write_unaligned(error_bytes.add(4).cast::<u32>(), why);
+            }
+        }
+    }
+}
+
+// --- _null_auth: this is a global variable in glibc, we export a function
+//     that fetches its address from the host. Programs typically access it
+//     directly; for LD_PRELOAD interposition we provide a function-based
+//     accessor. The linker symbol is handled separately in the version script. ---
+
+// ===========================================================================
+// Key management / Secure RPC (16+ symbols)
+// ===========================================================================
+
+/// Decrypt a session key through the local native keyserver client.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn key_decryptsession(
+    remotename: *const c_char,
+    deskey: *mut c_void,
+) -> c_int {
+    // SAFETY: the helper imports caller storage before the protocol exchange.
+    unsafe { rpc_udp::key_session(remotename, deskey, false) }
+}
+
+/// Decrypt using a counted public key, including an installed local key hook.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn key_decryptsession_pk(
+    remotename: *const c_char,
+    remotekey: *mut c_void,
+    deskey: *mut c_void,
+) -> c_int {
+    // SAFETY: checked private snapshots remain live across reentry or unwind.
+    unsafe { rpc_udp::key_session_pk(remotename, remotekey, deskey, false) }
+}
+
+/// Encrypt a session key through the local native keyserver client.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn key_encryptsession(
+    remotename: *const c_char,
+    deskey: *mut c_void,
+) -> c_int {
+    // SAFETY: the helper imports caller storage before the protocol exchange.
+    unsafe { rpc_udp::key_session(remotename, deskey, true) }
+}
+
+/// Encrypt using a counted public key, including an installed local key hook.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn key_encryptsession_pk(
+    remotename: *const c_char,
+    remotekey: *mut c_void,
+    deskey: *mut c_void,
+) -> c_int {
+    // SAFETY: checked private snapshots remain live across reentry or unwind.
+    unsafe { rpc_udp::key_session_pk(remotename, remotekey, deskey, true) }
+}
+
+/// Generate a DES key using native KEY_GEN or an installed local generator.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn key_gendes(deskey: *mut c_void) -> c_int {
+    // SAFETY: output admission precedes the request or user-installed callback.
+    unsafe { rpc_udp::key_generate(deskey) }
+}
+
+/// Derive a conversation key from a classic 48-byte public key via keyserv.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn key_get_conv(pkey: *mut c_char, deskey: *mut c_void) -> c_int {
+    // SAFETY: keybuf and output are imported/published through the checked copier.
+    unsafe { rpc_udp::key_conversation(pkey, deskey) }
+}
+/// Check if the secret key has been set with the key server.
+/// Returns zero on a missing/empty secret or failed protocol exchange.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn key_secretkey_is_set() -> c_int {
+    // SAFETY: the operation uses only private request and result storage.
+    unsafe { rpc_udp::key_secret_is_set() }
+}
+
+/// Store private/public keys and a network identity; returns one on success.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn key_setnet(arg: *mut c_void) -> c_int {
+    // SAFETY: the public record and its name are copied before daemon access.
+    unsafe { rpc_udp::key_set_network(arg) }
+}
+
+/// Store a classic 48-byte secret key with the local keyserver.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn key_setsecret(secretkey: *const c_char) -> c_int {
+    // SAFETY: the helper retains and erases its own fixed-size secret copy.
+    unsafe { rpc_udp::key_set_secret(secretkey) }
+}
+
+// --- Internal key function pointer globals ---
+// The public-key hooks return a borrowed cryptkeyres*, while the generator
+// returns a borrowed des_block*. Both receive uid_t and a procedure argument.
+// We export them as mutable static AtomicPtrs so programs and libraries
+// can read/write them. Initialized to null (no keyserv client installed).
+
+use std::sync::atomic::AtomicPtr;
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __key_decryptsession_pk_LOCAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __key_encryptsession_pk_LOCAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __key_gendes_LOCAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+// ===========================================================================
+// Portmapper client (5 symbols)
+// ===========================================================================
+
+/// Retrieve a native, caller-freeable portmapper v2 registration list over TCP.
+///
+/// # Safety
+/// address points to a live writable sockaddr_in throughout the operation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pmap_getmaps(address: *mut c_void) -> *mut c_void {
+    // SAFETY: the native importer checks the public address and owns all results.
+    unsafe { rpc_udp::getmaps(address) }
+}
+
+/// Get a program's port from the remote portmapper v2 service.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pmap_getport(
+    address: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    proto: c_uint,
+) -> u16 {
+    unsafe { rpc_udp::getport(address, prog, vers, proto) }
+}
+
+/// Execute portmapper v2 CALLIT with native UDP transport and XDR callbacks.
+///
+/// # Safety
+/// addr/portp are live writable public objects. Codecs and their payloads remain
+/// live for the call; application unwinding releases the owned transport.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pmap_rmtcall(
+    addr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    xdrargs: *mut c_void,
+    argsp: *mut c_void,
+    xdrres: *mut c_void,
+    resp: *mut c_void,
+    tout: Timeval,
+    portp: *mut c_ulong,
+) -> c_int {
+    // SAFETY: the native operation validates fixed structures and retains all
+    // private ownership guards across the application's live XDR callbacks.
+    unsafe {
+        rpc_udp::remote_call(
+            addr, prog, vers, proc_, xdrargs, argsp, xdrres, resp, tout, portp,
+        )
+    }
+}
+
+/// Register a program with the local portmapper v2 service.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pmap_set(prog: c_ulong, vers: c_ulong, proto: c_int, port: u16) -> c_int {
+    rpc_udp::registration(prog, vers, proto, port, false)
+}
+
+/// Unregister a program/version from the local portmapper v2 service.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pmap_unset(prog: c_ulong, vers: c_ulong) -> c_int {
+    rpc_udp::registration(prog, vers, 0, 0, true)
+}
+
+// ===========================================================================
+// DES crypt helpers (6 symbols) — native legacy RPC compatibility
+// ===========================================================================
+
+const DESERR_NOHWDEVICE: c_int = 1;
+const DESERR_BADPARAM: c_int = 3;
+
+/// Copy public bytes through the existing tracked-bound, fault-checked copier.
+/// No Rust slice or reference is formed over caller-owned storage.
+unsafe fn rpc_des_copy(source: *const u8, destination: *mut u8, bytes: usize) -> bool {
+    // SAFETY: callers keep initialized private buffers live for the copy. The
+    // shared copier checks both external address ranges and kernel permissions.
+    match unsafe { crate::io_abi::iov_snapshot::copy_user_bytes(source, destination, bytes) } {
+        Ok(()) => true,
+        Err(error) => {
+            // SAFETY: errno is the calling thread's writable error slot.
+            unsafe { set_abi_errno(error) };
+            false
+        }
+    }
+}
+
+unsafe fn rpc_des_password(password: *const c_char) -> Option<[u8; 8]> {
+    let mut prefix = [0u8; 8];
+    for (index, byte) in prefix.iter_mut().enumerate() {
+        // SAFETY: byte is private initialized storage; the source remains an
+        // untrusted address. GNU consumes at most eight bytes, stopping at NUL.
+        if !unsafe { rpc_des_copy(password.cast::<u8>().wrapping_add(index), byte, 1) } {
+            return None;
+        }
+        if *byte == 0 {
+            break;
+        }
+    }
+    Some(prefix)
+}
+
+unsafe fn rpc_des_apply(
+    key: *const c_char,
+    buffer: *mut c_char,
+    length: c_uint,
+    mode: c_uint,
+    vector: Option<*mut c_char>,
+) -> c_int {
+    use frankenlibc_core::crypt::des::{RPC_DES_MAX_DATA, rpc_des_crypt};
+    let length = length as usize;
+    if length > RPC_DES_MAX_DATA || !length.is_multiple_of(8) {
+        return DESERR_BADPARAM;
+    }
+    let mut key_bytes = [0u8; 8];
+    let mut iv = [0u8; 8];
+    let mut data = Vec::new();
+    if data.try_reserve_exact(length).is_err() {
+        // SAFETY: errno is the calling thread's writable error slot.
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return DESERR_BADPARAM;
+    }
+    data.resize(length, 0u8);
+    // SAFETY: all destinations are initialized private storage of exact size.
+    if !unsafe { rpc_des_copy(key.cast(), key_bytes.as_mut_ptr(), key_bytes.len()) }
+        || !unsafe { rpc_des_copy(buffer.cast(), data.as_mut_ptr(), length) }
+    {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: import the complete IV before writing either public output.
+        if !unsafe { rpc_des_copy(vector.cast(), iv.as_mut_ptr(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    // Check writable extents while republishing their unchanged contents. A
+    // failed admission cannot publish ciphertext or a new chaining vector.
+    // Concurrent changes to permissions/storage remain the caller's concern.
+    if !unsafe { rpc_des_copy(data.as_ptr(), buffer.cast(), length) } {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: iv contains exactly the imported public bytes.
+        if !unsafe { rpc_des_copy(iv.as_ptr(), vector.cast(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    if rpc_des_crypt(
+        &key_bytes,
+        &mut data,
+        mode & 1 != 0,
+        vector.map(|_| &mut iv),
+    )
+    .is_err()
+    {
+        return DESERR_BADPARAM;
+    }
+    // SAFETY: the same checked copier publishes only initialized owned bytes.
+    if !unsafe { rpc_des_copy(data.as_ptr(), buffer.cast(), length) } {
+        return DESERR_BADPARAM;
+    }
+    if let Some(vector) = vector {
+        // SAFETY: the complete resulting IV is initialized and still private.
+        if !unsafe { rpc_des_copy(iv.as_ptr(), vector.cast(), iv.len()) } {
+            return DESERR_BADPARAM;
+        }
+    }
+    if mode & 2 == 0 { DESERR_NOHWDEVICE } else { 0 }
+}
+
+/// CBC DES with GNU-compatible software fallback and chaining-vector updates.
+///
+/// # Safety
+/// key and ivec name eight live bytes; buf names len writable bytes. Public
+/// storage remains live for the call; tracked extents and faults are checked.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cbc_crypt(
+    key: *mut c_char,
+    buf: *mut c_char,
+    len: c_uint,
+    mode: c_uint,
+    ivec: *mut c_char,
+) -> c_int {
+    // SAFETY: the importer owns all intermediate key, data and IV bytes.
+    unsafe { rpc_des_apply(key, buf, len, mode, Some(ivec)) }
+}
+
+/// ECB DES with GNU-compatible software fallback.
+///
+/// # Safety
+/// key names eight live bytes; buf names len live writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ecb_crypt(
+    key: *mut c_char,
+    buf: *mut c_char,
+    len: c_uint,
+    mode: c_uint,
+) -> c_int {
+    // SAFETY: the importer owns all intermediate key and data bytes.
+    unsafe { rpc_des_apply(key, buf, len, mode, None) }
+}
+
+/// Apply the legacy seven-bit DES odd-parity table to eight key bytes.
+///
+/// # Safety
+/// key names eight live writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn des_setparity(key: *mut c_char) {
+    let mut bytes = [0u8; 8];
+    // SAFETY: the checked importer fills exactly this private key array.
+    if !unsafe { rpc_des_copy(key.cast(), bytes.as_mut_ptr(), bytes.len()) } {
+        return;
+    }
+    frankenlibc_core::crypt::des::rpc_des_setparity(&mut bytes);
+    // SAFETY: publish only initialized key bytes through the same checked path.
+    unsafe { rpc_des_copy(bytes.as_ptr(), key.cast(), bytes.len()) };
+}
+
+unsafe fn rpc_des_hex(secret: *mut c_char, password: *const c_char, decrypt: bool) -> c_int {
+    use frankenlibc_core::crypt::des::{RPC_DES_MAX_DATA, RpcDesError, rpc_des_hex_crypt};
+    // SAFETY: only the bounded eight-byte password prefix is imported.
+    let Some(password) = (unsafe { rpc_des_password(password) }) else {
+        return 0;
+    };
+    let mut bytes = Vec::new();
+    // One odd trailing nibble is accepted and discarded by GNU. Include its
+    // terminating NUL in private storage so even empty output needs no new
+    // allocation after transformation.
+    for index in 0..=2 * RPC_DES_MAX_DATA + 1 {
+        let mut byte = 0u8;
+        // SAFETY: one-byte fault-checked reads never pass a valid terminator
+        // or an allocation boundary merely to fill a speculative chunk.
+        if !unsafe { rpc_des_copy(secret.cast::<u8>().wrapping_add(index), &mut byte, 1) } {
+            return 0;
+        }
+        if bytes.try_reserve(1).is_err() {
+            // SAFETY: errno is the calling thread's writable error slot.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return 0;
+        }
+        bytes.push(byte);
+        if byte != 0 {
+            continue;
+        }
+        let binary_length = index / 2;
+        if !binary_length.is_multiple_of(8) {
+            return 0;
+        }
+        let output_length = binary_length * 2 + 1;
+        // SAFETY: test the exact output extent by copying its original bytes.
+        if !unsafe { rpc_des_copy(bytes.as_ptr(), secret.cast(), output_length) } {
+            return 0;
+        }
+        let length = match rpc_des_hex_crypt(&mut bytes[..index], &password, decrypt) {
+            Ok(length) => length,
+            Err(RpcDesError::Allocation) => {
+                // SAFETY: errno is the calling thread's writable error slot.
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return 0;
+            }
+            Err(RpcDesError::BadLength) => return 0,
+        };
+        bytes[length] = 0;
+        // SAFETY: the complete output and terminator fit the checked extent.
+        return c_int::from(unsafe { rpc_des_copy(bytes.as_ptr(), secret.cast(), length + 1) });
+    }
+    0
+}
+
+/// Hex-encrypt a legacy RPC secret with password-derived CBC DES.
+///
+/// # Safety
+/// secret is a live writable NUL-terminated string; passwd remains readable
+/// through its first NUL or eight bytes. Tracked bounds and faults are checked.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xencrypt(secret: *mut c_char, passwd: *mut c_char) -> c_int {
+    // SAFETY: the shared implementation imports and bounds both public inputs.
+    unsafe { rpc_des_hex(secret, passwd, false) }
+}
+
+/// Hex-decrypt a legacy RPC secret with password-derived CBC DES.
+///
+/// # Safety
+/// secret and passwd have the same live-buffer requirements as xencrypt.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xdecrypt(secret: *mut c_char, passwd: *mut c_char) -> c_int {
+    // SAFETY: the shared implementation imports and bounds both public inputs.
+    unsafe { rpc_des_hex(secret, passwd, true) }
+}
+
+/// Convert at most eight password bytes to the legacy RPC key. The C ABI is void.
+///
+/// # Safety
+/// passwd remains readable through its first NUL or eight bytes. key names
+/// eight live writable bytes; all accesses use the checked copier.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn passwd2des(passwd: *mut c_char, key: *mut c_char) {
+    // SAFETY: the bounded importer does not form a reference to caller memory.
+    let Some(password) = (unsafe { rpc_des_password(passwd) }) else {
+        return;
+    };
+    let bytes = frankenlibc_core::crypt::des::rpc_passwd2des(&password);
+    // SAFETY: publish only the complete initialized key.
+    unsafe { rpc_des_copy(bytes.as_ptr(), key.cast(), bytes.len()) };
+}
+
+// ===========================================================================
+// RPC network identity and utility functions (18 symbols)
+// ===========================================================================
+
+/// Choose an UP IPv4 address in interface order. Loopback is a fallback,
+/// determined by interface flags rather than by the spelling of its address.
+/// Missing/non-IPv4 addresses do not participate in selection.
+fn rpc_local_ipv4_address(
+    interfaces: impl IntoIterator<Item = (c_uint, Option<u32>)>,
+) -> Option<u32> {
+    let mut loopback = None;
+    for (flags, address) in interfaces {
+        if flags & libc::IFF_UP as c_uint == 0 {
+            continue;
+        }
+        let Some(address) = address else {
+            continue;
+        };
+        if flags & libc::IFF_LOOPBACK as c_uint == 0 {
+            return Some(address);
+        }
+        if loopback.is_none() {
+            loopback = Some(address);
+        }
+    }
+    loopback
+}
+
+struct RpcInterfaceList(*mut c_void);
+
+impl Drop for RpcInterfaceList {
+    fn drop(&mut self) {
+        // SAFETY: this guard owns the complete list returned by the native
+        // allocator. Releasing it must not replace the caller's errno.
+        unsafe {
+            let error = *crate::errno_abi::__errno_location();
+            crate::unistd_abi::freeifaddrs(self.0);
+            set_abi_errno(error);
+        }
+    }
+}
+
+/// The legacy void API reports enumeration failure and terminates through
+/// normal exit processing. Format the diagnostic without allocating, including
+/// an unknown errno number, so an allocation failure cannot recurse here.
+fn rpc_interface_failure(error: c_int) -> ! {
+    write_rpc_diagnostic(b"get_myaddress: getifaddrs: ");
+    if let Some(description) = rpc_errno_description(error) {
+        write_rpc_diagnostic(description);
+    } else {
+        write_rpc_diagnostic(b"Unknown error ");
+        let mut digits = [0u8; 11];
+        let mut position = digits.len();
+        let mut magnitude = error.unsigned_abs();
+        loop {
+            position -= 1;
+            digits[position] = b'0' + (magnitude % 10) as u8;
+            magnitude /= 10;
+            if magnitude == 0 {
+                break;
+            }
+        }
+        if error < 0 {
+            position -= 1;
+            digits[position] = b'-';
+        }
+        write_rpc_diagnostic(&digits[position..]);
+    }
+    write_rpc_diagnostic(b"\n");
+    // SAFETY: restore the discovery error before ordinary atexit processing.
+    unsafe {
+        set_abi_errno(error);
+        crate::stdlib_abi::exit(1)
+    }
+}
+
+/// Discover a local IPv4 portmapper endpoint without consulting NSS or DNS.
+/// An UP non-loopback interface takes precedence over an UP loopback. The
+/// selected endpoint uses port 111. If no interface qualifies, leave addr
+/// unchanged; enumeration failure prints a diagnostic and exits with status 1.
+///
+/// # Safety
+/// A non-null addr must point to writable sockaddr_in storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_myaddress(addr: *mut c_void) {
+    if addr.is_null() {
+        return;
+    }
+    let mut head = std::ptr::null_mut();
+    // SAFETY: head is a writable result slot. The native interface API owns
+    // all list/address storage until its matching freeifaddrs call.
+    if unsafe { crate::unistd_abi::getifaddrs(&mut head) } != 0 {
+        let error = unsafe { *crate::errno_abi::__errno_location() };
+        rpc_interface_failure(error);
+    }
+    let list = RpcInterfaceList(head);
+    let mut current = list.0.cast::<libc::ifaddrs>();
+    let interfaces = std::iter::from_fn(|| {
+        if current.is_null() {
+            return None;
+        }
+        // SAFETY: the still-owned native list supplies live nodes and address
+        // fields. Read only initialized IPv4 bytes, not sockaddr padding.
+        let entry = unsafe { &*current };
+        current = entry.ifa_next;
+        let address = if !entry.ifa_addr.is_null()
+            && unsafe { (*entry.ifa_addr).sa_family } as c_int == libc::AF_INET
+        {
+            let ipv4 = entry.ifa_addr.cast::<libc::sockaddr_in>();
+            Some(unsafe { std::ptr::addr_of!((*ipv4).sin_addr.s_addr).read_unaligned() })
+        } else {
+            None
+        };
+        Some((entry.ifa_flags, address))
+    });
+    if let Some(address) = rpc_local_ipv4_address(interfaces) {
+        let endpoint = libc::sockaddr_in {
+            sin_family: libc::AF_INET as libc::sa_family_t,
+            sin_port: 111u16.to_be(),
+            sin_addr: libc::in_addr { s_addr: address },
+            sin_zero: [0; 8],
+        };
+        // SAFETY: the caller provides the complete writable sockaddr. Publish
+        // only after selection, keeping an empty successful lookup untouched.
+        unsafe { addr.cast::<libc::sockaddr_in>().write_unaligned(endpoint) };
+    }
+}
+
+#[cfg(test)]
+mod myaddress_tests {
+    use super::rpc_local_ipv4_address;
+
+    #[test]
+    fn first_up_non_loopback_precedes_loopback_and_ignores_other_entries() {
+        let up = libc::IFF_UP as u32;
+        let local = libc::IFF_LOOPBACK as u32;
+        let first = u32::from_ne_bytes([192, 0, 2, 7]);
+        let second = u32::from_ne_bytes([198, 51, 100, 8]);
+        assert_eq!(
+            rpc_local_ipv4_address([
+                (up | local, Some(u32::from_ne_bytes([127, 0, 0, 1]))),
+                (0, Some(second)),
+                (up, None),
+                (up, Some(first)),
+                (up, Some(second)),
+            ]),
+            Some(first)
+        );
+    }
+
+    #[test]
+    fn first_up_loopback_is_retained_when_no_other_ipv4_qualifies() {
+        let up = libc::IFF_UP as u32;
+        let local = libc::IFF_LOOPBACK as u32;
+        let first = u32::from_ne_bytes([127, 0, 0, 1]);
+        assert_eq!(
+            rpc_local_ipv4_address([
+                (local, Some(u32::from_ne_bytes([127, 0, 0, 9]))),
+                (up, None),
+                (up | local, Some(first)),
+                (up | local, Some(u32::from_ne_bytes([127, 0, 0, 2]))),
+            ]),
+            Some(first)
+        );
+    }
+
+    #[test]
+    fn empty_or_ineligible_interface_lists_have_no_fabricated_address() {
+        assert_eq!(rpc_local_ipv4_address([]), None);
+        assert_eq!(
+            rpc_local_ipv4_address([
+                (0, Some(u32::from_ne_bytes([192, 0, 2, 7]))),
+                (libc::IFF_UP as u32, None),
+            ]),
+            None
+        );
+    }
+}
+
+/// Read the kernel hostname or NIS domain without inventing an identity.
+fn rpc_netname_system_component(host: bool) -> Option<Vec<u8>> {
+    let mut bytes = [0u8; 65];
+    // SAFETY: both native entry points receive writable storage large enough
+    // for a Linux UTS field and its terminating NUL.
+    let status = unsafe {
+        if host {
+            crate::unistd_abi::gethostname(bytes.as_mut_ptr().cast(), bytes.len())
+        } else {
+            crate::unistd_abi::getdomainname(bytes.as_mut_ptr().cast(), bytes.len())
+        }
+    };
+    if status != 0 {
+        return None;
+    }
+    let end = bytes.iter().position(|&byte| byte == 0)?;
+    Some(bytes[..end].to_vec())
+}
+
+/// Publish a Secure RPC name in the caller's buffer.
+///
+/// # Safety
+/// destination is non-null and writable for 256 bytes, or its smaller extent
+/// is registered with the allocator. Both input components are owned bytes.
+unsafe fn rpc_netname_write(destination: *mut c_char, identity: &[u8], domain: &[u8]) -> c_int {
+    let len = 5 + identity.len() + 1 + domain.len() + 1;
+    if len > 256 || known_remaining(destination as usize).is_some_and(|remaining| remaining < len) {
+        return 0;
+    }
+    let mut bytes = [0u8; 256];
+    bytes[..5].copy_from_slice(b"unix.");
+    let separator = 5 + identity.len();
+    bytes[5..separator].copy_from_slice(identity);
+    bytes[separator] = b'@';
+    bytes[separator + 1..len - 1].copy_from_slice(domain);
+    // SAFETY: callers validate the destination, the tracked extent is checked,
+    // and the complete output, including its NUL, fits in the local buffer.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination.cast(), len);
+    }
+    1
+}
+
+/// Get the current Secure RPC netname. Root uses the machine identity;
+/// other effective users use their uid and the kernel NIS domain.
+///
+/// # Safety
+/// name must point to a writable buffer of at least 256 bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
+    let uid = raw_syscall::sys_geteuid();
+    // SAFETY: both delegates validate null pointers and share this function's
+    // caller-owned output contract; null inputs select system components.
+    unsafe {
+        if uid == 0 {
+            host2netname(name, std::ptr::null(), std::ptr::null())
+        } else {
+            user2netname(name, uid, std::ptr::null())
+        }
+    }
+}
+
+/// Read a bounded native Secure RPC database image. A descriptor is closed on
+/// every exit; interrupted reads retry without publishing a partial image.
+fn rpc_identity_file<T>(
+    path: &std::ffi::CStr,
+    parse: impl FnOnce(&[u8]) -> Option<T>,
+) -> frankenlibc_core::nss::Answer<T> {
+    use frankenlibc_core::nss::Answer;
+    const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+    struct File(c_int);
+    impl Drop for File {
+        fn drop(&mut self) {
+            let _ = raw_syscall::sys_close(self.0);
+        }
+    }
+    let read = || -> Result<Vec<u8>, c_int> {
+        // SAFETY: path is a live NUL-terminated constant; no mode is needed
+        // for a read-only open. No host libc lookup is used for file access.
+        let fd = File(unsafe {
+            raw_syscall::sys_openat(
+                libc::AT_FDCWD,
+                path.as_ptr().cast(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                0,
+            )?
+        });
+        let mut image = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            // SAFETY: chunk is writable for its complete length and fd is
+            // owned by this call until its RAII guard closes it.
+            let count =
+                match unsafe { raw_syscall::sys_read(fd.0, chunk.as_mut_ptr(), chunk.len()) } {
+                    Ok(0) => return Ok(image),
+                    Ok(count) => count,
+                    Err(libc::EINTR) => continue,
+                    Err(error) => return Err(error),
+                };
+            if count > MAX_IMAGE_BYTES - image.len() {
+                return Err(libc::EFBIG);
+            }
+            image.try_reserve(count).map_err(|_| libc::ENOMEM)?;
+            image.extend_from_slice(&chunk[..count]);
+        }
+    };
+    match read() {
+        Ok(image) => parse(&image).map_or(Answer::NotFound, Answer::Found),
+        Err(error) => {
+            // SAFETY: errno is the calling thread's valid, writable error slot.
+            unsafe { set_abi_errno(error) };
+            Answer::Unavailable(error)
+        }
+    }
+}
+
+/// Get the public key for an exact network identity through the publickey
+/// NSS database. The native files source reads `/etc/publickey`; configured
+/// modules use their public GNU nss_getpublickey entry point.
+///
+/// # Safety
+/// netname is a readable C string and publickey is writable for 49 bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpublickey(netname: *const c_char, publickey: *mut c_char) -> c_int {
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    if publickey.is_null()
+        || known_remaining(publickey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        return 0;
+    }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/publickey", |image| {
+                    frankenlibc_core::rpc::lookup_publickey(image, &name)
+                })
+            } else {
+                crate::nss_module::getpublickey(service.name(), &name)
+            }
+        },
+        None,
+    );
+    let Answer::Found(key) = answer else {
+        return 0;
+    };
+    // SAFETY: the entire fixed-size output was validated before the lookup;
+    // the owned key is disjoint from caller storage and includes no NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(key.as_ptr(), publickey.cast(), key.len());
+        *publickey.add(key.len()) = 0;
+    }
+    1
+}
+
+/// Import a bounded Secure RPC input without dereferencing caller storage.
+unsafe fn rpc_secret_string(source: *const c_char, maximum: usize) -> Option<Vec<u8>> {
+    let mut value = Vec::new();
+    for index in 0..=maximum {
+        let Some(address) = (source as usize).checked_add(index) else {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EFAULT) };
+            return None;
+        };
+        let mut byte = 0u8;
+        // SAFETY: the byte destination is private; the copier checks each
+        // source address and never reads beyond a discovered terminator.
+        if !unsafe { rpc_des_copy(address as *const u8, &mut byte, 1) } {
+            return None;
+        }
+        if byte == 0 {
+            return Some(value);
+        }
+        if index == maximum {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return None;
+        }
+        if value.try_reserve(1).is_err() {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return None;
+        }
+        value.push(byte);
+    }
+    None
+}
+
+/// Get a classic secret key through the publickey NSS database. Native files
+/// decrypt and verify the stored checksum; configured GNU modules receive the
+/// complete password through their public four-argument entry point.
+///
+/// A found key with a wrong password returns 1 and publishes an empty string.
+/// A missing key or failed source returns 0 without publishing partial output.
+///
+/// # Safety
+/// netname/passwd are readable C strings. secretkey is writable for 49 bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsecretkey(
+    netname: *const c_char,
+    secretkey: *mut c_char,
+    passwd: *const c_char,
+) -> c_int {
+    use frankenlibc_core::crypt::des::RpcDesError;
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    use frankenlibc_core::rpc::secret::{SecretKey, decrypt_secret, lookup_encrypted_secret};
+
+    if secretkey.is_null()
+        || known_remaining(secretkey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return 0;
+    }
+    // SAFETY: inputs are only addresses for the fault-checked importer. The
+    // native name limit is 255; the password bound matches NSS scratch limits.
+    let Some(name) = (unsafe { rpc_secret_string(netname, 255) }) else {
+        return 0;
+    };
+    if name.is_empty() {
+        return 0;
+    }
+    let Some(password) = (unsafe { rpc_secret_string(passwd, 1 << 24) }) else {
+        return 0;
+    };
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() != b"files" {
+                return crate::nss_module::getsecretkey(service.name(), &name, &password);
+            }
+            match rpc_identity_file(c"/etc/publickey", |image| {
+                lookup_encrypted_secret(image, &name)
+            }) {
+                Answer::Found(encrypted) => match decrypt_secret(&encrypted, &password) {
+                    Ok(secret) => Answer::Found(secret),
+                    Err(RpcDesError::Allocation) => {
+                        // SAFETY: errno belongs to the calling thread.
+                        unsafe { set_abi_errno(libc::ENOMEM) };
+                        Answer::TryAgain(libc::ENOMEM)
+                    }
+                    Err(RpcDesError::BadLength) => Answer::NotFound,
+                },
+                Answer::NotFound => Answer::NotFound,
+                Answer::Unavailable(error) => Answer::Unavailable(error),
+                Answer::TryAgain(error) => Answer::TryAgain(error),
+                Answer::BufferTooSmall => Answer::BufferTooSmall,
+            }
+        },
+        None,
+    );
+    let Answer::Found(secret) = answer else {
+        return 0;
+    };
+    let mut output = [0u8; PUBLICKEY_HEX_BYTES + 1];
+    let length = match secret {
+        SecretKey::Key(key) => {
+            output[..PUBLICKEY_HEX_BYTES].copy_from_slice(&key);
+            output.len()
+        }
+        // Only this byte changes on a wrong password, preserving the public
+        // distinction between a missing key and a found but unusable key.
+        SecretKey::WrongPassword => 1,
+    };
+    // SAFETY: only initialized private bytes are published; the shared copier
+    // checks tracked allocation bounds and actual writable kernel mappings.
+    c_int::from(unsafe { rpc_des_copy(output.as_ptr(), secretkey.cast(), length) })
+}
+
+/// Discover an RPC service port through the native IPv4 resolver and portmapper.
+/// A failed lookup or an unregistered service returns zero and publishes the
+/// corresponding thread-local RPC creation error.
+///
+/// # Safety
+/// `host` must point to a live, NUL-terminated hostname or IPv4 address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getrpcport(
+    host: *const c_char,
+    prognum: c_ulong,
+    versnum: c_ulong,
+    proto: c_uint,
+) -> c_int {
+    // SAFETY: the helper retains the resolver result until discovery completes.
+    unsafe { rpc_client_create::getrpcport(host, prognum, versnum, proto) }
+}
+
+/// Convert a hostname to a Secure RPC netname in a caller-owned buffer.
+/// A null host selects the kernel hostname. A null domain uses the hostname
+/// suffix when present, otherwise the kernel NIS domain.
+///
+/// # Safety
+/// netname must point to a writable buffer of at least 256 bytes.
+/// Non-null host and domain must point to readable C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn host2netname(
+    netname: *mut c_char,
+    host: *const c_char,
+    domain: *const c_char,
+) -> c_int {
+    if netname.is_null() || known_remaining(netname as usize) == Some(0) {
+        return 0;
+    }
+    // GNU clears the output on a rejected host/domain pair.
+    // SAFETY: the destination is non-null with at least one writable byte.
+    unsafe {
+        *netname = 0;
+    }
+    let host_owned = if host.is_null() {
+        rpc_netname_system_component(true)
+    } else {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(host) }
+    };
+    let Some(host_owned) = host_owned else {
+        return 0;
+    };
+    // The host ABI bounds each component before applying its dot rules.
+    let host = &host_owned[..host_owned.len().min(64)];
+    let dot = host.iter().position(|&byte| byte == b'.');
+    let domain_owned = if !domain.is_null() {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(domain) }
+    } else if let Some(dot) = dot {
+        Some(host[dot + 1..].to_vec())
+    } else {
+        rpc_netname_system_component(false)
+    };
+    let Some(domain_owned) = domain_owned else {
+        return 0;
+    };
+    let domain = &domain_owned[..domain_owned.len().min(64)];
+    if domain.is_empty() {
+        return 0;
+    }
+    let domain = domain.strip_suffix(b".").unwrap_or(domain);
+    let host = &host[..dot.unwrap_or(host.len())];
+    // SAFETY: the output was validated above and both components are owned.
+    unsafe { rpc_netname_write(netname, host, domain) }
+}
+
+/// Resolve a network identity to the authoritative `/etc/netid` host mapping.
+/// The publickey NSS source order and status actions apply. GNU defines no
+/// netname2host service-module entry point, so other sources are unavailable.
+/// A successful files answer copies and pads exactly hostlen bytes, matching
+/// the public netid implementation's strncpy contract (truncation may omit NUL).
+///
+/// # Safety
+/// netname is a readable C string; hostname is writable for hostlen bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn netname2host(
+    netname: *const c_char,
+    hostname: *mut c_char,
+    hostlen: c_int,
+) -> c_int {
+    use frankenlibc_core::nss::{Answer, Database};
+    if hostlen < 0 || (hostlen > 0 && hostname.is_null()) {
+        return 0;
+    }
+    let hostlen = hostlen as usize;
+    if known_remaining(hostname as usize).is_some_and(|remaining| remaining < hostlen) {
+        return 0;
+    }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_host(image, &name).map(<[u8]>::to_vec)
+                })
+            } else {
+                Answer::Unavailable(libc::ENOSYS)
+            }
+        },
+        None,
+    );
+    let Answer::Found(host) = answer else {
+        return 0;
+    };
+    if hostlen == 0 {
+        return 1;
+    }
+    let copied = host.len().min(hostlen);
+    // SAFETY: the caller and tracked extent authorize hostlen writable bytes;
+    // the owned host image cannot alias the destination. Both ranges fit.
+    unsafe {
+        std::ptr::copy_nonoverlapping(host.as_ptr(), hostname.cast(), copied);
+        std::ptr::write_bytes(hostname.add(copied), 0, hostlen - copied);
+    }
+    1
+}
+
+/// Owned native identity lookup shared by netname2user and authenticated DES
+/// sessions. Callers retain the result; no server cache lock covers NSS work.
+fn rpc_lookup_netid_user(name: &[u8]) -> Option<frankenlibc_core::rpc::NetidUser> {
+    use frankenlibc_core::nss::{Answer, Database};
+    if name.is_empty() || name.len() > 255 || name.contains(&0) {
+        return None;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    match frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_user(image, name)
+                })
+            } else {
+                crate::nss_module::netname2user(service.name(), name)
+            }
+        },
+        None,
+    ) {
+        Answer::Found(user) => Some(user),
+        _ => None,
+    }
+}
+
+/// Resolve an exact network name through the publickey NSS database to an
+/// authoritative uid, primary gid and supplementary group list. The files
+/// source reads `/etc/netid`; other sources use nss_netname2user modules.
+/// No local credentials are inferred from the spelling of the network name.
+///
+/// # Safety
+/// netname is a readable C string; scalar outputs are writable uid_t/gid_t/int
+/// slots. gidlist has the public NGROUPS capacity, or a tracked smaller extent
+/// sufficient for the returned supplementary groups. A zero-group result may
+/// use a null gidlist. Failure does not publish partial caller outputs.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn netname2user(
+    netname: *const c_char,
+    uidp: *mut libc::uid_t,
+    gidp: *mut libc::gid_t,
+    gidlenp: *mut c_int,
+    gidlist: *mut libc::gid_t,
+) -> c_int {
+    if uidp.is_null()
+        || gidp.is_null()
+        || gidlenp.is_null()
+        || known_remaining(uidp as usize)
+            .is_some_and(|remaining| remaining < size_of::<libc::uid_t>())
+        || known_remaining(gidp as usize)
+            .is_some_and(|remaining| remaining < size_of::<libc::gid_t>())
+        || known_remaining(gidlenp as usize).is_some_and(|remaining| remaining < size_of::<c_int>())
+    {
+        return 0;
+    }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    let Some(user) = rpc_lookup_netid_user(&name) else {
+        return 0;
+    };
+    let group_bytes = user.groups.len() * size_of::<libc::gid_t>();
+    if !user.groups.is_empty()
+        && (gidlist.is_null()
+            || known_remaining(gidlist as usize).is_some_and(|remaining| remaining < group_bytes))
+    {
+        return 0;
+    }
+    // SAFETY: all caller extents were checked before any publication. uid_t
+    // and gid_t remain 32-bit on LP64; no adjacent word or unused group slot
+    // is changed. Private module/file buffers cannot alias caller outputs.
+    unsafe {
+        if !user.groups.is_empty() {
+            std::ptr::copy_nonoverlapping(user.groups.as_ptr(), gidlist, user.groups.len());
+        }
+        *uidp = user.uid;
+        *gidp = user.gid;
+        *gidlenp = user.groups.len() as c_int;
+    }
+    1
+}
+
+/// Convert a uid to a Secure RPC netname in a caller-owned buffer.
+/// A null domain selects the kernel NIS domain.
+///
+/// # Safety
+/// netname must point to a writable buffer of at least 256 bytes.
+/// A non-null domain must point to a readable C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn user2netname(
+    netname: *mut c_char,
+    uid: libc::uid_t,
+    domain: *const c_char,
+) -> c_int {
+    if netname.is_null() {
+        return 0;
+    }
+    let domain_owned = if domain.is_null() {
+        rpc_netname_system_component(false)
+    } else {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(domain) }
+    };
+    let Some(domain_owned) = domain_owned else {
+        return 0;
+    };
+    // GNU reserves space for the longest signed uid before stripping a dot.
+    // A rejected user domain must leave the entire destination unchanged.
+    if domain_owned.len() > 237 {
+        return 0;
+    }
+    let domain = domain_owned.strip_suffix(b".").unwrap_or(&domain_owned);
+    let identity = (uid as i32).to_string();
+    // SAFETY: the output is non-null and the publisher checks its known extent.
+    unsafe { rpc_netname_write(netname, identity.as_bytes(), domain) }
+}
+
+/// Query RFC 868 TIME over UDP (timeout supplied) or TCP (null timeout).
+/// Time values use GNU's eight-byte `rpc_timeval`, not the LP64 `timeval`.
+///
+/// # Safety
+/// ABI boundary function.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rtime(
+    addrp: *mut c_void,
+    timep: *mut c_void,
+    timeout: *mut c_void,
+) -> c_int {
+    unsafe { rpc_udp::rtime(addrp, timep, timeout) }
+}
+
+/// Bind a socket to a reserved port (ports 512-1023).
+/// Tries ports in the range until one succeeds. If `sin` is NULL,
+/// creates a default AF_INET sockaddr_in. Returns 0 on success, -1 on failure.
+///
+/// # Safety
+/// ABI boundary function. `sin` must be NULL or point to a valid `struct sockaddr_in`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bindresvport(sd: c_int, sin: *mut c_void) -> c_int {
+    // Use a local sockaddr_in if none provided
+    let mut local_sin: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    let sa: *mut libc::sockaddr_in = if sin.is_null() {
+        local_sin.sin_family = libc::AF_INET as u16;
+        &mut local_sin
+    } else {
+        sin.cast()
+    };
+
+    // Try ports 512..1024 (reserved range per glibc convention)
+    // Start from a "random" offset based on process ID for spread (bd-h5x)
+    let pid = raw_syscall::sys_getpid() as u16;
+    let start = 600 + (pid % 424); // range [600, 1023]
+
+    for i in 0..512 {
+        let port = 512 + ((start as u32 + i as u32) % 512) as u16;
+        unsafe {
+            (*sa).sin_port = port.to_be();
+        }
+        match unsafe {
+            raw_syscall::sys_bind(
+                sd,
+                (sa as *const libc::sockaddr_in).cast::<u8>(),
+                std::mem::size_of::<libc::sockaddr_in>() as u32,
+            )
+        } {
+            Ok(()) => return 0,
+            Err(err) => {
+                if err != libc::EADDRINUSE {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
+            }
+        }
+    }
+    // Exhausted all reserved ports
+    unsafe { set_abi_errno(libc::EADDRINUSE) };
+    -1
+}
+
+/// Bind a socket to a reserved IPv6 port (512..1023). IPv6
+/// companion to [`bindresvport`]. Tries ports in a
+/// process-id-rotated order until one binds successfully. If
+/// `sin6` is NULL, an in6addr_any sockaddr_in6 is synthesized.
+/// Returns 0 on success, -1 on failure with errno set
+/// (EADDRINUSE if no reserved port is available).
+///
+/// # Safety
+///
+/// `sin6` must be NULL or point to a valid `struct sockaddr_in6`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bindresvport6(sd: c_int, sin6: *mut c_void) -> c_int {
+    let mut local_sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+    let sa: *mut libc::sockaddr_in6 = if sin6.is_null() {
+        local_sin6.sin6_family = libc::AF_INET6 as u16;
+        // sin6_addr is already zero (in6addr_any) from the zeroed init.
+        &mut local_sin6
+    } else {
+        sin6.cast()
+    };
+
+    let pid = raw_syscall::sys_getpid() as u16;
+    let start = 600 + (pid % 424); // range [600, 1023]
+
+    for i in 0..512 {
+        let port = 512 + ((start as u32 + i as u32) % 512) as u16;
+        unsafe {
+            (*sa).sin6_port = port.to_be();
+        }
+        match unsafe {
+            raw_syscall::sys_bind(
+                sd,
+                (sa as *const libc::sockaddr_in6).cast::<u8>(),
+                std::mem::size_of::<libc::sockaddr_in6>() as u32,
+            )
+        } {
+            Ok(()) => return 0,
+            Err(err) => {
+                if err != libc::EADDRINUSE {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
+            }
+        }
+    }
+    unsafe { set_abi_errno(libc::EADDRINUSE) };
+    -1
+}
+
+// --- rpc_createerr: this is a thread-local struct in glibc. The
+//     __rpc_thread_createerr() accessor above returns a pointer to it.
+//     Direct symbol interposition of the variable is not needed because
+//     programs use the accessor or the linker resolves to glibc's copy. ---
+
+// ===========================================================================
+// pmap_getport with u16 return — specialized signature for portmapper
+// The pmap_getport above already handles this with u16 return type.
+// ===========================================================================
+
+// =================================

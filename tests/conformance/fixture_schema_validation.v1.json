@@ -51,27 +51,27 @@
     "expected_hex": ["string"]
   },
   "expected_inventory": {
-    "fixture_file_count": 127,
-    "standard_fixture_files": 126,
+    "fixture_file_count": 132,
+    "standard_fixture_files": 131,
     "structured_fixture_files": 1,
-    "standard_case_count": 2787,
+    "standard_case_count": 2875,
     "structured_program_scenarios": 2,
     "structured_unsupported_scenarios": 3,
-    "expected_errno_required_cases": 2745,
+    "expected_errno_required_cases": 2833,
     "expected_errno_optional_cases": 42,
     "primary_expectation_tags": {
-      "expected_output": 2670,
+      "expected_output": 2746,
       "expected_output_bytes": 1,
       "expected_output_pattern": 8,
       "expected_return": 2,
-      "expected_return+expected_values": 106
+      "expected_return+expected_values": 118
     },
     "expected_output_value_kinds": {
       "array": 6,
       "boolean": 1,
-      "number": 28,
+      "number": 25,
       "object": 47,
-      "string": 2588
+      "string": 2667
     },
     "supplemental_expectation_fields": {
       "expected_hex": 2,

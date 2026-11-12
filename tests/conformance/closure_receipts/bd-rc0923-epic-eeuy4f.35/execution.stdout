@@ -1,0 +1,16 @@
+
+running 11 tests
+test invalid_and_overflowing_allocations_are_rejected ... ok
+test peers_and_entire_requests_are_distinct ... ok
+test replay_owns_request_and_reply_bytes ... ok
+test abandoned_or_rejected_staging_preserves_cached_reply ... ok
+test replacing_a_reply_preserves_other_entries ... ok
+test fifo_eviction_is_not_changed_by_a_hit ... ok
+test staged_identity_survives_decoder_mutation ... ok
+test staged_reply_updates_reuse_a_single_fifo_entry ... ok
+test oversized_packets_do_not_consume_or_mutate_a_slot ... ok
+test service_generation_invalidates_cached_results ... ok
+test repeated_wraparound_returns_exact_latest_window ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

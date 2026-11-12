@@ -131,12 +131,12 @@
       "inputs": {
         "symbol": "__rpc_thread_svc_pollfd",
         "expected_class": "tls-accessor",
-        "strict_behavior": "returns non-null per-thread pointer slot initialized to NULL",
+        "strict_behavior": "returns non-null per-thread pointer slot initialized to snapshot storage",
         "hardened_behavior": "same deterministic TLS accessor; no repair path",
         "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=__rpc_thread_svc_pollfd;mode=strict;expected_class=tls-accessor;actual=TLS_NONNULL_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=__rpc_thread_svc_pollfd;mode=strict;expected_class=tls-accessor;actual=TLS_NONNULL_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -147,12 +147,12 @@
       "inputs": {
         "symbol": "__rpc_thread_svc_pollfd",
         "expected_class": "tls-accessor",
-        "strict_behavior": "returns non-null per-thread pointer slot initialized to NULL",
+        "strict_behavior": "returns non-null per-thread pointer slot initialized to snapshot storage",
         "hardened_behavior": "same deterministic TLS accessor; no repair path",
         "safe_default_rationale": "thread-local compatibility storage is native and does not require host RPC runtime state",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=__rpc_thread_svc_pollfd;mode=hardened;expected_class=tls-accessor;actual=TLS_NONNULL_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=__rpc_thread_svc_pollfd;mode=hardened;expected_class=tls-accessor;actual=TLS_NONNULL_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -163,12 +163,12 @@
       "inputs": {
         "symbol": "_authenticate",
         "expected_class": "safe-default-failure",
-        "strict_behavior": "returns 0 failure without consulting host RPC state",
-        "hardened_behavior": "same deterministic failure result; no repair path",
-        "safe_default_rationale": "legacy RPC authentication is intentionally unsupported and fails closed",
+        "strict_behavior": "returns AUTH_FAILED (7) for null request/message arguments without consulting host RPC state",
+        "hardened_behavior": "same deterministic AUTH_FAILED (7) result; no repair path",
+        "safe_default_rationale": "null RPC authentication arguments fail closed locally",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=_authenticate;mode=strict;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_output": "symbol=_authenticate;mode=strict;expected_class=safe-default-failure;actual=RETURN=7;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -179,12 +179,12 @@
       "inputs": {
         "symbol": "_authenticate",
         "expected_class": "safe-default-failure",
-        "strict_behavior": "returns 0 failure without consulting host RPC state",
-        "hardened_behavior": "same deterministic failure result; no repair path",
-        "safe_default_rationale": "legacy RPC authentication is intentionally unsupported and fails closed",
+        "strict_behavior": "returns AUTH_FAILED (7) for null request/message arguments without consulting host RPC state",
+        "hardened_behavior": "same deterministic AUTH_FAILED (7) result; no repair path",
+        "safe_default_rationale": "null RPC authentication arguments fail closed locally",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=_authenticate;mode=hardened;expected_class=safe-default-failure;actual=RETURN=0;failure_signature=none",
+      "expected_output": "symbol=_authenticate;mode=hardened;expected_class=safe-default-failure;actual=RETURN=7;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
@@ -386,13 +386,13 @@
       "spec_section": "glibc Sun RPC null auth creation compatibility",
       "inputs": {
         "symbol": "authnone_create",
-        "expected_class": "safe-default-null-handle",
-        "strict_behavior": "returns NULL because no RPC auth runtime is present",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "legacy RPC auth creation is intentionally unsupported and fails closed",
+        "expected_class": "native-authnone-singleton",
+        "strict_behavior": "returns the non-null singleton AUTH_NONE handle",
+        "hardened_behavior": "same deterministic singleton AUTH_NONE handle; no repair path",
+        "safe_default_rationale": "AUTH_NONE singleton requires no network or host RPC state",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=authnone_create;mode=strict;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=authnone_create;mode=strict;expected_class=native-authnone-singleton;actual=RETURN_PTR=NONNULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -402,13 +402,301 @@
       "spec_section": "glibc Sun RPC null auth creation compatibility",
       "inputs": {
         "symbol": "authnone_create",
-        "expected_class": "safe-default-null-handle",
-        "strict_behavior": "returns NULL because no RPC auth runtime is present",
-        "hardened_behavior": "same deterministic NULL result; no repair path",
-        "safe_default_rationale": "legacy RPC auth creation is intentionally unsupported and fails closed",
+        "expected_class": "native-authnone-singleton",
+        "strict_behavior": "returns the non-null singleton AUTH_NONE handle",
+        "hardened_behavior": "same deterministic singleton AUTH_NONE handle; no repair path",
+        "safe_default_rationale": "AUTH_NONE singleton requires no network or host RPC state",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=authnone_create;mode=hardened;expected_class=safe-default-null-handle;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_output": "symbol=authnone_create;mode=hardened;expected_class=native-authnone-singleton;actual=RETURN_PTR=NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "registerrpc_invalid_null_callbacks_strict",
+      "function": "registerrpc",
+      "spec_section": "glibc Sun RPC simplified UDP service registration",
+      "inputs": {
+        "symbol": "registerrpc",
+        "expected_class": "invalid-callback-rejection",
+        "strict_behavior": "rejects null callback/XDR pointers with -1 before opening sockets",
+        "hardened_behavior": "same deterministic -1 rejection; no repair path",
+        "safe_default_rationale": "null procedure/XDR pointers are rejected locally without network access",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=registerrpc;mode=strict;expected_class=invalid-callback-rejection;actual=RETURN=-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "registerrpc_invalid_null_callbacks_hardened",
+      "function": "registerrpc",
+      "spec_section": "glibc Sun RPC simplified UDP service registration",
+      "inputs": {
+        "symbol": "registerrpc",
+        "expected_class": "invalid-callback-rejection",
+        "strict_behavior": "rejects null callback/XDR pointers with -1 before opening sockets",
+        "hardened_behavior": "same deterministic -1 rejection; no repair path",
+        "safe_default_rationale": "null procedure/XDR pointers are rejected locally without network access",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=registerrpc;mode=hardened;expected_class=invalid-callback-rejection;actual=RETURN=-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcfd_create_invalid_fd_strict",
+      "function": "svcfd_create",
+      "spec_section": "glibc Sun RPC connected-stream service constructor",
+      "inputs": {
+        "symbol": "svcfd_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for invalid fd -1 without opening or consuming descriptors",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "connected stream adoption requires a valid caller descriptor",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcfd_create;mode=strict;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcfd_create_invalid_fd_hardened",
+      "function": "svcfd_create",
+      "spec_section": "glibc Sun RPC connected-stream service constructor",
+      "inputs": {
+        "symbol": "svcfd_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for invalid fd -1 without opening or consuming descriptors",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "connected stream adoption requires a valid caller descriptor",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcfd_create;mode=hardened;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcraw_create_native_memory_xprt_strict",
+      "function": "svcraw_create",
+      "spec_section": "glibc Sun RPC in-memory service constructor",
+      "inputs": {
+        "symbol": "svcraw_create",
+        "expected_class": "native-raw-xprt",
+        "strict_behavior": "returns the caller-thread native in-memory SVCXPRT handle without sockets",
+        "hardened_behavior": "same deterministic native SVCXPRT handle; no repair path",
+        "safe_default_rationale": "raw transport lives entirely in thread-local memory without descriptors",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=svcraw_create;mode=strict;expected_class=native-raw-xprt;actual=RETURN_PTR=NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcraw_create_native_memory_xprt_hardened",
+      "function": "svcraw_create",
+      "spec_section": "glibc Sun RPC in-memory service constructor",
+      "inputs": {
+        "symbol": "svcraw_create",
+        "expected_class": "native-raw-xprt",
+        "strict_behavior": "returns the caller-thread native in-memory SVCXPRT handle without sockets",
+        "hardened_behavior": "same deterministic native SVCXPRT handle; no repair path",
+        "safe_default_rationale": "raw transport lives entirely in thread-local memory without descriptors",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
+      },
+      "expected_output": "symbol=svcraw_create;mode=hardened;expected_class=native-raw-xprt;actual=RETURN_PTR=NONNULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svctcp_create_invalid_fd_strict",
+      "function": "svctcp_create",
+      "spec_section": "glibc Sun RPC TCP service constructor",
+      "inputs": {
+        "symbol": "svctcp_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for negative fd != RPC_ANYSOCK without opening sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed before binding or listening",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svctcp_create;mode=strict;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svctcp_create_invalid_fd_hardened",
+      "function": "svctcp_create",
+      "spec_section": "glibc Sun RPC TCP service constructor",
+      "inputs": {
+        "symbol": "svctcp_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for negative fd != RPC_ANYSOCK without opening sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed before binding or listening",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svctcp_create;mode=hardened;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcudp_bufcreate_invalid_fd_strict",
+      "function": "svcudp_bufcreate",
+      "spec_section": "glibc Sun RPC buffered UDP service constructor",
+      "inputs": {
+        "symbol": "svcudp_bufcreate",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for negative fd != RPC_ANYSOCK without opening sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed before binding UDP sockets",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcudp_bufcreate;mode=strict;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcudp_bufcreate_invalid_fd_hardened",
+      "function": "svcudp_bufcreate",
+      "spec_section": "glibc Sun RPC buffered UDP service constructor",
+      "inputs": {
+        "symbol": "svcudp_bufcreate",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for negative fd != RPC_ANYSOCK without opening sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed before binding UDP sockets",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcudp_bufcreate;mode=hardened;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcudp_create_invalid_fd_strict",
+      "function": "svcudp_create",
+      "spec_section": "glibc Sun RPC UDP service constructor",
+      "inputs": {
+        "symbol": "svcudp_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for negative fd != RPC_ANYSOCK without opening sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed before binding UDP sockets",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcudp_create;mode=strict;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcudp_create_invalid_fd_hardened",
+      "function": "svcudp_create",
+      "spec_section": "glibc Sun RPC UDP service constructor",
+      "inputs": {
+        "symbol": "svcudp_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for negative fd != RPC_ANYSOCK without opening sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed before binding UDP sockets",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcudp_create;mode=hardened;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcudp_enablecache_null_xprt_strict",
+      "function": "svcudp_enablecache",
+      "spec_section": "glibc Sun RPC UDP duplicate-reply cache enablement",
+      "inputs": {
+        "symbol": "svcudp_enablecache",
+        "expected_class": "invalid-xprt-cache-rejection",
+        "strict_behavior": "returns 0 failure when given a null transport handle",
+        "hardened_behavior": "same deterministic 0 rejection; no repair path",
+        "safe_default_rationale": "null transport handle fails closed locally; live replay suppression runs in check_rpc_svc_cache.py",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcudp_enablecache;mode=strict;expected_class=invalid-xprt-cache-rejection;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcudp_enablecache_null_xprt_hardened",
+      "function": "svcudp_enablecache",
+      "spec_section": "glibc Sun RPC UDP duplicate-reply cache enablement",
+      "inputs": {
+        "symbol": "svcudp_enablecache",
+        "expected_class": "invalid-xprt-cache-rejection",
+        "strict_behavior": "returns 0 failure when given a null transport handle",
+        "hardened_behavior": "same deterministic 0 rejection; no repair path",
+        "safe_default_rationale": "null transport handle fails closed locally; live replay suppression runs in check_rpc_svc_cache.py",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcudp_enablecache;mode=hardened;expected_class=invalid-xprt-cache-rejection;actual=RETURN=0;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcunix_create_null_path_strict",
+      "function": "svcunix_create",
+      "spec_section": "glibc Sun RPC UNIX-domain listener constructor",
+      "inputs": {
+        "symbol": "svcunix_create",
+        "expected_class": "null-path-null-xprt",
+        "strict_behavior": "returns NULL for null pathname without creating filesystem sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "null pathname fails closed before touching the filesystem",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcunix_create;mode=strict;expected_class=null-path-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcunix_create_null_path_hardened",
+      "function": "svcunix_create",
+      "spec_section": "glibc Sun RPC UNIX-domain listener constructor",
+      "inputs": {
+        "symbol": "svcunix_create",
+        "expected_class": "null-path-null-xprt",
+        "strict_behavior": "returns NULL for null pathname without creating filesystem sockets",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "null pathname fails closed before touching the filesystem",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcunix_create;mode=hardened;expected_class=null-path-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "svcunixfd_create_invalid_fd_strict",
+      "function": "svcunixfd_create",
+      "spec_section": "glibc Sun RPC connected UNIX-domain service constructor",
+      "inputs": {
+        "symbol": "svcunixfd_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for invalid fd -1 without consuming or opening descriptors",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed without socket side effects",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcunixfd_create;mode=strict;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "svcunixfd_create_invalid_fd_hardened",
+      "function": "svcunixfd_create",
+      "spec_section": "glibc Sun RPC connected UNIX-domain service constructor",
+      "inputs": {
+        "symbol": "svcunixfd_create",
+        "expected_class": "invalid-fd-null-xprt",
+        "strict_behavior": "returns NULL for invalid fd -1 without consuming or opening descriptors",
+        "hardened_behavior": "same deterministic NULL result; no repair path",
+        "safe_default_rationale": "invalid descriptor fails closed without socket side effects",
+        "oracle_source": "crates/frankenlibc-abi/src/rpc_svc.rs"
+      },
+      "expected_output": "symbol=svcunixfd_create;mode=hardened;expected_class=invalid-fd-null-xprt;actual=RETURN_PTR=NULL;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     }

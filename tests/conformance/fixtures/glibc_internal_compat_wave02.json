@@ -11,13 +11,12 @@
     "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
     "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture",
     "symbol_groups": {
-      "supported": ["_IO_enable_locks", "__b64_ntop", "__b64_pton"],
+      "supported": ["_IO_enable_locks", "__asprintf", "__b64_ntop", "__b64_pton"],
       "deterministic_fallback": [
         "__abort_msg",
         "__adjtimex",
         "__after_morecore_hook",
         "__arch_prctl",
-        "__asprintf",
         "__backtrace",
         "__backtrace_symbols",
         "__backtrace_symbols_fd",
@@ -197,31 +196,31 @@
     {
       "name": "asprintf_stub_error_strict",
       "function": "__asprintf",
-      "spec_section": "glibc internal variadic asprintf alias deterministic unsupported contract",
+      "spec_section": "glibc internal variadic asprintf alias literal formatting allocation contract",
       "inputs": {
         "symbol": "__asprintf",
-        "scenario": "variadic_alias_returns_enosys_and_null_output",
-        "expected": "ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL",
+        "scenario": "variadic_alias_allocates_literal_format",
+        "expected": "ASPRINTF_RC_11_ERRNO_NONE_OUT_PRESENT",
         "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
         "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
       },
-      "expected_output": "symbol=__asprintf;mode=strict;expected=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;actual=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;failure_signature=none",
-      "expected_errno": 38,
+      "expected_output": "symbol=__asprintf;mode=strict;expected=ASPRINTF_RC_11_ERRNO_NONE_OUT_PRESENT;actual=ASPRINTF_RC_11_ERRNO_NONE_OUT_PRESENT;failure_signature=none",
+      "expected_errno": 0,
       "mode": "strict"
     },
     {
       "name": "asprintf_stub_error_hardened",
       "function": "__asprintf",
-      "spec_section": "glibc internal variadic asprintf alias deterministic unsupported contract",
+      "spec_section": "glibc internal variadic asprintf alias literal formatting allocation contract",
       "inputs": {
         "symbol": "__asprintf",
-        "scenario": "variadic_alias_returns_enosys_and_null_output",
-        "expected": "ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL",
+        "scenario": "variadic_alias_allocates_literal_format",
+        "expected": "ASPRINTF_RC_11_ERRNO_NONE_OUT_PRESENT",
         "oracle_source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
         "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture"
       },
-      "expected_output": "symbol=__asprintf;mode=hardened;expected=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;actual=ASPRINTF_RC_-1_ERRNO_ENOSYS_OUT_NULL;failure_signature=none",
-      "expected_errno": 38,
+      "expected_output": "symbol=__asprintf;mode=hardened;expected=ASPRINTF_RC_11_ERRNO_NONE_OUT_PRESENT;actual=ASPRINTF_RC_11_ERRNO_NONE_OUT_PRESENT;failure_signature=none",
+      "expected_errno": 0,
       "mode": "hardened"
     },
     {
