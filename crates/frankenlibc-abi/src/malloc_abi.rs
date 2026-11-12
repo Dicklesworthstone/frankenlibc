@@ -1054,6 +1054,10 @@ fn bump_path_counter(counter: &AtomicUsize) {
 }
 static SEGMENT_OWNED_BITMAP: AtomicU64 = AtomicU64::new(0);
 static SEGMENT_SIDECAR_WRITABLE: AtomicU64 = AtomicU64::new(0);
+// One speculative permission upgrade per 32-sidecar batch. A failed mprotect
+// can leave earlier VMAs writable; retrying it would grow unused padding on
+// every new size class under RLIMIT_DATA. Claimed attempts never require waits.
+static SEGMENT_SIDECAR_BATCH_ATTEMPTED: AtomicU64 = AtomicU64::new(0);
 // Segment ids are claimed only when a thread exhausts its local class segment.
 // This counter is deliberately absent from the warmed allocation/free cycle.
 static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
@@ -1668,20 +1672,23 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
         let batch_index = raw_index & !31;
         let batch_base = arena_base + SEGMENT_ARENA_SIZE + batch_index * SEGMENT_SIDECAR_STRIDE;
         let batch_bytes = 32 * SEGMENT_SIDECAR_STRIDE;
-        // Batch-enable 32 contiguous sidecars (16 MiB of demand-zero virtual
-        // reservation, 0 RSS until touched) in a single mprotect syscall so
-        // startup across ~20 size classes neither issues 20 mprotect syscalls
-        // nor splits the sidecar region into ~40 alternating RW/PROT_NONE VMAs
-        // that every subsequent fork() must duplicate. Fall back to the single
-        // segment's sidecar if a tight RLIMIT_DATA rejects the batch.
-        if unsafe {
-            raw_syscall::sys_mprotect(
-                batch_base as *mut u8,
-                batch_bytes,
-                libc::PROT_READ | libc::PROT_WRITE,
-            )
-        }
-        .is_ok()
+        // Preserve the single-syscall batch optimization when resources allow.
+        // Claim the attempt before entering the kernel: concurrent callers and
+        // fork children can enable only their own sidecar without waiting for
+        // an interrupted claimant. A failed mprotect may upgrade earlier VMAs,
+        // so never retry the batch and repeatedly charge unused padding.
+        let batch_bit = 1u64 << batch_index;
+        let attempt_batch =
+            SEGMENT_SIDECAR_BATCH_ATTEMPTED.fetch_or(batch_bit, Ordering::AcqRel) & batch_bit == 0;
+        if attempt_batch
+            && unsafe {
+                raw_syscall::sys_mprotect(
+                    batch_base as *mut u8,
+                    batch_bytes,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                )
+            }
+            .is_ok()
         {
             SEGMENT_SIDECAR_WRITABLE
                 .fetch_or(u64::from(u32::MAX) << batch_index, Ordering::Release);

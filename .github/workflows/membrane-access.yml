@@ -108,6 +108,42 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/malloc.log
           cargo test -p frankenlibc-membrane --lib ptr_validator::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/pipeline.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/pipeline.log
+      - name: Reject repeated sidecar batch promotion after a real kernel failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess
+
+          source = Path('crates/frankenlibc-abi/src/malloc_abi.rs')
+          original = source.read_bytes()
+          good = b'if attempt_batch\n            && unsafe {'
+          bad = b'if true\n            && unsafe {'
+          assert original.count(good) == 1, 'sidecar batch guard must have one mutation site'
+          command = [
+              'cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'malloc_abi_test',
+              'segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible',
+              '--', '--exact', '--nocapture', '--test-threads=1',
+          ]
+          try:
+              source.write_bytes(original.replace(good, bad, 1))
+              result = subprocess.run(
+                  command, env=dict(os.environ, FRANKENLIBC_MODE='strict'),
+                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600,
+              )
+              Path('artifacts/access/sidecar-batch-mutation.log').write_bytes(result.stdout)
+              print(result.stdout.decode(errors='replace'))
+              assert result.returncode != 0, 'repeated batch promotion mutation incorrectly passed'
+              assert b'test result: FAILED. 0 passed; 1 failed;' in result.stdout, 'mutation must compile and execute one failed test'
+              assert b'failed batch retry made unused sidecar padding writable' in result.stdout, 'failure must identify the writable-padding regression'
+          finally:
+              source.write_bytes(original)
+          PY
+          FRANKENLIBC_MODE=strict cargo test -p frankenlibc-abi --test malloc_abi_test \
+            segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible \
+            -- --exact --nocapture --test-threads=1 2>&1 | tee artifacts/access/sidecar-batch-restored.log
+          grep -Eq '^test result: ok\. 1 passed; 0 failed; 0 ignored;' artifacts/access/sidecar-batch-restored.log
       - name: Execute deployed memory and string access matrix
         shell: bash
         run: |

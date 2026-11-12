@@ -90,7 +90,7 @@ fn range(base: usize, len: usize, start: usize, end: usize) -> Option<(usize, us
 // `malloc_abi` is `#[cfg(not(test))]` in `lib.rs` (bd-7s4j33), so a `#[cfg(test)]`
 // module here would be compiled out of `--lib` and silently never execute.
 // Expose these helpers under `cfg(debug_assertions)` so `tests/malloc_abi_test.rs`
-// compiles and executes all nine tests against the real segment arena.
+// compiles and executes these tests against the real segment arena.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub mod tests {
@@ -114,6 +114,76 @@ pub mod tests {
             }
         }
         panic!("mapping not found");
+    }
+
+    pub fn failed_sidecar_batch_keeps_unused_padding_inaccessible() {
+        // This helper runs only in the isolated integration-test subprocess.
+        // Leave enough data allowance for three small sidecars, but less than
+        // the 16 MiB speculative batch, irrespective of the test binary's size.
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let data_kib: usize = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmData:"))
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut original = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: original is writable and has the native rlimit layout.
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_DATA, &mut original) }, 0);
+        let allowance = data_kib.checked_mul(1024).unwrap() + 2 * 1024 * 1024;
+        assert!((allowance as libc::rlim_t) <= original.rlim_max);
+        let limited = libc::rlimit {
+            rlim_cur: allowance as libc::rlim_t,
+            rlim_max: original.rlim_max,
+        };
+        // SAFETY: this process is dedicated to this test. Only its soft data
+        // limit changes; the original hard limit is preserved.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_DATA, &limited) }, 0);
+
+        struct RestoreLimit(libc::rlimit);
+        impl Drop for RestoreLimit {
+            fn drop(&mut self) {
+                // SAFETY: restoring the saved limits in this same child process.
+                unsafe {
+                    libc::setrlimit(libc::RLIMIT_DATA, &self.0);
+                }
+            }
+        }
+        let restore = RestoreLimit(original);
+
+        // Class 31 has 32 KiB slots: each complete sidecar needs just 64 KiB
+        // of its 512 KiB stride. The third initialization would retry across
+        // the first unused gap after the second sidecar split the mapping.
+        let first = initialize_segment(31).expect("first narrow sidecar");
+        assert_eq!(first, 0, "regression requires a fresh subprocess arena");
+        let first_meta = SEGMENT_DESCRIPTORS
+            .get(first)
+            .unwrap()
+            .meta_base
+            .load(Ordering::Acquire);
+        assert_eq!(&permissions(first_meta)[..3], "rw-");
+        assert_eq!(&permissions(first_meta + GRANULE)[..3], "---");
+        assert_eq!(initialize_segment(31), Some(1));
+        assert_eq!(initialize_segment(31), Some(2));
+        let padding_permissions = permissions(first_meta + GRANULE);
+        drop(restore);
+
+        assert_eq!(
+            &padding_permissions[..3],
+            "---",
+            "failed batch retry made unused sidecar padding writable"
+        );
+        for index in 0..3 {
+            let header = segment_header(index).unwrap();
+            let last = segment_slot_view_at(index, header.slot_count - 1).unwrap();
+            assert_eq!(last.meta.requested_size.load(Ordering::Acquire), 0);
+        }
     }
 
     pub fn range_rounding_and_last_bit_are_exact() {

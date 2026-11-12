@@ -2284,6 +2284,36 @@ fn swing2_large_alloc_path_attribution() {
 }
 
 #[test]
+fn segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible() {
+    const CHILD: &str = "FRANKENLIBC_SIDECAR_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        frankenlibc_abi::malloc_abi::segment_mapping_tests::failed_sidecar_batch_keeps_unused_padding_inaccessible();
+        return;
+    }
+
+    // A fresh exec isolates both allocator state and the process-wide limit.
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("segment_mapping_failed_sidecar_batch_keeps_unused_padding_inaccessible")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(CHILD, "1")
+        .output()
+        .expect("run isolated sidecar regression");
+    let stdout = String::from_utf8_lossy(&child.stdout);
+    let stderr = String::from_utf8_lossy(&child.stderr);
+    assert!(
+        child.status.success(),
+        "sidecar child failed: {}\n{stdout}\n{stderr}",
+        child.status
+    );
+    assert!(
+        stdout.contains("test result: ok. 1 passed; 0 failed;"),
+        "sidecar regression did not execute: {stdout}\n{stderr}"
+    );
+}
+
+#[test]
 fn segment_mapping_range_rounding_and_last_bit_are_exact() {
     frankenlibc_abi::malloc_abi::segment_mapping_tests::range_rounding_and_last_bit_are_exact();
 }

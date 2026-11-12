@@ -68,6 +68,61 @@ jobs:
       FRANKENLIBC_TEST_PRESERVE_FILES: '1'
     steps:
       - uses: actions/checkout@v4
+      # Temporary: execute the preserved stdio candidate without activating it on main.
+      # Remove this step when the exact candidate files are landed or rejected.
+      - name: Overlay immutable stdio candidate for runtime validation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          git rev-parse HEAD > artifacts/stdio-layout/candidate-base-commit.txt
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          # Preserved tree: c6149d5a056f1741399c3cacd264b444b3803fa4.
+          # Overlay only these files so the checkout retains subsequent main fixes.
+          files = [
+              ("crates/frankenlibc-abi/src/io_internal_abi.rs", "5ece590b6447814e1a9709c42959ce3aab3d5b75", 0o644),
+              ("crates/frankenlibc-abi/src/stdio_abi.rs", "b67f306135aad055d4b54d0b473632019873f06b", 0o644),
+              ("crates/frankenlibc-abi/tests/io_internal_native_file_test.rs", "c9ed0b2d43486fa7d63793111c7f9eb3589218e8", 0o644),
+              ("crates/frankenlibc-abi/tests/stdio_abi_test.rs", "e56ec125c8e291f7c41b0224ab8b52a7fec84e97", 0o644),
+              ("crates/frankenlibc-abi/version_scripts/libc.map", "dbaa09a7b3daeae6ff1454f735ea32198bed7004", 0o644),
+              ("scripts/check_stdio_native.sh", "9398a3db4951bc97fdd8d4e62c16e83c94c4a3dd", 0o755),
+              ("tests/integration/fixture_stdio_globals.c", "2f39adf6be58be2b939f7eb3411b2d06fbf2d9fe", 0o644),
+              ("tests/integration/fixture_stdio_lifetime.c", "e55133143e4e74b494d4cebbca3d76afdc4ae3ce", 0o644),
+          ]
+          verified = []
+          for name, expected, mode in files:
+              url = f"{os.environ['GITHUB_API_URL']}/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{expected}"
+              request = Request(url, headers={
+                  "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "frankenlibc-agent (+https://github.com/Dicklesworthstone/frankenlibc)",
+              })
+              with urlopen(request, timeout=30) as response:
+                  blob = json.load(response)
+              assert blob["encoding"] == "base64", name
+              data = base64.b64decode(blob["content"])
+              actual = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+              assert actual == expected == blob["sha"], f"blob mismatch: {name}"
+              verified.append((name, data, mode, expected))
+          for name, data, mode, expected in verified:
+              path = Path(name)
+              path.write_bytes(data)
+              path.chmod(mode)
+              print(f"{expected}  {name}")
+          Path("artifacts/stdio-layout/candidate-blobs.txt").write_text(
+              "".join(f"{expected}  {name}\n" for name, _, _, expected in verified)
+          )
+          PY
+          git diff --check
+          git diff --binary > artifacts/stdio-layout/candidate.patch
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
@@ -86,14 +141,53 @@ jobs:
           path: artifacts/stdio-toolchain/
           retention-days: 1
       # END STDIO BOOTSTRAP
-      - name: Build deployed ABI and optimized C caller
+      - name: Build candidate ABI and optimized C caller
+        id: build
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Preserve process startup and normal host exit
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          printf 'stdio-normal-exit\n' > artifacts/stdio-layout/echo-expected.out
+          for mode in strict hardened; do
+            prefix="artifacts/stdio-layout/startup-$mode"
+            timeout --kill-after=2s 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+              /bin/true > "$prefix-true.out" 2> "$prefix-true.err"
+            test ! -s "$prefix-true.out"
+            test ! -s "$prefix-true.err"
+            timeout --kill-after=2s 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+              /bin/echo stdio-normal-exit > "$prefix-echo.out" 2> "$prefix-echo.err"
+            cmp artifacts/stdio-layout/echo-expected.out "$prefix-echo.out"
+            test ! -s "$prefix-echo.err"
+          done
+      - name: Preserve real GNU standard stream objects and COPY relocations
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/globals" \
+            timeout 120 bash scripts/check_stdio_native.sh --globals-only
+      - name: Verify native FILE layout and standard stream registry behavior
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          for mode in strict hardened; do
+            for target in stdio_abi_test io_internal_native_file_test native_file_layout_test; do
+              FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+                --test "$target" -- --test-threads=1 --nocapture \
+                2>&1 | tee "artifacts/stdio-layout/$target-$mode.log"
+              grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' \
+                "artifacts/stdio-layout/$target-$mode.log"
+            done
+          done
       - name: Preserve saved positions and buffered output against live host stdio
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
@@ -112,7 +206,7 @@ jobs:
             cmp "$prefix-host.err" "$prefix-$mode.err"
           done
       - name: Preserve stdio errors for interrupted and nonblocking reads
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -120,7 +214,7 @@ jobs:
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/read-errors" \
             bash scripts/check_stdio_native.sh --read-errors
       - name: Preserve write failures without replaying buffered output
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -128,7 +222,7 @@ jobs:
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/write-errors" \
             bash scripts/check_stdio_native.sh --write-errors
       - name: Close inherited process pipes and reap popen children
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -136,14 +230,14 @@ jobs:
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/popen" \
             bash scripts/check_stdio_native.sh --popen
       - name: Respect recursive FILE locks and preserve unlocked operations
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/locks" \
             bash scripts/check_stdio_native.sh --locks
       - name: Stress native FILE locking through the Rust ABI
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
@@ -155,19 +249,19 @@ jobs:
               "artifacts/stdio-layout/stdio-locking-stress-$mode.log"
           done
       - name: Use real FILE handles for mount tables and preserve stream cancellation modes
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           python3 scripts/check_mntent_file.py \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/stdio-layout/mntent-file"
       - name: Cancel native stdio I/O and preserve C and C++ cleanup
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           FRANKENLIBC_STDIO_CANCEL_OUT_DIR="$PWD/artifacts/stdio-layout/read-cancellation" \
             bash scripts/check_stdio_read_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
       - name: Preserve host stdio across local loading and native COPY relocations
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -176,7 +270,7 @@ jobs:
           cc -O2 -Wall -Wextra -Werror -fPIC -pie tests/integration/fixture_stdio_lifetime.c -ldl -o target/stdio-lifetime-pic
           readelf -rW target/stdio-lifetime-copy > artifacts/stdio-layout/lifetime-copy.relocations
           readelf -rW target/stdio-lifetime-pic > artifacts/stdio-layout/lifetime-pic.relocations
-          for symbol in stdin stdout stderr _IO_list_all; do
+          for symbol in stdin stdout stderr _IO_list_all _IO_2_1_stdin_ _IO_2_1_stdout_ _IO_2_1_stderr_; do
             grep -Eq "R_.*_COPY.* ${symbol}(@| )" artifacts/stdio-layout/lifetime-copy.relocations
           done
           if grep -Eq 'R_.*_COPY' artifacts/stdio-layout/lifetime-pic.relocations; then exit 1; fi
@@ -196,7 +290,7 @@ jobs:
             done
           done
       - name: Preserve printf arguments, saved positions and wide memory streams
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
@@ -214,7 +308,7 @@ jobs:
             done
           done
       - name: Exercise more than 32 arguments through all 18 C frontends
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
@@ -236,7 +330,7 @@ jobs:
             cmp "$prefix-host.err" "$prefix-$mode.err"
           done
       - name: Exercise registration and callback dispatch through the Rust ABI
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -249,7 +343,7 @@ jobs:
               "artifacts/stdio-layout/registration-$mode.log"
           done
       - name: Preserve legacy cleanup cancellation types through the Rust ABI
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
@@ -261,7 +355,7 @@ jobs:
               "artifacts/stdio-layout/legacy-cleanup-$mode.log"
           done
       - name: Run legacy cleanup handlers on cancellation and thread exit
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           mkdir -p artifacts/stdio-layout
@@ -287,7 +381,7 @@ jobs:
           done
           test "$count" -eq 6
       - name: Propagate registered C++ callback exceptions through every printf boundary
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -322,7 +416,7 @@ jobs:
           done
           test "$count" -eq 142
       - name: Propagate FTS comparator exceptions through both public APIs
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         run: |
           set -euo pipefail
           binary=target/stdio-callback-unwind
@@ -362,7 +456,7 @@ jobs:
           test ! -s "$prefix.out"
           grep -q '^fts-callback-unwind: assertion failed at ' "$prefix.err"
       - name: Exercise GNU printf callbacks against the live host in both modes
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -370,7 +464,7 @@ jobs:
           FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/gnu-printf" \
             timeout 240 bash scripts/check_stdio_native.sh --gnu-printf
       - name: Compare inline FILE operations against host glibc in both modes
-        if: always()
+        if: always() && steps.build.outcome == 'success'
         shell: bash
         run: |
           set -uo pipefail
@@ -388,6 +482,36 @@ jobs:
             done
           done
           exit "$status"
+      - name: Show bounded stdio failure diagnostics
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("artifacts/stdio-layout")
+          endings = (".err", ".stderr", ".stderr.log", ".out", ".stdout", ".stdout.log", ".json")
+          paths = [
+              path for path in root.rglob("*")
+              if path.is_file() and path.name.endswith(endings) and path.stat().st_size
+          ]
+          def priority(path):
+              if path.name.endswith((".err", ".stderr", ".stderr.log")):
+                  return 0
+              return 1 if path.suffix == ".json" else 2
+          budget = 64 * 1024
+          for path in sorted(paths, key=lambda path: (priority(path), str(path))):
+              with path.open("rb") as stream:
+                  stream.seek(max(0, path.stat().st_size - 4096))
+                  tail = stream.read(4096).decode("utf-8", errors="replace")
+              block = (f"\n--- {path} (tail) ---\n{tail}\n")[:budget]
+              print(block, end="")
+              budget -= len(block)
+              if budget == 0:
+                  print("\nDiagnostic output capped at 64 KiB.")
+                  break
+          if not paths:
+              print("No captured C fixture outputs or JSON summaries are available.")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
