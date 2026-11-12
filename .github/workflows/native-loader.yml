@@ -6,6 +6,9 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
+      - 'crates/frankenlibc-abi/src/util.rs'
+      - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-abi/examples/dlfcn_native_process_exit_probe.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/tlsdesc_state_probe.S'
       - 'crates/frankenlibc-core/src/elf/**'
@@ -15,6 +18,9 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/native_loader_hwcaps_test.rs'
+      - 'crates/frankenlibc-abi/src/util.rs'
+      - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-abi/examples/dlfcn_native_process_exit_probe.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/tlsdesc_state_probe.S'
       - 'crates/frankenlibc-core/src/elf/**'

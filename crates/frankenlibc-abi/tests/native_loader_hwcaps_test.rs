@@ -1,6 +1,15 @@
 //! Compile search/cache/CPU-policy tests despite ABI cfg(not(test)) gating.
 //! Also execute real dependency-bearing DSOs, requiring a native-handle witness
 //! and comparing the selected implementation with the host loader.
+// The isolated search module needs the same initialization serialization as
+// the real loader. Include the production lock and its native-clone regression,
+// both when this harness runs alone and when the search suite includes it.
+#[path = "../src/util.rs"]
+mod util;
+
+static OPERATIONS: util::AbiReentrantMutex<(), true> =
+    util::AbiReentrantMutex::new_kernel_tid(());
+
 #[path = "../src/dlfcn_search.rs"]
 mod search;
 
