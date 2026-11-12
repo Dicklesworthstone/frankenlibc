@@ -124,6 +124,7 @@ enum nss_status FN(getservbyname_r)(const char *name, const char *proto,
     *errnop = ENOENT;
     return NSS_STATUS_NOTFOUND;
   }
+#ifndef FLTEST_NATIVE_MODULE
   if (getenv("FLTEST_SERVICE_REENTER")) {
     struct passwd scratch, *found;
     char storage[1024];
@@ -132,6 +133,7 @@ enum nss_status FN(getservbyname_r)(const char *name, const char *proto,
       return NSS_STATUS_UNAVAIL;
     }
   }
+#endif
   return fill_service(http ? "module-http" : "fltest-service", proto,
                       http ? 42480 : large ? 4345 : !strcmp(proto, "tcp") ? 4343 : 4344,
                       large, out, buf, len, errnop);
@@ -208,6 +210,7 @@ static enum nss_status fill_host(int family, int large, struct hostent *host,
   return NSS_STATUS_SUCCESS;
 }
 
+#if !defined(NO_HOST1) || !defined(NO_HOST2) || !defined(NO_HOST3)
 static enum nss_status host_by_name(const char *name, int family, struct hostent *host,
                                     char *buf, size_t len, int *errnop, int *h_errnop) {
   enum nss_status status;
@@ -221,6 +224,7 @@ static enum nss_status host_by_name(const char *name, int family, struct hostent
     return host_failure(NSS_STATUS_NOTFOUND, ENOENT, errnop, h_errnop);
   return fill_host(family, large, host, buf, len, errnop, h_errnop);
 }
+#endif
 
 #ifdef WITH_HOST4
 enum nss_status FN(gethostbyname4_r)(const char *name, struct gaih_addrtuple **pat,
@@ -630,11 +634,31 @@ enum nss_status FN(getspent_r)(struct spwd *sp, char *buf, size_t len, int *errn
 }
 
 #ifndef NO_INITGROUPS
+#ifdef FLTEST_NATIVE_MODULE
+/* Force the loader-selected realloc to consume and resize the caller's
+   initial group array, even when the fixture contributes only three gids. */
+static unsigned initgroups_reallocations;
+unsigned FN(initgroups_reallocations)(void) { return initgroups_reallocations; }
+uintptr_t FN(allocator_address)(unsigned which) {
+  return which == 0 ? (uintptr_t)malloc : which == 1 ? (uintptr_t)realloc : (uintptr_t)free;
+}
+#endif
 enum nss_status FN(initgroups_dyn)(const char *user, gid_t group, long int *start, long int *size,
                                    gid_t **groupsp, long int limit, int *errnop) {
   enum nss_status st;
   trace("initgroups_dyn", user);
   if (forced(&st, errnop)) return st;
+#ifdef FLTEST_NATIVE_MODULE
+  long int grown = *size + 64;
+  gid_t *resized = realloc(*groupsp, (size_t)grown * sizeof(gid_t));
+  if (resized == NULL) {
+    *errnop = ENOMEM;
+    return NSS_STATUS_TRYAGAIN;
+  }
+  *groupsp = resized;
+  *size = grown;
+  ++initgroups_reallocations;
+#endif
   int found = 0;
   for (size_t i = 0; i < COUNT(groups); i++) {
     if (groups[i].gid == group) continue;

@@ -10,8 +10,8 @@
 //! source those users and groups did not exist under fl.
 //!
 //! This module owns the mechanics: reading nsswitch.conf (cached by file
-//! fingerprint), loading modules once per process through the host dynamic
-//! loader, and calling the reentrant entry points with a growing scratch
+//! fingerprint), loading modules once per process, and calling the reentrant
+//! entry points with a growing scratch
 //! buffer, converting each result into fl's owned entry types. The policy --
 //! source order, status actions, group merge, initgroups de-duplication --
 //! lives in `frankenlibc_core::nss`.
@@ -20,8 +20,9 @@
 //! and the gethostbyname3_r canonical-name extension are copied before release.
 //! gethostbyname4_r tuples retain mixed address families and IPv6 scope IDs.
 //!
-//! Loading needs the host dynamic loader, so standalone builds report every
-//! module source as unavailable (the switch then continues per its actions).
+//! Interpose builds retain the host loader's module and allocator namespace.
+//! Standalone builds use the owned loader and its matching allocation exports;
+//! an unsupported object remains unavailable without falling back to the host.
 
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::mem::{MaybeUninit, size_of};
@@ -297,7 +298,7 @@ pub(crate) fn is_files_only(services: &[Service]) -> bool {
 
 struct LoadedModule {
     service: Vec<u8>,
-    /// Host dlopen handle; 0 when the module could not be loaded.
+    /// Selected loader's handle; 0 when the module could not be loaded.
     handle: usize,
     /// Resolved entry points (function name, address; 0 = absent).
     symbols: Vec<(&'static str, usize)>,
@@ -306,7 +307,7 @@ struct LoadedModule {
 static MODULES: Mutex<Vec<LoadedModule>> = Mutex::new(Vec::new());
 
 #[cfg(not(feature = "standalone"))]
-fn host_dlopen(path: &CStr) -> usize {
+fn module_dlopen(path: &CStr) -> usize {
     type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
         return 0;
@@ -318,12 +319,14 @@ fn host_dlopen(path: &CStr) -> usize {
 }
 
 #[cfg(feature = "standalone")]
-fn host_dlopen(_path: &CStr) -> usize {
-    0
+fn module_dlopen(path: &CStr) -> usize {
+    // SAFETY: path is a live C string. The standalone public loader owns
+    // both the mapping and its dependencies and never delegates to the host.
+    unsafe { crate::dlfcn_abi::dlopen(path.as_ptr(), libc::RTLD_LAZY) as usize }
 }
 
 #[cfg(not(feature = "standalone"))]
-fn host_dlsym(handle: usize, name: &CStr) -> usize {
+fn module_dlsym(handle: usize, name: &CStr) -> usize {
     type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
         return 0;
@@ -335,8 +338,9 @@ fn host_dlsym(handle: usize, name: &CStr) -> usize {
 }
 
 #[cfg(feature = "standalone")]
-fn host_dlsym(_handle: usize, _name: &CStr) -> usize {
-    0
+fn module_dlsym(handle: usize, name: &CStr) -> usize {
+    // SAFETY: handles come from the same owned loader and name is a C string.
+    unsafe { crate::dlfcn_abi::dlsym(handle as *mut c_void, name.as_ptr()) as usize }
 }
 
 fn valid_service_name(service: &[u8]) -> bool {
@@ -350,7 +354,7 @@ fn valid_service_name(service: &[u8]) -> bool {
 /// Address of `_nss_<service>_<function>`, loading the module on first use.
 /// `None` when the module or the entry point does not exist.
 ///
-/// The table lock is never held across the host `dlopen`/`dlsym`: a module's
+/// The table lock is never held across `dlopen`/`dlsym`: a module's
 /// constructor may itself use the name service.
 fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     if !valid_service_name(service) {
@@ -373,7 +377,7 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
         let mut path = b"libnss_".to_vec();
         path.extend_from_slice(service);
         path.extend_from_slice(b".so.2\0");
-        let opened = CStr::from_bytes_with_nul(&path).map_or(0, host_dlopen);
+        let opened = CStr::from_bytes_with_nul(&path).map_or(0, module_dlopen);
         let mut modules = MODULES.lock().unwrap_or_else(|e| e.into_inner());
         match modules.iter().find(|m| m.service == service) {
             // Another thread won the race; its handle names the same object.
@@ -396,7 +400,7 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     symbol.push(b'_');
     symbol.extend_from_slice(function.as_bytes());
     symbol.push(0);
-    let addr = CStr::from_bytes_with_nul(&symbol).map_or(0, |name| host_dlsym(handle, name));
+    let addr = CStr::from_bytes_with_nul(&symbol).map_or(0, |name| module_dlsym(handle, name));
     let mut modules = MODULES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(module) = modules.iter_mut().find(|m| m.service == service)
         && !module.symbols.iter().any(|(n, _)| *n == function)
@@ -1568,22 +1572,31 @@ type InitgroupsDynFn = unsafe extern "C" fn(
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 
-/// The allocator a module's `realloc` of the group array binds to: the
-/// process's global `malloc`/`realloc`/`free` (fl's own when preloaded).
+/// The allocator a module's `realloc` of the group array binds to: the host
+/// process's global exports in interpose builds, or the owned loader's runtime
+/// exports in standalone builds. Never mix the two allocation namespaces.
+#[cfg(not(feature = "standalone"))]
 fn global_allocator() -> Option<(MallocFn, FreeFn)> {
     let default = libc::RTLD_DEFAULT as usize;
-    let malloc = host_dlsym(default, c"malloc");
-    let free = host_dlsym(default, c"free");
+    let malloc = module_dlsym(default, c"malloc");
+    let free = module_dlsym(default, c"free");
     if malloc == 0 || free == 0 {
         return None;
     }
-    // SAFETY: these are the process's malloc and free.
+    // SAFETY: these exports have the malloc and free ABIs in the same loader
+    // namespace used to bind the module's realloc.
     unsafe {
         Some((
             core::mem::transmute::<usize, MallocFn>(malloc),
             core::mem::transmute::<usize, FreeFn>(free),
         ))
     }
+}
+
+#[cfg(feature = "standalone")]
+fn global_allocator() -> Option<(MallocFn, FreeFn)> {
+    // These exact frontends also bind native DSO malloc/realloc/free imports.
+    Some((crate::malloc_abi::malloc, crate::malloc_abi::free))
 }
 
 /// One module's contribution to a user's supplementary groups: its gids

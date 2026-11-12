@@ -23,6 +23,8 @@ on:
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'tests/integration/fixture_nss_module_lib.c'
       - 'tests/integration/fixture_nss_modules.c'
+      - 'tests/integration/nss_owned_component.rs'
+      - 'scripts/check_nss_owned_component.sh'
       - 'scripts/check_nss_services.py'
       - '.github/workflows/addrinfo.yml'
   workflow_dispatch:
@@ -129,6 +131,35 @@ jobs:
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" \
             2>&1 | tee artifacts/nss-services/build.log
           cp target/release/libfrankenlibc_abi.so artifacts/nss-services/libfrankenlibc_abi.so
+      - name: Exercise standalone NSS source with real owned loader callbacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then
+            args+=(--features '${{ matrix.feature }}')
+          fi
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" --message-format=json \
+            > artifacts/nss-services/component-dependencies.jsonl
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          libraries = {'frankenlibc_core': set(), 'libc': set()}
+          with open('artifacts/nss-services/component-dependencies.jsonl', encoding='utf-8') as source:
+              for line in source:
+                  message = json.loads(line)
+                  name = message.get('target', {}).get('name')
+                  if message.get('reason') == 'compiler-artifact' and name in libraries:
+                      libraries[name].update(path for path in message['filenames'] if path.endswith('.rlib'))
+          if any(len(paths) != 1 for paths in libraries.values()):
+              raise SystemExit(f'expected one artifact per dependency: {libraries}')
+          subprocess.run([
+              'bash', 'scripts/check_nss_owned_component.sh',
+              str(pathlib.Path('artifacts/nss-services/libfrankenlibc_abi.so').resolve()),
+              libraries['frankenlibc_core'].pop(), libraries['libc'].pop(),
+              str(pathlib.Path('target/release').resolve()),
+              'artifacts/nss-services/owned-component',
+          ], check=True)
+          PY
       - name: Exercise runtime source replacement during concurrent lookup
         shell: bash
         run: |
