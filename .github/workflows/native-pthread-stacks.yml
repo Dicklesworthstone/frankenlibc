@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/owned_unwind_abi.rs'
+      - 'crates/frankenlibc-abi/version_scripts/libc.map'
+      - 'tests/conformance/fixtures/unwind/minimal_throw_catch.cpp'
+      - 'scripts/check_owned_unwinder_e2e.sh'
       - 'crates/frankenlibc-abi/src/pthread_cancel_wait.rs'
       - 'crates/frankenlibc-abi/src/pthread_cancel_poll.rs'
       - 'crates/frankenlibc-abi/src/signal_abi.rs'
@@ -53,6 +57,58 @@ permissions:
   contents: read
 
 jobs:
+  owned-unwind-component:
+    runs-on: ubuntu-24.04
+    container: debian:13
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      FRANKENLIBC_UNWIND_COMPONENT: '1'
+      FRANKENLIBC_UNWIND_OUT_DIR: artifacts/owned-unwind
+    steps:
+      - name: Install compiler and native exception fixture dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git python3
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - name: Build the ABI types dependency for the exact-source component
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/owned-unwind
+          cargo build --locked --release -p libc --message-format=json \
+            > artifacts/owned-unwind/dependency-build.jsonl
+          python3 - <<'PY'
+          import json, os
+          libraries = set()
+          with open('artifacts/owned-unwind/dependency-build.jsonl', encoding='utf-8') as source:
+              for line in source:
+                  message = json.loads(line)
+                  if message.get('reason') == 'compiler-artifact' and message['target']['name'] == 'libc':
+                      libraries.update(path for path in message['filenames'] if path.endswith('.rlib'))
+          if len(libraries) != 1:
+              raise SystemExit(f'expected one libc rlib, got {sorted(libraries)}')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as environment:
+              environment.write('FRANKENLIBC_UNWIND_LIBC_RLIB=' + libraries.pop() + '\n')
+          PY
+      - name: Execute owned cleanup and forced-unwind contracts without a host unwinder
+        shell: bash
+        run: bash scripts/check_owned_unwinder_e2e.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned-unwind-component
+          path: artifacts/owned-unwind/
+          if-no-files-found: error
+          retention-days: 7
+
   signal-waits:
     runs-on: ubuntu-24.04
     # The signal-mask cleanup oracle was established against GNU libc 2.41.

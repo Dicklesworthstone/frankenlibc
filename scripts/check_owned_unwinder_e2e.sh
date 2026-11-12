@@ -3,12 +3,17 @@
 #
 # Verifies that:
 # 1. owned_unwind_abi.rs source exists with all required symbols
-# 2. Existing conformance gates pass for the owned unwinder
-# 3. A shared C++ throw/catch fixture resolves _Unwind_* from FrankenLibC without libgcc_s
-# 4. The owned unwinder is documented as available via standalone+owned-unwind-stub
+# 2. Required feature gating and existing conformance references are present
+# 3. Real C++ cleanup landing pads, Resume, forced stops and stack termination
+#    work with and without frame pointers, using only the owned _Unwind symbols
+# 4. The same fixture assertions pass against the host unwinder
 #
 # The owned unwinder requires the `standalone` + `owned-unwind-stub` feature flags.
-# This test verifies the infrastructure exists and is tested via existing conformance gates.
+# FRANKENLIBC_UNWIND_COMPONENT=1 labels an exact-source component library test;
+# this does not establish that the complete standalone product builds or passes.
+# With no FRANKENLIBC_LIB, this mode builds the production module using RUSTC
+# (default rustc) and FRANKENLIBC_UNWIND_LIBC_RLIB from the repository toolchain.
+# Build that small dependency with `cargo build -p libc --release` if necessary.
 #
 # Exit 0 = PASS, nonzero = FAIL
 set -euo pipefail
@@ -31,6 +36,8 @@ fi
 REQUIRED_SYMBOLS=(
   "_Unwind_Backtrace"
   "_Unwind_DeleteException"
+  "_Unwind_ForcedUnwind"
+  "_Unwind_GetCFA"
   "_Unwind_GetDataRelBase"
   "_Unwind_GetGR"
   "_Unwind_GetIP"
@@ -118,12 +125,59 @@ done
 echo "PASS: conformance test files present"
 echo ""
 
-OUT_DIR="${REPO_ROOT}/target/owned_unwinder_e2e"
+OUT_DIR="${FRANKENLIBC_UNWIND_OUT_DIR:-${REPO_ROOT}/target/owned_unwinder_e2e}"
 mkdir -p "${OUT_DIR}"
+if [[ "${FRANKENLIBC_UNWIND_COMPONENT:-0}" == 1 ]]; then
+  VALIDATION_SCOPE="exact_source_component"
+else
+  VALIDATION_SCOPE="supplied_standalone_artifact"
+fi
 
 # Test 6: Build and run a shared C++ fixture whose _Unwind symbols resolve to FrankenLibC.
-echo "--- Test 6: Owned shared throw/catch fixture ---"
+echo "--- Test 6: Physical C++ unwinding (${VALIDATION_SCOPE}) ---"
 LIB_PATH="${FRANKENLIBC_LIB:-}"
+if [[ -z "${LIB_PATH}" && "${FRANKENLIBC_UNWIND_COMPONENT:-0}" == 1 ]]; then
+  LIBC_RLIB="${FRANKENLIBC_UNWIND_LIBC_RLIB:-}"
+  if [[ -z "${LIBC_RLIB}" || ! -f "${LIBC_RLIB}" ]]; then
+    echo "FAIL: component build requires FRANKENLIBC_UNWIND_LIBC_RLIB from the pinned repository toolchain"
+    echo "Build only libc with cargo build -p libc --release, then supply its liblibc-*.rlib path."
+    exit 1
+  fi
+  LIBC_ARGS=(--extern "libc=${LIBC_RLIB}")
+  # Newer Cargo can emit a separate metadata sidecar beside an otherwise
+  # metadata-only rlib. Pass it when present; ordinary rlibs need no sidecar.
+  if [[ -f "${LIBC_RLIB%.rlib}.rmeta" ]]; then
+    LIBC_ARGS+=(--extern "libc=${LIBC_RLIB%.rlib}.rmeta")
+  fi
+  COMPONENT_SOURCE="${OUT_DIR}/owned_unwind_component.rs"
+  LIB_PATH="${OUT_DIR}/libowned_unwind_component.so"
+  cat > "${COMPONENT_SOURCE}" <<EOF
+// Exact production module with the real host loader's public ABI catalog.
+// This does not build the standalone libc or substitute synthetic frame data.
+pub mod dlfcn_abi {
+    use std::ffi::{c_int, c_void};
+    unsafe extern "C-unwind" {
+        pub fn dl_iterate_phdr(
+            callback: Option<
+                unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
+            >,
+            data: *mut c_void,
+        ) -> c_int;
+    }
+}
+#[path = "${UNWIND_ABI}"]
+pub mod owned_unwind_abi;
+EOF
+  sha256sum "${UNWIND_ABI}" > "${OUT_DIR}/component-source-before.sha256"
+  "${RUSTC:-rustc}" --edition=2024 --crate-name owned_unwind_component --crate-type=cdylib \
+    -O -Zthreads=1 -Dwarnings -Cdebug-assertions=no -Cpanic=abort \
+    -Cforce-unwind-tables=yes -Clink-arg=-Wl,--as-needed \
+    --cfg 'feature="standalone"' --cfg 'feature="owned-unwind-stub"' \
+    "${LIBC_ARGS[@]}" "${COMPONENT_SOURCE}" -o "${LIB_PATH}"
+  sha256sum "${UNWIND_ABI}" > "${OUT_DIR}/component-source-after.sha256"
+  cmp "${OUT_DIR}/component-source-before.sha256" "${OUT_DIR}/component-source-after.sha256"
+  sha256sum "${LIB_PATH}" > "${OUT_DIR}/component-artifact.sha256"
+fi
 if [[ -z "${LIB_PATH}" ]]; then
   if [[ -n "${CARGO_TARGET_DIR:-}" && -f "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so" ]]; then
     LIB_PATH="${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
@@ -133,54 +187,95 @@ if [[ -z "${LIB_PATH}" ]]; then
 fi
 
 if [[ -z "${LIB_PATH}" || ! -f "${LIB_PATH}" ]]; then
-  echo "FAIL: set FRANKENLIBC_LIB to a standalone+owned-unwind-stub libfrankenlibc_abi.so"
+  echo "FAIL: set FRANKENLIBC_LIB to a standalone+owned-unwind-stub library or an explicitly labeled exact-source component"
   exit 1
 fi
 
 FIXTURE_SRC="${REPO_ROOT}/tests/conformance/fixtures/unwind/minimal_throw_catch.cpp"
-OWNED_SO="${OUT_DIR}/minimal_throw_catch_owned.so"
-g++ -fPIC -shared -nodefaultlibs \
-  -DFRANKENLIBC_WRAP_CXA_THROW \
-  -o "${OWNED_SO}" \
-  "${FIXTURE_SRC}" \
-  -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lc -lm \
-  -Wl,--wrap=__cxa_throw \
-  -Wl,--exclude-libs,ALL \
-  -Wl,--allow-shlib-undefined \
-  -Wl,--unresolved-symbols=ignore-all
+for variant in frame_pointer omit_frame_pointer; do
+  if [[ "${variant}" == frame_pointer ]]; then
+    FRAME_FLAG=-fno-omit-frame-pointer
+  else
+    FRAME_FLAG=-fomit-frame-pointer
+  fi
+  OWNED_SO="${OUT_DIR}/minimal_throw_catch_${variant}.so"
+  HOST_BIN="${OUT_DIR}/minimal_throw_catch_host_${variant}"
+  FIXTURE_FLAGS=(-std=c++17 -O2 "${FRAME_FLAG}" -DFRANKENLIBC_WRAP_CXA_THROW
+                 -DFRANKENLIBC_WRAP_PERSONALITY -Wl,--wrap=__cxa_throw
+                 -Wl,--wrap=__gxx_personality_v0)
+  g++ "${FIXTURE_FLAGS[@]}" -static-libstdc++ "${FIXTURE_SRC}" -o "${HOST_BIN}"
+  g++ "${FIXTURE_FLAGS[@]}" -fPIC -shared -nodefaultlibs \
+    -o "${OWNED_SO}" "${FIXTURE_SRC}" \
+    -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lc -lm \
+    -Wl,--exclude-libs,ALL -Wl,--allow-shlib-undefined
 
-if ldd "${OWNED_SO}" | grep -E 'libgcc_s|libunwind'; then
-  echo "FAIL: owned shared fixture must not load libgcc_s or libunwind"
-  exit 1
-fi
-if ! nm -D "${OWNED_SO}" | grep -q ' U _Unwind_RaiseException'; then
-  echo "FAIL: owned shared fixture must leave _Unwind_RaiseException unresolved for FrankenLibC"
-  exit 1
-fi
-if nm "${OWNED_SO}" | grep -E ' [Tt] _Unwind_RaiseException$'; then
-  echo "FAIL: owned shared fixture defines _Unwind_RaiseException locally"
-  exit 1
-fi
+  if ldd "${OWNED_SO}" | grep -E 'libgcc_s|libunwind'; then
+    echo "FAIL: owned shared fixture must not load libgcc_s or libunwind"
+    exit 1
+  fi
+  for sym in _Unwind_RaiseException _Unwind_Resume _Unwind_ForcedUnwind _Unwind_GetCFA; do
+    if ! nm -D "${OWNED_SO}" | grep -q " U ${sym}$"; then
+      echo "FAIL: owned shared fixture must leave ${sym} unresolved for the owned library"
+      exit 1
+    fi
+  done
+  if nm --defined-only "${OWNED_SO}" | grep -E ' [Tt] _Unwind_'; then
+    echo "FAIL: owned shared fixture defines an unwinder locally"
+    exit 1
+  fi
 
-python3 - "${LIB_PATH}" "${OWNED_SO}" <<'PY'
+  for case_name in ordinary forced rethrow end negative missing_fde boundary; do
+    if [[ "${case_name}" != missing_fde && "${case_name}" != boundary ]]; then
+      echo "Running ${variant}/${case_name} host reference"
+      "${HOST_BIN}" "${case_name}" > "${OUT_DIR}/host_${variant}_${case_name}.log"
+      cat "${OUT_DIR}/host_${variant}_${case_name}.log"
+    else
+      echo "Checking owned unsupported-input policy: stop may consume an absent-FDE cursor; otherwise it is an error"
+    fi
+    echo "Running ${variant}/${case_name} owned unwinder"
+    python3 - "${LIB_PATH}" "${OWNED_SO}" "${case_name}" > "${OUT_DIR}/owned_${variant}_${case_name}.log" <<'PY'
 import ctypes
 import os
 import struct
+import subprocess
 import sys
 
 lib_path = os.path.abspath(sys.argv[1])
 fixture_path = os.path.abspath(sys.argv[2])
+case_name = sys.argv[3]
+
+def reject_host_unwinder(stage):
+    with open("/proc/self/maps", encoding="utf-8") as maps:
+        forbidden = [line.strip() for line in maps
+                     if "libgcc_s" in line or "libunwind" in line]
+    if forbidden:
+        raise SystemExit(f"host unwinder mapped {stage}: {forbidden}")
+
+reject_host_unwinder("before loading candidate")
 franken = ctypes.CDLL(lib_path, mode=os.RTLD_GLOBAL)
 libdl = ctypes.CDLL("libdl.so.2")
 libdl.dlsym.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 libdl.dlsym.restype = ctypes.c_void_p
-owned_raise = ctypes.cast(franken._Unwind_RaiseException, ctypes.c_void_p).value
-default_raise = libdl.dlsym(None, b"_Unwind_RaiseException")
-if default_raise != owned_raise:
-    raise SystemExit(
-        f"_Unwind_RaiseException resolved to {default_raise:#x}, expected FrankenLibC {owned_raise:#x}"
-    )
+
+class DlInfo(ctypes.Structure):
+    _fields_ = [("filename", ctypes.c_char_p), ("base", ctypes.c_void_p),
+                ("symbol", ctypes.c_char_p), ("address", ctypes.c_void_p)]
+
+libdl.dladdr.argtypes = [ctypes.c_void_p, ctypes.POINTER(DlInfo)]
+libdl.dladdr.restype = ctypes.c_int
+undefined = subprocess.check_output(["nm", "-D", "--undefined-only", fixture_path], text=True)
+unwind_symbols = sorted({line.split()[-1] for line in undefined.splitlines()
+                         if line.split() and line.split()[-1].startswith("_Unwind_")})
+for name in unwind_symbols:
+    owned_address = libdl.dlsym(franken._handle, name.encode())
+    default_address = libdl.dlsym(None, name.encode())
+    info = DlInfo()
+    if (not owned_address or owned_address != default_address or
+        not libdl.dladdr(default_address, ctypes.byref(info)) or
+        not info.filename or not os.path.samefile(os.fsdecode(info.filename), lib_path)):
+        raise SystemExit(f"{name} did not resolve to the supplied owned library")
 fixture = ctypes.CDLL(fixture_path, mode=os.RTLD_GLOBAL)
+reject_host_unwinder("after loading fixture")
 with open(fixture_path, "rb") as elf_file:
     elf = elf_file.read()
 if elf[:4] != b"\x7fELF" or elf[4] != 2 or elf[5] != 1:
@@ -197,24 +292,39 @@ for index in range(program_count):
         break
 if not gnu_eh_frame:
     raise SystemExit("owned shared fixture has no PT_GNU_EH_FRAME header")
-entry = fixture.minimal_throw_catch_entry
+entries = {
+    "ordinary": "minimal_throw_catch_entry",
+    "forced": "owned_forced_unwind_entry",
+    "rethrow": "owned_forced_unwind_rethrow_entry",
+    "end": "owned_forced_unwind_end_entry",
+    "negative": "owned_unwind_negative_entry",
+    "missing_fde": "owned_unwind_missing_fde_entry",
+    "boundary": "owned_forced_unwind_boundary_entry",
+}
+entry_name = entries[case_name]
+entry = getattr(fixture, entry_name)
 entry.argtypes = []
 entry.restype = ctypes.c_int
 result = entry()
 if result != 0:
-    raise SystemExit(f"minimal_throw_catch_entry returned {result}")
+    raise SystemExit(f"{entry_name} returned {result}")
+reject_host_unwinder("after executing fixture")
 PY
+    cat "${OUT_DIR}/owned_${variant}_${case_name}.log"
+  done
+done
 
-echo "PASS: shared C++ throw/catch resolved _Unwind_RaiseException from FrankenLibC and caught successfully"
+echo "PASS: C++ cleanup/resume, forced stop ordering, terminal callbacks and errors passed in both frame layouts"
 echo ""
 
 # Write summary JSON
-SUMMARY_FILE="${REPO_ROOT}/tests/conformance/owned_unwinder_e2e.v1.json"
+SUMMARY_FILE="${OUT_DIR}/owned_unwinder_e2e.v1.json"
 cat > "${SUMMARY_FILE}" <<EOF
 {
   "schema_version": "owned_unwinder_e2e.v1",
   "bead_id": "bd-b2m2h6",
   "generated_at_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "validation_scope": "${VALIDATION_SCOPE}",
   "tests": {
     "source_symbols_defined": "pass",
     "feature_flags_defined": "pass",
@@ -223,28 +333,33 @@ cat > "${SUMMARY_FILE}" <<EOF
     "conformance_tests_present": "pass",
     "owned_shared_fixture_no_libgcc": "pass",
     "owned_shared_fixture_pt_gnu_eh_frame": "pass",
-    "owned_shared_fixture_throw_catch": "pass"
+    "owned_shared_fixture_throw_catch": "pass",
+    "owned_nested_raii_cleanup_resume": "pass",
+    "owned_callee_saved_cleanup_values": "pass",
+    "owned_resume_without_phase1_rerun": "pass",
+    "owned_forced_stop_before_personality": "pass",
+    "owned_forced_catch_rethrow_preserves_state": "pass",
+    "owned_forced_cfa_matches_suspended_stack": "pass",
+    "owned_forced_terminal_callback": "pass",
+    "owned_stop_error_normalization": "pass",
+    "owned_missing_fde_fails_without_false_terminal_callback": "pass",
+    "owned_stop_can_finish_at_native_style_no_cfi_boundary": "pass",
+    "owned_exception_cleanup_exactly_once": "pass",
+    "all_used_unwind_symbols_owned": "pass",
+    "no_host_unwinder_mapped": "pass",
+    "host_reference_assertions": "pass",
+    "optimized_frame_pointer_and_omitted_frame_pointer": "pass"
   },
   "implementation_status": {
     "source_file": "crates/frankenlibc-abi/src/owned_unwind_abi.rs",
     "feature_flags": ["standalone", "owned-unwind-stub"],
-    "behavior": {
-      "_Unwind_Backtrace": "performs bounded frame-pointer walk",
-      "_Unwind_RaiseException": "performs owned phase-1 search, phase-2 cleanup, and guarded x86_64 landing-pad transfer when the handler context validates",
-      "_Unwind_Resume": "aborts until phase-2 context transfer lands",
-      "_Unwind_Resume_or_Rethrow": "re-enters the owned raise path for rethrow-style edges",
-      "_Unwind_GetGR": "reads owned cursor general-register state and returns zero for invalid slots",
-      "_Unwind_SetGR": "mutates owned cursor general-register state for personality-requested landing-pad install",
-      "_Unwind_SetIP": "mutates owned cursor instruction-pointer state for personality-requested landing-pad install",
-      "x86_64_context_install": "validates landing-pad IP, physical frame/stack cursor, CFA register, and saved RIP before the non-returning jump"
-    },
     "owned_throw_catch_fixture": {
       "library": "${LIB_PATH}",
-      "shared_object": "${OWNED_SO}",
-      "dependency_policy": "no libgcc_s or libunwind DT_NEEDED entries; _Unwind_RaiseException is unresolved until FrankenLibC is loaded RTLD_GLOBAL",
-      "loaded_object_catalog_policy": "no manual __register_frame call; the owned unwinder must discover the fixture PT_GNU_EH_FRAME through standalone dl_iterate_phdr"
+      "variants": ["frame_pointer", "omit_frame_pointer"],
+      "dependency_policy": "no libgcc_s or libunwind dependencies or runtime mappings; every used _Unwind symbol resolves inside the supplied library",
+      "loaded_object_catalog_policy": "no manual __register_frame call; discover the fixture PT_GNU_EH_FRAME through the supplied library's loader catalog"
     },
-    "requirement_for_default": "Complete L2 standalone-readiness (WS-6) to remove feature flag gating"
+    "scope_limit": "Component validation does not establish full standalone product readiness, native pthread cancellation integration, or Rust Drop behavior"
   },
   "overall_status": "pass"
 }
@@ -252,8 +367,7 @@ EOF
 
 echo "Summary: ${SUMMARY_FILE}"
 echo ""
-echo "NOTE: The owned unwinder is available via feature flags (standalone + owned-unwind-stub)."
-echo "NOTE: Making it default requires completing L2 standalone-readiness prerequisites."
+echo "Validation scope: ${VALIDATION_SCOPE}; full standalone readiness and native pthread/Rust integration require their own gates."
 echo ""
 echo "PASS: Owned unwinder E2E verified"
 exit 0

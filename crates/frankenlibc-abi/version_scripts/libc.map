@@ -4724,6 +4724,7 @@ GCC_3.0 {
     global:
         _Unwind_Backtrace;
         _Unwind_DeleteException;
+        _Unwind_ForcedUnwind;
         _Unwind_GetDataRelBase;
         _Unwind_GetGR;
         _Unwind_GetIP;
@@ -4743,6 +4744,7 @@ GCC_3.0 {
 GCC_3.3 {
     global:
         _Unwind_Resume_or_Rethrow;
+        _Unwind_GetCFA;
 } GCC_3.0;
 
 GCC_4.2.0 {

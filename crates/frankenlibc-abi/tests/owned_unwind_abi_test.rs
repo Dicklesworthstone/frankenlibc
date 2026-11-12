@@ -306,6 +306,49 @@ fn synthetic_x86_64_cfi_row_advances_frame_pointer_cursor() {
 }
 
 #[test]
+fn undefined_return_address_overrides_and_restores_the_cie_rule() {
+    let section_addr = 0x425000usize;
+    let pc_begin = 0x426000usize;
+    // The CIE initially saves RIP at CFA-8. Remember that row, explicitly
+    // undefine RIP, then restore first the saved row and later the CIE rule.
+    let cfi = [0x0a, 0x07, 0x10, 0x41, 0x0b, 0x41, 0x07, 0x10, 0x41, 0xd0];
+    let eh_frame = synthetic_eh_frame(section_addr, pc_begin, 0x20, &cfi);
+    for (offset, expected) in [(0, None), (1, Some(-8)), (2, None), (3, Some(-8))] {
+        let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, pc_begin + offset)
+            .expect("defined/undefined return-address row should decode")
+            .expect("defined/undefined return-address row should resolve");
+        assert_eq!(
+            row.saved_rip_offset, expected,
+            "unexpected RIP rule at +{offset}"
+        );
+    }
+}
+
+#[test]
+fn signal_cie_does_not_poison_ordinary_fde_lookup() {
+    let section_addr = 0x428000usize;
+    let signal_pc = 0x429000usize;
+    let ordinary_pc = 0x42a000usize;
+    let mut eh_frame =
+        synthetic_eh_frame_with_signal_marker(section_addr, signal_pc, 0x20, &[], true);
+    eh_frame.truncate(eh_frame.len() - 4); // Append before the zero terminator.
+    let ordinary = synthetic_eh_frame(section_addr + eh_frame.len(), ordinary_pc, 0x20, &[]);
+    eh_frame.extend_from_slice(&ordinary);
+
+    let signal = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, signal_pc)
+        .expect("signal CIE metadata should decode without consuming a payload byte")
+        .expect("signal FDE should remain identifiable");
+    assert!(signal.signal_frame);
+    assert_eq!(signal.pc_begin, signal_pc);
+
+    let ordinary = owned_find_fde_for_ip_for_tests(&eh_frame, section_addr, ordinary_pc)
+        .expect("an unrelated signal CIE must not prevent ordinary FDE lookup")
+        .expect("ordinary FDE should remain reachable after signal metadata");
+    assert!(!ordinary.signal_frame);
+    assert_eq!(ordinary.pc_begin, ordinary_pc);
+}
+
+#[test]
 fn synthetic_cfi_expressions_fail_closed_during_row_evaluation() {
     let section_addr = 0x430000usize;
     let pc_begin = 0x431000usize;
@@ -655,9 +698,20 @@ fn compiled_test_binary_eh_frame_has_lookupable_fde() {
     assert_eq!(found, first);
     assert!(found.pc_end > found.pc_begin);
 
-    let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, first.pc_begin)
+    // The first FDE may describe _start, whose explicit undefined RIP rule
+    // correctly terminates unwinding. Test the ordinary saved-RIP contract
+    // against an actual Rust caller instead of assuming ELF record order.
+    let function_address = walk_from_inner as *const () as usize;
+    let loaded_object = owned_loaded_eh_frame_ranges_for_tests()
+        .into_iter()
+        .find(|range| function_address >= range.load_start && function_address < range.load_end)
+        .expect("known caller should belong to the real loaded-object catalog");
+    let function_ip = function_address
+        .checked_sub(loaded_object.object_base)
+        .expect("loaded caller address should be above its ELF load bias");
+    let row = owned_evaluate_cfi_row_for_tests(&eh_frame, section_addr, function_ip)
         .expect("compiled FDE CFI should evaluate")
-        .expect("first FDE start should produce a row");
+        .expect("known caller's FDE should produce a row");
     assert_eq!(row.return_address_register, 16);
     assert_eq!(row.saved_rip_offset, Some(-8));
     assert!(
@@ -684,12 +738,26 @@ fn synthetic_eh_frame(
     pc_range: usize,
     cfi: &[u8],
 ) -> Vec<u8> {
+    synthetic_eh_frame_with_signal_marker(section_addr, pc_begin, pc_range, cfi, false)
+}
+
+fn synthetic_eh_frame_with_signal_marker(
+    section_addr: usize,
+    pc_begin: usize,
+    pc_range: usize,
+    cfi: &[u8],
+    signal_frame: bool,
+) -> Vec<u8> {
     let mut bytes = Vec::new();
     let cie_offset = bytes.len();
     let mut cie_body = Vec::new();
     cie_body.extend_from_slice(&0u32.to_le_bytes());
     cie_body.push(1);
-    cie_body.extend_from_slice(b"zR\0");
+    if signal_frame {
+        cie_body.extend_from_slice(b"zRS\0");
+    } else {
+        cie_body.extend_from_slice(b"zR\0");
+    }
     encode_uleb(1, &mut cie_body);
     encode_sleb(-8, &mut cie_body);
     cie_body.push(16);

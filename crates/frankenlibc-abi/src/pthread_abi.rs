@@ -11092,9 +11092,8 @@ unsafe fn finish_native_thread_exit() -> ! {
 // Native lifecycle owns the exception object and cleanup destination. The
 // normal hybrid artifact already links the platform unwind runtime, whose
 // public Itanium ABI supplies stack walking and language landing pads. The
-// experimental owned-unwind-stub artifact does not implement forced unwinding
-// yet; it retains only the explicit C cleanup-buffer path below.
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+// opt-in owned artifact uses the same stop protocol with its own unwinder;
+// neither backend may skip language destructors and report successful exit.
 #[repr(C, align(16))]
 struct NativeUnwindException {
     exception_class: u64,
@@ -11102,7 +11101,7 @@ struct NativeUnwindException {
     private: [usize; 2],
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[cfg(any(test, not(all(feature = "standalone", feature = "owned-unwind-stub"))))]
 unsafe extern "C-unwind" {
     fn _Unwind_ForcedUnwind(
         exception: *mut NativeUnwindException,
@@ -11119,14 +11118,12 @@ unsafe extern "C-unwind" {
     fn _Unwind_GetCFA(context: *mut c_void) -> usize;
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe extern "C" fn native_unwind_cleanup(_reason: c_int, _exception: *mut NativeUnwindException) {
     // A language catch may observe cancellation only if it resumes unwinding.
     // Consuming the foreign exception would abandon the thread exit protocol.
     std::process::abort();
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe fn native_jump_buffer_stack_pointer(head: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
@@ -11148,7 +11145,6 @@ unsafe fn native_jump_buffer_stack_pointer(head: usize) -> usize {
     }
 }
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
 unsafe extern "C-unwind" fn native_unwind_stop(
     version: c_int,
     actions: c_int,
@@ -11164,7 +11160,16 @@ unsafe extern "C-unwind" fn native_unwind_stop(
     let cfa = if at_end {
         0
     } else {
-        unsafe { _Unwind_GetCFA(context) }
+        #[cfg(all(not(test), feature = "standalone", feature = "owned-unwind-stub"))]
+        // SAFETY: the owned callback adapter received this owned cursor.
+        unsafe {
+            crate::owned_unwind_abi::_Unwind_GetCFA(context.cast())
+        }
+        #[cfg(any(test, not(all(feature = "standalone", feature = "owned-unwind-stub"))))]
+        // SAFETY: the platform unwinder supplied this opaque cursor.
+        unsafe {
+            _Unwind_GetCFA(context)
+        }
     };
     loop {
         let head = native_cleanup_head();
@@ -11211,44 +11216,79 @@ unsafe extern "C-unwind" fn native_unwind_stop(
     0 // _URC_NO_REASON: allow this frame's language cleanup to run.
 }
 
+#[cfg(all(not(test), feature = "standalone", feature = "owned-unwind-stub"))]
+unsafe extern "C-unwind" fn native_owned_unwind_stop(
+    version: c_int,
+    actions: c_int,
+    exception_class: u64,
+    exception: *mut crate::owned_unwind_abi::UnwindException,
+    context: *mut crate::owned_unwind_abi::UnwindContext,
+    argument: *mut c_void,
+) -> c_int {
+    // SAFETY: the common stop protocol treats both exception and cursor as
+    // opaque; the backend-specific GetCFA above uses the matching layout.
+    unsafe {
+        native_unwind_stop(
+            version,
+            actions,
+            exception_class,
+            exception.cast(),
+            context.cast(),
+            argument,
+        )
+    }
+}
+
 /// Start (or restart after a plain C cleanup callback) a native forced unwind.
 /// The exception lives in owned thread storage, never in an unwound frame.
 unsafe fn continue_native_thread_exit() -> ! {
-    #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
-    {
-        let storage = if let Some(handle) = core_current_thread_handle() {
-            // SAFETY: only this native thread accesses its exception header.
-            unsafe {
-                (*handle)
-                    .unwind_exception
-                    .get()
-                    .cast::<NativeUnwindException>()
-            }
-        } else {
-            // The cache keeps its cell address stable; release its borrow
-            // before entering any unwinder, personality, or application code.
-            with_pthread_tls(|tls| {
-                std::ptr::from_mut(&mut tls.native_unwind_exception).cast::<NativeUnwindException>()
-            })
-        };
-        // SAFETY: both storage variants have 16-byte alignment and 32 bytes.
-        // A restarted chain has abandoned the previous cursor via longjmp.
+    let storage = if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: only this native thread accesses its exception header.
         unsafe {
-            storage.write(NativeUnwindException {
-                exception_class: u64::from_be_bytes(*b"FRNKCAN\0"),
-                cleanup: native_unwind_cleanup,
-                private: [0; 2],
-            });
-            _Unwind_ForcedUnwind(storage, native_unwind_stop, std::ptr::null_mut());
+            (*handle)
+                .unwind_exception
+                .get()
+                .cast::<NativeUnwindException>()
         }
-        // Returning means malformed unwind data or a violated unwind contract;
-        // never silently skip the remaining cleanup and report successful exit.
-        std::process::abort();
-    }
-    #[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+    } else {
+        // The cache keeps its cell address stable; release its borrow
+        // before entering any unwinder, personality, or application code.
+        with_pthread_tls(|tls| {
+            std::ptr::from_mut(&mut tls.native_unwind_exception).cast::<NativeUnwindException>()
+        })
+    };
+    // SAFETY: both storage variants have 16-byte alignment and 32 bytes.
+    // A restarted chain has abandoned the previous cursor via longjmp.
     unsafe {
-        transfer_native_cleanup()
+        storage.write(NativeUnwindException {
+            exception_class: u64::from_be_bytes(*b"FRNKCAN\0"),
+            cleanup: native_unwind_cleanup,
+            private: [0; 2],
+        });
+        #[cfg(any(test, not(all(feature = "standalone", feature = "owned-unwind-stub"))))]
+        _Unwind_ForcedUnwind(storage, native_unwind_stop, std::ptr::null_mut());
+        #[cfg(all(not(test), feature = "standalone", feature = "owned-unwind-stub"))]
+        {
+            const {
+                assert!(
+                    std::mem::size_of::<NativeUnwindException>()
+                        == std::mem::size_of::<crate::owned_unwind_abi::UnwindException>()
+                );
+                assert!(
+                    std::mem::align_of::<NativeUnwindException>()
+                        == std::mem::align_of::<crate::owned_unwind_abi::UnwindException>()
+                );
+            }
+            crate::owned_unwind_abi::_Unwind_ForcedUnwind(
+                storage.cast(),
+                Some(native_owned_unwind_stop),
+                std::ptr::null_mut(),
+            );
+        }
     }
+    // Returning means malformed unwind data or a violated unwind contract;
+    // never silently skip the remaining cleanup and report successful exit.
+    std::process::abort();
 }
 
 /// `__pthread_register_cancel` — C `pthread_cleanup_push` (built without
