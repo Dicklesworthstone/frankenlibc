@@ -1,0 +1,6 @@
+
+running 1 test
+test libarchive_confined_4arm_qualification_bundle_relocation_and_revocation_e2e ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 62.18s
+

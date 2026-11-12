@@ -39,7 +39,8 @@ FrankenLibC claims to prevent memory safety issues through its healing actions m
 ```bash
 # Build package with FrankenLibC
 FRANKENLIBC_MODE=hardened \
-FRANKENLIBC_LOG_FILE=/results/frankenlibc.jsonl \
+FRANKENLIBC_LOG=/results/frankenlibc.jsonl \
+FRANKENLIBC_HEAL_LOG=1 \
 emerge --quiet $PACKAGE
 ```
 
@@ -79,39 +80,26 @@ python scripts/gentoo/generate_security_report.py \
   --output-json artifacts/security-report.json
 ```
 
-## Security Score Calculation
+## Security Score and Counterfactual Qualification (`SQ.6` / `SQ.11`)
 
-### Per-Package Score
+Telemetry-only healing logs record **membrane intervention activity**, not exploit prevention. Under the `SQ.6`/`SQ.11` oracle contract enforced by `scripts/gentoo/security_analyzer.py`:
 
-```
-security_score = prevented_cves / total_preventable_cves
-```
+- Without an external memory-effect and output oracle (`qualified(c) == true`), every CVE entry evaluates to `would_prevent = False` and `qualification_status = "unqualified"`, regardless of how many `ClampSize` or other healing events appear in JSONL logs.
+- Packages with zero known CVEs evaluate to `"unassessed"` (`security_score = None`), never `100%` prevention.
+- A `"prevented"` or `"profile_accepted"` verdict requires a confined 4-arm counterfactual `(H, S, F, P)` with pinned artifact SHA-256s:
+  - `H` (`stock glibc`): reproduces nominated baseline memory harm (`H_stock == true`) under an external watchpoint/sanitizer/disclosure oracle.
+  - `S` (`FRANKENLIBC_MODE=strict`): ablation control separating interposition artifacts from hardened repairs.
+  - `F` (`FRANKENLIBC_MODE=hardened`): excludes the nominated memory harm (`watchpoint_triggered == false`, `marker_disclosed == false`) AND either produces independently validated output or safely rejects/quarantines corrupted staged output without publication.
+  - `P` (patched upstream reference): confirms expected safe behavior on the fixed upstream revision.
 
-Where:
-- `prevented_cves`: CVEs with matching healing action evidence
-- `total_preventable_cves`: CVEs marked as `expected_prevention: true`
+### Evidence Requirements
 
-### Aggregate Score
+For any CVE or application profile to move beyond `"unqualified"` telemetry correlation:
 
-```
-aggregate_score = sum(package_scores) / num_packages_with_cves
-```
-
-## Evidence Requirements
-
-For a CVE to be marked as "prevented", the following evidence is required:
-
-1. **Matching Action**: Healing action of the correct type was logged
-2. **Relevant Context**: Action occurred in relevant code path
-3. **Sufficient Coverage**: Multiple instances of the action observed
-
-### Evidence Confidence
-
-```python
-confidence = min(1.0, healing_action_count / 10)
-```
-
-More healing actions = higher confidence in prevention.
+1. **Baseline Harm Proof (`H`)**: External hardware watchpoint, sanitizer, or canary-disclosure oracle confirms out-of-bounds/temporal harm on stock glibc.
+2. **Hardened Harm Exclusion (`F`)**: Identical input and confinement show the external oracle armed and untriggered under `FRANKENLIBC_MODE=hardened`.
+3. **Output Integrity (`S11`/`S17`)**: Any truncated or clamped output is rejected by an independent out-of-process validator in staging and never published.
+4. **Honest Non-Promotion**: Cases where compiler-inlined direct stores bypass libc entrypoints (`unsupported`) or where paired latency/RSS budgets fail (`not_qualified`) retain their measured negative/boundary verdicts.
 
 ## Limitations
 

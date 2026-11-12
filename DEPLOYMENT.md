@@ -16,7 +16,7 @@ Canonical source artifacts for deployment claims:
 - [`tests/conformance/runtime_env_inventory.v1.json`](tests/conformance/runtime_env_inventory.v1.json)
 - [`tests/conformance/ld_preload_smoke_summary.v1.json`](tests/conformance/ld_preload_smoke_summary.v1.json)
 
-The committed smoke summary is a September 24, 2026 result at `a8a4110b…`, not a current-source qualification. Read each report's source, artifact identity and blocked obligations before using it to justify deployment. A passing declaration/schema checker does not itself promote the replacement level.
+The committed smoke summary (`tests/conformance/ld_preload_smoke_summary.v1.json`) is run `20261111T134243Z-2744068` at source commit `44a61541…` (`348 pass / 0 fail / 4 optional skips / 0 xfail`: `175` strict passes and `173` hardened passes), not an automatic qualification of arbitrary later commits. Read each report's source, artifact identity and blocked obligations before using it to justify deployment. A passing declaration/schema checker does not itself promote the replacement level.
 
 ## Supported Deployment Model
 
@@ -288,5 +288,9 @@ bash scripts/check_claim_reconciliation.sh
 - The shipping deployment model still depends on host glibc
 - FrankenLibC is not yet a blanket production-readiness claim for arbitrary workloads
 - Hardened mode adds repair/deny behavior, but it does not turn unsafe applications into proven-safe programs
+- **Confined `libarchive` qualification profile (`libarchive-confined-archive-worker-v1`, [`tests/cve_arena/results/libarchive_qualification_v1/`](tests/cve_arena/results/libarchive_qualification_v1/)):**
+  - Exercises real upstream `libarchive` `CVE-2026-45308` (ZIP heap overwrite) and `CVE-2025-5915` (RAR heap over-read) under `bwrap` read-only root confinement (`--unshare-net --unshare-ipc --unshare-uts --die-with-parent`), isolated per-job staging, and out-of-process stock-glibc `v3.8.8` output validation (`bash tests/cve_arena/report.sh --qualification tests/cve_arena/results/libarchive_qualification_v1 --verify`).
+  - While both primary CVE cases achieved `safe_rejection_in_tested_case` (`profile_accepted`) under `FRANKENLIBC_MODE=hardened` and `14/15` acceptance vector keys passed, the integrated `S22` profile disposition is **`not_qualified`** because the 30-block paired `F/H` wall-time 95% CI upper bound (`1.512x` point, 95% CI `[1.1393, 2.1116]`) exceeded the `<= 2.0x` operator budget (`S15=false`).
+  - Mandatory deployment exclusions: never rely on `FRANKENLIBC_MODE=strict` for memory-corruption containment (`observed_harm` in `S09`/`S14`); never publish `hardened` clamped outputs directly without independent staging validation (`S11`); compiler-inlined direct pointer stores bypassing libc symbols remain `unsupported` (`S23`); and changing `libfrankenlibc_abi.so`, `libarchive`, or profile flags invalidates prior bundle hashes (`revoked` / `superseded`, `S24`).
 - The committed smoke battery is historical evidence for its named artifact and curated cases; fresh source needs its own execution evidence
 - Full standalone replacement remains planned work, not a completed deployment path

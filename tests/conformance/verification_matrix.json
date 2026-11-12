@@ -35443,6 +35443,194 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-reality-202609-lx578q.15.3",
+      "title": "[SQ M1-M2: S08-S11,S13-S17] Execute confined 4-arm libarchive ZIP-writer and RAR-reader H/S/F/P counterfactuals, benign corpus, and staging lifecycle",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "libarchive",
+        "m1",
+        "m2",
+        "reality-check-202611",
+        "security-qualification"
+      ],
+      "dependencies": [
+        "bd-reality-202609-lx578q.8.4",
+        "bd-reality-202609-lx578q.15.2"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Confined 4-arm libarchive ZIP S08-S11, RAR S13-S14, benign S10, perf S15, lifecycle S16-S17 E2E"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "runner.sh + libarchive_qualification.py + report.sh --verify"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "observations.jsonl and per-milestone JSON artifacts verified"
+        },
+        "perf_evidence": {
+          "required": true,
+          "scope": "performance_s15.json 30 paired blocks across H, S, F"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test libarchive_security_qualification_e2e_test -- --test-threads=1"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "tests/cve_arena/libarchive_qualification.py"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/cve_arena/results/libarchive_qualification_v1/observations.jsonl"
+        },
+        "perf_evidence": {
+          "status": "complete",
+          "artifacts": "tests/cve_arena/results/libarchive_qualification_v1/performance_s15.json"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-reality-202609-lx578q.15.3",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test libarchive_security_qualification_e2e_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "bash tests/cve_arena/report.sh --qualification tests/cve_arena/results/libarchive_qualification_v1 --verify"
+        ],
+        "expected_assertions": [
+          "S08-S09 ZIP and S13-S14 RAR 4-arm H/S/F/P counterfactuals, S10 benign corpus, S11 corrupt output non-publication, S15 30-block live-incumbent latency/RSS, and S16-S17 staging/isolation failure controls pass"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "tests/cve_arena/runner.sh",
+          "tests/cve_arena/report.sh",
+          "tests/cve_arena/qualification_manifest.v1.json",
+          "tests/cve_arena/libarchive_qualification.py",
+          "tests/cve_arena/results/libarchive_qualification_v1/bundle_index.json",
+          "tests/cve_arena/results/libarchive_qualification_v1/s22_disposition.json",
+          "crates/frankenlibc-harness/tests/libarchive_security_qualification_e2e_test.rs",
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.15.3/receipt.json"
+        ],
+        "perf_proof_refs": [
+          "tests/cve_arena/results/libarchive_qualification_v1/performance_s15.json"
+        ],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 1b82ce539e9bf34f8caf6c10bdaaa715b48de5c8.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.15.3/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Execute confined 4-arm libarchive ZIP-writer (S08-S11) and RAR-reader (S13-S14) H/S/F/P counterfactuals, benign archive corpus (S10), 30-block live-incumbent performance (S15), and supervisor staging/admission failure controls (S16-S17)",
+          "acceptance_sha256": "2cc9ae404dbc26ff1d615a62a7e26e6de63f52ff02f9353803ab3112dbc14085",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "tests/cve_arena/runner.sh",
+            "tests/cve_arena/report.sh",
+            "tests/cve_arena/qualification_manifest.v1.json",
+            "tests/cve_arena/libarchive_qualification.py",
+            "tests/cve_arena/results/libarchive_qualification_v1/bundle_index.json",
+            "tests/cve_arena/results/libarchive_qualification_v1/s22_disposition.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/libarchive_security_qualification_e2e_test.rs"
+          ],
+          "source": {
+            "commit": "1b82ce539e9bf34f8caf6c10bdaaa715b48de5c8",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/tests/libarchive_security_qualification_e2e_test.rs": "b2f3638794503dab7d26e795988dbd9812eca0355d4592013d6ca1f1c00e7017",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "tests/cve_arena/libarchive_qualification.py": "7d346aa19001408a592818d0921ecb4ffce42de9ae26db69f6ed02b7990f6b0b",
+              "tests/cve_arena/qualification_manifest.v1.json": "bcd51288c1d27592d5c12427624687d7117398c2ca5352e92884991d06a4fc34",
+              "tests/cve_arena/report.sh": "67256ca9617977536bc70cd4cfd9ebf462e03c7cc6aaa6ec97f4d7073d6d01f7",
+              "tests/cve_arena/results/libarchive_qualification_v1/bundle_index.json": "a7035a50b175da2116cfcc3ba91ec465ca20bcbef0bbb49640e65954c88b6ff1",
+              "tests/cve_arena/results/libarchive_qualification_v1/s22_disposition.json": "84f35de276ba2e84178893bc3456d0ff738eac92de6d894830227e98d2c9bf67",
+              "tests/cve_arena/runner.sh": "febd8fe0c6280b9b1e955693aabd75f3538ab3c8d62ad58bc73553e8c684dc44"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-12T03:39:13+00:00",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/07ae624914842bd0/out/libarchive_security_qualification_e2e_test-07ae624914842bd0",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "libarchive_security_qualification_e2e_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/07ae624914842bd0/out/libarchive_security_qualification_e2e_test-07ae624914842bd0"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "libarchive_confined_4arm_qualification_bundle_relocation_and_revocation_e2e"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {

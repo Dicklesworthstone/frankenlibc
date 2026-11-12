@@ -54,7 +54,7 @@ These guarantees are strongest for membrane-managed allocations and supported AB
 | Guarantee | Mechanism | Bound / property |
 | --- | --- | --- |
 | Temporal safety on managed allocations | Generational arena plus quarantine queue | Same-slot use-after-free detection is intended to be exact via generation mismatch. |
-| Spatial integrity on managed allocations | SipHash-derived fingerprint header plus trailing canary | Undetected corruption probability is bounded by the stated collision bound, `<= 2^-64`. |
+| Spatial integrity on managed allocations | CSPRNG-seeded (`SYS_getrandom`) dual-key SipHash (`K_hdr` 24-byte header `SipHash-2-4` plus independent `K_tail != K_hdr` 8-byte trailing canary `SipHash-1-3`, verified on cold path, `1-in-16` warm `TLS_CACHE` hits, near-tail writes, and `free`) | Undetected corruption or forgery probability is bounded by `<= 2^-64`; leaking all 24 header bytes gives zero advantage on `K_tail`. |
 | Safety-state monotonicity | Safety lattice in `crates/frankenlibc-membrane/src/lattice.rs` | Join is commutative, associative, and idempotent; new negative evidence only moves toward more restrictive states. |
 | Sound C-to-safe projection | Galois connection in `crates/frankenlibc-membrane/src/galois.rs` | `gamma(alpha(c)) >= c` for correct C behavior. |
 | Deterministic invalid-input handling in hardened mode | Policy-driven repair or deny decisions | Covered families map invalid classes to fixed repair actions or deterministic error returns. |
@@ -108,6 +108,25 @@ Security decisions are supposed to be observable, not implicit.
   Machine-readable mapping from invalid-input classes to deterministic hardened outcomes.
 - `tests/cve_arena/results/paired_mode_evidence.v1.json`
   Paired strict vs hardened evidence for adversarial security scenarios.
+- `tests/cve_arena/results/libarchive_qualification_v1/`
+  Portable clean-room 4-arm `(H, S, F, P)` counterfactual qualification bundle (`libarchive-confined-archive-worker-v1`), independently verifiable via `bash tests/cve_arena/report.sh --qualification tests/cve_arena/results/libarchive_qualification_v1 --verify`.
+
+### Bounded Application Security Qualification (`libarchive-confined-archive-worker-v1`)
+
+The repository ships a reproducible, confined 4-arm `(H, S, F, P)` real-application counterfactual bundle under `tests/cve_arena/results/libarchive_qualification_v1/` (`tests/cve_arena/qualification_manifest.v1.json`) against unmodified upstream `libarchive` revisions compiled at `-O2`:
+
+- **Primary Cases (`S08–S09`, `S13–S14`):**
+  - `S09_zip_cd_68000_overflow` (`libarchive v3.8.7`, commit `ded82291ab41`, `CVE-2026-45308` / `GHSA-xgqq-r5j8-3mch` ZIP central-directory heap overwrite): x86_64 `DR0` hardware watchpoint confirmed out-of-bounds heap write at `+65536` in both `H` (`stock glibc`) and `S` (`FRANKENLIBC_MODE=strict`), while `F` (`FRANKENLIBC_MODE=hardened`, `6` watchpoints armed, `watchpoint_triggered=false`) clamped the oversized `memcpy` (`ClampSize`) and quarantined the resulting truncated archive in staging (`published=false`, `safe_rejection_in_tested_case` / per-case `profile_accepted`).
+  - `S14_rar_lzss_64_oob_read` (`libarchive v3.7.9`, commit `8a7a9cc527fd`, `CVE-2025-5915` / `GHSA-6vpf-5947-22g5` RAR LZSS window heap over-read): hardware read/write watchpoint confirmed out-of-bounds read across a neighbor guard block in `H` and `S`, while `F` (`2` watchpoints armed, `watchpoint_triggered=false`, `synthetic_marker_disclosed=false`) contained the read and rejected the malformed archive (`safe_rejection_in_tested_case` / per-case `profile_accepted`).
+- **Benign Corpus (`S10`), Lifecycle (`S16–S17`), Holdouts (`S23`) & Tamper Revocation (`S18–S19, S24`):**
+  - `5/5` multi-format benign archive conversions passed independent stock-glibc `v3.8.8` validation (`S10`), `6/6` supervisor crash/timeout/quota/symlink/hardlink/validator-rejection controls exposed `0` published outputs (`S17`), `5/5` adversarial holdouts behaved deterministically (`S23`), clean-room bundle relocation passed with zero machine-local paths (`S18–S19`), and 1-byte bundle/manifest edits fail closed as `revoked` or `superseded` (`S24`).
+- **Integrated `S22` Disposition (`not_qualified` on `S15` CI95 Upper Bound):**
+  - Across `30` randomized paired blocks (`S15`), `F/H` wall-time ratio measured **`1.512x`** point (`strict/stock` `1.2751x`) with 95% bootstrap CI **`[1.1393, 2.1116]`**. Because the 95% CI upper bound (`2.1116x`) exceeded the manifest's `<= 2.0x` operator gate (`S15=false`, `14/15` acceptance keys `true`), the integrated `S22` profile disposition in `s22_disposition.json` is recorded honestly as **`not_qualified`**.
+- **Explicit Scope Exclusions:**
+  - `strict` mode (`FRANKENLIBC_MODE=strict`) exhibited baseline memory harm in both `S09` and `S14` (`observed_harm` / `detected_after_harm`).
+  - Compiler-inlined direct pointer writes that never cross a libc symbol (`S23_holdout_boundary_inlined_direct_write_bypass`) trigger the hardware watchpoint and are classified **`unsupported`**.
+  - Clamped overlong archive writes (`S11`) produce structurally truncated outputs that **require** external supervisor staging validation and non-publication.
+  - Both primary CVEs exercise `libarchive` (write vs read boundaries); cross-application claims require separate qualification.
 
 ### Expected Structured Fields
 

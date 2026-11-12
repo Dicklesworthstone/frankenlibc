@@ -399,3 +399,142 @@ fn libarchive_confined_4arm_qualification_bundle_relocation_and_revocation_e2e()
         serde_json::from_str(&String::from_utf8_lossy(&sym_out.stdout)).expect("parse sym json");
     assert_eq!(sym_doc["status"], "invalid_bundle");
 }
+
+#[test]
+fn committed_libarchive_qualification_bundle_relocation_tamper_and_s22_docs_e2e() {
+    let root = workspace_root();
+    let report = root.join("tests/cve_arena/report.sh");
+    let manifest = root.join("tests/cve_arena/qualification_manifest.v1.json");
+    let committed_bundle = root.join("tests/cve_arena/results/libarchive_qualification_v1");
+    assert!(
+        committed_bundle.is_dir(),
+        "committed portable qualification bundle must exist at {}",
+        committed_bundle.display()
+    );
+
+    // S18 & S19: Relocate committed bundle to an isolated clean directory and verify zero local paths + independent recomputation.
+    let relocated_tmp = TestDir::new("committed_relocated");
+    let relocated_dir = relocated_tmp.path().join("clean_room_bundle");
+    copy_dir_flat(&committed_bundle, &relocated_dir);
+
+    let mut file_count = 0usize;
+    for entry in fs::read_dir(&relocated_dir).expect("read relocated_dir") {
+        let p = entry.expect("entry").path();
+        file_count += 1;
+        let text = fs::read_to_string(&p).expect("utf-8 bundle file");
+        assert!(
+            !text.contains("/data/projects") && !text.contains("/data/tmp"),
+            "bundle file {} leaked machine-local path",
+            p.display()
+        );
+    }
+    assert_eq!(file_count, 12, "expected 12 flat files in portable bundle");
+
+    let verify_out = Command::new("bash")
+        .arg(&report)
+        .args([
+            "--qualification",
+            relocated_dir.to_str().unwrap(),
+            "--verify",
+            "--check-manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run clean-room bundle verification");
+    assert!(
+        verify_out.status.success(),
+        "clean-room bundle verification failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&verify_out.stdout),
+        String::from_utf8_lossy(&verify_out.stderr)
+    );
+    let verify_doc: Value = serde_json::from_str(&String::from_utf8_lossy(&verify_out.stdout))
+        .expect("parse verify json");
+    assert_eq!(verify_doc["status"], "verified");
+    assert_eq!(verify_doc["verified_files"], 11);
+    assert_eq!(verify_doc["zip_s09_s11_recomputed"], true);
+    assert_eq!(verify_doc["rar_s14_recomputed"], true);
+    assert_eq!(verify_doc["holdout_s23_passed"], true);
+    assert_eq!(verify_doc["inlined_bypass_marked_unsupported"], true);
+
+    // S20 & S23: Raw JSONL observations + holdout & S22 disposition checks.
+    let obs_raw = fs::read_to_string(relocated_dir.join("observations.jsonl"))
+        .expect("read observations.jsonl");
+    let obs_lines: Vec<&str> = obs_raw.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        obs_lines.len() >= 15,
+        "expected >= 15 structured JSONL observation records, got {}",
+        obs_lines.len()
+    );
+    for line in &obs_lines {
+        let rec: Value = serde_json::from_str(line).expect("valid JSONL observation record");
+        assert!(rec.get("milestone").is_some() || rec.get("event").is_some());
+    }
+
+    let s22_doc: Value = serde_json::from_str(
+        &fs::read_to_string(relocated_dir.join("s22_disposition.json"))
+            .expect("read s22_disposition.json"),
+    )
+    .expect("parse s22_disposition.json");
+    let expected_qual = s22_doc["profile_qualification"]
+        .as_str()
+        .expect("profile_qualification string");
+
+    // S24: 1-byte tamper negative controls on manifest, JSONL log, and artifact identities.
+    let tamper_tmp = TestDir::new("committed_tamper");
+    let tampered_manifest = tamper_tmp.path().join("tampered_manifest.json");
+    let mut man_bytes = fs::read(&manifest).expect("read manifest");
+    man_bytes.push(b'\n');
+    fs::write(&tampered_manifest, &man_bytes).expect("write tampered manifest");
+    let sup_out = Command::new("bash")
+        .arg(&report)
+        .args([
+            "--qualification",
+            relocated_dir.to_str().unwrap(),
+            "--verify",
+            "--check-manifest",
+            tampered_manifest.to_str().unwrap(),
+        ])
+        .output()
+        .expect("verify tampered manifest");
+    assert!(!sup_out.status.success());
+    let sup_doc: Value =
+        serde_json::from_str(&String::from_utf8_lossy(&sup_out.stdout)).expect("parse sup json");
+    assert_eq!(sup_doc["status"], "superseded");
+
+    for target_file in ["observations.jsonl", "artifact_identities.json"] {
+        let tb = tamper_tmp.path().join(format!("tamper_{target_file}"));
+        copy_dir_flat(&relocated_dir, &tb);
+        let mut bytes = fs::read(tb.join(target_file)).expect("read target file");
+        bytes.push(b' ');
+        fs::write(tb.join(target_file), &bytes).expect("write tampered file");
+        let rev_out = Command::new("bash")
+            .arg(&report)
+            .args(["--qualification", tb.to_str().unwrap(), "--verify"])
+            .output()
+            .expect("verify tampered file");
+        assert!(
+            !rev_out.status.success(),
+            "1-byte tamper of {target_file} must fail closed"
+        );
+        let rev_doc: Value = serde_json::from_str(&String::from_utf8_lossy(&rev_out.stdout))
+            .expect("parse rev json");
+        assert_eq!(rev_doc["status"], "revoked");
+    }
+
+    // S22: Honest documentation alignment across SECURITY.md, DEPLOYMENT.md, and docs/gentoo/security-validation.md.
+    let security_md = fs::read_to_string(root.join("SECURITY.md")).expect("read SECURITY.md");
+    let deployment_md = fs::read_to_string(root.join("DEPLOYMENT.md")).expect("read DEPLOYMENT.md");
+    let gentoo_md = fs::read_to_string(root.join("docs/gentoo/security-validation.md"))
+        .expect("read docs/gentoo/security-validation.md");
+
+    assert!(security_md.contains("libarchive-confined-archive-worker-v1"));
+    assert!(security_md.contains(expected_qual));
+    assert!(security_md.contains("S23_holdout_boundary_inlined_direct_write_bypass"));
+    assert!(security_md.contains("unsupported"));
+    assert!(deployment_md.contains("libarchive-confined-archive-worker-v1"));
+    assert!(deployment_md.contains(expected_qual));
+    assert!(gentoo_md.contains("FRANKENLIBC_LOG=/results/frankenlibc.jsonl"));
+    assert!(!gentoo_md.contains("FRANKENLIBC_LOG_FILE"));
+    assert!(!gentoo_md.contains("healing_action_count / 10"));
+    assert!(gentoo_md.contains("unqualified"));
+}
