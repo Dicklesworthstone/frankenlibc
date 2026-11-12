@@ -83,6 +83,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/owned-unwind
+          # Cargo.lock is intentionally untracked. Preserve a supplied lock,
+          # or resolve one before enforcing it for this component build.
+          if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
+          cp Cargo.lock artifacts/owned-unwind/Cargo.lock
           cargo build --locked --release -p libc --message-format=json \
             > artifacts/owned-unwind/dependency-build.jsonl
           python3 - <<'PY'

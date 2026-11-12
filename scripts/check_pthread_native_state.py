@@ -52,6 +52,8 @@ WAIT_CASES = (
     "cond-wait", "cond-timed", "cond-clock-real", "cond-clock-mono",
     "sem-wait-disabled", "cond-wait-disabled", "sem-wait-enosys", "cond-wait-enosys",
     "cond-wait-peers", "cond-wait-peers-enosys",
+    "cond-timed-peers", "cond-clock-real-peers", "cond-clock-mono-peers",
+    "cond-wait-peers-robust", "cond-wait-peers-shared",
     "join", "join-alias", "join-timed", "join-clock-real", "join-clock-mono",
     "join-timed-null", "join-clock-null", "join-disabled", "join-clock-mono-disabled",
     "join-enosys", "join-disabled-enosys",
@@ -88,6 +90,8 @@ def main():
                         default=root / "target/conformance/pthread_native_state")
     parser.add_argument("--sigwait-only", action="store_true",
                         help="Run the signal-wait regression cases and provider/backend controls")
+    parser.add_argument("--condition-peers-only", action="store_true",
+                        help="Run canceled condition-waiter handoff and provider/backend controls")
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     output = args.out_dir.resolve()
@@ -191,6 +195,9 @@ def main():
     if args.sigwait_only:
         variants = (("wait-", tuple(case for case in WAIT_CASES if case.startswith("sigwait")),
                      wait_binary, "pthread-native-wait", ("0", "1")),)
+    if args.condition_peers_only:
+        variants = (("wait-", tuple(case for case in WAIT_CASES if "-peers" in case),
+                     wait_binary, "pthread-native-wait", ("0", "1")),)
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
@@ -221,7 +228,8 @@ def main():
     gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
     candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
-              "scope": "sigwait" if args.sigwait_only else "all",
+              "scope": ("condition-peers" if args.condition_peers_only else
+                        "sigwait" if args.sigwait_only else "all"),
               "fixture_sha256": sha256(source), "binary_sha256": sha256(binary),
               "cpp_fixture_sha256": sha256(cpp_source), "cpp_binary_sha256": sha256(cpp_binary),
               "wait_fixture_sha256": sha256(wait_source), "wait_binary_sha256": sha256(wait_binary),

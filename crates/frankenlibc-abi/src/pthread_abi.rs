@@ -4766,11 +4766,20 @@ struct CondWaitGuard {
     saved_count: u32,
     /// `condvar_wait_prepare` succeeded, so the mutex was released.
     prepared: bool,
+    /// Only an ordinary wait return may consume its selected condition signal.
+    completed: bool,
 }
 
 impl Drop for CondWaitGuard {
     fn drop(&mut self) {
         if self.prepared {
+            if !self.completed {
+                // A hosted asynchronous cancellation can arrive after the
+                // kernel selected this waiter for a signal. The native futex
+                // adapter's replacement wake does not cover that path.
+                // SAFETY: prepare registered this still-live condition wait.
+                replace_cancelled_condvar_wake(unsafe { &*self.cond });
+            }
             // SAFETY: pairs the successful prepare on the same pointers.
             unsafe { core_condvar_wait_finish(self.cond, self.word) };
         }
@@ -4789,6 +4798,26 @@ impl Drop for CondWaitGuard {
             }
         }
     }
+}
+
+/// POSIX condition cancellation must not consume a concurrent signal while
+/// another waiter remains blocked. Wake a replacement before deregistering or
+/// reacquiring the mutex, even when cancellation raced a successful futex wake.
+/// An unnecessary wake is an allowed spurious return; incrementing the sequence
+/// here would instead invent a new condition signal.
+fn replace_cancelled_condvar_wake(cv: &CondvarData) {
+    // SAFETY: a registered wait keeps the aligned sequence word live. The
+    // condition's private/shared setting must match the original futex wait.
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            std::ptr::from_ref(&cv.seq).cast_mut().cast(),
+            libc::FUTEX_WAKE | cv.futex_private_flag(),
+            1,
+            0,
+            0,
+            0,
+        )
+    };
 }
 
 /// Block on a condvar's sequence word until it moves past `expected_seq`
@@ -4881,6 +4910,7 @@ impl ExtCondWaitGuard<'_> {
 impl Drop for ExtCondWaitGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
+            replace_cancelled_condvar_wake(self.cv);
             let _ = self.finish();
         }
     }
@@ -4996,6 +5026,7 @@ unsafe fn cond_wait_common(
         mtype,
         saved_count,
         prepared: false,
+        completed: false,
     };
     // SAFETY: condvar pointer and mutex futex word pointer are validated/aligned and caller-owned.
     let expected_seq = match unsafe { core_condvar_wait_prepare(cond_ptr, word_u32) } {
@@ -5006,6 +5037,7 @@ unsafe fn cond_wait_common(
 
     // SAFETY: `cond_ptr` was validated above.
     let rc = cond_futex_wait(unsafe { &*cond_ptr }, expected_seq, abstime, clock);
+    guard.completed = true;
     drop(guard);
     rc
 }

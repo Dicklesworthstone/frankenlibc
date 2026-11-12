@@ -348,7 +348,7 @@ static void join_canceled(struct state *state) {
 
 static void condition_peers(struct state *state) {
     struct state peer = {0};
-    peer.operation = COND_WAIT;
+    peer.operation = state->operation;
     peer.shared = state;
     REQUIRE(pthread_create(&state->thread, NULL, worker, state) == 0, "create canceled condition peer");
     observe_parked(state);
@@ -912,7 +912,8 @@ int main(int argc, char **argv) {
             const char *suffix = case_name + length;
             if (*suffix && strcmp(suffix, "-disabled") && strcmp(suffix, "-enosys") &&
                 strcmp(suffix, "-disabled-enosys") && strcmp(suffix, "-peers") &&
-                strcmp(suffix, "-peers-enosys")) continue;
+                strcmp(suffix, "-peers-enosys") && strcmp(suffix, "-peers-robust") &&
+                strcmp(suffix, "-peers-shared")) continue;
             state.operation = (enum operation)i;
             state.disabled = strstr(suffix, "-disabled") != NULL;
             state.peers = strstr(suffix, "-peers") != NULL;
@@ -921,7 +922,7 @@ int main(int argc, char **argv) {
         }
     }
     if (!found) return 2;
-    if (state.peers && state.operation != COND_WAIT) return 2;
+    if (state.peers && !is_condition(&state)) return 2;
     if (strstr(case_name, "-enosys")) force_waitv_enosys();
     if (is_join(&state)) {
         if (state.operation == JOIN_ALIAS) {
@@ -939,9 +940,23 @@ int main(int argc, char **argv) {
         pthread_mutexattr_t attr;
         REQUIRE(pthread_mutexattr_init(&attr) == 0, "mutex attributes");
         REQUIRE(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK) == 0, "ERRORCHECK type");
+        if (strstr(case_name, "-peers-robust"))
+            REQUIRE(pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST) == 0,
+                    "robust cancellation mutex");
+        int shared = strstr(case_name, "-peers-shared") != NULL;
+        if (shared)
+            REQUIRE(pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) == 0,
+                    "shared cancellation mutex");
         REQUIRE(pthread_mutex_init(&state.mutex, &attr) == 0, "mutex initialization");
         REQUIRE(pthread_mutexattr_destroy(&attr) == 0, "destroy mutex attributes");
-        REQUIRE(pthread_cond_init(&state.condition, NULL) == 0, "condition initialization");
+        pthread_condattr_t condition_attr;
+        REQUIRE(pthread_condattr_init(&condition_attr) == 0, "condition attributes");
+        if (shared)
+            REQUIRE(pthread_condattr_setpshared(&condition_attr, PTHREAD_PROCESS_SHARED) == 0,
+                    "shared cancellation condition");
+        REQUIRE(pthread_cond_init(&state.condition, &condition_attr) == 0,
+                "condition initialization");
+        REQUIRE(pthread_condattr_destroy(&condition_attr) == 0, "destroy condition attributes");
     } else {
         REQUIRE(sem_init(&state.semaphore, 0, 0) == 0, "zero-token semaphore");
     }
