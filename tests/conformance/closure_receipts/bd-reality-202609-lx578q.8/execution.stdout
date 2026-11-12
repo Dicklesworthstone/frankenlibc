@@ -1,0 +1,24 @@
+
+running 19 tests
+test abi_guarantee_boundary_probe_child ... ok
+test determinism_heal_copy_bounds_is_pure ... ok
+test determinism_heal_string_bounds_is_pure ... ok
+test determinism_canonical_class_mapping_is_pure ... ok
+test hardened_bounded_string_ops_child ... ok
+test determinism_across_threads ... ok
+test posix_compatibility_truncate_reserves_null_byte ... ok
+test posix_compatibility_clamp_size_produces_valid_bounds ... ok
+test safety_recording_none_does_not_increment ... ok
+test totality_canonical_class_zero_is_none ... ok
+test posix_compatibility_no_heal_for_valid_string ... ok
+test safety_healing_policy_counters_monotonic ... ok
+test totality_healing_action_is_heal_correct ... ok
+test posix_compatibility_no_heal_for_valid_copy ... ok
+test totality_canonical_class_covers_all_classes ... ok
+test valid_inputs_pass_through_without_healing ... ok
+test hardened_bounded_string_ops_heal_only_real_overreads ... ok
+test safety_concurrent_recording_preserves_count_integrity ... ok
+test abi_guarantee_boundary_strict_vs_hardened_subprocesses ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
