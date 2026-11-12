@@ -5296,6 +5296,23 @@ impl RuntimeMathKernel {
         }
     }
 
+    /// Prepare bounded hot-path storage without manufacturing observations.
+    ///
+    /// Construction initializes controllers, while evidence rings stay lazy
+    /// for callers that never record. Native thread creators reserve those
+    /// rings here before a worker can enter policy through its inherited host
+    /// TLS. A failed reservation remains retryable on a suitable caller.
+    #[must_use]
+    pub fn prepare_runtime_storage(&self) -> bool {
+        self.evidence_log.prepare_storage()
+    }
+
+    /// Check readiness without allocating or changing runtime evidence.
+    #[must_use]
+    pub fn runtime_storage_ready(&self) -> bool {
+        self.evidence_log.storage_ready()
+    }
+
     /// Snapshot reverse-round branch-diversity state for runtime enforcement.
     #[must_use]
     pub fn reverse_round_diversity_snapshot(&self) -> RuntimeReverseRoundDiversitySnapshot {

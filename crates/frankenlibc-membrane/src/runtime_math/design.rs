@@ -196,7 +196,8 @@ impl OptimalDesignController {
         } else {
             0.0
         };
-        let mut candidates: Vec<(Probe, f64, u64)> = Vec::with_capacity(Probe::COUNT);
+        let mut candidates = [(Probe::Spectral, 0.0, 0u64); Probe::COUNT];
+        let mut candidate_count = 0;
         for probe in Probe::ALL {
             if (mask & probe.bit()) != 0 {
                 continue;
@@ -220,11 +221,25 @@ impl OptimalDesignController {
                 (logdet_spd(&trial) - base_logdet).max(0.0)
             };
             let score = gain / (cost_ns as f64 + 1.0);
-            candidates.push((probe, score, cost_ns));
+            candidates[candidate_count] = (probe, score, cost_ns);
+            candidate_count += 1;
         }
 
-        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-        for (probe, _, cost_ns) in candidates {
+        let candidates = &mut candidates[..candidate_count];
+        // At most seventeen candidates: stable insertion keeps the previous
+        // equal-score probe order without allocating sorting scratch space.
+        for end in 1..candidates.len() {
+            let candidate = candidates[end];
+            let mut position = end;
+            while position > 0
+                && candidates[position - 1].1.partial_cmp(&candidate.1) == Some(Ordering::Less)
+            {
+                candidates[position] = candidates[position - 1];
+                position -= 1;
+            }
+            candidates[position] = candidate;
+        }
+        for &(probe, _, cost_ns) in candidates.iter() {
             let next = expected_cost_ns.saturating_add(cost_ns);
             if next <= budget_ns {
                 add_probe(&mut mask, &mut expected_cost_ns, probe);

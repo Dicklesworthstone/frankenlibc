@@ -1,14 +1,17 @@
 //! Runtime evidence remains usable across allocation failures and TLS teardown.
 //! Neither failed slot allocation nor a destroyed Rust thread handle may abort libc.
 
+use frankenlibc_membrane::check_oracle::{CheckContext, CheckOracle, CheckStage, NUM_STAGES};
 use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::persistence::{PersistenceDetector, TopologicalState};
+use frankenlibc_membrane::risk_engine::{CallFamily, RiskEngine};
+use frankenlibc_membrane::runtime_math::design::{OptimalDesignController, Probe};
 use frankenlibc_membrane::runtime_math::evidence::{
     DecisionCardRingBuffer, DecisionCardV1, EVIDENCE_SYMBOL_SIZE_T, EvidenceRingBuffer,
     EvidenceSymbolRecord, FLAG_SYSTEMATIC, SystematicEvidenceLog,
 };
 use frankenlibc_membrane::runtime_math::{
-    ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,
-    ValidationProfile,
+    ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel, ValidationProfile,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -257,6 +260,138 @@ fn record(log: &SystematicEvidenceLog<CAPACITY>) -> u64 {
         0,
         None,
     )
+}
+
+#[test]
+fn storage_preparation_recovers_without_recording_phantom_decisions() {
+    for fail_at in 0..=4 {
+        let log = SystematicEvidenceLog::<CAPACITY>::new(123);
+        assert!(!log.storage_ready());
+        let (prepared, failure) = under_failure(fail_at, || log.prepare_storage());
+        assert!(!prepared);
+        assert!(!log.storage_ready());
+        assert_eq!(failure.rejected, 1);
+        assert_eq!(failure.attempts, fail_at.max(1));
+        assert_eq!(log.publication_loss_count(), 0);
+        assert!(log.snapshot_sorted().is_empty());
+        assert!(log.decision_cards_snapshot_sorted().is_empty());
+
+        assert!(log.prepare_storage());
+        assert!(log.storage_ready());
+        let (prepared_again, ready) = under_failure(0, || log.prepare_storage());
+        assert!(prepared_again);
+        assert_eq!(ready.attempts, 0);
+        assert_eq!(ready.deallocations, 0);
+        assert!(log.snapshot_sorted().is_empty());
+        assert!(log.decision_cards_snapshot_sorted().is_empty());
+        assert_eq!(record(&log), 1, "preparation must not reserve event IDs");
+        let cards = log.decision_cards_snapshot_sorted();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].decision_id, 1);
+        assert_eq!(cards[0].evidence_seqno, 1);
+        assert_eq!(log.publication_loss_count(), 0);
+    }
+}
+
+#[test]
+fn prepared_hardened_kernel_reaches_controller_cadences_without_heap_traffic() {
+    let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+    assert!(!kernel.runtime_storage_ready());
+    let (prepared, failure) = under_failure(0, || kernel.prepare_runtime_storage());
+    assert!(!prepared);
+    assert_eq!(failure.rejected, 1);
+    assert!(!kernel.runtime_storage_ready());
+    assert!(kernel.prepare_runtime_storage());
+    assert!(kernel.runtime_storage_ready());
+    assert_eq!(kernel.decision_count(), 0);
+    assert_eq!(kernel.evidence_contract_snapshot().evidence_seqno, 0);
+    assert_eq!(kernel.evidence_contract_snapshot().evidence_loss_count, 0);
+
+    // This crosses design refresh (4096), sampled-risk recalibration
+    // (512 * 64), and sampled-oracle refresh (512 * 128), while feeding the
+    // real observation cascade throughout. No dummy decisions prepare storage.
+    const CALLS: u64 = 65_536;
+    let (_, traffic) = under_failure(0, || {
+        for sequence in 0..CALLS {
+            let ctx = RuntimeContext {
+                family: ApiFamily::Signal,
+                addr_hint: 0,
+                requested_bytes: 0,
+                is_write: false,
+                contention_hint: 0,
+                bloom_negative: true,
+            };
+            let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+            kernel.observe_validation_result(
+                SafetyLevel::Hardened,
+                ctx.family,
+                decision.profile,
+                32 + sequence % 97,
+                sequence.is_multiple_of(257),
+            );
+        }
+    });
+    assert_eq!(traffic.attempts, 0, "prepared policy must not allocate");
+    assert_eq!(traffic.deallocations, 0, "prepared policy must not free");
+    assert_eq!(kernel.decision_count(), CALLS);
+    let evidence = kernel.evidence_contract_snapshot();
+    assert!(evidence.evidence_seqno > 0, "exercise prepared publication");
+    assert_eq!(evidence.evidence_loss_count, 0);
+}
+
+#[test]
+fn bounded_controllers_recompute_without_heap_traffic_and_keep_duplicate_clouds() {
+    let mut risk = RiskEngine::new();
+    let mut oracle = CheckOracle::new();
+    let mut design = OptimalDesignController::new();
+    let mut persistence = PersistenceDetector::new();
+    let context = CheckContext {
+        family: CallFamily::Signal as u8,
+        aligned: true,
+        recent_page: false,
+    };
+    let mut valid_orderings = true;
+    let mut valid_budgets = true;
+    const CALLS: u64 = 768;
+    let (_, traffic) = under_failure(0, || {
+        for sequence in 0..CALLS {
+            let _ = risk.evaluate(CallFamily::Signal, 0x1000, 1 + sequence as usize % 64);
+            let ordering = *oracle.get_ordering(&context);
+            valid_orderings &= ordering[0] == CheckStage::Null;
+            valid_orderings &= ordering
+                .iter()
+                .fold(0u32, |mask, stage| mask | (1u32 << *stage as u32))
+                == (1u32 << NUM_STAGES) - 1;
+            oracle.report_outcome(&context, &ordering, Some(sequence as usize % NUM_STAGES));
+
+            let plan = design.choose_plan(
+                SafetyLevel::Hardened,
+                ((sequence % 11) * 90_000) as u32,
+                sequence.is_multiple_of(13),
+                sequence.is_multiple_of(7),
+            );
+            valid_budgets &= plan.expected_cost_ns <= plan.budget_ns;
+            design.record_probe(Probe::Anytime, sequence.is_multiple_of(29));
+
+            // Every full 24-point cloud contains six copies of four collinear
+            // points: twenty zero-length merges and gaps of exactly 1, 2, 7.
+            let coordinate = [0.0, 1.0, 3.0, 10.0][sequence as usize % 4];
+            persistence.observe([coordinate, 0.0, 0.0, 0.0]);
+        }
+    });
+    assert_eq!(traffic.attempts, 0);
+    assert_eq!(traffic.deallocations, 0);
+    assert_eq!(risk.total_calls(), CALLS);
+    assert_eq!(oracle.total_calls(), CALLS);
+    assert!(valid_orderings, "null-first stage permutations remain valid");
+    assert!(valid_budgets, "probe scheduling still respects its budget");
+    let summary = persistence.last_summary();
+    assert_eq!(summary.pair_count, 23);
+    assert!((summary.total_persistence - 10.0).abs() < 1e-12);
+    assert!((summary.max_persistence - 7.0).abs() < 1e-12);
+    assert_eq!(summary.significant_features, 2);
+    assert_eq!(persistence.state(), TopologicalState::Normal);
+    assert_eq!(persistence.anomaly_count(), 0);
 }
 
 #[cfg(all(

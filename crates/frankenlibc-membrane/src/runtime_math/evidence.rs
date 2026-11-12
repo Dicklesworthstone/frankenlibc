@@ -1599,6 +1599,23 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         }
     }
 
+    /// Reserve both bounded publication buffers without recording an event.
+    ///
+    /// Preparation is fallible and retryable; it does not consume sequence
+    /// numbers, change hash chains, or report a publication loss. Callers that
+    /// cannot allocate later can prepare on their creating thread first.
+    #[must_use]
+    pub fn prepare_storage(&self) -> bool {
+        self.ring.prepared_slots().is_some()
+            && self.decision_cards.prepared_slots().is_some()
+    }
+
+    /// Whether publication can use its already allocated bounded buffers.
+    #[must_use]
+    pub fn storage_ready(&self) -> bool {
+        self.ring.slots.get().is_some() && self.decision_cards.slots.get().is_some()
+    }
+
     /// Enable crash-safe append/replay for decision cards.
     ///
     /// Returns the number of replayed cards loaded from the existing journal.
@@ -2687,18 +2704,22 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
             .wrapping_add(1)
     }
 
-    /// Publish a card, or return false if initial storage is unavailable.
-    /// A later publication retries initialization after memory pressure eases.
-    pub fn publish(&self, decision_id: u64, card: DecisionCardV1) -> bool {
+    fn prepared_slots(&self) -> Option<&Vec<DecisionCardSlot>> {
         if CAP == 0 {
-            return false;
+            return None;
         }
-        let Some(slots) = self.slots.get_or_try_init(|| {
+        self.slots.get_or_try_init(|| {
             let mut slots = Vec::new();
             slots.try_reserve_exact(CAP).ok()?;
             slots.resize_with(CAP, DecisionCardSlot::new);
             Some(slots)
-        }) else {
+        })
+    }
+
+    /// Publish a card, or return false if initial storage is unavailable.
+    /// A later publication retries initialization after memory pressure eases.
+    pub fn publish(&self, decision_id: u64, card: DecisionCardV1) -> bool {
+        let Some(slots) = self.prepared_slots() else {
             return false;
         };
         let idx = (decision_id as usize) % CAP;
@@ -2798,18 +2819,22 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
             .wrapping_add(1)
     }
 
-    /// Publish a record for a previously allocated seqno, or return false if
-    /// initial storage is unavailable. A later publication retries allocation.
-    pub fn publish(&self, seqno: u64, record: EvidenceSymbolRecord) -> bool {
+    fn prepared_slots(&self) -> Option<&Vec<EvidenceSlot>> {
         if CAP == 0 {
-            return false;
+            return None;
         }
-        let Some(slots) = self.slots.get_or_try_init(|| {
+        self.slots.get_or_try_init(|| {
             let mut slots = Vec::new();
             slots.try_reserve_exact(CAP).ok()?;
             slots.resize_with(CAP, EvidenceSlot::new);
             Some(slots)
-        }) else {
+        })
+    }
+
+    /// Publish a record for a previously allocated seqno, or return false if
+    /// initial storage is unavailable. A later publication retries allocation.
+    pub fn publish(&self, seqno: u64, record: EvidenceSymbolRecord) -> bool {
+        let Some(slots) = self.prepared_slots() else {
             return false;
         };
         let idx = (seqno as usize) % CAP;
