@@ -1,0 +1,127 @@
+//! # frankenlibc-core
+//!
+//! Safe Rust implementations of C standard library (libc) functions.
+//!
+//! This crate enforces `#![deny(unsafe_code)]` at the crate root so safe Rust is the
+//! default across POSIX and C standard library implementations; explicit
+//! `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` exemptions (`406` attributes across
+//! `11` files: `lib.rs`, `syscall/mod.rs`, `pthread/{mod,cond,thread,tls}.rs`, `rcu/mod.rs`,
+//! `string/str.rs`, `termios/mod.rs`, `float128.rs`, and `math/mod.rs`) are confined to
+//! raw Linux syscall entrypoints, futex/clone/TLS primitives, RCU synchronization, SIMD
+//! target-feature dispatch, and FFI layout boundaries.
+
+#![deny(unsafe_code)]
+#![feature(portable_simd)]
+
+#[cfg(feature = "owned-tls-cache")]
+use std::hash::{BuildHasherDefault, Hasher};
+
+#[cfg(feature = "owned-tls-cache")]
+#[derive(Clone)]
+pub(crate) struct DeterministicHasher {
+    state: u64,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+impl Default for DeterministicHasher {
+    fn default() -> Self {
+        Self {
+            state: 0xcbf2_9ce4_8422_2325,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+impl Hasher for DeterministicHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+type ArtifactBuildHasher = BuildHasherDefault<DeterministicHasher>;
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) type ArtifactHashMap<K, V> = std::collections::HashMap<K, V, ArtifactBuildHasher>;
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) type ArtifactHashMap<K, V> = std::collections::HashMap<K, V>;
+
+#[inline]
+pub(crate) fn artifact_hash_map<K, V>() -> ArtifactHashMap<K, V> {
+    ArtifactHashMap::default()
+}
+
+// Architecture support (bd-10pq): the `syscall` module gates below
+// on x86_64 / aarch64 because each ISA needs its own validated
+// register layout. Fail fast on other ISAs with a pointer to the
+// tracking bead so build output is actionable.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!(
+    "frankenlibc-core currently supports only target_arch = \"x86_64\" \
+    and \"aarch64\". Multi-ISA tracking: bd-10pq. Each new ISA needs \
+    per-arch raw-syscall register conventions in src/syscall/ before \
+    this crate can build on it."
+);
+
+pub mod addrinfo;
+pub mod aliases;
+pub mod argp;
+pub mod crypt;
+pub mod ctype;
+pub mod dirent;
+pub mod dlfcn;
+pub mod dns_transport;
+pub mod elf;
+pub mod err;
+pub mod errno;
+pub mod ether;
+pub mod float128;
+pub mod fmtmsg;
+pub mod ftw;
+pub mod getopt;
+pub mod grp;
+pub mod iconv;
+pub mod idna;
+pub mod inet;
+pub mod io;
+pub mod locale;
+pub mod malloc;
+pub mod math;
+pub mod mmap;
+pub mod mntent;
+pub mod netgroup;
+pub mod nss;
+pub mod poll;
+pub mod proc_maps;
+pub mod process;
+pub mod pthread;
+pub mod pwd;
+#[allow(unsafe_code)]
+pub mod rcu;
+pub mod resolv;
+pub mod resource;
+pub mod rpc;
+pub mod search;
+pub mod setjmp;
+pub mod signal;
+pub mod socket;
+pub mod stat;
+pub mod stdio;
+pub mod stdlib;
+pub mod string;
+#[allow(unsafe_code)]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub mod syscall;
+pub mod termios;
+pub mod time;
+pub mod unistd;

@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.52",
+  "contract": {
+    "behavior": "Verify multi-occurrence and cross-guide negative counterexamples in check_docs_semantic_claims.sh (stale smoke/stub rollups, duplicate LOC tables, closed beads cited as open, unapproved core unsafe_code allows, orphaned source_commit SHAs) and ephemeral /data/tmp closure-receipt rejection",
+    "acceptance_sha256": "fe848e2d4694c6c7d145dc83e7e0a7f05f7d4222f8f1e317f891e638c7038a84",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "scripts/check_docs_semantic_claims.sh",
+      "scripts/check_closure_gate.sh",
+      "README.md",
+      "AGENTS.md",
+      "DEPLOYMENT.md",
+      "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+      "FEATURE_PARITY.md",
+      "crates/frankenlibc-core/src/lib.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs"
+    ],
+    "source": {
+      "commit": "f89df0efd874bbbceb5f461f1a4df160f07c6438",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "AGENTS.md": "ead183ae2ac02a543b556709b0f8baf79fb1f2feedefc0c115bc8bc2dcaccbbc",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "DEPLOYMENT.md": "e7aeea84c3edd41cb0cf2d6fdd92efbeb83537ee3ced1b86362f27e47f141b72",
+        "FEATURE_PARITY.md": "374a9e085f8b099c17137f0b2e8287620564eaa6f14deb7f0736ec4b43d37202",
+        "PLAN_TO_PORT_GLIBC_TO_RUST.md": "d44cc5888f343f2632fdcb434ce5148631b540a7771ea4707787c0e1b629d0ec",
+        "README.md": "43fce7e1ef05fc5275b96571c60c776de92a6ac56b89da534a8f8004ebad7c49",
+        "crates/frankenlibc-core/src/lib.rs": "264fd39974e4ee81f82fd6718e6329c7ea19c4e93b3b1225ac38e4ef54dff3ac",
+        "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs": "d9b3ff0ef32e991684fd386f8091f80b58bf47592032db8b2a94c7a541060894",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+        "scripts/check_docs_semantic_claims.sh": "2c6d26cf5c7590c03572ebd3d3a68d70763939f1b5bdbe532072e8a496815fae"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-11T06:56:04.006411306Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "docs_semantic_claims_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "deployment_and_plan_reject_stale_smoke_and_stub_claims",
+        "readme_rejects_duplicate_contradictory_loc_table",
+        "readme_rejects_closed_bead_cited_as_open",
+        "core_rejects_unapproved_unsafe_code_allow_module",
+        "feature_parity_rejects_orphaned_source_commit_sha",
+        "closure_gate_rejects_ephemeral_data_tmp_receipt_and_companion_gates_pass"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "docs_semantic_claims_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T07:01:12.885430+00:00",
+    "finished_at": "2026-11-12T07:01:13.305381+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "555824730508c7b53e44bf800b7b402618d54e054d3db2c4a858ae4217f16e1d",
+    "stderr_sha256": "b2174072064ac17c0774b7fcdb68807ff1ccbd41dbcd916b7fd9e09acb76dbb9",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T07:01:13.308801+00:00",
+    "finished_at": "2026-11-12T07:02:25.524563+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "f632237211cc4dd0f828a35b779932f6d1233176fdbb650bece352e3eca2769a",
+    "stderr_sha256": "3e70934f1909b0f5a846d62237fcc1509d733b9fb0321187024723dfc67176d3",
+    "executed_cases": 20
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359": "4652eea9b01ece9a26e9413b6046ea4c9b06fb242b18251cfb6d989b2cdd24bd"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "AGENTS.md": "ead183ae2ac02a543b556709b0f8baf79fb1f2feedefc0c115bc8bc2dcaccbbc",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "DEPLOYMENT.md": "e7aeea84c3edd41cb0cf2d6fdd92efbeb83537ee3ced1b86362f27e47f141b72",
+    "FEATURE_PARITY.md": "374a9e085f8b099c17137f0b2e8287620564eaa6f14deb7f0736ec4b43d37202",
+    "PLAN_TO_PORT_GLIBC_TO_RUST.md": "d44cc5888f343f2632fdcb434ce5148631b540a7771ea4707787c0e1b629d0ec",
+    "README.md": "43fce7e1ef05fc5275b96571c60c776de92a6ac56b89da534a8f8004ebad7c49",
+    "crates/frankenlibc-core/src/lib.rs": "264fd39974e4ee81f82fd6718e6329c7ea19c4e93b3b1225ac38e4ef54dff3ac",
+    "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs": "d9b3ff0ef32e991684fd386f8091f80b58bf47592032db8b2a94c7a541060894",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+    "scripts/check_docs_semantic_claims.sh": "2c6d26cf5c7590c03572ebd3d3a68d70763939f1b5bdbe532072e8a496815fae"
+  },
+  "executable_sha256": "4652eea9b01ece9a26e9413b6046ea4c9b06fb242b18251cfb6d989b2cdd24bd"
+}

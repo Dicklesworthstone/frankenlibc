@@ -1,0 +1,27 @@
+
+running 20 tests
+test artifact_declares_claim_fields_inputs_replays_and_log_contract ... ok
+test closure_gate_rejects_ephemeral_data_tmp_receipt_and_companion_gates_pass ... ok
+test operator_guides_reject_missing_l0_scope_phrase ... ok
+test gate_passes_current_docs_and_emits_report_and_log ... ok
+Initialized empty Git repository in /data/projects/frankenlibc/.rch-tmp/frankenlibc-docs-semantic-orphaned-git-1794466909839626911-947968/
+test feature_parity_rejects_orphaned_source_commit_sha ... ok
+test malformed_declared_source_fails_instead_of_using_worker_head ... ok
+test core_rejects_unapproved_unsafe_code_allow_module ... ok
+test declared_source_identity_survives_a_worker_without_matching_git_metadata ... ok
+test deployment_and_plan_reject_stale_smoke_and_stub_claims ... ok
+test missing_claim_field_fails ... ok
+test undeclared_source_requires_an_observed_git_head ... ok
+test dated_historical_snapshots_remain_permitted ... ok
+test operator_guides_reject_planted_l1_and_stale_claims ... ok
+test readme_rejects_closed_bead_cited_as_open ... ok
+test readme_rejects_duplicate_contradictory_loc_table ... ok
+test forbidden_full_replacement_claim_fails has been running for over 60 seconds
+test readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims ... ok
+test readme_rejects_removal_of_required_semantic_architecture_facts ... ok
+test stale_overlay_taxonomy_counts_fails ... ok
+test stale_semantic_join_fails ... ok
+test forbidden_full_replacement_claim_fails ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 72.15s
+
