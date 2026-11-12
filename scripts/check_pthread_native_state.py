@@ -15,6 +15,7 @@ CASES = (
     "cancel-pending-reuse",
     "cleanup-exit", "cleanup-cancel", "cleanup-reentry", "cleanup-siblings",
     "cleanup-defer", "cleanup-cancel-reentry", "cleanup-initial", "cleanup-return-reentry",
+    "cleanup-return-testcancel", "cleanup-return-disabled",
     "legacy-exit", "legacy-cancel", "legacy-reentry", "legacy-cancel-reentry",
     "legacy-siblings", "legacy-defer",
 )

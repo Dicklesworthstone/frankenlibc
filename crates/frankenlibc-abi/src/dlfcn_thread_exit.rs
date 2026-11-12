@@ -350,6 +350,17 @@ fn drain_current() {
 }
 
 fn drain(state: &ThreadState, final_drain: bool) {
+    // A callback may initiate thread cancellation after an ordinary return.
+    // Release its code/data pins when unwinding abandons this drain too. Keep
+    // this guard local: dropping a queued Entry elsewhere must not acquire
+    // loader locks or release pins whose registration has not committed.
+    struct CallbackPins<'a>(&'a [usize]);
+    impl Drop for CallbackPins<'_> {
+        fn drop(&mut self) {
+            release_pins(self.0);
+        }
+    }
+
     loop {
         if final_drain {
             let blocked = u64::MAX;
@@ -370,9 +381,13 @@ fn drain(state: &ThreadState, final_drain: bool) {
         let Some(entry) = next else {
             break;
         };
+        let _pins = CallbackPins(&entry.owners[..entry.owner_count]);
         // SAFETY: registration validated and pinned the callback and owner.
-        unsafe { (entry.destructor)(entry.argument) };
-        release_pins(&entry.owners[..entry.owner_count]);
+        // C and C-unwind have the same machine ABI; a cancellation point in
+        // this application callback must not cross a nounwind Rust call.
+        let destructor: unsafe extern "C-unwind" fn(*mut c_void) =
+            unsafe { core::mem::transmute(entry.destructor) };
+        unsafe { destructor(entry.argument) };
     }
 }
 

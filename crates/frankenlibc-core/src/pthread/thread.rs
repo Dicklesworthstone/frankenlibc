@@ -488,11 +488,16 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
 #[allow(unsafe_code)]
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
-    // Normal start-routine return needs the same cancellation exclusion as
-    // pthread_exit: cleanup callbacks must not restart the exit protocol.
-    unsafe { (*handle_ptr).exit_started.store(1, Ordering::Relaxed) };
+    // Explicit pthread_exit/cancellation already marks exit_started before
+    // unwinding, so its destructors cannot restart that active unwind. An
+    // ordinary start-routine return has no unwind in progress: GNU permits a
+    // new cancellation in a key destructor to replace the eventual join value.
+    // Keep that distinction until application callbacks have all completed.
     drain_native_runtime_tls(tid);
     super::tls::teardown_native_thread_tls(tid);
+    // Signals are blocked and the native identity is withdrawn at this point.
+    // No application callback remains which could initiate cancellation.
+    unsafe { (*handle_ptr).exit_started.store(1, Ordering::Relaxed) };
 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return
     // value becomes visible only after the FINISHED/DETACHED synchronization.

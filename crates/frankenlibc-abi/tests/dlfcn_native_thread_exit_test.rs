@@ -638,6 +638,137 @@ fn native_clone_dynamic_tls_and_cpp_destructors_on_cancellation() {
     }
 }
 
+#[test]
+fn native_clone_tls_destructor_cancellation_releases_loader_pins() {
+    if !child_case("native_clone_tls_destructor_cancellation_releases_loader_pins") {
+        return;
+    }
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    // Scope dispatch to this test worker. Native children are identified by
+    // their registered handles; libtest's own threads must remain hosted.
+    let _restore = RestoreBackend(pthread_abi::pthread_threading_swap_force_native_for_tests());
+    let fixture = Fixture::new();
+    let loader = Loader::Native;
+    let sink = fixture.sink(loader);
+    let path = fixture.compile_with_flags(
+        "cancel_destructor",
+        r#"
+        #include <pthread.h>
+        #include <stdatomic.h>
+        extern void event_push(long);
+        extern int __cxa_thread_atexit_impl(void(*)(void*),void*,void*);
+        static int owner;
+        static __thread long value=17;
+        static _Atomic unsigned arrived, released;
+        static void last(void *pointer){event_push(*(long*)pointer==73 ? 20 : 920);}
+        static void cancel(void *pointer){
+            event_push(*(long*)pointer==73 ? 10 : 910);
+            if(pthread_cancel(pthread_self()))event_push(911);
+            pthread_testcancel();
+            event_push(999);
+        }
+        void *worker(void *argument){
+            (void)argument;
+            value=73;
+            if(__cxa_thread_atexit_impl(last,&value,&owner))return (void*)901;
+            if(__cxa_thread_atexit_impl(cancel,&value,&owner))return (void*)902;
+            atomic_store_explicit(&arrived,1,memory_order_release);
+            while(!atomic_load_explicit(&released,memory_order_acquire)){}
+            return (void*)123;
+        }
+        unsigned ready(void){return atomic_load_explicit(&arrived,memory_order_acquire);}
+        void release_worker(void){atomic_store_explicit(&released,1,memory_order_release);}
+        void *cancel_provider(void){return (void*)pthread_testcancel;}
+        __attribute__((destructor)) static void fini(void){event_push(99);}
+        "#,
+        false,
+        &["-O2", "-fexceptions", "-fasynchronous-unwind-tables"],
+    );
+    let object = frankenlibc_core::elf::ElfLoader::new(0)
+        .parse(&std::fs::read(&path).unwrap())
+        .unwrap();
+    assert!(
+        object.needed_libraries.is_empty(),
+        "fixture acquired a host dependency"
+    );
+    let handle = loader.open(&path, libc::RTLD_NOW);
+    assert!(
+        !handle.is_null(),
+        "TLS destructor cancellation fixture rejected"
+    );
+    let provider: unsafe extern "C" fn() -> *mut c_void =
+        unsafe { std::mem::transmute(loader.symbol(handle, "cancel_provider")) };
+    assert_eq!(
+        unsafe { provider() },
+        pthread_abi::pthread_testcancel as *const () as *mut c_void
+    );
+    let worker: StartRoutine = unsafe { std::mem::transmute(loader.symbol(handle, "worker")) };
+    let ready: unsafe extern "C" fn() -> u32 =
+        unsafe { std::mem::transmute(loader.symbol(handle, "ready")) };
+    let release: unsafe extern "C" fn() =
+        unsafe { std::mem::transmute(loader.symbol(handle, "release_worker")) };
+    let (create, join): (CreateThread, JoinThread) =
+        (pthread_abi::pthread_create, pthread_abi::pthread_join);
+    let mut thread = 0;
+    REJECT_NATIVE_HEAP.store(true, Ordering::Release);
+    assert_eq!(
+        unsafe {
+            create(
+                &mut thread,
+                std::ptr::null(),
+                Some(worker),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    let ready_deadline = Instant::now() + Duration::from_secs(10);
+    while unsafe { ready() } == 0 {
+        assert!(
+            Instant::now() < ready_deadline,
+            "worker did not register its TLS callbacks"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    loader.close(handle);
+    assert!(
+        native_dso_handle_for_tests(handle),
+        "queued callbacks must pin their DSO"
+    );
+    unsafe { release() };
+    let mut result = std::ptr::null_mut();
+    assert_eq!(unsafe { join(thread, &mut result) }, 0);
+    REJECT_NATIVE_HEAP.store(false, Ordering::Release);
+    assert_eq!(
+        result as usize,
+        usize::MAX,
+        "TLS callback cancellation must replace ordinary return"
+    );
+    assert_eq!(
+        fixture.events(loader, sink),
+        [10, 20],
+        "each callback must run once across teardown reentry"
+    );
+
+    // No user handle remains. Trigger the same deferred collection used by
+    // normal TLS teardown: a pin leaked during unwind would retain this DSO.
+    let retained = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+    assert_eq!(retained, handle);
+    loader.close(retained);
+    assert_eq!(fixture.events(loader, sink), [10, 20, 99]);
+    assert!(
+        loader
+            .open(&path, libc::RTLD_NOW | libc::RTLD_NOLOAD)
+            .is_null()
+    );
+    loader.close(sink);
+}
+
 struct ReloadProbe {
     first: unsafe extern "C" fn() -> *mut i64,
     replacement: AtomicUsize,

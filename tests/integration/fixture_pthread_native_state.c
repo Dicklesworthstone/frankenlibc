@@ -441,9 +441,17 @@ static void record_cleanup(void *argument) {
 static void cleanup_key_destructor(void *argument) {
     struct cleanup_state *state = argument;
     CHECK(pthread_getspecific(key) == NULL);
-    if (state->reenter == 3) {
+    if (state->reenter == 3 || state->reenter == 5 || state->reenter == 6) {
+        if (state->reenter == 6)
+            CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0);
         CHECK(pthread_cancel(pthread_self()) == 0);
-        CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+        if (state->reenter == 3)
+            CHECK(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL) == 0);
+        if (state->reenter == 6) {
+            pthread_testcancel();
+            state->log[state->count++] = 5;
+            CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0);
+        }
         pthread_testcancel();
     }
     CHECK(state->count < (int)(sizeof(state->log) / sizeof(state->log[0])));
@@ -467,7 +475,8 @@ static void *cleanup_worker(void *argument) {
         pthread_testcancel();
         _Exit(92);
     }
-    if (state->reenter != 3) pthread_exit(state);
+    if (state->reenter != 3 && state->reenter != 5 && state->reenter != 6)
+        pthread_exit(state);
     pthread_cleanup_pop(0);
     pthread_cleanup_pop(0);
     return state;
@@ -510,11 +519,12 @@ static void cleanup_exit_with_worker(int cancel, int reenter, int siblings,
         publish(&state->release, 1);
         void *result = NULL;
         CHECK(pthread_join(state->thread, &result) == 0);
-        if (reenter == 3) {
+        if (reenter == 3 || reenter == 5 || reenter == 6) {
             /* GNU permits a new cancellation to interrupt a key destructor
              * entered after an ordinary start-routine return. Explicit exit
              * has already entered its unwind protocol and suppresses restart. */
-            CHECK(result == PTHREAD_CANCELED && state->count == 0);
+            CHECK(result == PTHREAD_CANCELED && state->count == (reenter == 6));
+            if (reenter == 6) CHECK(state->log[0] == 5);
             continue;
         }
         CHECK(result == (cancel ? PTHREAD_CANCELED : (void *)state));
@@ -672,6 +682,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "cleanup-defer")) cleanup_defer();
     else if (!strcmp(name, "cleanup-initial")) cleanup_initial();
     else if (!strcmp(name, "cleanup-return-reentry")) cleanup_exit(0, 3, 0);
+    else if (!strcmp(name, "cleanup-return-testcancel")) cleanup_exit(0, 5, 0);
+    else if (!strcmp(name, "cleanup-return-disabled")) cleanup_exit(0, 6, 0);
     else if (!strcmp(name, "legacy-exit")) legacy_cleanup_exit(0, 0, 0);
     else if (!strcmp(name, "legacy-cancel")) legacy_cleanup_exit(1, 0, 0);
     else if (!strcmp(name, "legacy-reentry")) legacy_cleanup_exit(0, 1, 0);

@@ -428,9 +428,9 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        // All force-native entrypoints update the global flag before installing
-        // a TLS override. The deployed cache-hit path can therefore avoid
-        // borrowing the larger pthread TLS state unless the global flag is set.
+        // The global override disables this hosted cache. Scoped overrides
+        // affect only their caller; native_pthread_self checks the registered
+        // native owner before this possibly inherited compiler-TLS cache.
         if global_force_native_threading_enabled() {
             return None;
         }
@@ -480,6 +480,11 @@ fn force_native_threading_enabled() -> bool {
 
 #[inline]
 fn current_threading_backend() -> u8 {
+    // A native clone can inherit a hosted backend cached in compiler TLS.
+    // Its live registration is authoritative and must not mutate that cache.
+    if core_current_thread_handle().is_some() {
+        return THREAD_BACKEND_MANAGED;
+    }
     if force_native_threading_enabled() {
         return THREAD_BACKEND_MANAGED;
     }
@@ -1309,6 +1314,12 @@ fn adopt_static_condvar(condvar: &CondvarData) -> bool {
 
 #[inline(always)]
 pub(crate) fn native_pthread_self() -> libc::pthread_t {
+    // Native clone workers can inherit the creator's compiler TLS. Consult
+    // the registered owner before either pthread_self cache, even when only
+    // the creator selected native threading through a scoped override.
+    if let Some(handle) = core_current_thread_handle() {
+        return handle as usize as libc::pthread_t;
+    }
     // Per-thread cache: pthread_self() is constant for the life of a thread, so
     // the first computed value is cached in pthread TLS and every later call
     // returns it directly — skipping `core_self_tid()`, which issues a `gettid()`
@@ -5493,6 +5504,11 @@ pub unsafe extern "C" fn pthread_setspecific(
 /// callbacks from start_thread) that runs fl's destructors. The main thread is
 /// skipped: glibc does not run key destructors at process exit.
 fn ensure_host_thread_key_teardown() {
+    // Native teardown owns its key callbacks. Do not read or set the creator's
+    // inherited compiler-TLS DECIDED flag on behalf of a native clone.
+    if core_current_thread_handle().is_some() {
+        return;
+    }
     thread_local! {
         static DECIDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }

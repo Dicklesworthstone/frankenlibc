@@ -1186,6 +1186,14 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
                 rcu::rcu_quiescent_state(tid as u32);
                 // SAFETY: the callback was registered for this generation,
                 // and the owning thread's value was cleared before the call.
+                // C and C-unwind share the machine ABI. A destructor entered
+                // after ordinary thread return can reach a cancellation point;
+                // do not introduce a nounwind boundary around application code.
+                // No RCU guard or reference to its value spans this call, and
+                // clearing the value first prevents a resumed teardown from
+                // invoking the same destructor again.
+                let dtor: unsafe extern "C-unwind" fn(*mut c_void) =
+                    unsafe { core::mem::transmute(dtor) };
                 unsafe { dtor(value as *mut c_void) };
             }
         }
