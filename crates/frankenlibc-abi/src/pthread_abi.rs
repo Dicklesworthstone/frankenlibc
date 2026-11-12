@@ -2233,6 +2233,13 @@ unsafe fn native_pthread_create(
         }
     }
 
+    // Complete cold policy construction and bounded evidence storage while
+    // the creator still owns usable host TLS. A native worker must not be the
+    // first allocator user merely because its destructor changes a signal mask.
+    if let Err(error) = runtime_policy::prepare_native_thread_runtime() {
+        return error;
+    }
+
     // These threads share this thread's TCB self pointer; stop keying allocator
     // slots by it before the clone.
     crate::malloc_abi::note_native_thread_backend();

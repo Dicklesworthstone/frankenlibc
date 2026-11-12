@@ -184,11 +184,16 @@ fn child_case(name: &str) -> bool {
     if std::env::var("FL_THREAD_EXIT_CHILD").as_deref() == Ok(name) {
         return true;
     }
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
         .args(["--exact", name, "--nocapture"])
-        .env("FL_THREAD_EXIT_CHILD", name)
-        .spawn()
-        .unwrap();
+        .env("FL_THREAD_EXIT_CHILD", name);
+    if name == "native_clone_posix_keys_retain_tls_and_late_runtime_destructors" {
+        // This case must exercise real policy through pthread_sigmask, even
+        // when the outer test runner disables runtime math for another target.
+        command.env("FRANKENLIBC_RUNTIME_MATH", "on");
+    }
+    let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -707,6 +712,10 @@ fn native_clone_posix_keys_retain_tls_and_late_runtime_destructors() {
     if !child_case("native_clone_posix_keys_retain_tls_and_late_runtime_destructors") {
         return;
     }
+    // SAFETY: this diagnostic only reads the process runtime phase.
+    assert_eq!(unsafe {
+        frankenlibc_abi::startup_abi::__frankenlibc_runtime_phase()
+    }, 2, "the worker must exercise active policy, not bootstrap passthrough");
     let fixture = Fixture::new();
     let loader = Loader::Native;
     let sink = fixture.sink(loader);
@@ -714,6 +723,7 @@ fn native_clone_posix_keys_retain_tls_and_late_runtime_destructors() {
         #define _GNU_SOURCE
         #include <pthread.h>
         #include <signal.h>
+        #include <stdatomic.h>
         #include <dlfcn.h>
         extern void event_push(long);
         extern int __cxa_thread_atexit_impl(void(*)(void*),void*,void*);
@@ -751,7 +761,8 @@ fn native_clone_posix_keys_retain_tls_and_late_runtime_destructors() {
         }
         long finish(void){return pthread_key_delete(key);}
         void *worker(void *argument){
-            (void)argument;value=73;
+            while(!atomic_load_explicit((_Atomic unsigned*)argument,memory_order_acquire)){}
+            value=73;
             if(pthread_setspecific(key,&value))return (void*)1;
             if(__cxa_thread_atexit_impl(early,&value,&owner))return (void*)2;
             return 0;
@@ -768,13 +779,51 @@ fn native_clone_posix_keys_retain_tls_and_late_runtime_destructors() {
     assert_eq!(loader.value(handle, "initialize"), 0);
     let worker: StartRoutine = unsafe { std::mem::transmute(loader.symbol(handle, "worker")) };
     let (create, join) = thread_backend(loader);
+    let hardened = std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened");
+    if !hardened {
+        assert!(
+            !frankenlibc_abi::malloc_abi::malloc_runtime_kernel_ready_for_tests(),
+            "strict fixture setup must leave the policy kernel cold"
+        );
+    }
+    let worker_gate = AtomicU32::new(0);
     let mut thread = 0;
     REJECT_NATIVE_HEAP.store(true, Ordering::Release);
-    assert_eq!(unsafe { create(&mut thread, std::ptr::null(), Some(worker), std::ptr::null_mut()) }, 0);
+    assert_eq!(unsafe {
+        create(&mut thread, std::ptr::null(), Some(worker),
+            (&worker_gate as *const AtomicU32).cast_mut().cast())
+    }, 0);
+    if hardened {
+        assert!(
+            frankenlibc_abi::malloc_abi::malloc_runtime_kernel_ready_for_tests(),
+            "native creation must prepare hardened policy before its worker runs"
+        );
+    } else {
+        assert!(
+            !frankenlibc_abi::malloc_abi::malloc_runtime_kernel_ready_for_tests(),
+            "strict native creation must preserve lazy policy startup"
+        );
+        // Publish a kernel after the native worker already exists. READY must
+        // include storage before that worker enters its first observation.
+        let _ = frankenlibc_abi::malloc_abi::malloc_size_class_telemetry_snapshot(true);
+        assert!(frankenlibc_abi::malloc_abi::malloc_runtime_kernel_ready_for_tests());
+    }
+    // SAFETY: the kernel is already ready; this reads counters without
+    // constructing storage or manufacturing a policy decision.
+    let decisions_before = unsafe {
+        frankenlibc_abi::startup_abi::__frankenlibc_decision_count()
+    };
+    worker_gate.store(1, Ordering::Release);
     let mut result = std::ptr::null_mut();
     assert_eq!(unsafe { join(thread, &mut result) }, 0);
+    // SAFETY: the same ready, process-lifetime counters remain valid after join.
+    let decisions_after = unsafe {
+        frankenlibc_abi::startup_abi::__frankenlibc_decision_count()
+    };
     REJECT_NATIVE_HEAP.store(false, Ordering::Release);
     assert!(result.is_null());
+    assert!(decisions_after.saturating_sub(decisions_before) >= 3,
+        "all three worker signal-mask calls must consult policy: {decisions_before} -> {decisions_after}");
     assert_eq!(fixture.events(loader, sink), [1, 2, 3, 4]);
     assert_eq!(loader.value(handle, "finish"), 0);
     loader.close(handle);

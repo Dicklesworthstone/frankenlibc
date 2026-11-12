@@ -2715,6 +2715,56 @@ pub(crate) fn prewarm_kernel() {
     }
 }
 
+/// Complete policy allocation before a native clone inherits host TLS.
+///
+/// Strict cold startup and an explicit runtime-math opt-out stay lazy. An
+/// already native creator may only use prepared storage; allocating from its
+/// inherited host allocator would race its creator's allocator state.
+pub(crate) fn prepare_native_thread_runtime() -> Result<(), i32> {
+    let state = KERNEL_STATE.load(AtomicOrdering::Acquire);
+    if state == STATE_BROKEN {
+        return Ok(());
+    }
+    let _ = mode();
+    let mode_state = MODE_STATE.load(AtomicOrdering::Acquire);
+    if matches!(mode_state, MODE_UNRESOLVED | MODE_RESOLVING) {
+        return Err(libc::EAGAIN);
+    }
+    let level = u8_to_mode(mode_state);
+    if !level.heals_enabled() && state != STATE_READY {
+        return Ok(());
+    }
+    match resolved_runtime_math_enabled() {
+        Some(false) => return Ok(()),
+        Some(true) => {}
+        None => return Err(libc::EAGAIN),
+    }
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+        if state != STATE_READY {
+            return Err(libc::EAGAIN);
+        }
+        // SAFETY: READY publishes the process-lifetime kernel.
+        let ready = unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) }
+            .runtime_storage_ready();
+        return if ready { Ok(()) } else { Err(libc::EAGAIN) };
+    }
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return Err(libc::EAGAIN);
+    };
+    let Some(kernel) = kernel() else {
+        return if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_BROKEN {
+            Ok(())
+        } else {
+            Err(libc::EAGAIN)
+        };
+    };
+    if kernel.prepare_runtime_storage() {
+        Ok(())
+    } else {
+        Err(libc::EAGAIN)
+    }
+}
+
 #[inline]
 fn kernel() -> Option<&'static RuntimeMathKernel> {
     let kernel = if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
@@ -2753,6 +2803,13 @@ fn kernel_init() -> Option<&'static RuntimeMathKernel> {
         return None;
     }
 
+    // A native clone has no independent host allocator TLS. Its creator must
+    // prepare the kernel; even an explicit diagnostic on the worker cannot
+    // safely become the first constructor. A host caller can retry later.
+    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
+        return None;
+    }
+
     // Try to claim the init slot.
     if KERNEL_STATE
         .compare_exchange(
@@ -2787,6 +2844,17 @@ fn kernel_init() -> Option<&'static RuntimeMathKernel> {
             return None;
         }
     };
+    // READY must include the evidence rings. A strict native worker can exist
+    // before a host diagnostic first creates the kernel; publishing a lazy
+    // kernel would make that worker allocate on its first observation.
+    if !kernel.prepare_runtime_storage() {
+        // Keep INITIALIZING through destruction so interposed frees cannot
+        // recursively construct a second kernel. Reservation failure is
+        // transient and may be retried by a later host caller.
+        drop(kernel);
+        KERNEL_STATE.store(STATE_UNINIT, AtomicOrdering::Release);
+        return None;
+    }
     let ptr = Box::into_raw(kernel);
     KERNEL_PTR.store(ptr, AtomicOrdering::Release);
     KERNEL_STATE.store(STATE_READY, AtomicOrdering::Release);
@@ -4578,8 +4646,18 @@ mod tests {
             RestoreMathState(RUNTIME_MATH_STATE.swap(RUNTIME_MATH_ON, AtomicOrdering::SeqCst));
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_RESOLVING, AtomicOrdering::SeqCst);
         assert_eq!(resolved_runtime_math_enabled(), None);
+        {
+            let _hardened = set_mode_state_for_tests(MODE_HARDENED);
+            assert_eq!(prepare_native_thread_runtime(), Err(libc::EAGAIN));
+        }
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
         assert_eq!(resolved_runtime_math_enabled(), Some(false));
+        {
+            let _hardened = set_mode_state_for_tests(MODE_HARDENED);
+            assert_eq!(prepare_native_thread_runtime(), Ok(()));
+            let _resolving = set_mode_state_for_tests(MODE_RESOLVING);
+            assert_eq!(prepare_native_thread_runtime(), Err(libc::EAGAIN));
+        }
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_ON, AtomicOrdering::SeqCst);
         assert_eq!(resolved_runtime_math_enabled(), Some(true));
         let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS).expect("kernel ready");
