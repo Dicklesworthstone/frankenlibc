@@ -101,6 +101,27 @@ impl StreamBuffer {
         Self::new(BufMode::None, 0)
     }
 
+    /// Reset buffer state in place for recycled stream objects while keeping
+    /// any existing heap allocation up to `64 KiB`.
+    #[inline]
+    pub fn reset_for_reuse(&mut self, mode: BufMode, capacity: usize) {
+        if self.data.capacity() > 64 * 1024 {
+            self.data = Vec::new();
+        } else {
+            self.data.clear();
+        }
+        self.capacity = if matches!(mode, BufMode::None) {
+            0
+        } else {
+            capacity.max(1)
+        };
+        self.read_pos = 0;
+        self.read_filled = 0;
+        self.write_len = 0;
+        self.mode = mode;
+        self.io_started = false;
+    }
+
     /// Current buffering mode.
     pub fn mode(&self) -> BufMode {
         self.mode

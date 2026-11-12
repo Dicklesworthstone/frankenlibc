@@ -1140,7 +1140,7 @@ struct FastFixedMemRead {
     /// The stream's glibc-layout FILE handle (its id), whose `_flags` EOF bit
     /// must track `eof`: this lock-free path never passes a cell guard, and
     /// callers read the bit with `feof_unlocked` (bd-rc0923-epic-eeuy4f.1).
-    handle: usize,
+    handle: AtomicUsize,
 }
 
 impl FastFixedMemRead {
@@ -1149,17 +1149,28 @@ impl FastFixedMemRead {
             memory,
             eof: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            handle,
+            handle: AtomicUsize::new(handle),
         }
     }
 
     #[inline]
+    fn reset_mut(&mut self, handle: usize) {
+        *self.handle.get_mut() = handle;
+        *self.eof.get_mut() = false;
+        *self.closed.get_mut() = false;
+    }
+
+    #[inline]
     fn set_eof(&self, eof: bool) {
+        if !eof && !self.eof.load(Ordering::Acquire) {
+            return;
+        }
         self.eof.store(eof, Ordering::Release);
-        if self.handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&self.handle) {
+        let handle = self.handle.load(Ordering::Relaxed);
+        if handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&handle) {
             // SAFETY: a non-legacy id is the address of the stream's live
             // NativeFile handle; `_flags` is its first, aligned int field.
-            let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(self.handle as *mut i32) };
+            let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
             let bit = io_internal_abi::glibc_flag_bits::EOF_SEEN;
             if eof {
                 word.fetch_or(bit, Ordering::Relaxed);
@@ -1180,6 +1191,17 @@ impl FastFixedMemRead {
         (n != 0).then_some(byte[0])
     }
 
+    #[inline]
+    fn read_byte_st_with_anchor(&self, tls_anchor: usize) -> Option<u8> {
+        if self.closed.load(Ordering::Relaxed) {
+            return None;
+        }
+        let mut byte = [0];
+        let n = self.memory.read_into_st_with_anchor(&mut byte, tls_anchor);
+        self.set_eof(n == 0);
+        (n != 0).then_some(byte[0])
+    }
+
     /// Bulk sibling of `read_byte` for `fread`: copies up to `dst.len()` bytes from the current
     /// position into `dst`, advances the shared cursor by the amount copied, and returns that
     /// count. `None` iff the cursor is closed (⇒ caller falls through to the pushback-aware slow
@@ -1193,6 +1215,16 @@ impl FastFixedMemRead {
             return None;
         }
         let n = self.memory.read_into(dst, None);
+        self.set_eof(n < dst.len());
+        Some(n)
+    }
+
+    #[inline]
+    fn read_bytes_st_with_anchor(&self, dst: &mut [u8], tls_anchor: usize) -> Option<usize> {
+        if self.closed.load(Ordering::Relaxed) {
+            return None;
+        }
+        let n = self.memory.read_into_st_with_anchor(dst, tls_anchor);
         self.set_eof(n < dst.len());
         Some(n)
     }
@@ -1238,6 +1270,61 @@ impl FastFixedMemRead {
 
 type FastFixedMemReadMap = StreamMap<Arc<FastFixedMemRead>>;
 
+#[inline]
+fn dynamic_static_slot_for_id(id: usize) -> Option<usize> {
+    io_internal_abi::static_native_slot_for_ptr_lockfree(id as *const c_void)
+        .filter(|&slot| slot >= 3)
+}
+
+/// Lock-free cookie classification per static slot (`0..256`):
+/// `0` = not cookie-backed, `1` = builtin `fmemopen` (no user close callback),
+/// `2` = custom `fopencookie` / `funopen`.
+static STATIC_SLOT_COOKIE_KIND: [std::sync::atomic::AtomicU8;
+    io_internal_abi::STREAM_REGISTRY_CAPACITY] =
+    [const { std::sync::atomic::AtomicU8::new(0) }; io_internal_abi::STREAM_REGISTRY_CAPACITY];
+
+struct StaticSlotAux {
+    id: usize,
+    cookie: Option<CookieStreamInfo>,
+    fast_mem_read: Option<Arc<FastFixedMemRead>>,
+}
+
+impl StaticSlotAux {
+    const EMPTY: Self = Self {
+        id: 0,
+        cookie: None,
+        fast_mem_read: None,
+    };
+}
+
+static STATIC_SLOT_AUX: [std::sync::Mutex<StaticSlotAux>;
+    io_internal_abi::STREAM_REGISTRY_CAPACITY] = [const { std::sync::Mutex::new(StaticSlotAux::EMPTY) };
+    io_internal_abi::STREAM_REGISTRY_CAPACITY];
+
+#[inline]
+fn lock_static_slot_aux(slot: usize) -> std::sync::MutexGuard<'static, StaticSlotAux> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&STATIC_SLOT_AUX[slot])
+}
+
+/// Zero-`RefCell` POD TLS pointer cache for the single-threaded `fread` fast path:
+/// `(stream_ptr, registry_gen, *const FastFixedMemRead)`.
+///
+/// Sound exclusively when `__libc_single_threaded != 0`: no sibling thread exists
+/// to close `stream` concurrently, `read_bytes_st` invokes no user callbacks, and
+/// every removal/replacement of `FastFixedMemRead` clears `TLS_FAST_MEM_READ` and
+/// bumps `REGISTRY_GEN` before dropping its owning `Arc<FastFixedMemRead>`.
+#[thread_local]
+static TLS_FAST_MEM_READ: std::cell::Cell<(usize, u64, *const FastFixedMemRead)> =
+    std::cell::Cell::new((0, 0, std::ptr::null()));
+
+#[thread_local]
+static TLS_REFCELL_MEM_CACHED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+
+#[inline]
+fn current_fast_mem_tls_anchor() -> usize {
+    std::ptr::addr_of!(TLS_FAST_MEM_READ) as usize
+}
+
 thread_local! {
     static FAST_FIXED_MEM_READ_CACHE: RefCell<Option<(usize, Arc<FastFixedMemRead>)>> =
         const { RefCell::new(None) };
@@ -1258,15 +1345,59 @@ fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
 /// today's probe cost.
 static FIXED_MEM_CURSOR_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-fn register_fast_fixed_mem_read(id: usize, memory: Arc<FixedMemCookie>) {
-    let cursor = Arc::new(FastFixedMemRead::new(memory, id));
-    FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
-    let mut map = fast_fixed_mem_reads()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if map.insert(id, cursor).is_some() {
-        // Replaced an existing cursor for a reused id: keep the count exact-or-over.
-        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+#[inline]
+fn populate_fast_fixed_mem_read_tls(
+    tls_cell: *const std::cell::Cell<(usize, u64, *const FastFixedMemRead)>,
+    id: usize,
+    cur_gen: u64,
+    cursor_ptr: *const FastFixedMemRead,
+    mt_cursor: Option<&Arc<FastFixedMemRead>>,
+) {
+    unsafe { (*tls_cell).set((id, cur_gen, cursor_ptr)) };
+    if let Some(cursor) = mt_cursor {
+        TLS_REFCELL_MEM_CACHED.set(true);
+        let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+            *cache.borrow_mut() = Some((id, Arc::clone(cursor)));
+        });
+        let _ = FGETC_MEM_PTR_CACHE.try_with(|cache| {
+            *cache.borrow_mut() = Some((id, cur_gen, Arc::clone(cursor)));
+        });
+    }
+}
+
+#[inline]
+fn clear_fast_fixed_mem_read_tls(id: usize) {
+    if TLS_FAST_MEM_READ.get().0 == id {
+        TLS_FAST_MEM_READ.set((0, 0, std::ptr::null()));
+    }
+    if !TLS_REFCELL_MEM_CACHED.get() {
+        return;
+    }
+    let mut any_left = false;
+    let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+        let mut guard = cache.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|(cached_id, _)| *cached_id == id)
+        {
+            *guard = None;
+        } else if guard.is_some() {
+            any_left = true;
+        }
+    });
+    let _ = FGETC_MEM_PTR_CACHE.try_with(|cache| {
+        let mut guard = cache.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|(cached_ptr, _, _)| *cached_ptr == id)
+        {
+            *guard = None;
+        } else if guard.is_some() {
+            any_left = true;
+        }
+    });
+    if !any_left {
+        TLS_REFCELL_MEM_CACHED.set(false);
     }
 }
 
@@ -1274,19 +1405,26 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
         return None;
     }
-    if let Ok(Some(cursor)) = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
-        if let Some((cached_id, cursor)) = cache.borrow().as_ref()
-            && *cached_id == id
-            && !cursor.closed.load(Ordering::Acquire)
-        {
-            return Some(Arc::clone(cursor));
-        }
-        None
-    }) {
+    if TLS_REFCELL_MEM_CACHED.get()
+        && let Ok(Some(cursor)) = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+            if let Some((cached_id, cursor)) = cache.borrow().as_ref()
+                && *cached_id == id
+                && !cursor.closed.load(Ordering::Acquire)
+            {
+                return Some(Arc::clone(cursor));
+            }
+            None
+        })
+    {
         return Some(cursor);
     }
 
-    let cursor = {
+    let cursor = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        (aux.id == id)
+            .then(|| aux.fast_mem_read.as_ref().cloned())
+            .flatten()
+    } else {
         let map = fast_fixed_mem_reads()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -1295,6 +1433,10 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if cursor.closed.load(Ordering::Acquire) {
         return None;
     }
+    if cursor.memory.owner_tls.load(Ordering::Acquire) != current_fast_mem_tls_anchor() {
+        cursor.memory.owner_tls.store(0, Ordering::Release);
+    }
+    TLS_REFCELL_MEM_CACHED.set(true);
     let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
         *cache.borrow_mut() = Some((id, Arc::clone(&cursor)));
     });
@@ -1320,6 +1462,17 @@ thread_local! {
 fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+        let (cp, cg, ptr) = unsafe { (*tls_cell).get() };
+        if cp == key && !ptr.is_null() && cg == cur_gen {
+            return unsafe { (*ptr).read_byte_st_with_anchor(tls_cell as usize) }
+                .map(|b| b as c_int);
+        }
+    }
+    if !TLS_REFCELL_MEM_CACHED.get() {
+        return None;
+    }
     FGETC_MEM_PTR_CACHE
         .try_with(|c| {
             let cache = c.borrow();
@@ -1336,9 +1489,32 @@ fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
 /// Populate the pointer cache after a slow-path resolve confirms `stream` is a fixed-mem reader.
 fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>) {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+    if cursor.memory.owner_tls.load(Ordering::Acquire) == tls_cell as usize {
+        unsafe { (*tls_cell).set((stream as usize, cur_gen, Arc::as_ptr(cursor))) };
+    } else {
+        cursor.memory.owner_tls.store(0, Ordering::Release);
+    }
+    TLS_REFCELL_MEM_CACHED.set(true);
     let _ = FGETC_MEM_PTR_CACHE.try_with(|c| {
         *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
     });
+}
+
+/// Single-threaded POD TLS fast path for `fread` on read-only `fmemopen` streams.
+///
+/// # Safety
+/// Caller must have verified `__libc_single_threaded != 0`.
+#[inline]
+unsafe fn try_fread_fast_fixed_mem_st(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+    let (cp, cg, ptr) = unsafe { (*tls_cell).get() };
+    if cp != stream as usize || ptr.is_null() || cg != REGISTRY_GEN.load(Ordering::Acquire) {
+        return None;
+    }
+    // SAFETY: single-threaded process, `cg == REGISTRY_GEN`, and every cursor
+    // removal bumps `REGISTRY_GEN` and clears `TLS_FAST_MEM_READ` before drop.
+    unsafe { (*ptr).read_bytes_st_with_anchor(dst, tls_cell as usize) }
 }
 
 /// Pointer-keyed fmemopen bulk-read fast path — the `fread` sibling of
@@ -1346,6 +1522,9 @@ fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>
 /// `Some(bytes_read)` on a gen-valid, open cached cursor for `stream`; `None` on any miss
 /// (uncached / different stream / gen-stale / closed) ⇒ caller falls through and re-caches.
 fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    if !TLS_REFCELL_MEM_CACHED.get() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     FGETC_MEM_PTR_CACHE
@@ -1368,6 +1547,15 @@ fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Op
 fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        let (cp, cg, ptr) = TLS_FAST_MEM_READ.get();
+        if cp == key && !ptr.is_null() && cg == cur_gen {
+            return unsafe { (*ptr).read_line(dst) };
+        }
+    }
+    if !TLS_REFCELL_MEM_CACHED.get() {
+        return None;
+    }
     FGETC_MEM_PTR_CACHE
         .try_with(|c| {
             let cache = c.borrow();
@@ -1390,27 +1578,30 @@ fn sync_fast_fixed_mem_read_to_stream(id: usize, stream: &mut StdioStream) -> bo
 }
 
 fn unregister_fast_fixed_mem_read(id: usize) {
-    let cursor = {
+    if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let cursor = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let mut aux = lock_static_slot_aux(slot);
+        if aux.id == id {
+            aux.fast_mem_read.take()
+        } else {
+            None
+        }
+    } else {
         let mut map = fast_fixed_mem_reads()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         map.remove(&id)
     };
+    clear_fast_fixed_mem_read_tls(id);
     if let Some(cursor) = cursor {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
         // Decrement AFTER the successful remove (see FIXED_MEM_CURSOR_COUNT: the count may
         // transiently over-approximate but must never hit 0 while a cursor is live).
         FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
         cursor.closed.store(true, Ordering::Release);
     }
-    FAST_FIXED_MEM_READ_CACHE.with(|cache| {
-        let clear = cache
-            .borrow()
-            .as_ref()
-            .is_some_and(|(cached_id, _)| *cached_id == id);
-        if clear {
-            *cache.borrow_mut() = None;
-        }
-    });
 }
 
 fn sync_and_unregister_fast_fixed_mem_read(id: usize, stream: &mut StdioStream) {
@@ -1437,7 +1628,7 @@ fn new_stream_cell_with_handle(mut stream: StdioStream, handle: usize) -> Stream
     stream.set_c_handle(handle);
     Arc::new(StreamCellInner {
         stream: parking_lot::Mutex::new(stream),
-        flags_word: handle,
+        flags_word: AtomicUsize::new(handle),
     })
 }
 
@@ -1452,7 +1643,7 @@ fn new_stream_cell_with_handle(mut stream: StdioStream, handle: usize) -> Stream
 /// locked operation rather than immediately.
 struct StreamCellInner {
     stream: parking_lot::Mutex<StdioStream>,
-    flags_word: usize,
+    flags_word: AtomicUsize,
 }
 
 impl StreamCellInner {
@@ -1464,7 +1655,7 @@ impl StreamCellInner {
         absorb_read_window(&mut guard);
         StreamGuard {
             guard,
-            flags_word: self.flags_word,
+            flags_word: self.flags_word.load(Ordering::Relaxed),
         }
     }
 
@@ -1475,7 +1666,7 @@ impl StreamCellInner {
             absorb_read_window(&mut guard);
             StreamGuard {
                 guard,
-                flags_word: self.flags_word,
+                flags_word: self.flags_word.load(Ordering::Relaxed),
             }
         })
     }
@@ -1895,6 +2086,7 @@ fn alloc_stream_handle(
 
 struct StreamRegistry {
     streams: StreamMap<StreamCell>,
+    static_slots: Box<[Option<(usize, StreamCell)>; io_internal_abi::STREAM_REGISTRY_CAPACITY]>,
     std_initialized: u8,
 }
 
@@ -1902,8 +2094,53 @@ impl StreamRegistry {
     fn new() -> Self {
         Self {
             streams: StreamMap::with_capacity_and_hasher(8, StreamIdBuildHasher::default()),
+            static_slots: Box::new([const { None }; io_internal_abi::STREAM_REGISTRY_CAPACITY]),
             std_initialized: 0,
         }
+    }
+
+    #[inline]
+    fn contains_stream(&mut self, id: usize) -> bool {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            return self.static_slots[slot]
+                .as_ref()
+                .is_some_and(|(stored_id, _)| *stored_id == id);
+        }
+        self.ensure_std_stream(id);
+        self.streams.contains_key(&id)
+    }
+
+    #[inline]
+    fn get_stream(&mut self, id: usize) -> Option<StreamCell> {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            return self.static_slots[slot]
+                .as_ref()
+                .and_then(|(stored_id, cell)| (*stored_id == id).then(|| Arc::clone(cell)));
+        }
+        self.ensure_std_stream(id);
+        self.streams.get(&id).cloned()
+    }
+
+    #[inline]
+    fn get_stream_ref(&self, id: usize) -> Option<StreamCell> {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            return self.static_slots[slot]
+                .as_ref()
+                .and_then(|(stored_id, cell)| (*stored_id == id).then(|| Arc::clone(cell)));
+        }
+        self.streams.get(&id).cloned()
+    }
+
+    #[inline]
+    fn insert_cell(&mut self, id: usize, cell: StreamCell) -> u64 {
+        self.mark_std_stream_initialized(id);
+        let new_gen = REGISTRY_GEN.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            self.static_slots[slot] = Some((id, cell));
+        } else {
+            self.streams.insert(id, cell);
+        }
+        new_gen
     }
 
     #[inline]
@@ -1985,22 +2222,18 @@ impl StreamRegistry {
     /// values.
     #[inline]
     fn insert_stream(&mut self, id: usize, stream: StdioStream) {
-        self.mark_std_stream_initialized(id);
-        REGISTRY_GEN.fetch_add(1, Ordering::Release);
-        self.streams.insert(id, new_stream_cell(stream));
+        let _ = self.insert_cell(id, new_stream_cell(stream));
     }
 
     /// Insert a stream whose `FILE *` is the glibc-layout handle at `handle`
     /// (0 = none); see [`StreamCellInner`].
+    #[inline]
     fn insert_stream_with_handle(&mut self, id: usize, stream: StdioStream, handle: usize) {
-        self.mark_std_stream_initialized(id);
-        REGISTRY_GEN.fetch_add(1, Ordering::Release);
         let resolved = resolve_flags_word(handle);
         if resolved != 0 {
             mirror_stream_flags(resolved, &stream);
         }
-        self.streams
-            .insert(id, new_stream_cell_with_handle(stream, handle));
+        let _ = self.insert_cell(id, new_stream_cell_with_handle(stream, handle));
     }
 
     /// Remove a stream, bumping the registry generation (the removed stream may still
@@ -2008,6 +2241,16 @@ impl StreamRegistry {
     /// before the Arc can drop).
     #[inline]
     fn remove_stream(&mut self, id: usize) -> Option<StreamCell> {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            if self.static_slots[slot]
+                .as_ref()
+                .is_some_and(|(stored_id, _)| *stored_id == id)
+            {
+                REGISTRY_GEN.fetch_add(1, Ordering::Release);
+                return self.static_slots[slot].take().map(|(_, cell)| cell);
+            }
+            return None;
+        }
         self.ensure_std_stream(id);
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
         self.streams.remove(&id)
@@ -2019,8 +2262,7 @@ impl StreamRegistry {
 /// iff the id is unknown (unregistered/foreign) — same contract as `streams.get_mut`.
 fn stream_cell(id: usize) -> Option<StreamCell> {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.ensure_std_stream(id);
-    reg.streams.get(&id).cloned()
+    reg.get_stream(id)
 }
 
 thread_local! {
@@ -2485,7 +2727,16 @@ fn try_fread_fast_by_stream(stream: *mut c_void, dst: &mut [u8]) -> bool {
 }
 
 fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
-    let mut ids: Vec<usize> = reg.streams.keys().copied().collect();
+    let mut ids: Vec<usize> = reg
+        .streams
+        .keys()
+        .copied()
+        .chain(
+            reg.static_slots
+                .iter()
+                .filter_map(|entry| entry.as_ref().map(|(id, _)| *id)),
+        )
+        .collect();
     ids.sort_unstable();
     ids
 }
@@ -2534,8 +2785,8 @@ pub(crate) struct StdioForkGuard {
     _std_locks: crate::io_internal_abi::StdStreamLocksForkGuard,
     _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
     _streams: Option<parking_lot::MutexGuard<'static, StreamRegistry>>,
-    _cookies:
-        Option<std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>>>,
+    _cookies: Option<std::sync::MutexGuard<'static, Option<StreamMap<CookieStreamInfo>>>>,
+    _static_aux: Vec<std::sync::MutexGuard<'static, StaticSlotAux>>,
     _foreign: Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>>,
     _host_streams: Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, HostStreamState>>>,
 }
@@ -2558,6 +2809,7 @@ impl StdioForkGuard {
             _native,
             _streams,
             _cookies,
+            _static_aux,
             _foreign,
             _host_streams,
         } = self;
@@ -2583,8 +2835,29 @@ impl StdioForkGuard {
 
         drop(_native);
         drop(_cookies);
+        drop(_static_aux);
         drop(_foreign);
     }
+}
+
+fn try_lock_static_slot_aux_for_fork(
+    single_threaded: bool,
+) -> Result<Vec<std::sync::MutexGuard<'static, StaticSlotAux>>, ()> {
+    if single_threaded || !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return Ok(Vec::new());
+    }
+    let mut guards = Vec::new();
+    for slot in 3..io_internal_abi::STREAM_REGISTRY_CAPACITY {
+        if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 0 {
+            let guard = match STATIC_SLOT_AUX[slot].try_lock() {
+                Ok(g) => g,
+                Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => return Err(()),
+            };
+            guards.push(guard);
+        }
+    }
+    Ok(guards)
 }
 
 /// Acquire every stdio registry lock. Other code may take these in any order,
@@ -2622,6 +2895,7 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
                         }
                     };
                 if let Ok(cookies) = cookies
+                    && let Ok(static_aux) = try_lock_static_slot_aux_for_fork(single_threaded)
                     && let Ok(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
                     && let Ok(host_streams) = host_streams
                     && let Ok(std_locks) =
@@ -2632,6 +2906,7 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
                         _native: native,
                         _streams: streams,
                         _cookies: cookies,
+                        _static_aux: static_aux,
                         _foreign: foreign,
                         _host_streams: host_streams,
                     };
@@ -2677,8 +2952,7 @@ fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
 
 fn registry_contains_stream(id: usize) -> bool {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.ensure_std_stream(id);
-    reg.streams.contains_key(&id)
+    reg.contains_stream(id)
 }
 
 /// Whether a call carrying `stream` (the caller's pointer) and `id` (its
@@ -2751,6 +3025,15 @@ fn stream_is_host_owned(stream: *mut c_void) -> bool {
 }
 
 pub(crate) fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
+    // Fast lock-free exit: any static native slot (`0..256`) or visible
+    // `_IO_2_1_{stdin,stdout,stderr}_` handle is ALWAYS owned by FrankenLibC
+    // (open or closed), so never acquire `registry().lock()` just to return `false`.
+    if !stream.is_null()
+        && (io_internal_abi::is_native_slot_ptr_lockfree(stream)
+            || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream))
+    {
+        return false;
+    }
     // Never hand one of fl's own ids to the host, registered or not.
     //
     // The sentinel-only form of this guard left every ORDINARY fl id exposed to
@@ -3579,11 +3862,19 @@ fn native_stream_open_flags(open_flags: OpenFlags) -> u32 {
 }
 
 fn maybe_unregister_dynamic_native_stream(stream: *mut c_void) {
+    if let Some(slot) = io_internal_abi::occupied_static_native_slot_lockfree(stream) {
+        io_internal_abi::unregister_dynamic_static_slot(slot);
+        return;
+    }
     if let Some(slot) = io_internal_abi::verify_native_file(stream)
         && slot >= 3
     {
-        let mut native_reg = io_internal_abi::native_stream_registry();
-        let _ = native_reg.unregister(slot);
+        if slot < io_internal_abi::STREAM_REGISTRY_CAPACITY {
+            io_internal_abi::unregister_dynamic_static_slot(slot);
+        } else {
+            let mut native_reg = io_internal_abi::native_stream_registry();
+            let _ = native_reg.unregister(slot);
+        }
     }
 }
 
@@ -3595,35 +3886,15 @@ pub(crate) fn register_memory_stream_with_native_handle(
     open_flags: OpenFlags,
     fileno: c_int,
 ) -> *mut c_void {
-    let file = io_internal_abi::NativeFile::new_with_backing(
+    let Some(native_ptr) = io_internal_abi::register_memory_handle(
         backing,
         native_stream_open_flags(open_flags),
-        NativeFileBufMode::None,
-    );
-    let mut native_reg = io_internal_abi::native_stream_registry();
-    let Some(slot) = native_reg.register(file) else {
+        fileno,
+        initial_glibc_flags(&open_flags, false, BufMode::Full),
+    ) else {
         unsafe { set_abi_errno(errno::ENOMEM) };
         return std::ptr::null_mut();
     };
-    let native_ptr = match native_reg.get_mut(slot) {
-        Some(file) => file as *mut io_internal_abi::NativeFile as *mut c_void,
-        None => {
-            unsafe { set_abi_errno(errno::EMFILE) };
-            return std::ptr::null_mut();
-        }
-    };
-    io_internal_abi::register_native_file_ptr(native_ptr);
-    drop(native_reg);
-
-    // SAFETY: native_ptr is the registered NativeFile; `_flags` is its first
-    // field. Set the observable open-mode bits (the memory backing has no fd).
-    unsafe {
-        io_internal_abi::reset_stdio_handle_header(
-            native_ptr,
-            fileno,
-            initial_glibc_flags(&open_flags, false, BufMode::Full),
-        );
-    }
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.insert_stream_with_handle(native_ptr as usize, stream, native_ptr as usize);
     native_ptr
@@ -4486,7 +4757,7 @@ fn fdopen_native_impl_with_origin(
         return std::ptr::null_mut();
     };
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if reg.streams.contains_key(&id) {
+    if reg.contains_stream(id) {
         // A stale entry at a reused handle address would be a registry bug;
         // refuse rather than alias two streams.
         drop(reg);
@@ -4598,10 +4869,70 @@ fn raw_isatty(fd: c_int) -> bool {
 /// POSIX `fclose`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
+    if !stream.is_null()
+        && let Some(rc) = try_fclose_fast_static_fmemopen(stream)
+    {
+        return rc;
+    }
     unsafe { fclose_for_caller(stream, core::intrinsics::return_address() as usize) }
 }
 
+#[inline]
+fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+    let slot =
+        io_internal_abi::occupied_static_native_slot_lockfree(stream).filter(|&slot| slot >= 3)?;
+    if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 1 {
+        return None;
+    }
+    let id = stream as usize;
+    let cell = {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let (_, cell_ref) = reg.static_slots[slot]
+            .as_ref()
+            .filter(|(stored_id, _)| *stored_id == id)?;
+        let mut s = cell_ref.stream.try_lock()?;
+        if s.is_error() || !s.pending_flush().is_empty() || s.read_window().is_some() {
+            return None;
+        }
+        retire_read_window(&mut s);
+        drop(s);
+        reg.remove_stream(id)?
+    };
+    STATIC_SLOT_COOKIE_KIND[slot].store(0, Ordering::Release);
+    let (cookie_info, fast_mem_read) = {
+        let mut aux = lock_static_slot_aux(slot);
+        if aux.id == id {
+            aux.id = 0;
+            (aux.cookie.take(), aux.fast_mem_read.take())
+        } else {
+            (None, None)
+        }
+    };
+    clear_fast_fixed_mem_read_tls(id);
+    if let Some(cursor) = fast_mem_read {
+        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+        cursor.closed.store(true, Ordering::Release);
+        drop(cookie_info);
+        recycle_fmemopen_objects(cell, cursor);
+    } else if let Some(info) = cookie_info
+        && let Some(memory) = info.fixed_memory
+    {
+        let buf = memory.lock_inner().cursor.take_input_buffer();
+        return_pooled_fixed_mem_input(buf);
+    }
+    io_internal_abi::unregister_dynamic_static_slot(slot);
+    Some(0)
+}
+
 pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    if !stream.is_null()
+        && let Some(rc) = try_fclose_fast_static_fmemopen(stream)
+    {
+        return rc;
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         return libc::EOF;
@@ -4625,8 +4956,7 @@ pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_
     let file_lock = unsafe { StdioLockGuard::acquire(stream) };
     let cell = {
         let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        reg.ensure_std_stream(id);
-        let Some(cell) = reg.streams.get(&id).cloned() else {
+        let Some(cell) = reg.get_stream(id) else {
             unsafe { set_abi_errno(errno::EBADF) };
             return libc::EOF;
         };
@@ -4833,7 +5163,7 @@ pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usi
             };
             sorted_stream_ids(&reg)
                 .into_iter()
-                .filter_map(|id| reg.streams.get(&id).cloned().map(|c| (id, c)))
+                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, c)))
                 .collect()
         };
         let mut any_fail = false;
@@ -6062,6 +6392,25 @@ pub unsafe extern "C-unwind" fn fread(
     nmemb: usize,
     stream: *mut c_void,
 ) -> usize {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && !ptr.is_null()
+    {
+        let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+        let (cp, cg, cursor_ptr) = unsafe { (*tls_cell).get() };
+        if cp == stream as usize
+            && !cursor_ptr.is_null()
+            && let Some(total) = size.checked_mul(nmemb)
+            && total > 0
+            && cg == REGISTRY_GEN.load(Ordering::Acquire)
+        {
+            let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+            if let Some(n) =
+                unsafe { (*cursor_ptr).read_bytes_st_with_anchor(dst, tls_cell as usize) }
+            {
+                return fread_elements_from_bytes(n, size, nmemb, total);
+            }
+        }
+    }
     unsafe {
         fread_for_caller(
             ptr,
@@ -6073,6 +6422,17 @@ pub unsafe extern "C-unwind" fn fread(
     }
 }
 
+#[inline]
+fn fread_elements_from_bytes(bytes_read: usize, size: usize, nmemb: usize, total: usize) -> usize {
+    if bytes_read == total {
+        nmemb
+    } else if size == 1 {
+        bytes_read
+    } else {
+        bytes_read / size
+    }
+}
+
 pub(crate) unsafe fn fread_for_caller(
     ptr: *mut c_void,
     size: usize,
@@ -6080,6 +6440,27 @@ pub(crate) unsafe fn fread_for_caller(
     stream: *mut c_void,
     caller: usize,
 ) -> usize {
+    // Single-threaded non-callback fast path: when no other thread exists in
+    // the process (`__libc_single_threaded != 0`), synchronous in-memory buffer
+    // reads (`TLS_FAST_MEM_READ` read-only fmemopen hit or `WRITE_CACHE` fd hit)
+    // invoke no user callbacks, syscalls, or `pthread_create` and therefore
+    // cannot contend on or alter the recursive `FILE` lock state.
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && !ptr.is_null()
+        && let Some(total) = size.checked_mul(nmemb)
+        && total > 0
+    {
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+        if let Some(n) = unsafe { try_fread_fast_fixed_mem_st(stream, dst) } {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+        if try_fread_fast_by_stream(stream, dst) {
+            return nmemb;
+        }
+        if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+    }
     let _lock = unsafe { StdioLockGuard::acquire(stream) };
     unsafe { fread_unlocked_for_caller(ptr, size, nmemb, stream, caller) }
 }
@@ -6104,23 +6485,27 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
     // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
     {
         let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+        if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+            && let Some(n) = unsafe { try_fread_fast_fixed_mem_st(stream, dst) }
+        {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
         if try_fread_fast_by_stream(stream, dst) {
             return nmemb;
         }
         // Pointer-keyed fmemopen bulk-read fast path (the fd cache above EXCLUDES mem streams,
         // so fmemopen `fread` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
         // `fast_fixed_mem_reads` map lock per call — the per-op floor, ST and MT). Reads share
-        // the cursor lock. Miss ⇒ falls through and re-caches. Mirrors `fgetc`. `total > 0`
-        // ⇒ `size >= 1`, so `n / size` is the complete-element count (as the slow path returns).
+        // the cursor lock. Miss ⇒ falls through and re-caches. Mirrors `fgetc`.
         if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
-            return n / size;
+            return fread_elements_from_bytes(n, size, nmemb, total);
         }
         // MT-safe cell-cache bulk-read fast path: the ST cache above is
         // `__libc_single_threaded`-gated and the mem cursor only serves fmemopen — a THREADED
         // fread on an fd stream otherwise pays canonical_stream_id + the registry map lock per
-        // call. Gen-valid hit ⇒ read under this stream's lock only. `total > 0` ⇒ `size >= 1`.
+        // call. Gen-valid hit ⇒ read under this stream's lock only.
         if let Some(n) = try_fread_fast_cell(stream, dst, caller) {
-            return n / size;
+            return fread_elements_from_bytes(n, size, nmemb, total);
         }
     }
 
@@ -17276,7 +17661,7 @@ fn popen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
         return std::ptr::null_mut();
     };
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if reg.streams.contains_key(&id) {
+    if reg.contains_stream(id) {
         drop(reg);
         maybe_unregister_dynamic_native_stream(id as *mut c_void);
         unsafe { set_abi_errno(errno::EMFILE) };
@@ -17622,8 +18007,10 @@ pub struct CookieIoFuncs {
 /// own accesses with stream I/O and keep borrowed storage alive until close.
 struct FixedMemCookie {
     inner: parking_lot::Mutex<FixedMemCookieInner>,
+    st_active: AtomicBool,
+    owner_tls: AtomicUsize,
     read_capacity: AtomicUsize,
-    readable: bool,
+    readable: AtomicBool,
 }
 
 struct FixedMemCookieInner {
@@ -17632,10 +18019,144 @@ struct FixedMemCookieInner {
     owned: Option<Vec<u8>>,
 }
 
+struct PooledFmemopenObjects {
+    cell: StreamCell,
+    cursor: Arc<FastFixedMemRead>,
+}
+
+const FIXED_MEM_INPUT_POOL_MAX_CAP: usize = 64 * 1024;
+
+thread_local! {
+    /// Destructor-order-safe 1-slot recycler for `FixedMemCursor` input buffers
+    /// across repeated `fmemopen` + `fclose` lifecycles on the same thread.
+    static FIXED_MEM_INPUT_POOL: crate::util::TlsHeapCell<std::cell::Cell<Option<Vec<u8>>>> =
+        const { crate::util::TlsHeapCell::new() };
+    /// Destructor-order-safe 1-slot recycler for `(StreamCell, Arc<FastFixedMemRead>)`
+    /// bundles across repeated read-only `fmemopen` + `fclose` lifecycles.
+    static FMEMOPEN_OBJECT_POOL: crate::util::TlsHeapCell<
+        std::cell::Cell<Option<PooledFmemopenObjects>>,
+    > = const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn take_pooled_fmemopen_objects() -> Option<PooledFmemopenObjects> {
+    FMEMOPEN_OBJECT_POOL
+        .try_with(|cell| {
+            cell.try_with_init(|| std::cell::Cell::new(None), None, |slot| slot.take())
+                .flatten()
+        })
+        .ok()
+        .flatten()
+}
+
+#[inline]
+fn return_pooled_fmemopen_objects(bundle: PooledFmemopenObjects) {
+    let _ = FMEMOPEN_OBJECT_POOL.try_with(|cell| {
+        let _ = cell.try_with_init(
+            || std::cell::Cell::new(None),
+            None,
+            |slot| {
+                slot.set(Some(bundle));
+            },
+        );
+    });
+}
+
+#[inline]
+fn recycle_fmemopen_objects(mut cell: StreamCell, mut cursor: Arc<FastFixedMemRead>) {
+    let can_recycle = if let Some(_cell_mut) = Arc::get_mut(&mut cell)
+        && let Some(cursor_mut) = Arc::get_mut(&mut cursor)
+        && let Some(mem_mut) = Arc::get_mut(&mut cursor_mut.memory)
+    {
+        let inner = mem_mut.inner.get_mut();
+        inner.owned = None;
+        inner.borrowed = 0;
+        inner.cursor.reset(0, 0, false);
+        true
+    } else {
+        false
+    };
+    if can_recycle {
+        return_pooled_fmemopen_objects(PooledFmemopenObjects { cell, cursor });
+    }
+}
+
+#[inline]
+fn take_pooled_fixed_mem_input() -> Vec<u8> {
+    FIXED_MEM_INPUT_POOL
+        .try_with(|cell| {
+            cell.try_with_init(|| std::cell::Cell::new(None), None, |slot| slot.take())
+                .flatten()
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+#[inline]
+fn return_pooled_fixed_mem_input(mut buf: Vec<u8>) {
+    let cap = buf.capacity();
+    if cap == 0 || cap > FIXED_MEM_INPUT_POOL_MAX_CAP {
+        return;
+    }
+    buf.clear();
+    let _ = FIXED_MEM_INPUT_POOL.try_with(|cell| {
+        let _ = cell.try_with_init(
+            || std::cell::Cell::new(None),
+            None,
+            |slot| {
+                let keep_existing = slot.take().filter(|prev| prev.capacity() >= cap);
+                slot.set(Some(keep_existing.unwrap_or(buf)));
+            },
+        );
+    });
+}
+
+struct StActiveGuard<'a>(&'a AtomicBool);
+
+impl Drop for StActiveGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 impl FixedMemCookie {
     #[inline]
     fn lock_inner(&self) -> parking_lot::MutexGuard<'_, FixedMemCookieInner> {
         crate::runtime_policy::lock_parking_lot_preserving_errno(&self.inner)
+    }
+
+    #[inline]
+    fn read_into_st_with_anchor(&self, dst: &mut [u8], tls_anchor: usize) -> usize {
+        if self.owner_tls.load(Ordering::Relaxed) == tls_anchor
+            && !self.inner.is_locked()
+            && !self.st_active.load(Ordering::Relaxed)
+        {
+            self.st_active.store(true, Ordering::Release);
+            let _guard = StActiveGuard(&self.st_active);
+            let prefetch = self.read_capacity.load(Ordering::Relaxed);
+            // SAFETY: caller verified `__libc_single_threaded != 0`, `owner_tls`
+            // matches the calling thread's `TLS_FAST_MEM_READ` anchor, `self.inner`
+            // is unlocked, and `st_active` guards against same-thread signal-handler
+            // reentry.
+            let FixedMemCookieInner {
+                cursor,
+                borrowed,
+                owned,
+            } = unsafe { &mut *self.inner.data_ptr() };
+            return cursor.read_with_refill(dst, None, prefetch, |start, count, output| {
+                if let Some(data) = owned {
+                    output.extend_from_slice(&data[start..start + count]);
+                } else {
+                    let slice = unsafe {
+                        std::slice::from_raw_parts((*borrowed as *const u8).add(start), count)
+                    };
+                    output.extend_from_slice(slice);
+                }
+            });
+        }
+        self.read_into(dst, None)
     }
 
     fn read_into(&self, dst: &mut [u8], delimiter: Option<u8>) -> usize {
@@ -17646,20 +18167,17 @@ impl FixedMemCookie {
             borrowed,
             owned,
         } = &mut *inner;
-        cursor.read_into(dst, delimiter, prefetch, |start, output| {
+        cursor.read_with_refill(dst, delimiter, prefetch, |start, count, output| {
             if let Some(data) = owned {
-                output.copy_from_slice(&data[start..start + output.len()]);
+                output.extend_from_slice(&data[start..start + count]);
             } else {
                 // SAFETY: FixedMemCursor bounds each span by the capacity
                 // supplied to fmemopen. Its caller guarantees readable backing
                 // through fclose; only this synchronous copy borrows it.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        (*borrowed as *const u8).add(start),
-                        output.as_mut_ptr(),
-                        output.len(),
-                    );
-                }
+                let slice = unsafe {
+                    std::slice::from_raw_parts((*borrowed as *const u8).add(start), count)
+                };
+                output.extend_from_slice(slice);
             }
         })
     }
@@ -17678,7 +18196,7 @@ unsafe extern "C-unwind" fn fixed_mem_cookie_read(
             std::slice::from_raw_parts_mut(dst.cast(), count),
         )
     };
-    if !memory.readable {
+    if !memory.readable.load(Ordering::Relaxed) {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
     }
@@ -17756,7 +18274,7 @@ unsafe impl Send for CookieStreamInfo {}
 unsafe impl Sync for CookieStreamInfo {}
 
 /// Registry of cookie streams, keyed by stream sentinel ID.
-static COOKIE_REGISTRY: Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> = Mutex::new(None);
+static COOKIE_REGISTRY: Mutex<Option<StreamMap<CookieStreamInfo>>> = Mutex::new(None);
 
 /// Monotonic "has any cookie stream ever been created?" flag. `fopencookie` is
 /// rare; the overwhelmingly common case is that NO cookie stream exists, yet
@@ -17767,18 +18285,32 @@ static COOKIE_REGISTRY: Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> 
 /// `fopencookie`), so once set the locked check resumes — still correct.
 static COOKIE_STREAMS_PRESENT: AtomicBool = AtomicBool::new(false);
 
-fn cookie_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> {
+fn cookie_registry() -> &'static Mutex<Option<StreamMap<CookieStreamInfo>>> {
     &COOKIE_REGISTRY
 }
 
 #[inline]
-fn lock_cookie_registry()
--> std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>> {
+fn lock_cookie_registry() -> std::sync::MutexGuard<'static, Option<StreamMap<CookieStreamInfo>>> {
     crate::runtime_policy::lock_std_mutex_preserving_errno(&COOKIE_REGISTRY)
 }
 
 /// Read from a cookie-backed stream. Called by fread/fgetc for cookie streams.
 pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -> isize {
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        if aux.id == id
+            && let Some(ref info) = aux.cookie
+        {
+            if let Some(read_fn) = info.funcs.read {
+                let cookie = info.cookie;
+                drop(aux);
+                return unsafe { read_fn(cookie, buf as *mut c_char, count) };
+            }
+            return -1;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
     let guard = lock_cookie_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
@@ -17804,6 +18336,21 @@ pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -
 
 /// Write to a cookie-backed stream. Called by fwrite/fputc for cookie streams.
 pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize) -> isize {
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        if aux.id == id
+            && let Some(ref info) = aux.cookie
+        {
+            if let Some(write_fn) = info.funcs.write {
+                let cookie = info.cookie;
+                drop(aux);
+                return unsafe { write_fn(cookie, buf as *const c_char, count) };
+            }
+            return 0;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
     let guard = lock_cookie_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
@@ -17951,6 +18498,15 @@ fn fixed_mem_cookie(id: usize) -> Option<Arc<FixedMemCookie>> {
     if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
         return None;
     }
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 1 {
+            return None;
+        }
+        let aux = lock_static_slot_aux(slot);
+        return (aux.id == id)
+            .then(|| aux.cookie.as_ref()?.fixed_memory.clone())
+            .flatten();
+    }
     lock_cookie_registry()
         .as_ref()?
         .get(&id)?
@@ -17976,6 +18532,22 @@ fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
 
 /// Seek a cookie-backed stream.
 pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_int) -> c_int {
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        if aux.id == id
+            && let Some(ref info) = aux.cookie
+        {
+            if let Some(seek_fn) = info.funcs.seek {
+                let cookie = info.cookie;
+                drop(aux);
+                return unsafe { seek_fn(cookie, offset, whence) };
+            }
+            unsafe { set_abi_errno(errno::ESPIPE) };
+            return -1;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
     let guard = lock_cookie_registry();
     if let Some(ref map) = *guard
         && let Some(info) = map.get(&id)
@@ -17996,7 +18568,14 @@ pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_i
 /// unseekable stream. GNU tell/getpos retain a callback's errno (including a
 /// pre-existing value); when no error was supplied they report EIO.
 unsafe fn cookie_stream_position(id: usize, whence: c_int) -> Option<i64> {
-    let (cookie, seek) = {
+    let (cookie, seek) = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        let Some(info) = (aux.id == id).then_some(aux.cookie.as_ref()).flatten() else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return None;
+        };
+        (info.cookie, info.funcs.seek)
+    } else {
         let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
         let Some(info) = guard.as_ref().and_then(|map| map.get(&id)) else {
             unsafe { set_abi_errno(errno::EBADF) };
@@ -18022,14 +18601,30 @@ unsafe fn cookie_stream_position(id: usize, whence: c_int) -> Option<i64> {
 
 /// Close a cookie-backed stream: call the close callback and remove from registry.
 pub(crate) unsafe fn cookie_stream_close(id: usize) -> c_int {
-    let mut guard = lock_cookie_registry();
-    if let Some(ref mut map) = *guard
-        && let Some(info) = map.remove(&id)
-        && let Some(close_fn) = info.funcs.close
-    {
-        let cookie = info.cookie;
-        drop(guard);
-        return unsafe { close_fn(cookie) };
+    let removed = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        STATIC_SLOT_COOKIE_KIND[slot].store(0, Ordering::Release);
+        let mut aux = lock_static_slot_aux(slot);
+        if aux.id == id {
+            let info = aux.cookie.take();
+            if aux.fast_mem_read.is_none() {
+                aux.id = 0;
+            }
+            info
+        } else {
+            None
+        }
+    } else {
+        let mut guard = lock_cookie_registry();
+        guard.as_mut().and_then(|map| map.remove(&id))
+    };
+    if let Some(info) = removed {
+        if let Some(memory) = info.fixed_memory {
+            let buf = memory.lock_inner().cursor.take_input_buffer();
+            return_pooled_fixed_mem_input(buf);
+        }
+        if let Some(close_fn) = info.funcs.close {
+            return unsafe { close_fn(info.cookie) };
+        }
     }
     0
 }
@@ -18042,6 +18637,9 @@ pub(crate) fn is_cookie_stream(id: usize) -> bool {
     // for a real cookie id happens-after this `Acquire` load observes `true`.
     if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
         return false;
+    }
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        return STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 0;
     }
     let guard = lock_cookie_registry();
     if let Some(ref map) = *guard {
@@ -18162,7 +18760,12 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
         _ => {}
     }
 
-    // Lock-free std stream slot check (stdin/stdout/stderr) before bloom filter hashing
+    // Lock-free O(1) resolution for all 256 static NativeFile slots (0..256)
+    if let Some(slot) = io_internal_abi::occupied_static_native_slot_lockfree(stream) {
+        return StreamType::NativeFile(slot);
+    }
+
+    // Lock-free std stream slot check (including visible/copy-relocated _IO_2_1_*)
     if let Some(fd) = io_internal_abi::native_stdio_fd_for_ptr(stream) {
         return StreamType::NativeFile(fd as usize);
     }
@@ -18228,7 +18831,9 @@ pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
     }
     match classify_stream_for_locking(stream) {
         StreamType::NativeFile(slot) => {
-            if let Some(native_file) = native_file_unlocked_registry(slot) {
+            if !io_internal_abi::try_static_slot_explicit_lock(slot)
+                && let Some(native_file) = native_file_unlocked_registry(slot)
+            {
                 native_file.explicit_lock();
             }
         }
@@ -18253,6 +18858,9 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
     }
     match classify_stream_for_locking(stream) {
         StreamType::NativeFile(slot) => {
+            if let Some(acquired) = io_internal_abi::try_static_slot_explicit_trylock(slot) {
+                return if acquired { 0 } else { -1 };
+            }
             if let Some(native_file) = native_file_unlocked_registry(slot) {
                 return if native_file.try_explicit_lock() {
                     0
@@ -18284,10 +18892,12 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
     }
     match classify_stream_for_locking(stream) {
         StreamType::NativeFile(slot) => {
-            if let Some(native_file) = native_file_unlocked_registry(slot) {
-                // SAFETY: Caller is responsible for having called flockfile/ftrylockfile first.
-                // This is the POSIX contract - funlockfile behavior is undefined if the caller
-                // doesn't hold the lock.
+            // SAFETY: Caller is responsible for having called flockfile/ftrylockfile first.
+            // This is the POSIX contract - funlockfile behavior is undefined if the caller
+            // doesn't hold the lock.
+            if !unsafe { io_internal_abi::try_static_slot_explicit_unlock(slot) }
+                && let Some(native_file) = native_file_unlocked_registry(slot)
+            {
                 unsafe { native_file.explicit_unlock() };
             }
         }
@@ -18342,16 +18952,33 @@ pub unsafe extern "C" fn fmemopen(
         return std::ptr::null_mut();
     }
 
-    // Parse mode string.
-    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
-    if !mode_terminated {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
-    }
-    let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
-    let Some(open_flags) = parse_mode(mode_bytes) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
+    // Fast-parse common single-character modes ("r", "w") inline; fall back to
+    // full `scan_c_str_len` + `parse_mode` for compound/modifier modes.
+    let b0 = unsafe { *mode.cast::<u8>() };
+    let open_flags = if b0 == b'r' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
+        OpenFlags {
+            readable: true,
+            ..Default::default()
+        }
+    } else if b0 == b'w' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
+        OpenFlags {
+            writable: true,
+            create: true,
+            truncate: true,
+            ..Default::default()
+        }
+    } else {
+        let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+        if !mode_terminated {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        }
+        let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
+        let Some(flags) = parse_mode(mode_bytes) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        };
+        flags
     };
 
     if size > isize::MAX as usize || (!buf.is_null() && (buf as usize).checked_add(size).is_none())
@@ -18359,7 +18986,6 @@ pub unsafe extern "C" fn fmemopen(
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
-    let owned = buf.is_null().then(|| vec![0; size]);
     let content_len = if open_flags.truncate {
         0
     } else if open_flags.append {
@@ -18376,62 +19002,164 @@ pub unsafe extern "C" fn fmemopen(
     } else {
         size
     };
-    let memory = Arc::new(FixedMemCookie {
-        inner: parking_lot::Mutex::new(FixedMemCookieInner {
-            cursor: frankenlibc_core::stdio::file::FixedMemCursor::new(
-                size,
-                content_len,
-                open_flags.append,
-            ),
-            borrowed: buf as usize,
-            owned,
-        }),
-        read_capacity: AtomicUsize::new(8192),
-        readable: open_flags.readable,
-    });
-    let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
-    stream.set_offset(if open_flags.append {
-        content_len as i64
-    } else {
-        0
-    });
-    // glibc's fmemopen streams are byte-oriented from creation (_mode == -1).
-    stream.set_orientation(-1);
-    let handle = register_memory_stream_with_native_handle(
-        stream,
+
+    let Some(handle) = io_internal_abi::register_memory_handle(
         io_internal_abi::NativeFileBacking::MemoryFixed {
             buf: buf.cast::<u8>(),
             size,
             content_len,
             owns: buf.is_null(),
         },
-        open_flags,
+        native_stream_open_flags(open_flags),
         -2,
-    );
-    if handle.is_null() {
+        initial_glibc_flags(&open_flags, false, BufMode::Full),
+    ) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
         return std::ptr::null_mut();
-    }
-    let id = canonical_stream_id(handle);
-    let funcs = CookieIoFuncs {
-        read: Some(fixed_mem_cookie_read),
-        write: Some(fixed_mem_cookie_write),
-        seek: Some(fixed_mem_cookie_seek),
-        close: None,
     };
-    lock_cookie_registry()
-        .get_or_insert_with(artifact_hash_map)
-        .insert(
-            id,
-            CookieStreamInfo {
-                cookie: Arc::as_ptr(&memory).cast_mut().cast(),
-                funcs,
-                fixed_memory: Some(Arc::clone(&memory)),
-            },
-        );
-    COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
-    if open_flags.readable && !open_flags.writable {
-        register_fast_fixed_mem_read(id, memory);
+
+    // `register_memory_handle` never returns one of the three reserved std
+    // streams (`0..3`), so `handle as usize` is already its canonical id.
+    let id = handle as usize;
+    let initial_offset = if open_flags.append {
+        content_len as i64
+    } else {
+        0
+    };
+    let mut owned = buf.is_null().then(|| vec![0; size]);
+    let read_only = open_flags.readable && !open_flags.writable;
+    let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+    let tls_anchor = tls_cell as usize;
+    crate::glibc_internal_abi::note_current_thread_activity();
+
+    let mut reused = None;
+    if read_only
+        && let Some(PooledFmemopenObjects {
+            mut cell,
+            mut cursor,
+        }) = take_pooled_fmemopen_objects()
+        && let Some(cell_mut) = Arc::get_mut(&mut cell)
+        && let Some(cursor_mut) = Arc::get_mut(&mut cursor)
+        && let Some(mem_mut) = Arc::get_mut(&mut cursor_mut.memory)
+    {
+        let inner = mem_mut.inner.get_mut();
+        inner.cursor.reset(size, content_len, open_flags.append);
+        inner.borrowed = buf as usize;
+        inner.owned = owned.take();
+        *mem_mut.st_active.get_mut() = false;
+        *mem_mut.owner_tls.get_mut() = tls_anchor;
+        *mem_mut.read_capacity.get_mut() = 8192;
+        *mem_mut.readable.get_mut() = open_flags.readable;
+        cursor_mut.reset_mut(id);
+        let stream_mut = cell_mut.stream.get_mut();
+        stream_mut.reset_for_fmemopen(open_flags, initial_offset, id);
+        mirror_stream_flags(id, stream_mut);
+        *cell_mut.flags_word.get_mut() = id;
+        let memory = Arc::clone(&cursor.memory);
+        reused = Some((cell, memory, Some(cursor)));
     }
+
+    let (cell, memory, fast_cursor) = if let Some(bundle) = reused {
+        bundle
+    } else {
+        let input_buf = if open_flags.readable && size > 0 {
+            take_pooled_fixed_mem_input()
+        } else {
+            Vec::new()
+        };
+        let memory = Arc::new(FixedMemCookie {
+            inner: parking_lot::Mutex::new(FixedMemCookieInner {
+                cursor: frankenlibc_core::stdio::file::FixedMemCursor::with_input_buffer(
+                    size,
+                    content_len,
+                    open_flags.append,
+                    input_buf,
+                ),
+                borrowed: buf as usize,
+                owned,
+            }),
+            st_active: AtomicBool::new(false),
+            owner_tls: AtomicUsize::new(tls_anchor),
+            read_capacity: AtomicUsize::new(8192),
+            readable: AtomicBool::new(open_flags.readable),
+        });
+        let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
+        stream.set_offset(initial_offset);
+        // glibc's fmemopen streams are byte-oriented from creation (_mode == -1).
+        stream.set_orientation(-1);
+        stream.set_c_handle(id);
+        mirror_stream_flags(id, &stream);
+        let cell = new_stream_cell_with_handle(stream, id);
+        let fast_cursor =
+            read_only.then(|| Arc::new(FastFixedMemRead::new(Arc::clone(&memory), id)));
+        (cell, memory, fast_cursor)
+    };
+
+    let info = CookieStreamInfo {
+        cookie: Arc::as_ptr(&memory).cast_mut().cast(),
+        funcs: CookieIoFuncs {
+            read: Some(fixed_mem_cookie_read),
+            write: Some(fixed_mem_cookie_write),
+            seek: Some(fixed_mem_cookie_seek),
+            close: None,
+        },
+        fixed_memory: Some(memory),
+    };
+
+    let single_threaded =
+        crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
+    let st_cursor_ptr = fast_cursor.as_ref().map(Arc::as_ptr);
+    let mt_cursor = if single_threaded {
+        None
+    } else {
+        fast_cursor.clone()
+    };
+
+    // Publish cookie + fast-mem metadata before inserting into `REGISTRY` so a
+    // concurrent `fflush(NULL)` snapshot never observes `id` before
+    // `is_cookie_stream(id)` returns `true`.
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        if fast_cursor.is_some() {
+            FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
+        }
+        {
+            let mut aux = lock_static_slot_aux(slot);
+            aux.id = id;
+            aux.cookie = Some(info);
+            if core::mem::replace(&mut aux.fast_mem_read, fast_cursor).is_some() {
+                FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+            }
+        }
+        STATIC_SLOT_COOKIE_KIND[slot].store(1, Ordering::Release);
+        if !COOKIE_STREAMS_PRESENT.load(Ordering::Relaxed) {
+            COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+        }
+    } else {
+        lock_cookie_registry()
+            .get_or_insert_with(stream_map)
+            .insert(id, info);
+        if !COOKIE_STREAMS_PRESENT.load(Ordering::Relaxed) {
+            COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+        }
+        if let Some(cursor) = fast_cursor {
+            FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
+            let mut map = fast_fixed_mem_reads()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if map.insert(id, cursor).is_some() {
+                FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+            }
+        }
+    }
+
+    let cur_gen = {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.insert_cell(id, cell)
+    };
+    if let Some(cursor_ptr) = st_cursor_ptr {
+        populate_fast_fixed_mem_read_tls(tls_cell, id, cur_gen, cursor_ptr, mt_cursor.as_ref());
+    }
+
     if !buf.is_null() && open_flags.truncate && open_flags.readable && size > 0 {
         // SAFETY: w+ requires writable backing and exposes the initial NUL;
         // bytes beyond it are untouched until actual output is flushed.
@@ -18546,25 +19274,36 @@ pub unsafe extern "C" fn fopencookie(
         return std::ptr::null_mut();
     };
 
+    // Publish cookie info before inserting into `REGISTRY` so a concurrent
+    // `fflush(NULL)` snapshot never observes `id` before `is_cookie_stream(id)`
+    // returns `true`.
+    let info = CookieStreamInfo {
+        cookie,
+        funcs,
+        fixed_memory: None,
+    };
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        {
+            let mut aux = lock_static_slot_aux(slot);
+            aux.id = id;
+            aux.cookie = Some(info);
+            aux.fast_mem_read = None;
+        }
+        STATIC_SLOT_COOKIE_KIND[slot].store(2, Ordering::Release);
+        COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+    } else {
+        let mut cookie_guard = lock_cookie_registry();
+        let map = cookie_guard.get_or_insert_with(stream_map);
+        map.insert(id, info);
+        // Publish before releasing the lock and before the id is returned, so the
+        // lock-free fast path in `is_cookie_stream` is correct (Acquire/Release pair).
+        COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+        drop(cookie_guard);
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.insert_stream_with_handle(id, stream, handle);
     drop(reg);
-
-    // Register the cookie info
-    let mut cookie_guard = lock_cookie_registry();
-    let map = cookie_guard.get_or_insert_with(artifact_hash_map);
-    map.insert(
-        id,
-        CookieStreamInfo {
-            cookie,
-            funcs,
-            fixed_memory: None,
-        },
-    );
-    // Publish before releasing the lock and before the id is returned, so the
-    // lock-free fast path in `is_cookie_stream` is correct (Acquire/Release pair).
-    COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
-    drop(cookie_guard);
 
     id as *mut c_void
 }

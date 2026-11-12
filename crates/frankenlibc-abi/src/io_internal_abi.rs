@@ -575,6 +575,28 @@ impl NativeFileLocked {
         }
     }
 
+    #[inline]
+    fn reinit_in_place(
+        &mut self,
+        backing: NativeFileBacking,
+        open_flags: u32,
+        buf_mode: NativeFileBufMode,
+    ) {
+        self.magic = NATIVE_FILE_MAGIC;
+        self.backing = backing;
+        self.buffer_base = ptr::null_mut();
+        self.buffer_pos = ptr::null_mut();
+        self.buffer_end = ptr::null_mut();
+        self.buffer_capacity = 0;
+        self.buf_mode = buf_mode;
+        self.eof = false;
+        self.error = false;
+        self.ungetc = None;
+        self.healing_budget = 0;
+        self.open_flags = open_flags;
+        self.popen_child_pid = None;
+    }
+
     /// Get the file descriptor if this is an fd-backed stream.
     #[allow(dead_code)] // WIP: used when native fmemopen is wired
     fn fd(&self) -> Option<c_int> {
@@ -605,17 +627,41 @@ static STD_STREAM_LOCKS: [NativeFileLock; 3] = [
     ))),
 ];
 
+/// Persistent per-slot locks for static registry slots `0..STREAM_REGISTRY_CAPACITY`
+/// (slots `0..3` route through `STD_STREAM_LOCKS`; slots `3..256` lazily allocate
+/// once on first use and are reused in place across `fopen`/`fmemopen`/`fclose`
+/// without heap box churn or global `NATIVE_STREAM_REGISTRY` lock contention).
+static STATIC_SLOT_LOCKS: [frankenlibc_membrane::util::LazyBox<NativeFileLock>;
+    STREAM_REGISTRY_CAPACITY] =
+    [const { frankenlibc_membrane::util::LazyBox::new() }; STREAM_REGISTRY_CAPACITY];
+
+/// Lock-free occupancy mirror (`0` = free, `1` = occupied) for the 256 static
+/// slots in the process-wide `NATIVE_STREAM_REGISTRY`.
+static STATIC_SLOT_OCCUPIED: [std::sync::atomic::AtomicU8; STREAM_REGISTRY_CAPACITY] =
+    [const { std::sync::atomic::AtomicU8::new(0) }; STREAM_REGISTRY_CAPACITY];
+
+#[inline]
+fn static_slot_lock(slot: usize) -> &'static NativeFileLock {
+    if slot < STD_STREAM_LOCKS.len() {
+        &STD_STREAM_LOCKS[slot]
+    } else {
+        STATIC_SLOT_LOCKS[slot].get_or_init(|| {
+            let mut state = NativeFileLocked::new(-1, 0, NativeFileBufMode::None);
+            NativeFile::reset_locked_state(&mut state);
+            crate::util::AbiReentrantMutex::new(RefCell::new(state))
+        })
+    }
+}
+
 struct NativeFileState {
-    /// Built at construction for a real stream; for an empty registry slot,
-    /// on first touch. Every process's registry has 256 slots, and boxing a
-    /// lock for each at startup was 256 host mallocs plus 256 fallback-table
-    /// inserts (allocations before runtime-ready go to the host allocator)
-    /// per process start (bd-rc0923-epic-eeuy4f.25).
-    /// Standard streams (slots 0..3) use static `STD_STREAM_LOCKS` via
-    /// `std_lock_slot` (1..=3) so `.init_array` makes zero heap allocations.
+    /// Built at construction for an overflow/standalone stream; for static
+    /// registry slots (`0..256`), `static_lock_slot` (`1..=256`) routes to
+    /// `STD_STREAM_LOCKS` (`0..3`) or `STATIC_SLOT_LOCKS` (`3..256`) so
+    /// `.init_array` makes zero heap allocations and dynamic stream lifecycles
+    /// reuse persistent slot locks without per-open `Box` alloc/free.
     locked: frankenlibc_membrane::util::LazyBox<NativeFileLock>,
     orientation: AtomicI8,
-    std_lock_slot: u8,
+    static_lock_slot: u16,
 }
 
 impl NativeFileState {
@@ -627,15 +673,15 @@ impl NativeFileState {
                 ))),
             ),
             orientation: AtomicI8::new(0),
-            std_lock_slot: 0,
+            static_lock_slot: 0,
         }
     }
 
-    const fn new_std(slot_index: usize) -> Self {
+    const fn new_static_slot(slot_index: usize) -> Self {
         Self {
             locked: frankenlibc_membrane::util::LazyBox::new(),
             orientation: AtomicI8::new(0),
-            std_lock_slot: (slot_index + 1) as u8,
+            static_lock_slot: (slot_index + 1) as u16,
         }
     }
 
@@ -644,15 +690,15 @@ impl NativeFileState {
         Self {
             locked: frankenlibc_membrane::util::LazyBox::new(),
             orientation: AtomicI8::new(0),
-            std_lock_slot: 0,
+            static_lock_slot: 0,
         }
     }
 
     /// The lock, creating an empty slot's (in the invalidated state an empty
     /// slot had always been built with) on first use.
     fn lock(&self) -> &NativeFileLock {
-        if self.std_lock_slot != 0 {
-            return &STD_STREAM_LOCKS[(self.std_lock_slot - 1) as usize];
+        if self.static_lock_slot != 0 {
+            return static_slot_lock((self.static_lock_slot - 1) as usize);
         }
         self.locked.get_or_init(|| {
             let mut state = NativeFileLocked::new(-1, 0, NativeFileBufMode::None);
@@ -673,14 +719,14 @@ impl NativeFileState {
                 )),
             ),
             orientation: AtomicI8::new(0),
-            std_lock_slot: 0,
+            static_lock_slot: 0,
         }
     }
 
     /// `_IO_FILE::_lock`: null for an empty slot that never needed a lock.
     fn lock_ptr(&self) -> *mut c_void {
-        if self.std_lock_slot != 0 {
-            return STD_STREAM_LOCKS[(self.std_lock_slot - 1) as usize].opaque_ptr();
+        if self.static_lock_slot != 0 {
+            return static_slot_lock((self.static_lock_slot - 1) as usize).opaque_ptr();
         }
         self.locked
             .get()
@@ -912,7 +958,33 @@ impl NativeFile {
         let mut file = Self {
             _io_file: _IO_FILE_Layout::new(fd),
             vtable: ptr::addr_of_mut!(_IO_file_jumps),
-            _frankenlibc_state: NativeFileState::new_std(slot_index),
+            _frankenlibc_state: NativeFileState::new_static_slot(slot_index),
+        };
+        file.sync_lock_ptr();
+        file
+    }
+
+    fn new_in_static_slot(slot_index: usize, fd: i32) -> Self {
+        let mut file = Self {
+            _io_file: _IO_FILE_Layout::new(fd),
+            vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
+            _frankenlibc_state: NativeFileState::new_static_slot(slot_index),
+        };
+        file.sync_lock_ptr();
+        file
+    }
+
+    fn new_from_locked(fd: i32, locked_state: NativeFileLocked) -> Self {
+        let mut file = Self {
+            _io_file: _IO_FILE_Layout::new(fd),
+            vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
+            _frankenlibc_state: NativeFileState {
+                locked: frankenlibc_membrane::util::LazyBox::new_with(
+                    crate::util::AbiReentrantMutex::new(RefCell::new(locked_state)),
+                ),
+                orientation: AtomicI8::new(0),
+                static_lock_slot: 0,
+            },
         };
         file.sync_lock_ptr();
         file
@@ -994,9 +1066,9 @@ impl NativeFile {
     /// (bd-rc0923-epic-eeuy4f.25).
     #[allow(dead_code)]
     fn invalidate_unshared(&mut self) {
-        if self._frankenlibc_state.std_lock_slot != 0 {
+        if self._frankenlibc_state.static_lock_slot != 0 {
             let guard =
-                STD_STREAM_LOCKS[(self._frankenlibc_state.std_lock_slot - 1) as usize].lock();
+                static_slot_lock((self._frankenlibc_state.static_lock_slot - 1) as usize).lock();
             Self::reset_locked_state(&mut guard.borrow_mut());
         } else if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
             Self::reset_locked_state(lock.get_mut().get_mut());
@@ -1497,7 +1569,7 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
 use std::sync::Mutex;
 
 /// Number of slots in the allocation-free startup slab and each growth slab.
-const STREAM_REGISTRY_CAPACITY: usize = 256;
+pub(crate) const STREAM_REGISTRY_CAPACITY: usize = 256;
 
 /// Slot state: slot is free.
 const SLOT_FREE: u32 = 0;
@@ -1543,6 +1615,14 @@ pub struct NativeStreamRegistry {
     /// (`Vec::new()` contains a non-zero `NonNull::dangling()` pointer).
     #[allow(clippy::box_collection)]
     overflow: Option<Box<Vec<Vec<StreamSlot>>>>,
+    /// Lowest likely free dynamic slot index (`0` behaves as `3` so `EMPTY`
+    /// stays all-zero in `.bss`).
+    next_free_hint: usize,
+    /// `false` (`0` in `.bss`) on the process-wide `NATIVE_STREAM_REGISTRY`
+    /// static; `true` on standalone `NativeStreamRegistry::new()` instances in
+    /// unit tests so parallel test registries never share `STATIC_SLOT_LOCKS`
+    /// or `STATIC_SLOT_OCCUPIED`.
+    local_test_instance: bool,
 }
 
 impl NativeStreamRegistry {
@@ -1555,6 +1635,8 @@ impl NativeStreamRegistry {
     const EMPTY: Self = Self {
         slots: [const { StreamSlot::EMPTY }; STREAM_REGISTRY_CAPACITY],
         overflow: None,
+        next_free_hint: 0,
+        local_test_instance: false,
     };
 
     fn slots(&self) -> impl Iterator<Item = &StreamSlot> {
@@ -1618,6 +1700,7 @@ impl NativeStreamRegistry {
     #[allow(dead_code)]
     fn new() -> Self {
         let mut registry = Self::EMPTY;
+        registry.local_test_instance = true;
         registry.install_std_streams();
         registry
     }
@@ -1630,11 +1713,21 @@ impl NativeStreamRegistry {
         // stdin and stdout were unbuffered and neither read- nor write-only.
         const STD_STREAM_FLAGS: i32 =
             GLIBC_IO_MAGIC | glibc_flag_bits::LINKED | glibc_flag_bits::IS_FILEBUF;
+        let local_test_instance = self.local_test_instance;
+        let make_std_file =
+            |slot_idx: usize, fd: c_int, open_flags: u32, mode: NativeFileBufMode| {
+                if local_test_instance {
+                    NativeFile::new(fd, open_flags, mode)
+                } else {
+                    NativeFile::new_std(slot_idx, fd)
+                }
+            };
         let registry = self;
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
-                let mut file = NativeFile::new_std(0, 0);
+                let mut file = make_std_file(0, 0, file_flags::READ, NativeFileBufMode::Full);
+                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
                 file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_WRITES;
                 file
             },
@@ -1642,7 +1735,8 @@ impl NativeStreamRegistry {
         registry.slots[1] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
-                let mut file = NativeFile::new_std(1, 1);
+                let mut file = make_std_file(1, 1, file_flags::WRITE, NativeFileBufMode::Line);
+                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
                 file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_READS;
                 file
             },
@@ -1650,12 +1744,18 @@ impl NativeStreamRegistry {
         registry.slots[2] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
-                let mut file = NativeFile::new_std(2, 2);
+                let mut file = make_std_file(2, 2, file_flags::WRITE, NativeFileBufMode::None);
+                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
                 file._io_file._flags =
                     STD_STREAM_FLAGS | glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED;
                 file
             },
         };
+        if !local_test_instance {
+            for flag in &STATIC_SLOT_OCCUPIED[..3] {
+                flag.store(1, Ordering::Release);
+            }
+        }
         // Note: Chain linking is deferred to ensure_stdio_chain_linked().
     }
 
@@ -1680,18 +1780,66 @@ impl NativeStreamRegistry {
         }
     }
 
-    /// Register a new stream, growing by a stable slab when needed.
-    /// Returns `None` only if storage cannot be allocated or indexed.
-    ///
-    /// The new file is prepended to the `_IO_list_all` linked list.
-    pub fn register(&mut self, file: NativeFile) -> Option<usize> {
-        // Start from slot 3 (0/1/2 are reserved for stdin/stdout/stderr).
-        for (i, slot) in self.slots_mut().enumerate().skip(3) {
-            if slot.state == SLOT_FREE {
-                Self::occupy_slot(slot, file);
-                return Some(i);
+    fn find_free_slot_index(&self) -> Option<usize> {
+        let start = self.next_free_hint.max(3);
+        if start < STREAM_REGISTRY_CAPACITY {
+            if let Some(rel) = self.slots[start..]
+                .iter()
+                .position(|slot| slot.state == SLOT_FREE)
+            {
+                return Some(start + rel);
+            }
+            if start > 3
+                && let Some(rel) = self.slots[3..start]
+                    .iter()
+                    .position(|slot| slot.state == SLOT_FREE)
+            {
+                return Some(3 + rel);
+            }
+        } else if let Some(rel) = self.slots[3..]
+            .iter()
+            .position(|slot| slot.state == SLOT_FREE)
+        {
+            return Some(3 + rel);
+        }
+        self.find_free_overflow_slot_index()
+    }
+
+    fn find_free_overflow_slot_index(&self) -> Option<usize> {
+        if let Some(overflow) = self.overflow.as_ref() {
+            for (slab_idx, slab) in overflow.iter().enumerate() {
+                if let Some(in_slab) = slab.iter().position(|slot| slot.state == SLOT_FREE) {
+                    return Some((slab_idx + 1) * STREAM_REGISTRY_CAPACITY + in_slab);
+                }
             }
         }
+        None
+    }
+
+    /// Claim a free static slot (`3..STREAM_REGISTRY_CAPACITY`) whose persistent
+    /// lock can be acquired immediately via `try_lock()`, avoiding any blocking
+    /// wait on `STATIC_SLOT_LOCKS` while `NATIVE_STREAM_REGISTRY` is held.
+    fn try_claim_free_static_slot(
+        &self,
+    ) -> Option<(
+        usize,
+        crate::util::AbiReentrantMutexGuard<'static, RefCell<NativeFileLocked>>,
+    )> {
+        if self.local_test_instance {
+            return None;
+        }
+        let start = self.next_free_hint.clamp(3, STREAM_REGISTRY_CAPACITY);
+        for index in (start..STREAM_REGISTRY_CAPACITY).chain(3..start) {
+            if self.slots[index].state == SLOT_FREE
+                && let Some(guard) = static_slot_lock(index).try_lock()
+            {
+                return Some((index, guard));
+            }
+        }
+        None
+    }
+
+    fn grow_overflow_and_first_slot(&mut self) -> Option<usize> {
         let overflow = self.overflow.get_or_insert_with(|| Box::new(Vec::new()));
         let index = overflow
             .len()
@@ -1703,23 +1851,168 @@ impl NativeStreamRegistry {
         let mut slab = Vec::new();
         slab.try_reserve_exact(STREAM_REGISTRY_CAPACITY).ok()?;
         slab.resize_with(STREAM_REGISTRY_CAPACITY, StreamSlot::empty);
-        // Neither Vec can allocate below: their capacities were reserved
-        // fallibly before publishing a FILE pointer into either registry.
         overflow.push(slab);
-        Self::occupy_slot(&mut overflow.last_mut()?[0], file);
         Some(index)
     }
 
-    /// Unregister a stream by slot index. Returns `true` if the slot was occupied.
+    fn bind_file_to_static_slot(
+        index: usize,
+        slot_guard: crate::util::AbiReentrantMutexGuard<'static, RefCell<NativeFileLocked>>,
+        file: &mut NativeFile,
+    ) {
+        if file._frankenlibc_state.static_lock_slot != 0 {
+            return;
+        }
+        if let Some(boxed_lock) = file._frankenlibc_state.locked.get_mut() {
+            let mut blank = NativeFileLocked::new(-1, 0, NativeFileBufMode::None);
+            NativeFile::reset_locked_state(&mut blank);
+            let moved_state = std::mem::replace(boxed_lock.get_mut().get_mut(), blank);
+            *slot_guard.borrow_mut() = moved_state;
+        }
+        drop(slot_guard);
+        file._frankenlibc_state.locked = frankenlibc_membrane::util::LazyBox::new();
+        file._frankenlibc_state.static_lock_slot = (index + 1) as u16;
+        file.sync_lock_ptr();
+    }
+
+    fn occupy_static_slot_in_place(
+        &mut self,
+        index: usize,
+        header_fd: c_int,
+        glibc_flags: i32,
+    ) -> *mut c_void {
+        let slot = &mut self.slots[index];
+        if slot.file._frankenlibc_state.static_lock_slot != (index + 1) as u16 {
+            slot.file = NativeFile::new_in_static_slot(index, header_fd);
+        } else {
+            slot.file._io_file._fileno = header_fd;
+            slot.file._io_file._mode = 0;
+            slot.file._io_file._offset = 0;
+            slot.file._io_file._old_offset = 0;
+            slot.file._io_file._flags2 = 0;
+            slot.file.vtable = ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t;
+            slot.file
+                ._frankenlibc_state
+                .orientation
+                .store(0, Ordering::Relaxed);
+        }
+        slot.file._io_file._flags =
+            GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
+        slot.state = SLOT_OCCUPIED;
+        let ptr = &mut slot.file as *mut NativeFile;
+        // SAFETY: caller holds `NATIVE_STREAM_REGISTRY` mutex and static slots
+        // reside at stable addresses for the lifetime of the process.
+        unsafe {
+            slot.file.set_chain(native_file_list().cast::<NativeFile>());
+            publish_native_file_list(ptr.cast());
+        }
+        STATIC_SLOT_OCCUPIED[index].store(1, Ordering::Release);
+        self.next_free_hint = index + 1;
+        ptr.cast()
+    }
+
+    fn try_claim_and_reinit_static_slot(
+        &mut self,
+        backing: NativeFileBacking,
+        open_flags: u32,
+        buf_mode: NativeFileBufMode,
+    ) -> Result<usize, NativeFileBacking> {
+        if self.local_test_instance {
+            return Err(backing);
+        }
+        let start = self.next_free_hint.clamp(3, STREAM_REGISTRY_CAPACITY);
+        for index in (start..STREAM_REGISTRY_CAPACITY).chain(3..start) {
+            if self.slots[index].state != SLOT_FREE {
+                continue;
+            }
+            if let Some(guard) = static_slot_lock(index).try_lock() {
+                guard
+                    .borrow_mut()
+                    .reinit_in_place(backing, open_flags, buf_mode);
+                drop(guard);
+                return Ok(index);
+            }
+        }
+        Err(backing)
+    }
+
+    fn register_with_locked_state(
+        &mut self,
+        header_fd: c_int,
+        glibc_flags: i32,
+        locked_state: NativeFileLocked,
+    ) -> Option<usize> {
+        if let Some((index, slot_guard)) = self.try_claim_free_static_slot() {
+            *slot_guard.borrow_mut() = locked_state;
+            drop(slot_guard);
+            let _ = self.occupy_static_slot_in_place(index, header_fd, glibc_flags);
+            return Some(index);
+        }
+        let index = if self.local_test_instance {
+            match self.find_free_slot_index() {
+                Some(i) => i,
+                None => self.grow_overflow_and_first_slot()?,
+            }
+        } else {
+            match self.find_free_overflow_slot_index() {
+                Some(i) => i,
+                None => self.grow_overflow_and_first_slot()?,
+            }
+        };
+        let mut file = NativeFile::new_from_locked(header_fd, locked_state);
+        file._io_file._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
+        file._io_file._fileno = header_fd;
+        let local_test_instance = self.local_test_instance;
+        let slot = self.slot_mut(index)?;
+        Self::occupy_slot(slot, file);
+        if index < STREAM_REGISTRY_CAPACITY {
+            if !local_test_instance {
+                STATIC_SLOT_OCCUPIED[index].store(1, Ordering::Release);
+            }
+            self.next_free_hint = index + 1;
+        }
+        Some(index)
+    }
+
+    /// Register a new stream, growing by a stable slab when needed.
+    /// Returns `None` only if storage cannot be allocated or indexed.
     ///
-    /// The file is unlinked from the `_IO_list_all` linked list.
-    pub fn unregister(&mut self, index: usize) -> bool {
+    /// The new file is prepended to the `_IO_list_all` linked list.
+    pub fn register(&mut self, mut file: NativeFile) -> Option<usize> {
+        let index = if let Some((index, slot_guard)) = self.try_claim_free_static_slot() {
+            Self::bind_file_to_static_slot(index, slot_guard, &mut file);
+            index
+        } else if self.local_test_instance {
+            match self.find_free_slot_index() {
+                Some(i) => i,
+                None => self.grow_overflow_and_first_slot()?,
+            }
+        } else {
+            match self.find_free_overflow_slot_index() {
+                Some(i) => i,
+                None => self.grow_overflow_and_first_slot()?,
+            }
+        };
+        let local_test_instance = self.local_test_instance;
+        let slot = self.slot_mut(index)?;
+        Self::occupy_slot(slot, file);
+        if index < STREAM_REGISTRY_CAPACITY {
+            if !local_test_instance {
+                STATIC_SLOT_OCCUPIED[index].store(1, Ordering::Release);
+            }
+            self.next_free_hint = index + 1;
+        }
+        Some(index)
+    }
+
+    fn unlink_and_clear_slot(&mut self, index: usize) -> bool {
+        let local_test_instance = self.local_test_instance;
         let Some(slot) = self.slot_mut(index) else {
             return false;
         };
         if slot.state != SLOT_OCCUPIED {
             return false;
-        }
+        };
         // Unlink from _chain list.
         let file_ptr: *mut NativeFile = &mut slot.file;
         // SAFETY: _IO_list_all is protected by the registry mutex.
@@ -1742,12 +2035,64 @@ impl NativeStreamRegistry {
                 curr = (*curr).chain();
             }
         }
-        *slot = StreamSlot::empty();
+        if !local_test_instance
+            && (3..STREAM_REGISTRY_CAPACITY).contains(&index)
+            && slot.file._frankenlibc_state.static_lock_slot == (index + 1) as u16
+        {
+            slot.state = SLOT_FREE;
+            slot.file._io_file._flags = 0;
+            slot.file._io_file._fileno = -1;
+            slot.file._io_file._mode = 0;
+            slot.file._io_file._offset = 0;
+            slot.file._io_file._old_offset = 0;
+            slot.file._io_file._flags2 = 0;
+            slot.file
+                .sync_glibc_buffer_head(ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
+            slot.file.set_chain(ptr::null_mut());
+            slot.file.vtable = ptr::null_mut();
+            slot.file
+                ._frankenlibc_state
+                .orientation
+                .store(0, Ordering::Relaxed);
+        } else {
+            *slot = StreamSlot::empty();
+        }
+        if index < STREAM_REGISTRY_CAPACITY {
+            if !local_test_instance {
+                STATIC_SLOT_OCCUPIED[index].store(0, Ordering::Release);
+            }
+            if index >= 3 && (self.next_free_hint == 0 || index < self.next_free_hint) {
+                self.next_free_hint = index;
+            }
+        }
         // Keep the lock-free `native_stdio_fd_for_ptr` table exact. `register` never hands
         // out a reserved slot (it starts at 3), so this is unreachable today; it exists so
         // the table cannot outlive the slot's occupancy if that ever changes.
         if index < NATIVE_STDIO_SLOT_ADDR.len() {
             NATIVE_STDIO_SLOT_ADDR[index].store(0, Ordering::Release);
+        }
+        true
+    }
+
+    /// Unregister a stream by slot index. Returns `true` if the slot was occupied.
+    ///
+    /// The file is unlinked from the `_IO_list_all` linked list.
+    pub fn unregister(&mut self, index: usize) -> bool {
+        let local_test_instance = self.local_test_instance;
+        if !self.unlink_and_clear_slot(index) {
+            return false;
+        }
+        if !local_test_instance && index < STREAM_REGISTRY_CAPACITY {
+            if let Some(slot_guard) = static_slot_lock(index).try_lock() {
+                NativeFile::reset_locked_state(&mut slot_guard.borrow_mut());
+                drop(slot_guard);
+            }
+            // SAFETY: no live guard for `static_slot_lock(index)` remains on this
+            // stack frame, and retiring the closed stream resets any unmatched
+            // caller `flockfile`/`ftrylockfile` recursion levels (`_IO_lock_fini`).
+            unsafe {
+                static_slot_lock(index).unlock_all_forgotten_for_current_tid();
+            }
         }
         true
     }
@@ -1824,7 +2169,9 @@ static STD_STREAMS_INSTALLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 pub(crate) struct StdStreamLocksForkGuard {
-    guards: [Option<crate::util::AbiReentrantMutexGuard<'static, RefCell<NativeFileLocked>>>; 3],
+    parent_tid: usize,
+    guards: [Option<crate::util::AbiReentrantMutexGuard<'static, RefCell<NativeFileLocked>>>;
+        STREAM_REGISTRY_CAPACITY],
 }
 
 impl StdStreamLocksForkGuard {
@@ -1832,24 +2179,67 @@ impl StdStreamLocksForkGuard {
         for guard in self.guards.iter_mut().flatten() {
             unsafe { guard.adopt_in_fork_child() };
         }
+        // Also adopt any single-threaded explicit `flockfile` held by the
+        // forking thread across `fork()` (where `try_lock_std_stream_locks`
+        // skipped acquiring guards in the parent).
+        for lock in &STD_STREAM_LOCKS {
+            unsafe { lock.adopt_in_fork_child(self.parent_tid) };
+        }
+        for slot_lock in &STATIC_SLOT_LOCKS[3..STREAM_REGISTRY_CAPACITY] {
+            if let Some(lock) = slot_lock.get() {
+                unsafe { lock.adopt_in_fork_child(self.parent_tid) };
+            }
+        }
     }
 }
 
-/// Non-blocking acquisition of all three `STD_STREAM_LOCKS` across multi-threaded `fork()`.
+/// Non-blocking acquisition of all active static stream locks (`0..256`) across
+/// multi-threaded `fork()`.
 pub(crate) fn try_lock_std_stream_locks(
     single_threaded: bool,
 ) -> Result<StdStreamLocksForkGuard, ()> {
+    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
+    let mut guards = [const { None }; STREAM_REGISTRY_CAPACITY];
     if single_threaded {
-        return Ok(StdStreamLocksForkGuard {
-            guards: [None, None, None],
-        });
+        return Ok(StdStreamLocksForkGuard { parent_tid, guards });
     }
-    let g0 = STD_STREAM_LOCKS[0].try_lock().ok_or(())?;
-    let g1 = STD_STREAM_LOCKS[1].try_lock().ok_or(())?;
-    let g2 = STD_STREAM_LOCKS[2].try_lock().ok_or(())?;
-    Ok(StdStreamLocksForkGuard {
-        guards: [Some(g0), Some(g1), Some(g2)],
-    })
+    for (slot, dst) in guards[..STD_STREAM_LOCKS.len()].iter_mut().enumerate() {
+        *dst = Some(STD_STREAM_LOCKS[slot].try_lock().ok_or(())?);
+    }
+    for (slot, dst) in guards.iter_mut().enumerate().skip(STD_STREAM_LOCKS.len()) {
+        if STATIC_SLOT_OCCUPIED[slot].load(Ordering::Acquire) != 0
+            && let Some(lock) = STATIC_SLOT_LOCKS[slot].get()
+        {
+            *dst = Some(lock.try_lock().ok_or(())?);
+        }
+    }
+    Ok(StdStreamLocksForkGuard { parent_tid, guards })
+}
+
+/// Unregister a dynamic static slot (`3..STREAM_REGISTRY_CAPACITY`) in canonical
+/// `STATIC_SLOT_LOCKS[slot] -> NATIVE_STREAM_REGISTRY` lock order, resetting its
+/// state and clearing any unmatched caller `flockfile`/`ftrylockfile` recursion.
+pub(crate) fn unregister_dynamic_static_slot(slot: usize) {
+    if !(3..STREAM_REGISTRY_CAPACITY).contains(&slot) {
+        return;
+    }
+    let lock = static_slot_lock(slot);
+    let slot_guard = lock.lock();
+    let removed = {
+        let mut native_reg = native_stream_registry();
+        native_reg.unlink_and_clear_slot(slot)
+    };
+    if removed {
+        NativeFile::reset_locked_state(&mut slot_guard.borrow_mut());
+    }
+    drop(slot_guard);
+    if removed && !lock.is_unowned() {
+        // SAFETY: `slot_guard` was dropped above, and retiring the closed stream
+        // clears any unmatched caller `flockfile`/`ftrylockfile` recursion depth.
+        unsafe {
+            lock.unlock_all_forgotten_for_current_tid();
+        }
+    }
 }
 
 /// Non-blocking lock of the stream registry, for `fork` preparation.
@@ -1928,13 +2318,74 @@ static NATIVE_SLOTS_FILE_BASE: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
 const NATIVE_SLOT_STRIDE: usize = std::mem::size_of::<StreamSlot>();
 const NATIVE_FILE_MAX_OFFSET: usize = (STREAM_REGISTRY_CAPACITY - 1) * NATIVE_SLOT_STRIDE;
 
+/// Lock-free slot lookup: returns `Some(slot)` (`0..STREAM_REGISTRY_CAPACITY`)
+/// iff `stream` is the exact address of `NATIVE_STREAM_REGISTRY.slots[slot].file`.
+#[inline]
+pub(crate) fn static_native_slot_for_ptr_lockfree(stream: *const c_void) -> Option<usize> {
+    let base = NATIVE_SLOTS_FILE_BASE.load(Ordering::Acquire);
+    if base == usize::MAX / 2 {
+        return None;
+    }
+    let offset = (stream as usize).wrapping_sub(base);
+    if offset <= NATIVE_FILE_MAX_OFFSET && offset.is_multiple_of(NATIVE_SLOT_STRIDE) {
+        Some(offset / NATIVE_SLOT_STRIDE)
+    } else {
+        None
+    }
+}
+
 /// Lock-free check: returns `true` iff `stream` is the exact address of one of
 /// the `STREAM_REGISTRY_CAPACITY` `NativeFile` slots in `NATIVE_STREAM_REGISTRY`.
 #[inline]
 pub(crate) fn is_native_slot_ptr_lockfree(stream: *const c_void) -> bool {
-    let base = NATIVE_SLOTS_FILE_BASE.load(Ordering::Acquire);
-    let offset = (stream as usize).wrapping_sub(base);
-    offset <= NATIVE_FILE_MAX_OFFSET && offset.is_multiple_of(NATIVE_SLOT_STRIDE)
+    static_native_slot_for_ptr_lockfree(stream).is_some()
+}
+
+/// Lock-free check: returns `Some(slot)` iff `stream` is an OCCUPIED static
+/// `NativeFile` slot (`0..STREAM_REGISTRY_CAPACITY`) in `NATIVE_STREAM_REGISTRY`.
+#[inline]
+pub(crate) fn occupied_static_native_slot_lockfree(stream: *const c_void) -> Option<usize> {
+    let slot = static_native_slot_for_ptr_lockfree(stream)?;
+    (STATIC_SLOT_OCCUPIED[slot].load(Ordering::Acquire) != 0).then_some(slot)
+}
+
+/// Lock-free explicit `flockfile` acquisition for static registry slots
+/// (`0..STREAM_REGISTRY_CAPACITY`) without touching `NATIVE_STREAM_REGISTRY`.
+#[inline]
+pub(crate) fn try_static_slot_explicit_lock(slot: usize) -> bool {
+    if slot >= STREAM_REGISTRY_CAPACITY || !STD_STREAMS_INSTALLED.load(Ordering::Acquire) {
+        return false;
+    }
+    let guard = static_slot_lock(slot).lock();
+    std::mem::forget(guard);
+    true
+}
+
+/// Lock-free explicit `ftrylockfile` acquisition for static registry slots.
+#[inline]
+pub(crate) fn try_static_slot_explicit_trylock(slot: usize) -> Option<bool> {
+    if slot >= STREAM_REGISTRY_CAPACITY || !STD_STREAMS_INSTALLED.load(Ordering::Acquire) {
+        return None;
+    }
+    if let Some(guard) = static_slot_lock(slot).try_lock() {
+        std::mem::forget(guard);
+        Some(true)
+    } else {
+        Some(false)
+    }
+}
+
+/// Lock-free explicit `funlockfile` release for static registry slots.
+///
+/// # Safety
+/// Caller must hold a matching explicit lock on `slot`.
+#[inline]
+pub(crate) unsafe fn try_static_slot_explicit_unlock(slot: usize) -> bool {
+    if slot >= STREAM_REGISTRY_CAPACITY || !STD_STREAMS_INSTALLED.load(Ordering::Acquire) {
+        return false;
+    }
+    unsafe { static_slot_lock(slot).unlock_forgotten_guard() };
+    true
 }
 
 /// Address of the internal `NativeFile` slot for `fd` (0..=2) without taking
@@ -2224,16 +2675,43 @@ pub(crate) fn register_stdio_handle(
     native_open_flags: u32,
     glibc_flags: i32,
 ) -> Option<*mut c_void> {
-    let mut file = NativeFile::new(fd, native_open_flags, NativeFileBufMode::None);
-    file._io_file._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
     // glibc marks fd-less streams (fmemopen, fopencookie) with _fileno == -2.
-    file._io_file._fileno = if fd < 0 { -2 } else { fd };
+    let header_fd = if fd < 0 { -2 } else { fd };
+    let locked_state = NativeFileLocked::new(fd, native_open_flags, NativeFileBufMode::None);
     let mut reg = native_stream_registry();
-    let slot = reg.register(file)?;
+    let slot = reg.register_with_locked_state(header_fd, glibc_flags, locked_state)?;
     let ptr = reg.get_mut(slot)? as *mut NativeFile as *mut c_void;
     drop(reg);
     register_native_file_ptr(ptr);
     Some(ptr)
+}
+
+/// Register a memory-backed (`fmemopen`/`open_memstream`/`open_wmemstream`)
+/// `FILE` handle directly into a static slot without allocating a temporary
+/// `LazyBox<NativeFileLock>` on the heap.
+pub(crate) fn register_memory_handle(
+    backing: NativeFileBacking,
+    native_open_flags: u32,
+    fileno: c_int,
+    glibc_flags: i32,
+) -> Option<*mut c_void> {
+    let mut reg = native_stream_registry();
+    match reg.try_claim_and_reinit_static_slot(backing, native_open_flags, NativeFileBufMode::None)
+    {
+        Ok(slot) => Some(reg.occupy_static_slot_in_place(slot, fileno, glibc_flags)),
+        Err(backing) => {
+            let locked_state = NativeFileLocked::new_with_backing(
+                backing,
+                native_open_flags,
+                NativeFileBufMode::None,
+            );
+            let slot = reg.register_with_locked_state(fileno, glibc_flags, locked_state)?;
+            let ptr = reg.get_mut(slot)? as *mut NativeFile as *mut c_void;
+            drop(reg);
+            register_native_file_ptr(ptr);
+            Some(ptr)
+        }
+    }
 }
 
 /// Byte offset of `_IO_FILE::_mode` (stream orientation) in a handle.
@@ -2274,7 +2752,13 @@ pub(crate) unsafe fn reset_stdio_handle_header(ptr: *mut c_void, fd: c_int, glib
 /// handle slots, occupied or not. A closed handle must never be passed to host
 /// glibc as if it were a host `FILE *` (its vtable is ours).
 pub(crate) fn is_native_handle_slot_address(ptr: *mut c_void) -> bool {
-    if ptr.is_null() || !might_be_native_file(ptr) {
+    if ptr.is_null() {
+        return false;
+    }
+    if let Some(slot) = static_native_slot_for_ptr_lockfree(ptr) {
+        return slot >= 3;
+    }
+    if !might_be_native_file(ptr) {
         return false;
     }
     let registry = native_stream_registry();
@@ -2543,12 +3027,17 @@ pub fn verify_native_file(ptr: *mut c_void) -> Option<usize> {
         return None;
     }
 
+    // Lock-free O(1) resolution for all 256 static registry slots (both open and closed).
+    if let Some(slot) = static_native_slot_for_ptr_lockfree(ptr) {
+        return (STATIC_SLOT_OCCUPIED[slot].load(Ordering::Acquire) != 0).then_some(slot);
+    }
+
     // Fast path: bloom filter says definitely not ours
     if !might_be_native_file(ptr) {
         return None;
     }
 
-    // Check stdin/stdout/stderr first (slots 0/1/2) via lock-free slot address table
+    // Check stdin/stdout/stderr first (slots 0/1/2, including visible/copy-relocated _IO_2_1_*)
     if let Some(fd) = native_stdio_fd_for_ptr(ptr) {
         return Some(fd as usize);
     }
@@ -2558,7 +3047,7 @@ pub fn verify_native_file(ptr: *mut c_void) -> Option<usize> {
         return Some(slot);
     }
 
-    // Check registry for dynamically opened files (slots 3+)
+    // Check registry for dynamically opened overflow files (slots 256+)
     let registry = native_stream_registry();
     registry
         .handle_slot(ptr)

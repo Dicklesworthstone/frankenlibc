@@ -141,6 +141,13 @@ impl<T> AbiReentrantMutex<T> {
         self.value.get_mut()
     }
 
+    /// Returns `true` when no thread currently owns this lock.
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn is_unowned(&self) -> bool {
+        self.owner_tid.load(Ordering::Acquire) == 0
+    }
+
     #[inline]
     pub(crate) fn try_lock(&self) -> Option<AbiReentrantMutexGuard<'_, T>> {
         let tid = current_tid();
@@ -167,6 +174,24 @@ impl<T> AbiReentrantMutex<T> {
     #[allow(dead_code)]
     pub(crate) unsafe fn unlock_forgotten_guard(&self) {
         self.unlock_for_tid(current_tid());
+    }
+
+    /// Release all remaining forgotten recursion levels owned by the calling
+    /// thread (matching glibc `_IO_lock_fini` when `fclose` retires a reusable
+    /// stream slot whose caller still held explicit `flockfile` recursion).
+    ///
+    /// # Safety
+    ///
+    /// No live `AbiReentrantMutexGuard` for `self` may exist on the calling
+    /// thread's stack when this returns.
+    #[allow(dead_code)]
+    #[inline]
+    pub(crate) unsafe fn unlock_all_forgotten_for_current_tid(&self) {
+        let owner = self.owner_tid.load(Ordering::Acquire);
+        if owner != 0 && owner == current_tid() {
+            self.recursion_depth.store(0, Ordering::Relaxed);
+            self.owner_tid.store(0, Ordering::Release);
+        }
     }
 
     /// Call in a `fork` child for a lock the forking thread held across the
@@ -240,6 +265,7 @@ impl<T> AbiReentrantMutex<T> {
 
 #[inline]
 fn current_tid() -> usize {
+    crate::glibc_internal_abi::note_current_thread_activity();
     #[cfg(not(test))]
     if let Some(owner_key) = crate::malloc_abi::fast_thread_owner_key() {
         return owner_key;
@@ -1075,6 +1101,39 @@ mod tests {
                 .join()
                 .expect("contender thread"),
             Some(42)
+        );
+    }
+
+    #[test]
+    fn abi_reentrant_mutex_unlock_all_forgotten_clears_recursive_ownership() {
+        let lock = Arc::new(AbiReentrantMutex::new(Cell::new(7usize)));
+        std::mem::forget(lock.lock());
+        std::mem::forget(lock.lock());
+        assert_eq!(lock.recursion_depth.load(Ordering::Relaxed), 2);
+
+        // Foreign thread must not be able to clear our recursive ownership.
+        let foreign = Arc::clone(&lock);
+        std::thread::spawn(move || {
+            assert!(foreign.try_lock().is_none());
+            unsafe { foreign.unlock_all_forgotten_for_current_tid() };
+            assert!(foreign.try_lock().is_none());
+        })
+        .join()
+        .expect("foreign contender");
+        assert_eq!(lock.recursion_depth.load(Ordering::Relaxed), 2);
+
+        // Owner clears all remaining forgotten recursion levels (`_IO_lock_fini`),
+        // allowing another thread to acquire the reusable slot lock immediately.
+        unsafe { lock.unlock_all_forgotten_for_current_tid() };
+        assert_eq!(lock.owner_tid.load(Ordering::Acquire), 0);
+        assert_eq!(lock.recursion_depth.load(Ordering::Relaxed), 0);
+
+        let next_owner = Arc::clone(&lock);
+        assert_eq!(
+            std::thread::spawn(move || next_owner.try_lock().map(|g| g.get()))
+                .join()
+                .expect("next owner"),
+            Some(7)
         );
     }
 

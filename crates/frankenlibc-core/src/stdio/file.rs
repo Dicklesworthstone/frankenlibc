@@ -163,6 +163,16 @@ pub struct FixedMemCursor {
 
 impl FixedMemCursor {
     pub fn new(capacity: usize, content_end: usize, append: bool) -> Self {
+        Self::with_input_buffer(capacity, content_end, append, Vec::new())
+    }
+
+    pub fn with_input_buffer(
+        capacity: usize,
+        content_end: usize,
+        append: bool,
+        mut input: Vec<u8>,
+    ) -> Self {
+        input.clear();
         let content_end = content_end.min(capacity);
         Self {
             capacity,
@@ -170,8 +180,32 @@ impl FixedMemCursor {
             content_end,
             append,
             input_start: 0,
-            input: Vec::new(),
+            input,
         }
+    }
+
+    pub fn take_input_buffer(&mut self) -> Vec<u8> {
+        self.input_start = 0;
+        let mut buf = std::mem::take(&mut self.input);
+        buf.clear();
+        buf
+    }
+
+    /// Reset cursor state in place while keeping its pooled `input` buffer
+    /// allocation (bounded to `64 KiB` so large transient buffers are released).
+    #[inline]
+    pub fn reset(&mut self, capacity: usize, content_end: usize, append: bool) {
+        if self.input.capacity() > 64 * 1024 {
+            self.input = Vec::new();
+        } else {
+            self.input.clear();
+        }
+        let content_end = content_end.min(capacity);
+        self.capacity = capacity;
+        self.position = if append { content_end } else { 0 };
+        self.content_end = content_end;
+        self.append = append;
+        self.input_start = 0;
     }
 
     pub fn position(&self) -> usize {
@@ -207,23 +241,40 @@ impl FixedMemCursor {
         Some(next)
     }
 
-    /// Copy input, optionally stopping after a delimiter. Only a refill reads
-    /// caller storage in buffered mode; unbuffered reads retain no snapshot.
-    pub fn read_into(
+    /// Copy input using a direct `Vec<u8>` refill callback (avoiding redundant
+    /// zero-initialization before overwriting). Only a refill reads caller
+    /// storage in buffered mode; unbuffered reads retain no snapshot.
+    #[inline]
+    pub fn read_with_refill(
         &mut self,
         dst: &mut [u8],
         delimiter: Option<u8>,
         prefetch: usize,
-        mut copy_from: impl FnMut(usize, &mut [u8]),
+        mut refill_into: impl FnMut(usize, usize, &mut Vec<u8>),
     ) -> usize {
+        if delimiter.is_none()
+            && let Some(start) = self.position.checked_sub(self.input_start)
+            && let Some(end) = start.checked_add(dst.len())
+            && end <= self.input.len()
+        {
+            dst.copy_from_slice(&self.input[start..end]);
+            self.position += dst.len();
+            return dst.len();
+        }
         let mut written = 0;
         while written < dst.len() && self.position < self.content_end {
             let buffered = self.position.checked_sub(self.input_start);
             if buffered.is_none_or(|i| i >= self.input.len()) {
                 self.input_start = self.position;
                 let count = prefetch.max(1).min(self.content_end - self.position);
-                self.input.resize(count, 0);
-                copy_from(self.position, &mut self.input);
+                self.input.clear();
+                refill_into(self.position, count, &mut self.input);
+                if self.input.len() > count {
+                    self.input.truncate(count);
+                }
+                if self.input.is_empty() {
+                    break;
+                }
             }
             let start = self.position - self.input_start;
             let count = (dst.len() - written).min(self.input.len() - start);
@@ -238,6 +289,21 @@ impl FixedMemCursor {
             }
         }
         written
+    }
+
+    /// Copy input, optionally stopping after a delimiter. Only a refill reads
+    /// caller storage in buffered mode; unbuffered reads retain no snapshot.
+    pub fn read_into(
+        &mut self,
+        dst: &mut [u8],
+        delimiter: Option<u8>,
+        prefetch: usize,
+        mut copy_from: impl FnMut(usize, &mut [u8]),
+    ) -> usize {
+        self.read_with_refill(dst, delimiter, prefetch, |start, count, input| {
+            input.resize(count, 0);
+            copy_from(start, input);
+        })
     }
 
     /// Commit one output callback, touching only its byte range and any
@@ -617,6 +683,26 @@ impl StdioStream {
             mem_pending_write: 0,
             mem_pending_overflow: 0,
         }
+    }
+
+    /// Reset a recycled `StdioStream` in place for a fresh `fmemopen` lifecycle.
+    #[inline]
+    pub fn reset_for_fmemopen(&mut self, open_flags: OpenFlags, offset: i64, c_handle: usize) {
+        self.fd = -1;
+        self.buffer.reset_for_reuse(BufMode::Full, BUFSIZ);
+        self.open_flags = open_flags;
+        self.flags = StreamFlags {
+            orientation: -1,
+            ..StreamFlags::default()
+        };
+        self.wide_codec = None;
+        self.offset = offset;
+        self.ungetc_byte = None;
+        self.read_pushback.clear();
+        self.mem_backing = None;
+        self.mem_pending_write = 0;
+        self.mem_pending_overflow = 0;
+        self.c_handle = c_handle;
     }
 
     /// Create a memory-backed stream for `fmemopen`.
@@ -2154,6 +2240,32 @@ mod tests {
     }
 
     #[test]
+    fn fixed_cursor_read_with_refill_recycles_buffer_without_leaking_stale_bytes() {
+        let mut backing = Vec::with_capacity(4096);
+        backing.extend_from_slice(b"stale-secret-bytes");
+        let source = b"hello\nworld!";
+        let mut cursor =
+            FixedMemCursor::with_input_buffer(source.len(), source.len(), false, backing);
+        let mut first_line = [0u8; 16];
+        let n = cursor.read_with_refill(&mut first_line, Some(b'\n'), 4096, |start, count, buf| {
+            assert!(buf.is_empty());
+            assert!(buf.capacity() >= 4096);
+            buf.extend_from_slice(&source[start..start + count]);
+        });
+        assert_eq!(&first_line[..n], b"hello\n");
+
+        let mut rest = [0u8; 16];
+        let m = cursor.read_with_refill(&mut rest, None, 4096, |_, _, _| {
+            panic!("prefetched input must serve remaining bytes without refill");
+        });
+        assert_eq!(&rest[..m], b"world!");
+
+        let recycled = cursor.take_input_buffer();
+        assert!(recycled.is_empty());
+        assert!(recycled.capacity() >= 4096);
+    }
+
+    #[test]
     fn committed_read_window_sets_sticky_byte_orientation() {
         let mut stream = StdioStream::new(
             3,
@@ -2782,5 +2894,56 @@ mod tests {
         let s = StdioStream::new(3, flags);
         assert!(!s.is_mem_backed());
         assert!(s.mem_data().is_none());
+    }
+
+    #[test]
+    fn test_fixed_cursor_reset_and_stream_reset_for_fmemopen() {
+        let mut cursor = FixedMemCursor::new(16, 16, false);
+        let src1 = *b"0123456789abcdef";
+        let mut dst = [0u8; 4];
+        assert_eq!(
+            cursor.read_with_refill(&mut dst, None, 16, |start, count, out| {
+                out.extend_from_slice(&src1[start..start + count]);
+            }),
+            4
+        );
+        assert_eq!(&dst, b"0123");
+        // Second buffered read hits the inline fast path without invoking refill.
+        assert_eq!(
+            cursor.read_with_refill(&mut dst, None, 16, |_, _, _| {
+                panic!("buffered read should not refill");
+            }),
+            4
+        );
+        assert_eq!(&dst, b"4567");
+
+        // Reset cursor in place for a smaller stream and verify clean state.
+        cursor.reset(5, 5, false);
+        assert_eq!(cursor.position(), 0);
+        assert_eq!(cursor.content_end(), 5);
+        let src2 = *b"hello";
+        let mut dst6 = [0u8; 6];
+        assert_eq!(
+            cursor.read_with_refill(&mut dst6, None, 16, |start, count, out| {
+                out.extend_from_slice(&src2[start..start + count]);
+            }),
+            5
+        );
+        assert_eq!(&dst6[..5], b"hello");
+
+        let ro_flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut stream = StdioStream::with_mode(-1, ro_flags, BufMode::Full);
+        stream.set_eof();
+        stream.set_error();
+        let _ = stream.ungetc(b'X');
+        stream.reset_for_fmemopen(ro_flags, 0, 0x1234);
+        assert!(!stream.is_eof());
+        assert!(!stream.is_error());
+        assert_eq!(stream.effective_orientation(), -1);
+        assert_eq!(stream.c_handle(), 0x1234);
+        assert_eq!(stream.offset(), 0);
     }
 }

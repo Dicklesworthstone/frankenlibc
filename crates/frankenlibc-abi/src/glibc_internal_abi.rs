@@ -528,10 +528,54 @@ pub unsafe extern "C" fn __libc_sa_len(af: u16) -> c_int {
 }
 
 // __libc_single_threaded: 1 at startup (single-threaded), cleared to 0
-// when the first thread is created via pthread_create.
+// when the first thread is created via pthread_create (or when a second host
+// thread enters FrankenLibC via `note_current_thread_activity`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static __libc_single_threaded: std::sync::atomic::AtomicU8 =
     std::sync::atomic::AtomicU8::new(1);
+
+static OBSERVED_PRIMARY_THREAD: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[thread_local]
+static THREAD_ACTIVITY_MARKER: u8 = 0;
+
+/// Observe the calling thread's canonical TLS marker address. If a second
+/// distinct thread enters FrankenLibC without going through FrankenLibC's own
+/// `pthread_create` (e.g., Rust `std::thread::spawn`, host `pthread_create`
+/// under `RTLD_DEEPBIND`, or raw `clone`), clear `__libc_single_threaded` to `0`
+/// so single-threaded fast paths disable.
+///
+/// Using a dedicated `#[thread_local]` address guarantees every call site on
+/// the same thread (and across single-threaded `fork()`) observes the exact
+/// same non-zero token, while any concurrent live thread has a distinct TLS
+/// block address.
+#[inline]
+pub(crate) fn note_current_thread_activity() {
+    if __libc_single_threaded.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return;
+    }
+    let thread_token = std::ptr::addr_of!(THREAD_ACTIVITY_MARKER) as usize;
+    let prev = OBSERVED_PRIMARY_THREAD.load(std::sync::atomic::Ordering::Relaxed);
+    if prev == thread_token {
+        return;
+    }
+    if prev == 0
+        && OBSERVED_PRIMARY_THREAD
+            .compare_exchange(
+                0,
+                thread_token,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+    {
+        return;
+    }
+    if OBSERVED_PRIMARY_THREAD.load(std::sync::atomic::Ordering::Relaxed) != thread_token {
+        __libc_single_threaded.store(0, std::sync::atomic::Ordering::Release);
+    }
+}
 
 // ==========================================================================
 // __ctype_* internal table accessors (4 symbols)

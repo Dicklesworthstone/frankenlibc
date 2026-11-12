@@ -332,6 +332,30 @@ fn fmemopen_custom_input_windows_refill_from_live_storage() {
 
 #[test]
 fn fmemopen_global_flush_preserves_input_and_unbuffering_discards_it() {
+    // `fflush(NULL)` flushes every open stream in the process. Sibling tests in
+    // this binary (`fmemopen_write_nul_terminates_like_glibc` and
+    // `fmemopen_write_overflow_deferred_to_flush_like_glibc`) deliberately stage
+    // overflowing writes into small `fmemopen` buffers to assert `fflush == EOF`;
+    // isolate `fflush(NULL)` in a clean child process so parallel scheduling
+    // cannot observe their intentionally-failing staged writes.
+    if std::env::var_os("FL_FMEMOPEN_ISOLATED_GLOBAL_FLUSH").is_none() {
+        let status = std::process::Command::new(
+            std::env::current_exe().expect("resolve current test binary"),
+        )
+        .args([
+            "--exact",
+            "fmemopen_global_flush_preserves_input_and_unbuffering_discards_it",
+            "--nocapture",
+        ])
+        .env("FL_FMEMOPEN_ISOLATED_GLOBAL_FLUSH", "1")
+        .status()
+        .expect("spawn isolated global-flush child");
+        assert!(
+            status.success(),
+            "isolated global-flush child failed: {status}"
+        );
+        return;
+    }
     for mode in [c"r", c"r+"] {
         let mut expected = *b"abcde";
         let mut actual = expected;
@@ -678,4 +702,239 @@ fn fmemopen_write_overflow_deferred_to_flush_like_glibc() {
         assert_eq!(fl::fclose(f), fclose(g));
         assert_eq!(fbuf, gbuf);
     }
+}
+
+#[test]
+fn fmemopen_repeated_lifecycle_and_multithreaded_flockfile_reuse_match_glibc() {
+    // 1. Repeated lifecycle reuse on one thread: verifies STATIC_SLOT_LOCKS,
+    // FGETC_MEM_PTR_CACHE pre-population, set_eof(false) fast guard, and
+    // FIXED_MEM_INPUT_POOL buffer recycling never leak stale bytes or EOF flags.
+    for cycle in 0..32u8 {
+        let mut g_data = vec![0u8; 4096];
+        for (i, b) in g_data.iter_mut().enumerate() {
+            *b = cycle.wrapping_mul(37).wrapping_add((i % 251) as u8);
+        }
+        let mut fl_data = g_data.clone();
+        unsafe {
+            let g_fp = fmemopen(g_data.as_mut_ptr().cast(), g_data.len(), c"r".as_ptr());
+            let fl_fp = fl::fmemopen(fl_data.as_mut_ptr().cast(), fl_data.len(), c"r".as_ptr());
+            assert!(!g_fp.is_null() && !fl_fp.is_null());
+
+            let mut g_chunk = [0u8; 64];
+            let mut fl_chunk = [0u8; 64];
+            for step in 0..64 {
+                let gn = fread(g_chunk.as_mut_ptr().cast(), 1, 64, g_fp);
+                let fn_ = fl::fread(fl_chunk.as_mut_ptr().cast(), 1, 64, fl_fp);
+                assert_eq!((fn_, fl_chunk), (gn, g_chunk), "cycle={cycle} step={step}");
+                assert_eq!(fl::feof(fl_fp) != 0, feof(g_fp) != 0);
+            }
+            // Exhausted read sets EOF; seek(0) clears EOF on both handle _flags and cursor.
+            assert_eq!(fl::fread(fl_chunk.as_mut_ptr().cast(), 1, 64, fl_fp), 0);
+            assert_eq!(fread(g_chunk.as_mut_ptr().cast(), 1, 64, g_fp), 0);
+            assert_eq!(fl::feof(fl_fp) != 0, feof(g_fp) != 0);
+            assert_eq!(
+                fl::fseek(fl_fp, 0, libc::SEEK_SET),
+                fseek(g_fp, 0, libc::SEEK_SET)
+            );
+            assert_eq!(fl::feof(fl_fp) != 0, feof(g_fp) != 0);
+            assert_eq!(fl::fclose(fl_fp), fclose(g_fp));
+        }
+    }
+
+    // 2. Concurrent multi-threaded open/flockfile/fread/fclose across shared static slots.
+    std::thread::scope(|s| {
+        for tid in 0..4u8 {
+            s.spawn(move || {
+                for iter in 0..24u8 {
+                    let mut data = vec![0u8; 1024];
+                    for (i, b) in data.iter_mut().enumerate() {
+                        *b = tid
+                            .wrapping_mul(53)
+                            .wrapping_add(iter.wrapping_mul(11))
+                            .wrapping_add((i & 0xff) as u8);
+                    }
+                    let expected = data.clone();
+                    let mut out = vec![0u8; 1024];
+                    unsafe {
+                        let fp = fl::fmemopen(data.as_mut_ptr().cast(), data.len(), c"r".as_ptr());
+                        assert!(!fp.is_null());
+                        fl::flockfile(fp);
+                        assert_eq!(fl::ftrylockfile(fp), 0);
+                        let mut pos = 0usize;
+                        while pos < out.len() {
+                            let n = fl::fread(out[pos..].as_mut_ptr().cast(), 1, 64, fp);
+                            assert_eq!(n, 64);
+                            pos += n;
+                        }
+                        fl::funlockfile(fp);
+                        fl::funlockfile(fp);
+                        assert_eq!(fl::fclose(fp), 0);
+                    }
+                    assert_eq!(out, expected);
+                }
+            });
+        }
+    });
+
+    // 3. Unmatched explicit `flockfile`/`ftrylockfile` across `fclose` must reset
+    // the reusable static-slot lock (`_IO_lock_fini` semantics) so a subsequent
+    // thread reusing that slot never deadlocks on stale owner_tid/recursion_depth.
+    let reused_slot_addr = std::thread::spawn(|| unsafe {
+        let mut buf = [b'Q'; 64];
+        let fp = fl::fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr());
+        assert!(!fp.is_null());
+        fl::flockfile(fp);
+        assert_eq!(fl::ftrylockfile(fp), 0);
+        // Intentionally unlock only once before fclose (leaving depth == 1).
+        fl::funlockfile(fp);
+        assert_eq!(fl::fclose(fp), 0);
+        fp as usize
+    })
+    .join()
+    .expect("first thread panicked");
+
+    std::thread::spawn(move || unsafe {
+        let mut buf = [b'R'; 64];
+        let fp = fl::fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr());
+        assert!(!fp.is_null());
+        assert_eq!(fp as usize, reused_slot_addr, "expected static slot reuse");
+        assert_eq!(fl::ftrylockfile(fp), 0, "reused slot lock must be unowned");
+        let mut out = [0u8; 64];
+        assert_eq!(fl::fread(out.as_mut_ptr().cast(), 1, 64, fp), 64);
+        assert_eq!(out, buf);
+        fl::funlockfile(fp);
+        assert_eq!(fl::fclose(fp), 0);
+    })
+    .join()
+    .expect("second thread panicked");
+}
+
+#[test]
+fn fmemopen_readonly_object_pool_reuse_and_pushback_seek_freopen_parity() {
+    unsafe {
+        // 1. Repeated read-only `fmemopen -> fread -> fclose` across varying sizes
+        // and NULL-owned buffers must never leak stale buffered bytes or EOF flags.
+        for (len, seed) in [(4096usize, 11u8), (37, 73), (0, 0), (512, 199), (13, 41)] {
+            let mut host_buf: Vec<u8> =
+                (0..len).map(|i| seed.wrapping_add((i * 7) as u8)).collect();
+            let mut fl_buf = host_buf.clone();
+            let h = fmemopen(host_buf.as_mut_ptr().cast(), len, c"r".as_ptr());
+            let f = fl::fmemopen(fl_buf.as_mut_ptr().cast(), len, c"r".as_ptr());
+            assert!(!h.is_null() && !f.is_null());
+
+            let mut h_out = vec![0xa5u8; len + 8];
+            let mut f_out = vec![0xa5u8; len + 8];
+            let hn = fread(h_out.as_mut_ptr().cast(), 1, h_out.len(), h);
+            let fn_ = fl::fread(f_out.as_mut_ptr().cast(), 1, f_out.len(), f);
+            assert_eq!(fn_, hn);
+            assert_eq!(f_out, h_out);
+            assert_eq!(fl::feof(f) != 0, feof(h) != 0);
+            assert_eq!(fl::fclose(f), fclose(h));
+        }
+
+        // 2. Owned `fmemopen(NULL, 64, "r")` reads all zeros and recycles cleanly.
+        let f_owned = fl::fmemopen(std::ptr::null_mut(), 64, c"r".as_ptr());
+        assert!(!f_owned.is_null());
+        let mut z = [0xffu8; 64];
+        assert_eq!(fl::fread(z.as_mut_ptr().cast(), 1, 64, f_owned), 64);
+        assert_eq!(z, [0u8; 64]);
+        assert_eq!(fl::fclose(f_owned), 0);
+
+        // 3. `ungetc` and `fseek` after fast `fread` must retire `TLS_FAST_MEM_READ`
+        // and match glibc byte-for-byte.
+        let mut g_src = *b"abcdefghij";
+        let mut f_src = g_src;
+        let g = fmemopen(g_src.as_mut_ptr().cast(), g_src.len(), c"r".as_ptr());
+        let f = fl::fmemopen(f_src.as_mut_ptr().cast(), f_src.len(), c"r".as_ptr());
+        let mut g_head = [0u8; 4];
+        let mut f_head = [0u8; 4];
+        assert_eq!(fread(g_head.as_mut_ptr().cast(), 1, 4, g), 4);
+        assert_eq!(fl::fread(f_head.as_mut_ptr().cast(), 1, 4, f), 4);
+        assert_eq!(f_head, g_head);
+        assert_eq!(
+            fl::ungetc(b'Z' as libc::c_int, f),
+            ungetc(b'Z' as libc::c_int, g)
+        );
+        let mut g_mid = [0u8; 3];
+        let mut f_mid = [0u8; 3];
+        assert_eq!(fread(g_mid.as_mut_ptr().cast(), 1, 3, g), 3);
+        assert_eq!(fl::fread(f_mid.as_mut_ptr().cast(), 1, 3, f), 3);
+        assert_eq!(f_mid, g_mid);
+        assert_eq!(fl::fseek(f, 2, libc::SEEK_SET), fseek(g, 2, libc::SEEK_SET));
+        let mut g_tail = [0u8; 8];
+        let mut f_tail = [0u8; 8];
+        assert_eq!(
+            fl::fread(f_tail.as_mut_ptr().cast(), 1, 8, f),
+            fread(g_tail.as_mut_ptr().cast(), 1, 8, g)
+        );
+        assert_eq!(f_tail, g_tail);
+        assert_eq!(fl::fclose(f), fclose(g));
+    }
+}
+
+#[test]
+fn fmemopen_preserves_single_threaded_fast_path_until_second_thread_enters() {
+    if std::env::var_os("FL_FMEMOPEN_ISOLATED_ST_GUARD").is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("current_exe"))
+            .env("FL_FMEMOPEN_ISOLATED_ST_GUARD", "1")
+            .args([
+                "--exact",
+                "fmemopen_preserves_single_threaded_fast_path_until_second_thread_enters",
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .output()
+            .expect("spawn isolated single-threaded guard test");
+        assert!(
+            output.status.success(),
+            "isolated ST guard test failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    use std::sync::atomic::Ordering;
+    assert_eq!(
+        frankenlibc_abi::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire),
+        1,
+        "fresh single-threaded process must start with __libc_single_threaded == 1"
+    );
+
+    let mut data = [0u8; 4096];
+    for (i, b) in data.iter_mut().enumerate() {
+        *b = (i % 251) as u8;
+    }
+    for _ in 0..8 {
+        unsafe {
+            let fp = fl::fmemopen(data.as_mut_ptr().cast(), data.len(), c"r".as_ptr());
+            assert!(!fp.is_null());
+            let mut chunk = [0u8; 64];
+            for step in 0..64 {
+                assert_eq!(fl::fread(chunk.as_mut_ptr().cast(), 1, 64, fp), 64);
+                assert_eq!(chunk[0], ((step * 64) % 251) as u8);
+            }
+            assert_eq!(fl::fclose(fp), 0);
+        }
+    }
+    assert_eq!(
+        frankenlibc_abi::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire),
+        1,
+        "repeated single-threaded fmemopen+fread+fclose must preserve __libc_single_threaded == 1"
+    );
+
+    std::thread::spawn(|| unsafe {
+        let mut buf = *b"mt";
+        let fp = fl::fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr());
+        assert!(!fp.is_null());
+        assert_eq!(fl::fclose(fp), 0);
+    })
+    .join()
+    .expect("join second thread");
+
+    assert_eq!(
+        frankenlibc_abi::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire),
+        0,
+        "second host thread entering fmemopen must clear __libc_single_threaded to 0"
+    );
 }
