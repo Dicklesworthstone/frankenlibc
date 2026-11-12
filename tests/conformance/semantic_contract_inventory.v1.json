@@ -58,7 +58,7 @@
       ],
       "module": "frankenlibc-abi::pthread_abi",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 10195,
+      "source_line": 11381,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __pthread_register_cancel(",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -86,7 +86,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9736,
+      "source_line": 9754,
       "line_marker": "DES is obsolete and unsupported",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -112,7 +112,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 11678,
+      "source_line": 11696,
       "line_marker": "_nss_files_endXX NSS plugin",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -138,7 +138,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 1736,
+      "source_line": 1734,
       "line_marker": "__nss_configure_lookup: process-local source selection",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -169,7 +169,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 3961,
+      "source_line": 3991,
       "line_marker": "native file overflow bridge",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "limited_bootstrap",
@@ -196,7 +196,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5451,
+      "source_line": 5486,
       "line_marker": "bdflush: deprecated Linux syscall",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "unsupported_platform_contract",
@@ -223,7 +223,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 22932,
+      "source_line": 23677,
       "line_marker": "Malloc debug stubs",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -250,7 +250,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 27144,
+      "source_line": 28002,
       "line_marker": "pub unsafe extern \"C\" fn argp_help(",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -304,7 +304,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5141,
+      "source_line": 5171,
       "line_marker": "pub unsafe extern \"C\" fn __fentry__()",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -334,7 +334,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 9302,
+      "source_line": 9334,
       "line_marker": "__gconv_open",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -363,7 +363,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 10449,
+      "source_line": 10467,
       "line_marker": "NIS / Yellow Pages is dead infrastructure",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -389,7 +389,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 11612,
+      "source_line": 11630,
       "line_marker": "Without a real NIS backend",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -414,7 +414,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 31199,
+      "source_line": 31927,
       "line_marker": "/// GNU asynchronous name/service resolution using the native resolver.",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -470,7 +470,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 19700,
+      "source_line": 20419,
       "line_marker": "__cxa_pure_virtual",
       "support_matrix_status": "Implemented",
       "semantic_class": "abort_only",
@@ -494,7 +494,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 6945,
+      "source_line": 6972,
       "line_marker": "// rcmd/rcmd_af: rsh remote command",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "deterministic_fallback",
@@ -516,7 +516,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4020,
+      "source_line": 4050,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __printf_fp(",
       "support_matrix_status": "Implemented",
       "semantic_class": "limited_bootstrap",
@@ -619,27 +619,27 @@
         }
       }
     },
-    "source_tree_sha256": "dba0967793997804bf343cba9d7a96218b5a9df33fce7455363c6a6f6c4ef6c4",
-    "version_script_sha256": "2b4f931ed54086b34286f934e8d68092f47ff728ebcd5d44bb57ad436cc74305",
+    "source_tree_sha256": "d1c95bdf35dd57137cfa6713cc963bad4ca4547b3fc1876411902d13c9bf92b4",
+    "version_script_sha256": "295ab0a4c499c2f1dc601809646c79a6b872635c4d61a79d796938c4abb0d78d",
     "support_rows_sha256": "ad9ecafd85eabc37f2cdcb4a3a1cb492f52c79e4ee5870f234c774af4a90d87d",
-    "contract_rows_sha256": "a8c75361bb889dfae4eb48c875f14737d263770144c3ea8886aa9303f683e2fd",
+    "contract_rows_sha256": "29b8812344ad12d6513993af0c9f06febabc2fdb51a275ca43b18f183bb6ea7b",
     "summary": {
       "declared_symbol_count": 4730,
-      "raw_source_symbol_count": 4720,
+      "raw_source_symbol_count": 4725,
       "profile_source_symbol_counts": {
-        "interpose-release-linux-x86_64": 4698,
-        "standalone-release-linux-x86_64": 4701
+        "interpose-release-linux-x86_64": 4701,
+        "standalone-release-linux-x86_64": 4704
       },
       "profile_function_symbol_counts": {
         "interpose-release-linux-x86_64": 4604,
         "standalone-release-linux-x86_64": 4605
       },
-      "version_script_symbol_count": 4230,
+      "version_script_symbol_count": 4235,
       "support_symbol_count": 4119,
-      "group_count": 159,
+      "group_count": 156,
       "unknown_semantics_count": 4730,
       "full_semantics_count": 0,
-      "unqualified_configuration_count": 29
+      "unqualified_configuration_count": 26
     },
     "groups": [
       {
@@ -1016,12 +1016,15 @@
         "symbols": [
           "_Unwind_Backtrace",
           "_Unwind_DeleteException",
+          "_Unwind_ForcedUnwind",
           "_Unwind_GetDataRelBase",
           "_Unwind_GetGR",
           "_Unwind_GetIP",
           "_Unwind_GetLanguageSpecificData",
           "_Unwind_GetRegionStart",
           "_Unwind_GetTextRelBase",
+          "_Unwind_RaiseException",
+          "_Unwind_Resume",
           "_Unwind_SetGR",
           "_Unwind_SetIP",
           "__deregister_frame",
@@ -2767,27 +2770,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-37bbf429806af7fe",
-        "profiles": [],
-        "function_profiles": [],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "owned_unwind_abi"
-        ],
-        "version_nodes": [],
-        "support_status": "not_listed",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "__frankenlibc_owned_raise_exception_from_frame",
-          "__frankenlibc_owned_resume_from_frame"
-        ],
-        "next_action": "Resolve the data/assembly/inactive-module or target/feature declaration before claiming a provider; then review behavior under bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-384172e139071e32",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -2822,24 +2804,6 @@
           "sigorset"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
-        "id": "unknown-38ade77801b2fac1",
-        "profiles": [],
-        "function_profiles": [],
-        "declaration_kinds": [],
-        "source_modules": [],
-        "version_nodes": [],
-        "support_status": "Implemented",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "_IO_2_1_stderr_",
-          "_IO_2_1_stdin_",
-          "_IO_2_1_stdout_"
-        ],
-        "next_action": "Resolve the data/assembly/inactive-module or target/feature declaration before claiming a provider; then review behavior under bd-reality-202609-lx578q.7."
       },
       {
         "id": "unknown-3ac59ce1eea62e82",
@@ -3044,6 +3008,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "_Unwind_GetCFA",
           "_Unwind_Resume_or_Rethrow"
         ],
         "next_action": "Resolve the data/assembly/inactive-module or target/feature declaration before claiming a provider; then review behavior under bd-reality-202609-lx578q.7."
@@ -4186,25 +4151,6 @@
           "__wprintf_chk"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
-        "id": "unknown-64d6aa8acb65e3b2",
-        "profiles": [],
-        "function_profiles": [],
-        "declaration_kinds": [],
-        "source_modules": [],
-        "version_nodes": [
-          "GCC_3.0"
-        ],
-        "support_status": "not_listed",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "_Unwind_RaiseException",
-          "_Unwind_Resume"
-        ],
-        "next_action": "Resolve the data/assembly/inactive-module or target/feature declaration before claiming a provider; then review behavior under bd-reality-202609-lx578q.7."
       },
       {
         "id": "unknown-67e26a5f9d8786b7",
@@ -9207,6 +9153,9 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "_IO_2_1_stderr_",
+          "_IO_2_1_stdin_",
+          "_IO_2_1_stdout_",
           "_IO_file_jumps",
           "_IO_list_all",
           "_IO_wfile_jumps"

@@ -237,8 +237,7 @@ impl PacBayesMonitor {
         } else {
             (2.0 / ALPHA - 1.0).min(self.count as f64)
         };
-        let complexity_term =
-            self.kl_divergence + crate::util::ln_f64(2.0 * n.sqrt() / DELTA);
+        let complexity_term = self.kl_divergence + crate::util::ln_f64(2.0 * n.sqrt() / DELTA);
         let slack = (complexity_term / (2.0 * n)).sqrt();
         self.bound = (self.empirical_error + slack).clamp(0.0, 1.0);
 

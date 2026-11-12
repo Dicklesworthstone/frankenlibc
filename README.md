@@ -45,12 +45,12 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Large classified ABI surface | **4,119 exported symbols** all classified |
 | Recorded native classifications | **2,414 `Implemented` + 408 `RawSyscall` = 2,822 / 4,119 (68.5% native coverage)** |
 | Host-backed and unsupported subsets are explicit | **1,279 `WrapsHostLibc` (31.1%), 0 `GlibcCallThrough`, 18 `Stub` (0.4%)** |
-| Interposition has a checked workload snapshot | The committed 2026-11-11 preload artifact reports **344 passes / 0 fails / 4 optional skips / 0 xfails** across strict + hardened modes (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
+| Interposition has a checked workload snapshot | The committed 2026-11-11 preload artifact reports **348 passes / 0 fails / 4 optional skips / 0 xfails** across strict + hardened modes (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
 | Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
 | Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 control-kernel modules** with live execution paths, not just design docs (which calls reach them depends on mode; see [Runtime Math Controllers](#runtime-math-controllers)) |
-| Build-time proof-oriented infrastructure | Three supplied Gram matrices are checked for PSD/Cholesky validity and an algebraic recomposition identity; a source scanner inventories selected atomic sites. These are consistency checks, not proofs of allocator fragmentation, thread safety, or size-class correctness (`crates/frankenlibc-membrane/build.rs`) |
+| Build-time proof-oriented infrastructure | Three supplied Gram matrices are checked for exact rational PSD ($Q = L D L^\top$, $D \ge 0$) and monomial-expansion polynomial equality (`B(z) == sigma(z) + z^T Q z`); a source scanner inventories selected atomic sites. These are algebraic consistency checks, not bindings from variables to live allocator fragmentation, thread safety, or size-class state (`crates/frankenlibc-membrane/build.rs`) |
 
 ### Claim-Field Contract
 
@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-11, bound to ABI source `b70205895`; its counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,085 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-12, bound to ABI source `e9760aa9e`; its counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications, not semantic-parity evidence: the fresh maintenance report still rejects 1,092 rows pending source/proof reconciliation (`bd-rc0923-epic-eeuy4f.37`).
 Reality snapshot: total_exported=4119, implemented=2414, raw_syscall=408, wraps_host_libc=1279, glibc_call_through=0, stub=18.
 
 Declared replacement level: **L0 — Interpose**.
@@ -230,28 +230,27 @@ User-facing support and replacement claims must keep these fields separate:
 
 ### Curated LD_PRELOAD Smoke Battery
 
-Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20261111T045420Z-4186424`, checked November 11, 2026) reports 344 passes / 0 fails / 4 skips overall, with strict 173/0/2 and hardened 171/0/2 across the curated preload smoke battery.
+Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20261111T134243Z-2744068`, checked November 11, 2026) reports 348 passes / 0 fails / 4 skips overall, with strict 175/0/2 and hardened 173/0/2 across the curated preload smoke battery.
 
 | Mode | Pass | Fail | Skip | Xfail | Programs exercised |
 |---|---:|---:|---:|---:|---|
-| `strict` | 173 | 0 | 2 | 0 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
-| `hardened` | 171 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
-| **Total** | **344** | **0** | **4** | **0** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
+| `strict` | 175 | 0 | 2 | 0 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp / multithreaded `fork` fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
+| `hardened` | 173 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
+| **Total** | **348** | **0** | **4** | **0** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
 
 | Workload family | Commands |
 |---|---|
 | Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/bin/wc` |
 
-The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 0 xfail. Those numbers describe run `20261111T045420Z-4186424` at source commit `b7020589…`. The artifact establishes that the cases recorded in that run passed under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`, bd-rc0923-epic-eeuy4f.4).
+The committed curated preload snapshot has 348 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 0 xfail. Those numbers describe run `20261111T134243Z-2744068` at source commit `44a61541…`. The artifact establishes that the cases recorded in that run passed under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`).
 
 ### Known broken or not yet freshly evidenced under preload
 
-- The committed real-program summary is stale relative to HEAD and the declared corpus is still narrower than the bead's target; refresh and breadth are tracked by `bd-rc0923-epic-eeuy4f.4`.
-- Hardened sorting remains far outside the glibc performance target (`bd-rc0923-epic-eeuy4f.9`), while multi-threaded allocation remains blocked on a larger architecture decision (`bd-rc0923-epic-eeuy4f.26`).
+- Multi-threaded allocation throughput and per-thread cache architecture remain open (`bd-rc0923-epic-eeuy4f.26`).
 - `fork`/exit and fork/exec remain materially slower than glibc (`bd-rc0923-epic-eeuy4f.25`).
 - Native-loader metadata/TLS closure is incomplete even though common libc-linked pathname loads now delegate safely to the host loader (`bd-rc0923-epic-eeuy4f.3`).
-- NSS standalone module support, concurrency/cache-coherence closure, and complete blocked-cancellation-point coverage remain open (`bd-rc0923-epic-eeuy4f.19`, `bd-rc0923-epic-eeuy4f.24`).
-- Support-matrix labels and several evidence/closure gates still need executable reconciliation (`bd-rc0923-epic-eeuy4f.17`, `bd-rc0923-epic-eeuy4f.18`).
+- Complete blocked-cancellation-point coverage remains open (`bd-rc0923-epic-eeuy4f.24`).
+- Support-matrix source/proof promotion reconciliation (`bd-rc0923-epic-eeuy4f.37`) and durable post-cutoff closure-receipt backfill (`bd-rc0923-epic-eeuy4f.51`) remain active.
 
 ---
 
@@ -263,8 +262,8 @@ The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips 
                                             ▼
               ┌────────────────────────────────────────────────────────┐
               │ glibc-shaped extern "C" ABI                            │
-              │ crates/frankenlibc-abi  (50 module files, ~121 kLOC)    │
-              │ libc.map version script  (4,749 lines, GLIBC_2.2.5)    │
+              │ crates/frankenlibc-abi  (125 Rust files, ~243 kLOC)    │
+              │ libc.map version script  (4,753 lines, GLIBC_2.2.5)    │
               └────────────────────────────────────────────────────────┘
                                             │
                                             ▼
@@ -277,7 +276,7 @@ The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips 
                                             ▼
               ┌────────────────────────────────────────────────────────┐
               │ Transparent Safety Membrane                            │
-              │ crates/frankenlibc-membrane  (~75 kLOC, 109 modules)    │
+              │ crates/frankenlibc-membrane  (113 Rust files, ~86 kLOC)│
               │                                                        │
               │ null → tls_cache → bloom → arena → fingerprint         │
               │      → canary → bounds → policy → decision             │
@@ -292,7 +291,7 @@ The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips 
    ┌──────────────────────────┐                       ┌──────────────────────────────┐
    │ Native Rust kernels      │                       │ Raw syscall veneers          │
    │ crates/frankenlibc-core  │                       │ crates/frankenlibc-core/src/ │
-   │ (197 files; generated    │                       │  syscall/  (typed wrappers)  │
+   │ (204 files; generated    │                       │  syscall/  (typed wrappers)  │
    │ tables dominate size)    │                       │                             │
    │                          │                       │                              │
    │ stdio, string, math,     │                       │ io_uring, landlock, futex2,  │
@@ -307,7 +306,7 @@ The committed curated preload snapshot has 344 pass / 0 fail / 4 optional skips 
               │ crates/frankenlibc-harness  (44 modules, ~34 kLOC)      │
               │ tests/conformance/  (282 completion-contract JSONs +    │
               │                     69 CLI-contract manifests)         │
-              │ scripts/  (554 shell scripts: gates, smoke, perf)       │
+              │ scripts/  (732 files under scripts/: gates, smoke)     │
               │ docs/proofs/  (9 proof notes; obligation mappings)      │
               │ no machine-checked proof artifacts committed yet         │
               └────────────────────────────────────────────────────────┘
@@ -368,7 +367,7 @@ These invariants are maintained as the codebase grows:
 | Hardened repairs are deterministic | Makes behavior replayable and auditable |
 | Every exported symbol must be explicitly classified | Prevents silent unknown-support zones |
 | Documentation and machine artifacts are expected to agree | Drift is treated as a bug, not a cosmetic issue |
-| Bead closure should cite executable evidence | Historical coverage is incomplete: 282 heterogeneous completion-contract files do not bind every closed bead; remediation is tracked by `bd-rc0923-epic-eeuy4f.18` |
+| Bead closure should cite executable evidence | Pre-cutoff historical coverage is incomplete (282 heterogeneous completion-contract files do not bind every legacy bead); post-cutoff (`2026-10-15T00:00:00Z`) executable receipt enforcement is live via `scripts/check_closure_gate.sh` (`bd-rc0923-epic-eeuy4f.51`) |
 | CLI-contract manifests are mechanically checked | 69 manifests are subject to roughly 50 meta-gates; count alone does not prove one executable gate per subcommand |
 | Clean-room implementation remains the rule | Keeps the project from degenerating into line-by-line translation |
 
@@ -491,11 +490,11 @@ The fingerprint header is a `#[repr(C)]` struct:
 
 | Field | Size | Content |
 |---|---:|---|
-| Hash | 8 bytes | SipHash-2-4 of `(base_address, size, generation, secret)` |
+| Hash | 8 bytes | `H = SipHash24(K_hdr, user_base || user_size || generation)` |
 | Generation | 8 bytes | `u64` generation counter for temporal safety |
 | Allocation size | 8 bytes | User-requested size as `u64` (supports allocations > 4 GiB) |
 
-The trailing canary stores `hash XOR 0xDEADBEEFCAFEBABE` in little-endian order. This invertible transform preserves all 64 input bits; the previous `hash XOR rotate_left(hash, 32)` fold discarded half of them. Header and canary checks detect mismatches when validation reaches them. A single blind guess has probability **2⁻⁶⁴** only under a uniformly unpredictable 64-bit hash assumption. The process/time/address key mix does not establish that assumption, and reading the header hash reveals the canary. These two checks are correlated, not independent authentication tags.
+The trailing canary stores `C_tail = SipHash13(K_tail, user_base || user_size || generation || H)` in little-endian order using an independent 128-bit key `K_tail != K_hdr` drawn from the 256-bit `SYS_getrandom` process secret (`fingerprint.rs`). Because `K_tail` is cryptographically independent of `K_hdr`, reading an adjacent allocation's header hash `H` does not disclose `C_tail`. Header and canary checks detect mismatches when validation reaches them (including on warm `TLS_CACHE` hits via `validate_live_trailing_canary`); under the PRF assumption on `SipHash-2-4` and `SipHash-1-3`, a single blind full-word guess has probability **2⁻⁶⁴** per tag.
 
 ### Bloom Filter
 
@@ -704,7 +703,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,086 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,087 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -838,7 +837,7 @@ Each stage maintains a `Beta(α, β)` distribution initialized to `Beta(1, 1)`. 
 
 ## alien_cs — Concurrency Primitives
 
-Membrane-gated paths need to avoid global-lock contention. The `alien_cs` toolkit in `crates/frankenlibc-membrane/src/` provides specialized concurrency primitives beyond what `parking_lot` offers; its presence does not mean every libc entrypoint reaches the membrane or every primitive is on a deployed hot path:
+Membrane-gated paths need to avoid global-lock contention. The `alien_cs` toolkit in `crates/frankenlibc-membrane/src/` provides specialized lock-free and wait-free concurrency primitives without pulling `parking_lot` into the membrane crate; its presence does not mean every libc entrypoint reaches the membrane or every primitive is on a deployed hot path:
 
 | Primitive | Source | Purpose | Size |
 |---|---|---|---:|
@@ -1218,7 +1217,7 @@ The project is organized around verification artifacts. Coverage is uneven: some
 
 ### Completion-Contract Evidence Framework
 
-`tests/conformance/` contains **282 files matching `*completion_contract*.json`** and **69 files matching `*cli_contract*.json`**. These artifacts are heterogeneous—many are source/manifest receipts, not executed semantic tests—and they do not cover every historical bead closure. Executable closure-evidence coverage is still being repaired under `bd-rc0923-epic-eeuy4f.18`; file count alone is not proof that a closed bead was implemented.
+`tests/conformance/` contains **282 files matching `*completion_contract*.json`** and **69 files matching `*cli_contract*.json`**. These artifacts are heterogeneous—147 checker scripts execute binaries or sub-gates while 120 are static receipt validators—and they do not cover every pre-cutoff legacy bead closure. Post-cutoff executable closure receipts are enforced by `scripts/check_closure_gate.sh` (`bd-rc0923-epic-eeuy4f.51`); file count alone is not proof that a legacy closed bead was implemented.
 
 Categories include:
 
@@ -1302,7 +1301,7 @@ The `conformance_diff_swscanf` wide-I/O tests require GNU `C.UTF-8` and ISO-8859
 
 ### C Integration Fixtures
 
-`tests/integration/` contains 107 C source fixtures at this snapshot. The following older core set is representative, not exhaustive:
+`tests/integration/` contains 137 C source fixtures at this snapshot. The following older core set is representative, not exhaustive:
 
 | Fixture | What it exercises |
 |---|---|
@@ -1353,10 +1352,10 @@ These catch failures that escape direct fixture comparison because the metamorph
 | Galois soundness | `γ(α(c)) ≥ c` is the intended abstraction/concretization law | Unit/property-test evidence plus proof notes; not established for every deployed ABI path |
 | Allocation integrity | Hardened-arena fingerprint checks use a keyed 64-bit SipHash value | A targeted forgery is bounded by `2⁻⁶⁴` under the keyed-hash assumptions when the check is reached |
 | Use-after-free detection (hardened) | Freed blocks sit in a quarantine queue; access to a quarantined block is recognised | Deterministic while the block is quarantined. A raw C pointer carries no generation, so once the address is reused a stale pointer resolves to the NEW allocation and is not detected (`arena.rs` module doc) |
-| Buffer overflow detection (hardened arena allocations) | Full-width trailing canary checked at `free` | A single blind guess is `2⁻⁶⁴` only for a uniformly unpredictable, undisclosed hash. Changed bytes are detected when checked, not at the overflowing write; header disclosure reveals the canary |
+| Buffer overflow detection (hardened arena allocations) | Full-width trailing canary (`SipHash-1-3` under independent `K_tail`) checked on validation (including warm `TLS_CACHE` hits) and `free` | Under CSPRNG-seeded (`SYS_getrandom`) dual-key independence (`K_tail != K_hdr`), a single blind guess is `2⁻⁶⁴` even if the header hash `H` is disclosed; changed bytes are detected when checked, not at the overflowing write |
 | Bloom filter soundness | Zero false negatives | By construction (all insertions are remembered) |
 | Healing policy coverage | Explicitly membrane-gated families map wired validation outcomes to policy actions | Partial; universal per-function/per-invalid-input completeness is not established |
-| Supplied SOS-task consistency | Three supplied Gram matrices are PSD and the generated quadratic terms recompose algebraically | Checked at build time; this does not connect the variables to allocator fragmentation, thread safety, or size-class behavior |
+| Supplied SOS-task consistency | Three supplied Gram matrices satisfy exact rational $Q = L D L^\top$ ($D \ge 0$) and monomial expansion `B(z) == sigma(z) + z^T Q z` | Checked at build time; this does not connect the polynomial variables to live allocator fragmentation, thread safety, or size-class state |
 | Memory-model site inventory | Selected source files retain minimum counted atomic sites | Enforced syntactically by `build.rs`; counts do not prove that the orderings are sufficient |
 
 ### Proof Notes and Obligations Catalog
@@ -1377,22 +1376,22 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 ### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (1,056 lines at this snapshot) parses three pre-supplied task files and checks their internal algebraic consistency:
+`crates/frankenlibc-membrane/build.rs` (1,223 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
 
 | Task label | What the build actually checks |
 |---|---|
-| Fragmentation | Its supplied Gram matrix is PSD and participates in the generated quadratic identity |
-| Thread Safety | Its supplied Gram matrix is PSD and participates in the generated quadratic identity |
-| Size Class | Its supplied Gram matrix is PSD and participates in the generated quadratic identity |
+| Fragmentation | Its supplied Gram matrix admits an exact rational $Q = L D L^\top$ ($D \ge 0$) factorization and satisfies the monomial-expanded polynomial identity `B(z) == sigma(z) + z^T Q z` |
+| Thread Safety | Its supplied Gram matrix admits an exact rational $Q = L D L^\top$ ($D \ge 0$) factorization and satisfies the monomial-expanded polynomial identity `B(z) == sigma(z) + z^T Q z` |
+| Size Class | Its supplied Gram matrix admits an exact rational $Q = L D L^\top$ ($D \ge 0$) factorization and satisfies the monomial-expanded polynomial identity `B(z) == sigma(z) + z^T Q z` |
 
 Each certificate undergoes:
 
-1. Gram matrix construction
-2. PSD (positive semi-definite) verification via Cholesky decomposition with tolerance `1e-9`
-3. Algebraic recomposition of an identity constructed from the same matrix (`B = (B - sigma) + sigma`)
+1. Gram matrix and explicit target polynomial (`target_constant`, `target_diagonal`) parsing
+2. Exact reduced-rational (`Rational128`) $Q = L D L^\top$ ($D \ge 0$) positive semi-definiteness verification (complemented by floating-point Cholesky diagnostics)
+3. Exact monomial-by-monomial polynomial expansion verifying `B(z) - sigma(z) == z^T Q z` (`verify_exact_polynomial_identity`)
 4. Artifact generation as Rust `const` values and JSON soundness reports
 
-The task files contain dimensions, budgets, and matrices but no binding from variables to allocator or concurrency state. The checks therefore validate the supplied artifacts' shape and arithmetic, not the named system invariants (`crates/frankenlibc-membrane/artifacts/sos/*.task`, `build.rs::verify_polynomial_identity`).
+The task files contain dimensions, budgets, target coefficients, and Gram matrices, but no mechanical proof binding those variables to live Rust allocator or concurrency state. The checks therefore validate genuine exact SOS polynomial identities on the supplied task artifacts, not end-to-end theorem proofs of the named system invariants (`crates/frankenlibc-membrane/artifacts/sos/*.task`, `build.rs::verify_exact_polynomial_identity`).
 
 ### Build-Time Memory-Model Barrier Audit
 
@@ -1634,7 +1633,7 @@ The membrane crate's `build.rs` fails if supplied-matrix Cholesky verification t
 
 ### Is FrankenLibC a drop-in replacement for glibc today?
 
-The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 68.5% of rows as native/direct-syscall, and the historical 2026-09-24 smoke artifact reports 189 passes / 0 fails / 4 optional skips plus 1 xfail at source `a8a4110b…`. The matrix includes the NSS module dependency reclassification described above; the smoke result is historical rather than fresh HEAD evidence. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed and stub subsets and by L2/L3 contracts; it is not yet declared ready.
+The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 68.5% of rows as native/direct-syscall, and the committed 2026-11-11 smoke artifact (`run 20261111T134243Z-2744068`) reports 348 passes / 0 fails / 4 optional skips / 0 xfails at source `44a61541…`. The matrix includes the NSS module dependency reclassification described above; the smoke result establishes bounded preload behavior on its curated battery rather than universal production readiness. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed and stub subsets and by L2/L3 contracts; it is not yet declared ready.
 
 ### Does it implement a lot of symbols natively?
 
@@ -1674,7 +1673,7 @@ Because libc risk is broader than allocation. String APIs, stdio, resolver paths
 
 ### Why are there so many JSON and JSONL artifacts?
 
-Because the project is building machinery to reconcile implementation claims, evidence, and release readiness. The 282 completion-contract files and 69 CLI-contract files are useful bookkeeping, but their existence does not yet make unsupported closure impossible; executable coverage and historical closure binding remain open work (`bd-rc0923-epic-eeuy4f.18`).
+Because the project is building machinery to reconcile implementation claims, evidence, and release readiness. The 282 completion-contract files and 69 CLI-contract files are useful bookkeeping, while `scripts/check_closure_gate.sh` enforces executable post-cutoff closure receipts (`bd-rc0923-epic-eeuy4f.51`); pre-cutoff historical closure binding remains bounded rather than retroactive.
 
 ### What does "native coverage" actually mean?
 
@@ -1692,7 +1691,7 @@ Via `thread_local! { static ERRNO: Cell<i32> = ... }`. `__errno_location()` retu
 
 | Crate | Policy |
 |---|---|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` (SIMD/arena modules `#[allow(unsafe_code)]` with `// SAFETY:` per block) |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` (`407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments) |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` (arena/fingerprint modules `#[allow(unsafe_code)]` with `// SAFETY:` per block) |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` (the ABI boundary is inherently unsafe; entrypoints mix membrane-gated delegation, raw syscalls, local ABI logic, and host-backed wrappers) |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` |
@@ -1716,7 +1715,7 @@ Limitations of interposition:
 - `LD_PRELOAD` is ignored for setuid/setgid binaries (kernel security policy)
 - The interpose library must export symbols with the correct version tags
 
-The version script (`crates/frankenlibc-abi/version_scripts/libc.map`, 4,749 lines) defines the full `GLIBC_2.2.5`+ symbol-version hierarchy used when linking `libfrankenlibc_abi.a` or standalone replacement targets. Default `cargo build -p frankenlibc-abi --release` runs `crates/frankenlibc-abi/build_elf.rs`, which supplies `version_scripts/fromfp.map` for the C23 `fromfp` version nodes on Linux x86_64 interpose builds while specific symbols carry explicit `.symver` assembly bindings.
+The version script (`crates/frankenlibc-abi/version_scripts/libc.map`, 4,753 lines) defines the full `GLIBC_2.2.5`+ symbol-version hierarchy used when linking `libfrankenlibc_abi.a` or standalone replacement targets. Default `cargo build -p frankenlibc-abi --release` runs `crates/frankenlibc-abi/build_elf.rs`, which supplies `version_scripts/fromfp.map` for the C23 `fromfp` version nodes on Linux x86_64 interpose builds while specific symbols carry explicit `.symver` assembly bindings.
 
 ---
 
@@ -1860,7 +1859,7 @@ These principles are explicit, not implicit. Every decision in the repo defers t
 7. **Clean-room, not transliteration.** Behavior is driven by spec, fixtures, and verification artifacts. Reference glibc is consulted; never copied.
 8. **No scripted bulk edits.** Every refactor is manual or routed through parallel subagents that understand the change. Regex-based source rewrites are banned because they create more correctness problems than they solve.
 9. **Developer transparency.** Contributors write normal Rust APIs and policy tables. The heavy math machinery compiles to compact deterministic guards in the hot path; theorem-proving stays offline.
-10. **One bead, one outcome.** Implementation work is anchored to a `bd-*` issue and should close on cited executable evidence. Historical closure-to-artifact coverage is incomplete and under repair in `bd-rc0923-epic-eeuy4f.18`; do not infer compliance from a closed status alone.
+10. **One bead, one outcome.** Implementation work is anchored to a `bd-*` issue and closes on cited executable evidence. Post-cutoff (`2026-10-15T00:00:00Z`) closure receipts are enforced by `scripts/check_closure_gate.sh` (`bd-rc0923-epic-eeuy4f.51`), while pre-cutoff legacy closures remain bounded rather than retroactively proven by status alone.
 
 These principles are why the project has so many JSON artifacts, so many gates, so much fixture work, and so few wrappers.
 
@@ -1886,7 +1885,7 @@ Catches the highest-frequency, lowest-cost failure: a null pointer where one is 
 
 ### Stage 2 — TLS Validation Cache (~5 ns)
 
-Each thread carries a 1,024-entry direct-mapped cache indexed by `ptr >> 4` (16-byte granularity, masked by `CACHE_SIZE - 1`). Entries record `(generation, classification)`. A cache hit avoids the global metadata path entirely. Cache entries are invalidated lazily by epoch advancement (the EBR layer), so a freed allocation can never produce a stale `Valid` hit on its old slot.
+Each thread carries a 1,024-entry direct-mapped cache indexed by `ptr >> 4` (16-byte granularity, masked by `CACHE_SIZE - 1`). Entries record `(generation, classification)` plus per-shard cache epochs (`SHARD_EPOCHS: [AtomicU64; 16]`, `Acquire`/`Release`). A warm cache hit avoids the arena lock while still running `validate_live_trailing_canary` on live allocations, and lazy shard-epoch invalidation prevents a freed allocation from producing a stale `Valid` hit.
 
 ### Stage 3 — Bloom Filter (~10 ns)
 
@@ -1898,11 +1897,11 @@ Each thread carries a 1,024-entry direct-mapped cache indexed by `ptr >> 4` (16-
 
 ### Stage 5 — Fingerprint Check (~20 ns)
 
-For a hardened-arena allocation, the 24-byte header at `user_base − 24` carries a keyed SipHash-derived value plus generation and size. If a reached check does not match the recomputation, the header has been corrupted (buffer underflow, foreign write, or an outright fake pointer). A targeted forgery is bounded by 2⁻⁶⁴ under the keyed-hash assumptions.
+For a hardened-arena allocation, the 24-byte header at `user_base − 24` carries `H = SipHash24(K_hdr, user_base || user_size || generation)` plus generation and size. If a reached check does not match the recomputation, the header has been corrupted (buffer underflow, foreign write, or an outright fake pointer). A targeted forgery is bounded by 2⁻⁶⁴ under the CSPRNG-seeded keyed-hash assumption.
 
 ### Stage 6 — Canary Check (~10 ns)
 
-The 8-byte trailing canary at `user_base + user_size` is derived from the same key. A mismatch when the check is reached reports that bytes past the allocation end changed. Strict segment/host allocations do not carry this metadata, and an unchecked raw write is not intercepted at the instant it happens.
+The 8-byte trailing canary at `user_base + user_size` stores `C_tail = SipHash13(K_tail, user_base || user_size || generation || H)` under an independent 128-bit key `K_tail != K_hdr` and is checked on both cold validations and warm `TLS_CACHE` hits. A mismatch when the check is reached reports that bytes past the allocation end changed. Strict segment/host allocations do not carry this metadata, and an unchecked raw write is not intercepted at the instant it happens.
 
 ### Stage 7 — Bounds + Policy Check (~5 ns)
 
@@ -2014,19 +2013,19 @@ Arena draining updates metadata under the shard lock. The validation pipeline th
 Why SipHash-2-4 specifically:
 
 - **Designed for short messages.** Allocation metadata is tens of bytes; this is SipHash's sweet spot.
-- **Keyed.** Keys are initialized from process/thread identifiers, wall-clock time, and address noise. This mix is not an established cryptographic entropy source; it does not by itself justify an attacker-independent forgery bound.
-- **Fast.** SipHash-2-4 runs in a handful of cycles per 8-byte block on x86_64; the per-call cost is ~20 ns even before vectorization.
-- **Strong against differential attacks.** The 2-4 round count is conservatively chosen to defeat known cryptanalytic shortcuts.
+- **Keyed.** A 256-bit process secret (`32` bytes) is drawn once per process from the Linux kernel CSPRNG via direct `SYS_getrandom(GRND_NONBLOCK)` (with `/dev/urandom` fallback if unavailable) and split into two domain-separated 128-bit keys: `K_hdr` (`bytes[0..16]`) for the 24-byte header hash `H = SipHash24(K_hdr, ...)` and `K_tail` (`bytes[16..32]`, `K_tail != K_hdr`) for the 8-byte trailing canary (`fingerprint.rs`).
+- **Fast.** SipHash-2-4 and SipHash-1-3 run in a handful of cycles per 8-byte block on x86_64; the per-call cost stays within the membrane budget.
+- **Strong against differential attacks.** SipHash-2-4 protects the allocation header and SipHash-1-3 authenticates the trailing canary under an independent secret key.
 
 The 24-byte header layout is `[hash:8][generation:8][size:8]`, immediately before the user region:
 
 - The size occupies bytes `p - 8` through `p - 1`, serialized in little-endian order
 - The generation binds the current metadata to an allocation lifetime; raw pointers still cannot identify an old lifetime after same-address reuse
-- The hash binds size and generation to the user allocation address
+- The hash `H = SipHash24(K_hdr, user_base || user_size || generation)` binds size and generation to the user allocation address
 
-Trailing canaries use the invertible map `c(h) = h XOR 0xDEADBEEFCAFEBABE`, not a separate keyed hash or cryptographic domain separator. Since `h = c(h) XOR 0xDEADBEEFCAFEBABE`, the map is one-to-one over all 64-bit inputs and preserves their entropy without increasing it. The former `h XOR rotate_left(h, 32)` map had rank 32 over GF(2); regression tests measure the repaired affine map's rank as 64 and reject that frozen negative control. These are structural and execution checks, not a proof that the process keys are uniformly secret.
+Trailing canaries compute `C_tail = SipHash13(K_tail, user_base || user_size || generation || H)` under the independent 128-bit key `K_tail != K_hdr`, replacing the earlier `h XOR 0xDEADBEEFCAFEBABE` affine mask (which leaked the canary whenever an adjacent header hash `H` was read) and the historical `h XOR rotate_left(h, 32)` rank-32 fold. Under CSPRNG key initialization and the SipHash PRF assumption, disclosing `H` gives no advantage in forging `C_tail`.
 
-For a uniformly unpredictable and undisclosed hash, a single blind full-word guess has success probability `2⁻⁶⁴`. This is distinct from birthday collisions across many allocations, and from overwriting bytes that happen to remain unchanged. Header disclosure reveals the tail exactly, so coordinated header/tail forgery probabilities must not be multiplied. Repeated attempts, arbitrary reads, direct writes outside checked libc calls, bootstrap/signal bypasses, and same-address stale-pointer reuse require their own threat models.
+For an undisclosed CSPRNG-seeded key pair `(K_hdr, K_tail)`, a single blind full-word guess has success probability `2⁻⁶⁴` for the header tag and `2⁻⁶⁴` for the trailing canary independently of `H` disclosure. This remains distinct from birthday collisions across many allocations, overwriting bytes with identical values, repeated oracle attempts, direct writes outside checked libc calls, bootstrap/signal bypasses, and same-address stale-pointer reuse.
 
 The fingerprint and canary together are a *detection* mechanism, not an *exclusion* mechanism for an attacker who has already achieved arbitrary write. The membrane's job is to make corruption visible, not to make it impossible.
 
@@ -2273,8 +2272,8 @@ The workspace deliberately keeps the external dependency graph small. Every depe
 
 | Crate | Why it's here |
 |---|---|
-| `parking_lot` | Fast `Mutex` / `RwLock` for the non-`alien_cs` paths in the membrane and harness |
-| `blake3` | Allocation fingerprint hashing in some auxiliary paths (the primary fingerprint is SipHash) |
+| `parking_lot` | Fast non-poisoning `Mutex` / `RwLock` for `frankenlibc-abi` (`stdio_abi`, `dlfcn_native`, `runtime_policy`) and legacy `frankenlibc` |
+| `blake3` | Runtime-math PCPT policy-table digest verification (`policy_table.rs`) and harness golden snapshot hashing |
 | `sha2` | Conformance fixture digesting for tamper-evidence |
 | `md-5` | Legacy hash compatibility for specific MD5-keyed fixture lookups |
 | `serde` + `serde_json` + `serde_yaml` | Conformance fixture and report serialization |
@@ -2296,7 +2295,7 @@ The two companion crates (`asupersync-conformance`, `ftui-harness`) are explicit
 
 | Crate | `unsafe` policy | Notes |
 |---|---|---|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` | SIMD modules and the arena layer get `#[allow(unsafe_code)]` with per-block `// SAFETY:` comments |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | `407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit syscall/pthread/RCU/SIMD/termios boundary files with `// SAFETY:` comments |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena / fingerprint / page-oracle modules `#[allow]` with `// SAFETY:` |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe; entrypoints use path-specific membrane, raw-syscall, local, or host-backed logic |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | The test harness never needs unsafe |
@@ -2357,7 +2356,7 @@ Additional gates routinely run:
 | Gate | What it checks |
 |---|---|
 | `check_support_matrix_maintenance.sh` | Symbol classification drift between source and the maintenance report |
-| `check_c_fixture_suite.sh` | C integration-fixture compilation/execution gate (107 `.c` files exist at this snapshot) |
+| `check_c_fixture_suite.sh` | C integration-fixture compilation/execution gate (137 `.c` files exist at this snapshot) |
 | `check_conformance_fixture_pipeline.sh` | Fixture capture, replay, and verification round-trip |
 | `ld_preload_smoke.sh` | Real-program interposition in both modes |
 | `check_allocator_e2e.sh` | Concurrent alloc/free with glibc parity diff |
@@ -2446,7 +2445,7 @@ present?  artifact?
 closed!   reopen + flag in audit
 ```
 
-The current compliance machinery joins `.beads/issues.jsonl` with completion-contract artifacts, but its historical coverage is incomplete: the tracked audit bead reports only about 215 of 7,423 closed beads covered and 2,089 empty closure reasons. Treat the diagram as the intended lifecycle for historical beads, not proof that every legacy closure has a binding artifact; `scripts/check_closure_gate.sh` (Check 5) enforces verifiable commit/artifact and gate-outcome evidence on all beads closed after `2026-10-15T00:00:00Z`, all 68 `crates/frankenlibc-harness/tests/*_cli_contract_test.rs` suites resolve the `harness` binary fail-closed via `CARGO_BIN_EXE_harness`, and the 267 `scripts/check_*completion_contract*.sh` checker scripts are classified into **147 `executes`** (gates that execute binaries, C fixtures under `LD_PRELOAD`, or sub-gates, including the top 30 user-impact `malloc`, `stdio`, `string`, `pthread`, `locale`, `loader`, and `resolver` contracts) and **120 `receipt`** (static manifest/source-anchor validators) (`bd-rc0923-epic-eeuy4f.18`).
+The current compliance machinery joins `.beads/issues.jsonl` with completion-contract artifacts and durable closure receipts. Pre-cutoff historical coverage is incomplete (about 215 of 7,423 legacy closed beads covered and 2,089 empty legacy closure reasons); treat the diagram as the intended lifecycle rather than proof that every pre-cutoff closure has a binding artifact. `scripts/check_closure_gate.sh` (Check 5, delivered in `bd-rc0923-epic-eeuy4f.18` and backfilled with durable repo-tracked receipts in `bd-rc0923-epic-eeuy4f.51`) enforces verifiable commit/artifact and gate-outcome evidence on all beads closed after `2026-10-15T00:00:00Z`, all 68 `crates/frankenlibc-harness/tests/*_cli_contract_test.rs` suites resolve the `harness` binary fail-closed via `CARGO_BIN_EXE_harness`, and the 267 `scripts/check_*completion_contract*.sh` checker scripts are classified into **147 `executes`** (gates that execute binaries, C fixtures under `LD_PRELOAD`, or sub-gates, including the top 30 user-impact `malloc`, `stdio`, `string`, `pthread`, `locale`, `loader`, and `resolver` contracts) and **120 `receipt`** (static manifest/source-anchor validators).
 
 ### Why is the membrane in its own crate?
 
@@ -2623,14 +2622,14 @@ Every shared resource has a documented synchronization primitive. The choice of 
 
 | Resource | Protection | Why |
 |---|---|---|
-| Arena per-shard map (live allocations) | `Mutex<ArenaShard>` (parking_lot) | Writes are point mutations; lock granularity is one of 16 shards |
-| Arena quarantine queue | Same shard mutex | Co-locates with the arena writes that produce quarantine entries |
+| Arena per-shard map (live allocations) | `ArenaMutex<ArenaShard>` (raw Linux futex) | Writes are point mutations; lock granularity is one of 16 shards without `parking_lot` reentrancy |
+| Arena quarantine queue | Same futex-backed `ArenaMutex` | Co-locates with the arena writes that produce quarantine entries |
 | Bloom filter bitmap | Lock-free atomic `u64` array | Concurrent insertion via `fetch_or`; query via plain load |
-| TLS validation cache | Thread-local `Cell`; epoch via global `AtomicU64` | No locks needed; invalidation via `Release`/`Acquire` epoch |
+| TLS validation cache | Thread-local `Cell`; per-shard epochs `SHARD_EPOCHS: [AtomicU64; 16]` | No locks needed; per-shard invalidation via `Release`/`Acquire` epochs |
 | Page-oracle L1 chunk filter | Atomic `u64` words | Monotone (no removal); concurrent `fetch_or` |
 | Page-oracle L2 bitmaps | `BravoRwLock` (lock-free read-mostly variant) | L2 entries are read on every check, written rarely |
-| Allocator size-class slab list | `parking_lot::Mutex` per class | Per-class so contention is bounded |
-| Allocator large-alloc table | `parking_lot::Mutex` | Large allocs are rare; contention low |
+| ABI strict segment allocator | Atomic free-lists + per-segment spin/CAS locks | Deployed strict fast path avoids global allocator locks |
+| Core slab/large allocator model | Single-owner `&mut MallocState` (`core/src/malloc/`) | Safe model state; caller supplies synchronization when shared |
 | Mutex internal state | Atomic `u32` + futex | Lock-free uncontended path |
 | Condvar internal state | Atomic sequence + futex bitset | Lock-free signal/broadcast |
 | Stdio `FILE` struct | `parking_lot::Mutex` (per FILE) | One lock per stream; `flockfile`/`funlockfile` map to it |
@@ -2967,19 +2966,19 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,056 lines at this snapshot. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,223 lines at this snapshot. It performs three jobs at compile time:
 
 ### Job 1: Supplied SOS-Task Consistency
 
 For each of three task labels (fragmentation, thread safety, size class), the build script:
 
-1. Loads a dimension, budget, and pre-supplied Gram matrix from a `.task` file
+1. Loads a dimension, budget, target polynomial (`target_constant`, `target_diagonal`), and pre-supplied Gram matrix from a `.task` file
 2. Validates the matrix shape and numeric fields
-3. Runs Cholesky decomposition with numerical tolerance `1e-9`
-4. Checks the tautological recomposition `B = (B - sigma) + sigma`
+3. Runs exact reduced-rational (`Rational128`) $Q = L D L^\top$ ($D \ge 0$) PSD verification alongside floating-point Cholesky diagnostics
+4. Expands every monomial of $z^\top Q z$ in exact rational arithmetic and verifies `B(z) - sigma(z) == z^T Q z` (`verify_exact_polynomial_identity`)
 5. Emits constants plus a JSON consistency report
 
-A failure at any of these steps fails the build. Because the task files do not bind variables to allocator or concurrency state, this catches malformed/internally inconsistent artifacts; it does not prove the task label's system property.
+A failure at any of these steps fails the build. Because the task files do not bind polynomial variables to live Rust allocator or concurrency state, this catches malformed or algebraically invalid SOS certificates; it does not prove the task label's runtime system property.
 
 ### Job 2: Memory-Model Barrier Audit
 
@@ -3186,11 +3185,11 @@ The membrane uses every atomic ordering primitive Rust offers, and the choices m
 |---|---|---|
 | Read of cached mode (after init) | `Relaxed` | Mode is immutable post-init; any thread sees the terminal value |
 | CAS to initialize mode | `AcqRel` | Establishes happens-before with the env read |
-| TLS-cache epoch increment | `Release` (writer), `Acquire` (reader) | Reader must see all writes that happened before the writer's epoch bump |
+| TLS-cache per-shard epoch (`SHARD_EPOCHS[s]`) | `Release` (writer), `Acquire` (reader) | Reader must see shard mutations that preceded the writer's epoch bump |
 | Bloom filter `fetch_or` | `Relaxed` | Insertion is monotone; concurrent operations commute |
 | Bloom filter `load` (query) | `Relaxed` | Query tolerates seeing an old state because the filter is monotone |
 | Mutex state CAS (uncontended path) | `Acquire` (lock), `Release` (unlock) | Standard mutex semantics |
-| Arena generation increment | `AcqRel` | Establishes happens-before with the slot-recycle path |
+| Arena `next_generation` `fetch_add` | `Relaxed` (uniqueness; happens-before via `ArenaMutex`, `SHARD_EPOCHS`, and EBR) | Monotonic counter supplies unique IDs while shard lock + epochs publish slot state |
 | Metrics counters | `Relaxed` | Counter accuracy doesn't need ordering |
 | Evidence ledger seqno | `AcqRel` | Consumer must see the ledger entry the producer wrote |
 | Runtime-math snapshot read | `Acquire` (cross-controller) | Avoid torn reads across controllers |
@@ -3204,7 +3203,7 @@ Wrong ordering here can surface only under heavy multi-thread load and resist re
 
 Linux dynamic linking is *versioned*. A binary built against glibc-2.34 expects `__libc_start_main@@GLIBC_2.34`; a binary built against glibc-2.17 expects `__libc_start_main@@GLIBC_2.17`. The two have different argument conventions.
 
-FrankenLibC's `version_scripts/libc.map` (4,749 lines) is a GNU ld version script that maps symbols to versions. The actual structure on disk:
+FrankenLibC's `version_scripts/libc.map` (4,753 lines) is a GNU ld version script that maps symbols to versions. The actual structure on disk:
 
 ```
 GLIBC_2.2.5 {
@@ -3288,7 +3287,7 @@ Even under adversarial workloads, generation overflow is not a practical concern
 
 ### Why generation must outlive the slot
 
-If a slot transitions through `Live(gen=N) → Freed(gen=N) → Quarantine(gen=N) → Recycle → Live(gen=N+1)`, the generation must increment *before* the slot becomes recyclable. The arena enforces this ordering via `AcqRel` on the increment, so any thread observing the new occupant via the membrane will also observe the bumped generation, and any stale pointer carrying `gen=N` will see the mismatch.
+If a slot transitions through `Live(gen=N) → Freed(gen=N) → Quarantine(gen=N) → Recycle → Live(gen=N+1)`, each new occupant receives a fresh generation from `next_generation.fetch_add(1, Ordering::Relaxed)` before its record is inserted under the shard's futex-backed `ArenaMutex`, while `SHARD_EPOCHS[shard]` (`Release`/`Acquire`) and EBR synchronize cache invalidation and backing-memory reclamation across threads.
 
 ---
 
@@ -3391,7 +3390,7 @@ Every category of detectable issue and what surfaces it:
 | Stale source commit in evidence | Closure-gate freshness check | Fail gate |
 | Closed bead without binding artifact | Audit gate | Reopen / flag |
 
-The table describes intended and implemented handling, but not every row has an independent executable negative control today. Treat a row as a claim to verify against its cited source/gate; the missing executable-evidence work is tracked by `bd-rc0923-epic-eeuy4f.18`.
+The table describes intended and implemented handling, but not every row has an independent executable negative control today. Treat a row as a claim to verify against its cited source/gate; post-cutoff executable closure receipts are enforced by `scripts/check_closure_gate.sh` (`bd-rc0923-epic-eeuy4f.51`), while pre-cutoff legacy rows must still be inspected individually.
 
 ---
 
@@ -3620,7 +3619,7 @@ Caller has `p = base + 24`. Caller writes `memset(p, 0x42, 70)`. The write cover
 When `free(p)` or any later call hits the membrane validation pipeline for this allocation:
 
 - The fingerprint header at `base..base+24` is unchanged (the overflow was forward, not backward).
-- The 8-byte trailing canary at `base+88..base+96` is compared against `SipHash(base+24, size=64, gen=N, secret)`.
+- The 8-byte trailing canary at `base+88..base+96` is compared against `SipHash13(K_tail, user_base || user_size || gen || H)`.
 - The canary doesn't match (because 6 of its 8 bytes were overwritten).
 - A membrane-gated copy can clamp/truncate **before** an out-of-bounds write when it knows the allocation bound. If the program performed the raw write itself, `free(p)` reports `FreedWithCanaryCorruption` but still retires the block; it does not retroactively return `TruncateWithNull` or `EFAULT` (`arena.rs`, `malloc_abi.rs`).
 - Corruption of a neighboring hardened-arena header can be detected when that neighboring allocation is later validated. Strict segment/host allocations do not carry these fingerprint/canary fields.
@@ -3692,7 +3691,7 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
      for `frankenlibc-abi`; workspace-wide LTO and strip remain disabled
      by default.
 8. Native packaging and standalone checks that require the full
-   4,749-line `version_scripts/libc.map` hierarchy link
+   4,753-line `version_scripts/libc.map` hierarchy link
    `libfrankenlibc_abi.a` with `cc -Wl,--version-script=libc.map`
    (see `scripts/check_setjmp_native.sh`).
 ```
@@ -3893,16 +3892,16 @@ This split lets the project develop new controllers (e.g., a new e-process varia
 
 `std::sync::Mutex` is poison-aware: if a thread panics while holding the lock, subsequent acquisitions return a `PoisonError` and the application must explicitly recover. That is the right default for application code but the wrong default for a libc; a poisoned libc mutex would propagate failures up through the entire process.
 
-`parking_lot::Mutex` is *not* poison-aware. A panic while holding the lock unlocks it, and the next acquirer proceeds normally. For the membrane and core kernels, this is the right behavior: a panic in the middle of `malloc` should not poison every future allocation in the process.
+`parking_lot::Mutex` is *not* poison-aware. A panic while holding the lock unlocks it, and the next acquirer proceeds normally. For `frankenlibc-abi` boundary registries (`stdio_abi`, `dlfcn_native`, `runtime_policy`), this avoids poisoning process-wide ABI tables if an internal panic occurs; `frankenlibc-membrane` avoids `parking_lot` altogether in favor of its raw-futex `ArenaMutex` and lock-free `alien_cs` primitives.
 
-Other reasons we use `parking_lot`:
+Other reasons `frankenlibc-abi` uses `parking_lot`:
 
 - **Smaller footprint**: `parking_lot::RawMutex` is 1 byte (so `Mutex<T>` adds only 1 byte plus padding to `T`); `std::sync::Mutex` includes a poison flag and platform-specific fields.
 - **Faster uncontended path**: `parking_lot` uses an inline CAS without entering the kernel.
 - **Adaptive parking**: contended waiters spin briefly before parking, optimizing for short-critical-section workloads.
 - **Fair RwLock semantics** are available via `RawRwLock` if needed.
 
-We use `parking_lot::Mutex` and `RwLock` everywhere except where the membrane's `alien_cs` primitives (`SeqLock`, `RCU`, `EBR`, `FlatCombining`, `BravoRwLock`) are explicitly chosen for their lock-free or wait-free properties.
+We use `parking_lot::Mutex` and `RwLock` in `frankenlibc-abi` where non-poisoning locks fit, while `frankenlibc-membrane` uses its futex-backed `ArenaMutex` and `alien_cs` primitives (`SeqLock`, `RCU`, `EBR`, `FlatCombining`, `BravoRwLock`) so membrane hot paths never depend on `parking_lot`.
 
 ---
 
@@ -3955,7 +3954,7 @@ To keep the runtime artifact lean, several capabilities live in companion crates
 
 The repo `/data/projects/frankenlibc` contains only what's needed to *build, test, and run* FrankenLibC. The companion crates are pulled in via their published crates.io versions (`asupersync-conformance = "=0.5.0"`, `ftui-harness = "0.3.1"`) as build-tooling dependencies, never as runtime libc dependencies.
 
-This separation also makes the safety claim cleaner: "the runtime libc artifact depends on `parking_lot`, `blake3`, `sha2`, `libc` (types only), `libm`", and nothing else from outside the workspace.
+This separation also makes the dependency graph explicit: the default runtime `libfrankenlibc_abi.so` crate graph depends on `parking_lot`, `blake3`, `sha2`, `md-5`, `serde` + `serde_json`, `libc` (types only), and `libm` (plus optional `tracing` when `runtime-tracing` is enabled), keeping test/TUI companion crates strictly in `[dev-dependencies]` / harness tooling.
 
 ---
 
@@ -3968,10 +3967,10 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,822 native/direct-syscall rows (68.5%), 1,279 host-backed wrapper rows (31.1%), and 18 explicit stub classifications (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,899 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 239,194 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 83,291 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,608 lines including generated codec tables |
+| Tracked Rust files in `crates/` | 2,902 |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 242,538 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 85,536 lines |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,796 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
@@ -3981,9 +3980,9 @@ Selected project health snapshot:
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
 | Top-level shell/scripts files | 732 files under `scripts/` |
-| GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
-| Membrane `build.rs` | 1,049 lines (supplied-matrix consistency + atomic-site inventory) |
-| Curated `LD_PRELOAD` snapshot | 189 pass / 0 fail / 4 optional skip + 1 xfail at source `a8a4110b…`; stale relative to HEAD |
+| GNU ld version script | 4,753 lines, `GLIBC_2.2.5` |
+| Membrane `build.rs` | 1,223 lines (exact rational SOS polynomial verification + atomic-site inventory) |
+| Curated `LD_PRELOAD` snapshot | 348 pass / 0 fail / 4 optional skip / 0 xfail (`run 20261111T134243Z-2744068`, source `44a61541…`) |
 
 ---
 
@@ -4027,8 +4026,8 @@ Selected project health snapshot:
 | `crates/frankenlibc-membrane/` | Safety membrane, healing, runtime math, alien_cs |
 | `crates/frankenlibc-core/` | Safe semantic kernels |
 | `crates/frankenlibc-harness/` | Verification and evidence tooling |
-| `crates/frankenlibc-membrane/build.rs` | Supplied-matrix consistency checks + atomic-site inventory |
-| `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,749 lines) |
+| `crates/frankenlibc-membrane/build.rs` | Exact rational SOS polynomial checks + atomic-site inventory |
+| `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,753 lines) |
 | `tests/conformance/` | Canonical reports, fixtures, completion contracts, CLI contracts |
 | `tests/conformance/fixtures/` | Host-libc fixture corpus |
 | `tests/integration/` | C integration fixtures linked against `libfrankenlibc_abi.so` |

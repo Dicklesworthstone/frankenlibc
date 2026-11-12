@@ -439,7 +439,11 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
             ("-1", u32::MAX, false),
             ("-0", 0, false),
             (" +17", 17, false),
-            ("4294967296", u32::MAX, core::mem::size_of::<core::ffi::c_ulong>() == 4),
+            (
+                "4294967296",
+                u32::MAX,
+                core::mem::size_of::<core::ffi::c_ulong>() == 4,
+            ),
             (negative_max.as_str(), 1, false),
             (overflow_text.as_str(), u32::MAX, true),
         ] {

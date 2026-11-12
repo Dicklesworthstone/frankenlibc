@@ -14875,13 +14875,7 @@ fn nss_files_rpc_rejects_invalid_output_without_claiming_a_miss() {
         assert_eq!(error, libc::EINVAL);
         error = 717;
         assert_eq!(
-            _nss_files_getrpcbynumber_r(
-                9999,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                0,
-                &mut error,
-            ),
+            _nss_files_getrpcbynumber_r(9999, ptr::null_mut(), ptr::null_mut(), 0, &mut error,),
             -1
         );
         assert_eq!(error, libc::EINVAL);

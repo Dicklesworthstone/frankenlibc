@@ -353,7 +353,10 @@ ubuntu:x:1000:
         let (entry, overflow) = parse_group_stream_line(line).unwrap();
         assert_eq!(entry.gr_name, b"\xff");
         assert_eq!(entry.gr_gid, u32::MAX);
-        assert_eq!(entry.gr_mem, vec![b"\xfe".to_vec(), b"alice".to_vec(), b"\xfd".to_vec()]);
+        assert_eq!(
+            entry.gr_mem,
+            vec![b"\xfe".to_vec(), b"alice".to_vec(), b"\xfd".to_vec()]
+        );
         assert!(!overflow);
 
         let line = format!("group:x:{}0:alice,bob\n", core::ffi::c_ulong::MAX);

@@ -325,7 +325,10 @@ fn runtime_math_kernel_evaluates_live_allocator_sos_certificates_and_detects_vio
         "nominal allocator + size-class telemetry must stay inside certified SOS safe set: {nominal:?}"
     );
     assert!(
-        matches!(nominal.state, SosBarrierState::Safe | SosBarrierState::Warning),
+        matches!(
+            nominal.state,
+            SosBarrierState::Safe | SosBarrierState::Warning
+        ),
         "after 64 nominal observations SOS barrier state must exit Calibrating without violation: {nominal:?}"
     );
 

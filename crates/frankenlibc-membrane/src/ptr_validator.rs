@@ -1020,9 +1020,8 @@ impl ValidationPipeline {
         if self.validation_logging_enabled() || !mode.validation_enabled() {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
-        let (mut l, mut r) = try_with_tls_cache_hit(
-            (CachedRemaining::MISS, CachedRemaining::MISS),
-            |cache| {
+        let (mut l, mut r) =
+            try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
                 cache.lookup_hit_remaining_pair_with_oracle::<LHS_IS_WRITE>(
                     lhs,
                     rhs,
@@ -1030,8 +1029,7 @@ impl ValidationPipeline {
                     Some(&self.arena),
                     write_len,
                 )
-            },
-        );
+            });
         if l.is_corrupted() {
             Self::record_warm_cache_corruption_heal(lhs);
             l = CachedRemaining::clamped_zero();
@@ -1912,13 +1910,7 @@ impl ValidationPipeline {
             // Borrow the snapshot rather than copying — `[u64; NUM_TLS_CACHE_SHARDS]`
             // is 128 bytes and we hit this path on every cached fast-profile hit.
             if let Some(snapshot) = validation_shard_epochs.as_ref() {
-                self.cache_validation(
-                    addr,
-                    &slot,
-                    verified_fp_hash,
-                    verified_canary_tag,
-                    snapshot,
-                );
+                self.cache_validation(addr, &slot, verified_fp_hash, verified_canary_tag, snapshot);
             }
             self.runtime_math.note_check_order_outcome(
                 mode,
@@ -2120,13 +2112,7 @@ impl ValidationPipeline {
         // is 128 bytes; the full-validation path here is rarer than the fast
         // profile above but the borrow still costs nothing extra.
         if let Some(snapshot) = validation_shard_epochs.as_ref() {
-            self.cache_validation(
-                addr,
-                &slot,
-                verified_fp_hash,
-                verified_canary_tag,
-                snapshot,
-            );
+            self.cache_validation(addr, &slot, verified_fp_hash, verified_canary_tag, snapshot);
         }
         self.runtime_math.note_check_order_outcome(
             mode,

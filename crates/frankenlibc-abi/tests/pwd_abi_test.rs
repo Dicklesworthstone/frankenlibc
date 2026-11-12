@@ -1781,16 +1781,16 @@ struct TestSgrp {
     sg_mem: *mut *mut c_char,
 }
 
-
 fn assert_gshadow_caller_storage(entry: &TestSgrp, buffer: *mut c_char, capacity: usize) {
     let start = buffer as usize;
     let end = start + capacity;
     let check_string = |value: *mut c_char| {
         let address = value as usize;
-        assert!(address >= start && address < end, "string escapes caller buffer");
-        let remaining = unsafe {
-            std::slice::from_raw_parts(value.cast::<u8>(), end - address)
-        };
+        assert!(
+            address >= start && address < end,
+            "string escapes caller buffer"
+        );
+        let remaining = unsafe { std::slice::from_raw_parts(value.cast::<u8>(), end - address) };
         assert!(remaining.contains(&0), "string lacks a bounded terminator");
     };
     check_string(entry.sg_namp);
@@ -1798,7 +1798,10 @@ fn assert_gshadow_caller_storage(entry: &TestSgrp, buffer: *mut c_char, capacity
     for table in [entry.sg_adm, entry.sg_mem] {
         let address = table as usize;
         assert_eq!(address % std::mem::align_of::<*mut c_char>(), 0);
-        assert!(address >= start && address < end, "list escapes caller buffer");
+        assert!(
+            address >= start && address < end,
+            "list escapes caller buffer"
+        );
         let slots = (end - address) / std::mem::size_of::<*mut c_char>();
         let mut terminated = false;
         for index in 0..slots {
@@ -1841,16 +1844,31 @@ fn gshadow_string_result_ownership_alignment_and_retry_boundaries() {
                 )
             };
             assert!(bytes[..16 + offset].iter().all(|&byte| byte == 0xa5));
-            assert!(bytes[16 + offset + capacity..].iter().all(|&byte| byte == 0xa5));
+            assert!(
+                bytes[16 + offset + capacity..]
+                    .iter()
+                    .all(|&byte| byte == 0xa5)
+            );
             if capacity < minimum {
                 assert_eq!(rc, libc::ERANGE);
                 assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
-                assert_eq!(result, if capacity == 1 { sentinel } else { ptr::null_mut() });
+                assert_eq!(
+                    result,
+                    if capacity == 1 {
+                        sentinel
+                    } else {
+                        ptr::null_mut()
+                    }
+                );
                 continue;
             }
             assert_eq!(rc, 0);
             assert_eq!(unsafe { *__errno_location() }, 717);
-            assert_eq!(result, entry.as_mut_ptr().cast(), "must return the supplied sgrp");
+            assert_eq!(
+                result,
+                entry.as_mut_ptr().cast(),
+                "must return the supplied sgrp"
+            );
             let entry = unsafe { entry.assume_init() };
             assert_gshadow_caller_storage(&entry, buffer, capacity);
             unsafe {
@@ -1878,7 +1896,11 @@ fn gshadow_string_result_ownership_alignment_and_retry_boundaries() {
         );
         let entry = unsafe { entry.assume_init() };
         assert_gshadow_caller_storage(&entry, buffer.as_mut_ptr().cast(), buffer.len());
-        assert!(unsafe { CStr::from_ptr(entry.sg_passwd) }.to_bytes().is_empty());
+        assert!(
+            unsafe { CStr::from_ptr(entry.sg_passwd) }
+                .to_bytes()
+                .is_empty()
+        );
         assert!(unsafe { *entry.sg_adm }.is_null());
         assert!(unsafe { *entry.sg_mem }.is_null());
     }
@@ -1891,9 +1913,7 @@ fn gshadow_stream_long_records_retry_and_eof() {
 
     let name = "g".repeat(5000);
     let mut image = format!("# comment\n{name}:!:alice,bob:carol,dave\nlast:!::\n").into_bytes();
-    let stream = unsafe {
-        fmemopen(image.as_mut_ptr().cast(), image.len(), c"r".as_ptr())
-    };
+    let stream = unsafe { fmemopen(image.as_mut_ptr().cast(), image.len(), c"r".as_ptr()) };
     assert!(!stream.is_null());
     struct Close(*mut c_void);
     impl Drop for Close {
@@ -1907,18 +1927,31 @@ fn gshadow_stream_long_records_retry_and_eof() {
     let mut result = ptr::null_mut();
     assert_eq!(
         unsafe {
-            fgetsgent_r(stream, entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), 64, &mut result)
+            fgetsgent_r(
+                stream,
+                entry.as_mut_ptr().cast(),
+                buffer.as_mut_ptr().cast(),
+                64,
+                &mut result,
+            )
         },
         libc::ERANGE
     );
     assert!(result.is_null());
-    assert_eq!(unsafe { ftello(stream) }, 10, "retry must retain the long record");
+    assert_eq!(
+        unsafe { ftello(stream) },
+        10,
+        "retry must retain the long record"
+    );
     unsafe { *__errno_location() = 717 };
     assert_eq!(
         unsafe {
             fgetsgent_r(
-                stream, entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(),
-                buffer.len(), &mut result,
+                stream,
+                entry.as_mut_ptr().cast(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
             )
         },
         0
@@ -1927,7 +1960,10 @@ fn gshadow_stream_long_records_retry_and_eof() {
     assert_eq!(result, entry.as_mut_ptr().cast());
     let value = unsafe { entry.assume_init_ref() };
     assert_gshadow_caller_storage(value, buffer.as_mut_ptr().cast(), buffer.len());
-    assert_eq!(unsafe { CStr::from_ptr(value.sg_namp) }.to_bytes(), name.as_bytes());
+    assert_eq!(
+        unsafe { CStr::from_ptr(value.sg_namp) }.to_bytes(),
+        name.as_bytes()
+    );
     assert_eq!(unsafe { fseeko(stream, 0, libc::SEEK_SET) }, 0);
     let answer = unsafe { fgetsgent(stream).cast::<TestSgrp>() };
     assert!(!answer.is_null());
@@ -1938,7 +1974,10 @@ fn gshadow_stream_long_records_retry_and_eof() {
     );
     let last = unsafe { fgetsgent(stream).cast::<TestSgrp>() };
     assert!(!last.is_null());
-    assert_eq!(unsafe { CStr::from_ptr((*last).sg_namp) }.to_bytes(), b"last");
+    assert_eq!(
+        unsafe { CStr::from_ptr((*last).sg_namp) }.to_bytes(),
+        b"last"
+    );
     assert!(unsafe { fgetsgent(stream) }.is_null());
     assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
     assert_ne!(unsafe { feof(stream) }, 0);
@@ -1958,7 +1997,12 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         let mut error = 717;
         assert_eq!(
             unsafe {
-                getsgent_r(entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), 1, &mut result)
+                getsgent_r(
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    1,
+                    &mut result,
+                )
             },
             libc::ERANGE
         );
@@ -1966,7 +2010,10 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         assert_eq!(
             unsafe {
                 _nss_files_getsgent_r(
-                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut error,
                 )
             },
             1
@@ -1979,8 +2026,11 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         assert_eq!(
             unsafe {
                 _nss_files_getsgnam_r(
-                    c"ops".as_ptr(), entry.as_mut_ptr().cast(),
-                    buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    c"ops".as_ptr(),
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut error,
                 )
             },
             1
@@ -1989,7 +2039,10 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         assert_eq!(
             unsafe {
                 getsgent_r(
-                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut result,
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut result,
                 )
             },
             0
@@ -2003,7 +2056,10 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         assert_eq!(
             unsafe {
                 getsgent_r(
-                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut result,
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut result,
                 )
             },
             libc::ENOENT
@@ -2012,7 +2068,10 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         assert_eq!(
             unsafe {
                 _nss_files_getsgent_r(
-                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut error,
                 )
             },
             0
@@ -2022,7 +2081,10 @@ fn gshadow_files_provider_preserves_retry_and_lookup_cursor() {
         assert_eq!(
             unsafe {
                 _nss_files_getsgent_r(
-                    entry.as_mut_ptr().cast(), buffer.as_mut_ptr().cast(), buffer.len(), &mut error,
+                    entry.as_mut_ptr().cast(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                    &mut error,
                 )
             },
             1

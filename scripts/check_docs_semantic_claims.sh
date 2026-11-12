@@ -560,7 +560,7 @@ required_readme_facts = [
     ("abi_release_codegen_units", "[profile.release.package.frankenlibc-abi]"),
     ("nss_tuple_lookup", "tries `gethostbyname4_r` first (`nss_module.rs`)"),
     ("fingerprint_24byte_layout", "[hash:8][generation:8][size:8]"),
-    ("canary_affine_xor_mask", "0xDEADBEEFCAFEBABE"),
+    ("canary_dual_key_siphash", "SipHash13(K_tail"),
     ("deployed_malloc_provider_separation", "deployed `malloc` in `crates/frankenlibc-abi/src/malloc_abi.rs` does not call this core slab/magazine model"),
     ("stdio_cancellation_admission", "retain their public caller's cancellation admission around the underlying raw syscall"),
 ]

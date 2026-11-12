@@ -177,7 +177,10 @@ fn splitmix64(seed: &mut u64) -> u64 {
 /// Allocation-free, lock-free, TLS-free, and `environ`-free: safe to invoke
 /// before `main` during early `ld.so` `LD_PRELOAD` initialization without
 /// re-entering interposed libc functions.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 #[allow(unsafe_code)]
 fn fill_os_csprng_bytes(buf: &mut [u8; 32]) -> bool {
     const GRND_NONBLOCK: usize = 0x0001;
@@ -229,13 +232,8 @@ fn fill_os_csprng_bytes(buf: &mut [u8; 32]) -> bool {
     let mut flags = GRND_NONBLOCK;
     while filled < buf.len() {
         // SAFETY: `buf[filled..]` is valid writable stack memory for `buf.len() - filled` bytes.
-        let n = unsafe {
-            raw_sys_getrandom(
-                buf.as_mut_ptr().add(filled),
-                buf.len() - filled,
-                flags,
-            )
-        };
+        let n =
+            unsafe { raw_sys_getrandom(buf.as_mut_ptr().add(filled), buf.len() - filled, flags) };
         if n > 0 {
             let step = (n as usize).min(buf.len() - filled);
             filled += step;
@@ -251,7 +249,10 @@ fn fill_os_csprng_bytes(buf: &mut [u8; 32]) -> bool {
     true
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 fn fill_os_csprng_bytes(_buf: &mut [u8; 32]) -> bool {
     false
 }
@@ -638,7 +639,10 @@ mod tests {
             (t0, t1),
             "K_hdr and K_tail must be independent 128-bit keys"
         );
-        #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
         assert!(
             keys_seeded_from_csprng(),
             "Linux x86_64/aarch64 must seed fingerprint/canary keys from SYS_getrandom"

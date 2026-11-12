@@ -704,7 +704,10 @@ fn dual_key_csprng_canary_domain_separation_e2e() {
     };
 
     let sample_fp = AllocationFingerprint::compute(0x4000_0000, 128, 1);
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     assert!(
         keys_seeded_from_csprng(),
         "Linux key initialization must seed 256-bit header/tail SipHash keys from SYS_getrandom"

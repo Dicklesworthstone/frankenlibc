@@ -900,7 +900,9 @@ impl AllocationArena {
         };
         drop(shard);
 
-        if actual_hash != expected_hash || actual_gen != generation || actual_size != user_size as u64
+        if actual_hash != expected_hash
+            || actual_gen != generation
+            || actual_size != user_size as u64
         {
             return CachedIntegrityVerdict::HeaderCorrupted;
         }

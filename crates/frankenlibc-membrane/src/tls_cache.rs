@@ -702,8 +702,7 @@ impl TlsValidationCache {
         if let Some(entry) = found_entry {
             let offset = addr.wrapping_sub(entry.user_base);
             if offset < entry.user_size {
-                if let Some(rem) =
-                    Self::remaining_for_state(entry.state, entry.user_size - offset)
+                if let Some(rem) = Self::remaining_for_state(entry.state, entry.user_size - offset)
                 {
                     let checked = self.check_entry_remaining_if_needed(entry, rem, integrity);
                     if checked.is_hit() {
@@ -765,17 +764,21 @@ impl TlsValidationCache {
         integrity: Option<(&crate::arena::AllocationArena, bool, usize)>,
     ) -> CachedRemaining {
         match integrity {
-            Some((arena, true, write_len)) => self
-                .lookup_hit_remaining_with_oracle_const::<true>(
-                    addr,
-                    page_oracle,
-                    Some(arena),
-                    write_len,
-                ),
-            Some((arena, false, _)) => {
-                self.lookup_hit_remaining_with_oracle_const::<false>(addr, page_oracle, Some(arena), 0)
+            Some((arena, true, write_len)) => self.lookup_hit_remaining_with_oracle_const::<true>(
+                addr,
+                page_oracle,
+                Some(arena),
+                write_len,
+            ),
+            Some((arena, false, _)) => self.lookup_hit_remaining_with_oracle_const::<false>(
+                addr,
+                page_oracle,
+                Some(arena),
+                0,
+            ),
+            None => {
+                self.lookup_hit_remaining_with_oracle_const::<false>(addr, page_oracle, None, 0)
             }
-            None => self.lookup_hit_remaining_with_oracle_const::<false>(addr, page_oracle, None, 0),
         }
     }
 

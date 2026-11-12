@@ -59,7 +59,9 @@ fn snap(p: *const RpcEnt) -> Option<Snap> {
 
 #[test]
 fn getrpcent_matches_glibc() {
-    let _serial = RPC_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _serial = RPC_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let lib = unsafe { dlopen(c"libc.so.6".as_ptr(), RTLD_NOW) };
     assert!(!lib.is_null(), "dlopen libc.so.6 failed");
     type Ent = extern "C" fn() -> *mut RpcEnt;
@@ -178,14 +180,20 @@ fn assert_caller_owned(entry: &RpcEnt, buffer: *mut c_char, capacity: usize) {
     let end = base + capacity;
     let string_is_owned = |value: *mut c_char| {
         let start = value as usize;
-        assert!(start >= base && start < end, "string escapes caller storage");
+        assert!(
+            start >= base && start < end,
+            "string escapes caller storage"
+        );
         let bytes = unsafe { std::slice::from_raw_parts(value.cast::<u8>(), end - start) };
         assert!(bytes.contains(&0), "unterminated string in caller storage");
     };
     string_is_owned(entry.r_name);
     let table = entry.r_aliases as usize;
     assert_eq!(table % std::mem::align_of::<*mut c_char>(), 0);
-    assert!(table >= base && table < end, "alias table escapes caller storage");
+    assert!(
+        table >= base && table < end,
+        "alias table escapes caller storage"
+    );
     let slots = (end - table) / std::mem::size_of::<*mut c_char>();
     let mut terminated = false;
     for index in 0..slots {
@@ -250,7 +258,9 @@ fn call_nss(
 #[test]
 #[cfg(debug_assertions)]
 fn rpc_private_database_keeps_large_records_and_retries() {
-    let _serial = RPC_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _serial = RPC_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let (content, first, second, third) = large_fixture();
     let path = fixture_path("records", &content);
     flu::with_rpc_database_for_tests(&path, || {
@@ -285,7 +295,10 @@ fn rpc_private_database_keeps_large_records_and_retries() {
         );
 
         unsafe { flu::setrpcent(0) };
-        assert_eq!(snap(unsafe { flu::getrpcent().cast() }), Some(first.clone()));
+        assert_eq!(
+            snap(unsafe { flu::getrpcent().cast() }),
+            Some(first.clone())
+        );
         let last_alias = CString::new(first.2.last().unwrap().clone()).unwrap();
         let static_answer = unsafe { flu::getrpcbyname(last_alias.as_ptr()).cast::<RpcEnt>() };
         assert_eq!(snap(static_answer), Some(first.clone()));
@@ -298,14 +311,21 @@ fn rpc_private_database_keeps_large_records_and_retries() {
         // A reentrant lookup must not overwrite the nonreentrant answer.
         assert_eq!(snap(static_answer), Some(first.clone()));
         // Keyed lookups do not disturb the process-wide enumeration cursor.
-        assert_eq!(snap(unsafe { flu::getrpcent().cast() }), Some(second.clone()));
+        assert_eq!(
+            snap(unsafe { flu::getrpcent().cast() }),
+            Some(second.clone())
+        );
 
         for query in [
             CString::new(first.0.clone()).unwrap(),
             last_alias,
             CString::new(third.2[0].clone()).unwrap(),
         ] {
-            let expected = if query.as_bytes() == third.2[0] { &third } else { &first };
+            let expected = if query.as_bytes() == third.2[0] {
+                &third
+            } else {
+                &first
+            };
             assert_eq!(
                 call_r(16384, |record, buffer, size, result| unsafe {
                     flu::getrpcbyname_r(query.as_ptr(), record, buffer, size, result)
@@ -313,7 +333,10 @@ fn rpc_private_database_keeps_large_records_and_retries() {
                 (0, 0, Some(expected.clone()))
             );
         }
-        assert_eq!(snap(unsafe { flu::getrpcbynumber(first.1).cast() }), Some(first.clone()));
+        assert_eq!(
+            snap(unsafe { flu::getrpcbynumber(first.1).cast() }),
+            Some(first.clone())
+        );
         for query in [c"OMEGA", c"missing", c"alias095_xxxxxxxxxxxxxxxxxxxxxxxx"] {
             assert_eq!(
                 call_r(16384, |record, buffer, size, result| unsafe {
@@ -330,14 +353,19 @@ fn rpc_private_database_keeps_large_records_and_retries() {
             (libc::ERANGE, libc::ERANGE, None)
         );
         unsafe { flu::endrpcent() };
-        assert_eq!(snap(unsafe { flu::getrpcent().cast() }), Some(first.clone()));
+        assert_eq!(
+            snap(unsafe { flu::getrpcent().cast() }),
+            Some(first.clone())
+        );
     });
 }
 
 #[test]
 #[cfg(debug_assertions)]
 fn rpc_files_provider_returns_records_and_distinguishes_source_errors() {
-    let _serial = RPC_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _serial = RPC_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let (content, first, second, third) = large_fixture();
     let path = fixture_path("provider", &content);
     flu::with_rpc_database_for_tests(&path, || {
@@ -385,7 +413,8 @@ fn rpc_files_provider_returns_records_and_distinguishes_source_errors() {
         assert_eq!(
             call_nss(16384, |record, buffer, size, error| unsafe {
                 flu::_nss_files_getrpcent_r(record, buffer, size, error)
-            }).3,
+            })
+            .3,
             Some(first.clone())
         );
         assert_eq!(unsafe { flu::_nss_files_endrpcent() }, 1);
@@ -395,7 +424,12 @@ fn rpc_files_provider_returns_records_and_distinguishes_source_errors() {
             call_nss(256, |record, buffer, size, error| unsafe {
                 flu::_nss_files_getrpcent_r(record, buffer, size, error)
             }),
-            (1, 99, 77, Some((b"replacement".to_vec(), 700099, vec![b"fresh".to_vec()])))
+            (
+                1,
+                99,
+                77,
+                Some((b"replacement".to_vec(), 700099, vec![b"fresh".to_vec()]))
+            )
         );
     });
 
@@ -450,10 +484,15 @@ fn rpc_files_provider_returns_records_and_distinguishes_source_errors() {
 #[test]
 #[cfg(debug_assertions)]
 fn rpc_enumeration_shares_one_cursor_across_threads() {
-    let _serial = RPC_TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _serial = RPC_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut content = String::new();
     for number in 0..128 {
-        content.push_str(&format!("record{number} {} alias{number}\n", 710000 + number));
+        content.push_str(&format!(
+            "record{number} {} alias{number}\n",
+            710000 + number
+        ));
     }
     let path = fixture_path("threads", content.as_bytes());
     flu::with_rpc_database_for_tests(&path, || {

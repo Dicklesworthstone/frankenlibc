@@ -136,10 +136,9 @@ impl EbrCollector {
             pins: Mutex::new(EbrPinState { count: 0, epoch }),
         });
         slots.push(Arc::clone(&slot));
-        let _ =
-            ACTIVE_REGISTERED_THREADS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                Some(n.saturating_add(1))
-            });
+        let _ = ACTIVE_REGISTERED_THREADS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            Some(n.saturating_add(1))
+        });
         EbrHandle {
             collector: self,
             slot,
@@ -350,10 +349,9 @@ impl Drop for EbrHandle<'_> {
         // Deregistration is not unpinning: guards can legally outlive this
         // handle and retain both their counted pin and their Arc to the slot.
         self.slot.active.store(false, Ordering::Release);
-        let _ =
-            ACTIVE_REGISTERED_THREADS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                Some(n.saturating_sub(1))
-            });
+        let _ = ACTIVE_REGISTERED_THREADS.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+            Some(n.saturating_sub(1))
+        });
     }
 }
 

@@ -2,8 +2,13 @@
 //!
 //! Safe Rust implementations of C standard library (libc) functions.
 //!
-//! This crate provides pure-Rust, safe implementations of POSIX and C standard
-//! library functions. No `unsafe` code is permitted at the crate level.
+//! This crate enforces `#![deny(unsafe_code)]` at the crate root so safe Rust is the
+//! default across POSIX and C standard library implementations; explicit
+//! `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` exemptions (`407` attributes across
+//! `11` files: `lib.rs`, `syscall/mod.rs`, `pthread/{mod,cond,thread,tls}.rs`, `rcu/mod.rs`,
+//! `string/str.rs`, `termios/mod.rs`, `float128.rs`, and `math/mod.rs`) are confined to
+//! raw Linux syscall entrypoints, futex/clone/TLS primitives, RCU synchronization, SIMD
+//! target-feature dispatch, and FFI layout boundaries.
 
 #![deny(unsafe_code)]
 #![feature(portable_simd)]

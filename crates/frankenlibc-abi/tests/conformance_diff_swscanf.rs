@@ -1443,7 +1443,12 @@ mod locale_scanning {
                     *(engine.errno)() = 23;
                     assert_eq!((engine.get)(stream), 0xe9, "{} bound read", engine.name);
                     assert_eq!((engine.tell)(stream), encoded.len() as libc::c_long);
-                    assert_eq!((engine.unget)(0xe9, stream), 0xe9, "{} pushback", engine.name);
+                    assert_eq!(
+                        (engine.unget)(0xe9, stream),
+                        0xe9,
+                        "{} pushback",
+                        engine.name
+                    );
                     assert_eq!((engine.get)(stream), 0xe9);
                     assert_eq!((engine.tell)(stream), encoded.len() as libc::c_long);
                     let mut line = [SENTINEL as Wc; 8];
@@ -1456,7 +1461,11 @@ mod locale_scanning {
                     assert_eq!(&line[..4], &[Wc::from(b'A'), 0xe9, Wc::from(b'\n'), 0]);
                     assert!(line[4..].iter().all(|&wc| wc == SENTINEL));
                     assert_eq!((engine.tell)(stream), input.len() as libc::c_long);
-                    assert!((engine.orient)(stream, 0) > 0, "{} host orientation", engine.name);
+                    assert!(
+                        (engine.orient)(stream, 0) > 0,
+                        "{} host orientation",
+                        engine.name
+                    );
                     assert_eq!((engine.error)(stream), 0);
                     assert_eq!(*(engine.errno)(), 23, "{} success errno", engine.name);
                     assert_eq!((engine.get)(stream), u32::MAX);
@@ -1478,7 +1487,12 @@ mod locale_scanning {
                 let line = w("abcdefghijklmnopéé\n");
                 unsafe {
                     *(engine.errno)() = 23;
-                    assert_eq!((engine.put)(0xe9, stream), 0xe9, "{} bound write", engine.name);
+                    assert_eq!(
+                        (engine.put)(0xe9, stream),
+                        0xe9,
+                        "{} bound write",
+                        engine.name
+                    );
                     assert!(
                         (engine.puts)(line.as_ptr(), stream) >= 0,
                         "{} bound string",
@@ -1520,7 +1534,12 @@ mod locale_scanning {
                 let stream = (engine.open)(path.as_ptr(), c"w".as_ptr());
                 assert!(!stream.is_null());
                 assert_eq!((engine.orient)(stream, 0), 0);
-                assert_eq!((engine.put)(0xe9, stream), 0xe9, "{} initial write", engine.name);
+                assert_eq!(
+                    (engine.put)(0xe9, stream),
+                    0xe9,
+                    "{} initial write",
+                    engine.name
+                );
                 assert!((engine.orient)(stream, 0) > 0);
                 assert_eq!((engine.close)(stream), 0);
             }
@@ -1547,7 +1566,12 @@ mod locale_scanning {
             unsafe {
                 *(engine.errno)() = 23;
                 assert_eq!((engine.get)(stream), u32::from(b'A'));
-                assert_eq!((engine.get)(stream), u32::MAX, "{} invalid encoding", engine.name);
+                assert_eq!(
+                    (engine.get)(stream),
+                    u32::MAX,
+                    "{} invalid encoding",
+                    engine.name
+                );
                 assert_eq!(*(engine.errno)(), libc::EILSEQ);
                 assert_ne!((engine.error)(stream), 0);
                 assert_eq!((engine.eof)(stream), 0);
@@ -1579,7 +1603,12 @@ mod locale_scanning {
                 assert!((engine.orient)(stream, 1) > 0);
                 *(engine.errno)() = 23;
                 assert_eq!((engine.get)(stream), u32::MAX);
-                assert_eq!(*(engine.errno)(), libc::EBADF, "{} access error", engine.name);
+                assert_eq!(
+                    *(engine.errno)(),
+                    libc::EBADF,
+                    "{} access error",
+                    engine.name
+                );
                 assert_ne!((engine.error)(stream), 0);
                 assert_eq!((engine.eof)(stream), 0);
                 assert_eq!((engine.tell)(stream), 0);
@@ -2064,8 +2093,7 @@ mod locale_scanning {
 
         // Register only in the native provider. Delegating the entire format
         // to GNU would lose this callback even though GNU owns the FILE.
-        static CALLBACKS: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
+        static CALLBACKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         unsafe extern "C-unwind" fn arginfo(
             _info: *const c_void,
             _count: usize,

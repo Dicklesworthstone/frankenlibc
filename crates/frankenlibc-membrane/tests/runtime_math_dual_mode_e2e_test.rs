@@ -916,12 +916,11 @@ fn e2e_framework_decision_cards_export_contains_all_decisions() {
 
 const FORBIDDEN_LIBM_SYMBOLS: &[&str] = &[
     "acos", "acosf", "acosh", "acoshf", "asin", "asinf", "asinh", "asinhf", "atan", "atanf",
-    "atan2", "atan2f", "atanh", "atanhf", "cbrt", "cbrtf", "cos", "cosf", "cosh", "coshf",
-    "erf", "erff", "erfc", "erfcf", "exp", "expf", "exp2", "exp2f", "exp10", "exp10f",
-    "expm1", "expm1f", "hypot", "hypotf", "lgamma", "lgammaf", "log", "logf", "log10",
-    "log10f", "log1p", "log1pf", "log2", "log2f", "pow", "powf", "sin", "sinf", "sincos",
-    "sincosf", "sinh", "sinhf", "sqrt", "sqrtf", "tan", "tanf", "tanh", "tanhf", "tgamma",
-    "tgammaf",
+    "atan2", "atan2f", "atanh", "atanhf", "cbrt", "cbrtf", "cos", "cosf", "cosh", "coshf", "erf",
+    "erff", "erfc", "erfcf", "exp", "expf", "exp2", "exp2f", "exp10", "exp10f", "expm1", "expm1f",
+    "hypot", "hypotf", "lgamma", "lgammaf", "log", "logf", "log10", "log10f", "log1p", "log1pf",
+    "log2", "log2f", "pow", "powf", "sin", "sinf", "sincos", "sincosf", "sinh", "sinhf", "sqrt",
+    "sqrtf", "tan", "tanf", "tanh", "tanhf", "tgamma", "tgammaf",
 ];
 
 fn normalize_elf_symbol_name(raw: &str) -> &str {
@@ -1015,7 +1014,9 @@ fn scan_membrane_disassembly_for_libm_calls(
             if !target_raw.starts_with("frankenlibc_membrane::")
                 && is_forbidden_libm_target(target_raw)
             {
-                violations.push(format!("{current_fn} -> direct/PLT `{target_raw}` ({trimmed})"));
+                violations.push(format!(
+                    "{current_fn} -> direct/PLT `{target_raw}` ({trimmed})"
+                ));
                 continue;
             }
         }
@@ -1261,10 +1262,12 @@ fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
     let rows = parse_jsonl_rows(&log_text);
     let has_upgrade = rows.iter().any(|row| {
         row.get("event").and_then(Value::as_str) == Some("runtime_math_upgrade_to_safe_variant")
-            && row.get("action").and_then(Value::as_str)
-                == Some("Repair(UpgradeToSafeVariant)")
+            && row.get("action").and_then(Value::as_str) == Some("Repair(UpgradeToSafeVariant)")
             && row.get("risk_ppm").and_then(Value::as_u64).is_some()
-            && row.get("repair_trigger_ppm").and_then(Value::as_u64).is_some()
+            && row
+                .get("repair_trigger_ppm")
+                .and_then(Value::as_u64)
+                .is_some()
     });
     let has_quarantine = rows.iter().any(|row| {
         row.get("event").and_then(Value::as_str) == Some("quarantine_depth_transition")
@@ -1273,7 +1276,10 @@ fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
                 .get("to_depth")
                 .and_then(Value::as_u64)
                 .is_some_and(|d| d != 8192)
-            && row.get("epochs").and_then(Value::as_u64).is_some_and(|e| e >= 1)
+            && row
+                .get("epochs")
+                .and_then(Value::as_u64)
+                .is_some_and(|e| e >= 1)
     });
     assert!(
         has_upgrade,

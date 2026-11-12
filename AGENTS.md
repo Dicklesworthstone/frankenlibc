@@ -213,21 +213,21 @@ This project leverages companion crates for build/test tooling roles only. These
 
 | Crate | Purpose |
 |-------|---------|
-| `parking_lot` | Fast synchronization primitives (Mutex, RwLock) |
-| `blake3` | BLAKE3 hashing for allocation fingerprints |
+| `parking_lot` | Fast synchronization primitives (`Mutex`, `RwLock`) in `frankenlibc-abi` (`stdio_abi`, `dlfcn_native`, `runtime_policy`) and legacy `frankenlibc` (not used in `frankenlibc-membrane`) |
+| `blake3` | BLAKE3 digest hashing for runtime-math policy-table verification (`policy_table.rs`) and harness artifacts (allocation fingerprints use SipHash in `fingerprint.rs`, not `blake3`) |
 | `sha2` | SHA-2 hashing for conformance fixture verification |
 | `serde` + `serde_json` | Serialization for fixtures and conformance data |
 | `thiserror` | Ergonomic error type derivation |
 | `clap` | CLI argument parsing for harness binary |
 | `criterion` | Criterion benchmarks for performance regression gates |
 | `libc` | libc type definitions for ABI compatibility layer |
-| `libm` | Pure Rust math implementations (no C dependency) |
+| `libm` | Pure Rust math implementations declared directly in `frankenlibc-core/Cargo.toml` (no C dependency) |
 | `asupersync-conformance` | Deterministic conformance orchestration (build tooling) |
 | `ftui-harness` | TUI-driven harness output (build tooling) |
 
 ### Release Profile
 
-`Cargo.toml` defines NO `[profile.release]`, so release builds use Cargo's defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, no strip). Two derived profiles exist: `release-perf` (release + `debug = "line-tables-only"`, `strip = false`, for profiling) and `bench` (release + `lto = "thin"`, `codegen-units = 1`). The default build targets **baseline x86-64** (`.cargo/config.toml` adds no target features), so the shipped `.so` runs on any x86_64 CPU (bd-rc0923-epic-eeuy4f.13). All crates are built with `-Cllvm-args=-enable-tlsdesc` (TLS descriptors: an interposed malloc must not reach `__tls_get_addr`, which ld.so's DTV update re-enters through `free`; see the comment there). Code that needs SSE4.x/AVX/AVX2/FMA/AVX-512 must be a `#[target_feature]` function reached only after a run-time check (`is_x86_feature_detected!`), or a math kernel declared through `avx2_fma_dispatch!` (core `math/mod.rs`); nothing may assume a "crate-wide AVX2" any more. `scripts/check_baseline_isa.sh` enforces this (objdump allow-list + qemu `-cpu Nehalem`/`qemu64` fixture runs). The `release-x86-64-v3` profile (`+avx2,+fma`, output `target/release-x86-64-v3/`) exists only for A/B benchmarking against the old x86-64-v3 build; it refuses to start on older CPUs. LTO / single codegen unit / strip for the shipped `libc.so` are untried tuning, not current settings.
+`Cargo.toml` defines `[profile.release.package.frankenlibc-abi]` with `codegen-units = 1`, while other crates use Cargo's release defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, no strip). Two derived profiles exist: `release-perf` (release + `debug = "line-tables-only"`, `strip = false`, for profiling) and `bench` (release + `lto = "thin"`, `codegen-units = 1`). The default build targets **baseline x86-64** (`.cargo/config.toml` adds no target features), so the shipped `.so` runs on any x86_64 CPU (bd-rc0923-epic-eeuy4f.13). All crates are built with `-Cllvm-args=-enable-tlsdesc` (TLS descriptors: an interposed malloc must not reach `__tls_get_addr`, which ld.so's DTV update re-enters through `free`; see the comment there). Code that needs SSE4.x/AVX/AVX2/FMA/AVX-512 must be a `#[target_feature]` function reached only after a run-time check (`is_x86_feature_detected!`), or a math kernel declared through `avx2_fma_dispatch!` (core `math/mod.rs`); nothing may assume a "crate-wide AVX2" any more. `scripts/check_baseline_isa.sh` enforces this (objdump allow-list + qemu `-cpu Nehalem`/`qemu64` fixture runs). The `release-x86-64-v3` profile (`+avx2,+fma`, output `target/release-x86-64-v3/`) exists only for A/B benchmarking against the old x86-64-v3 build; it refuses to start on older CPUs. Workspace-wide LTO and strip for the shipped `libc.so` remain untried tuning (`codegen-units = 1` is already active for `frankenlibc-abi`).
 
 ---
 
@@ -392,11 +392,9 @@ FrankenLibC/
 ├── docs/planning/EXISTING_GLIBC_STRUCTURE.md
 ├── PROPOSED_ARCHITECTURE.md
 ├── FEATURE_PARITY.md
-├── legacy_glibc_code/            # Reference only — never translate line-by-line
-│   └── glibc/
 ├── crates/
 │   ├── frankenlibc-membrane/     # THE INNOVATION — TSM validation pipeline
-│   ├── frankenlibc-core/         # Safe Rust implementations (#![deny(unsafe_code)])
+│   ├── frankenlibc-core/         # Safe Rust default (#![deny(unsafe_code)] + explicit boundary exemptions)
 │   ├── frankenlibc-abi/          # extern "C" cdylib boundary (produces libc.so)
 │   ├── frankenlibc-fixture-exec/ # Fixture execution helper
 │   ├── frankenlibc-harness/      # Conformance testing framework
@@ -435,7 +433,7 @@ FrankenLibC/
 | `frankenlibc-abi` | `src/macros.rs` | Helper macros for ABI declarations |
 | `frankenlibc-abi` | `src/runtime_policy.rs` | Shared runtime-kernel gate for ABI entrypoints |
 | `frankenlibc-abi` | `src/*_abi.rs` | One file per function family |
-| `frankenlibc-abi` | `version_scripts/libc.map` | GNU ld version script |
+| `frankenlibc-abi` | `version_scripts/libc.map`, `version_scripts/fromfp.map` | GNU ld version scripts (full `libc.map` + interpose C23 `fromfp.map`) |
 | `frankenlibc-harness` | `src/runner.rs` | Test execution engine |
 | `frankenlibc-harness` | `src/capture.rs` | Host libc fixture capture |
 | `frankenlibc-harness` | `src/verify.rs` | Output comparison |
@@ -461,7 +459,7 @@ runtime-math-research = ["runtime-math-production"]  # Research-only extensions
 
 # frankenlibc-harness
 [features]
-default = ["asupersync-tooling"]
+default = ["asupersync-tooling", "frankentui-ui"]
 asupersync-tooling = ["dep:asupersync-conformance"]  # Deterministic conformance orchestration
 frankentui-ui = [...]                                 # TUI-driven analysis output
 ```
@@ -470,7 +468,7 @@ frankentui-ui = [...]                                 # TUI-driven analysis outp
 
 | Crate | Policy | Notes |
 |-------|--------|-------|
-| `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust only. SIMD modules get `#[allow(unsafe_code)]` with per-block `// SAFETY:` comments. |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust by default; `407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit boundary/SIMD files (`lib.rs`, `syscall/mod.rs`, `pthread/{mod,cond,thread,tls}.rs`, `rcu/mod.rs`, `string/str.rs`, `termios/mod.rs`, `float128.rs`, `math/mod.rs`) with `// SAFETY:` comments. |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena/fingerprint modules get `#[allow(unsafe_code)]` for raw pointer ops. Every unsafe block must have `// SAFETY:` comment. |
 | `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Entrypoints use a mixture of membrane-gated delegation, raw-syscall veneers, and host-backed wrappers. |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | Test harness never needs unsafe. |
@@ -584,7 +582,7 @@ Developer transparency remains mandatory:
 2. **Galois Connection:** `gamma(alpha(c)) >= c`. Safe interpretation is at least as permissive as what correct programs need.
 3. **Allocation Integrity:** For a hardened-arena allocation whose fingerprint is checked, a targeted 64-bit SipHash forgery has probability at most 2^-64 under the keyed-hash assumptions.
 4. **UAF Detection:** Deterministic for a freed block while it is in the hardened arena's quarantine queue. A raw C pointer carries no generation, so after same-address reuse a stale pointer resolves to the new allocation and is NOT detected (`arena.rs` module doc). Strict-mode (segment) allocations have no quarantine.
-5. **Buffer Overflow Detection:** Hardened-arena trailing canaries detect changed bytes when a later checked operation reaches the block. The invertible `hash XOR 0xDEADBEEFCAFEBABE` derivation preserves 64 bits but adds no entropy. A single blind guess has probability 2^-64 only under a uniformly unpredictable, undisclosed hash assumption; the process/time/address key mix does not establish it. Reading the header hash reveals the tail, and header/tail probabilities must not be multiplied.
+5. **Buffer Overflow Detection:** Hardened-arena trailing canaries detect changed bytes when a later checked operation reaches the block (including sampled `1-in-16` and near-tail warm `TLS_CACHE` write checks). Allocation fingerprints and trailing canaries use CSPRNG-seeded (`SYS_getrandom`) dual-key SipHash domain separation (`H = SipHash24(K_hdr, user_base || user_size || generation)` and `C_tail = SipHash13(K_tail, user_base || user_size || generation || H)` with independent 128-bit `K_tail != K_hdr`), so disclosing the 24-byte header does not reveal `C_tail`. A single blind 64-bit canary guess has probability 2^-64 under SipHash PRF assumptions; direct writes that never reach a checked path or full arbitrary-read/write compromise remain outside this detection boundary.
 6. **Healing Scope:** Explicitly membrane-gated families have defined policy-table actions for their wired validation outcomes. Universal per-function/per-invalid-input completeness is not yet established.
 
 ### Key Design Decisions
@@ -736,7 +734,7 @@ Developer transparency remains mandatory:
 - `macros.rs` — Helper macros for ABI declarations
 - `runtime_policy.rs` — Shared runtime-kernel gate for ABI entrypoints
 - `*_abi.rs` — One file per function family
-- `version_scripts/libc.map` — GNU ld version script
+- `version_scripts/libc.map`, `version_scripts/fromfp.map` — GNU ld version scripts (full `libc.map` + interpose C23 `fromfp.map`)
 
 ### frankenlibc-harness — Conformance Testing
 

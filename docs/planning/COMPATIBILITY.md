@@ -2,19 +2,19 @@
 
 > **Evidence source**: `tests/conformance/ld_preload_smoke_summary.v1.json`
 >
-> **Guide reconciled**: 2026-10-20. The recorded workload run is September 24, 2026 at `a8a4110b98606f26b296cd351d278073ee611ac9`; no new workload run is claimed by this documentation change.
+> **Guide reconciled**: 2026-11-11. The committed workload run is November 11, 2026 (`run_id`: `20261111T134243Z-2744068`) at `44a61541664180227df61c46d491ef024d2b4536`.
 
-FrankenLibC currently declares **L0 interposition over host glibc**. This guide describes the committed workload snapshot and its limitations. A historical pass does not establish that current HEAD or an arbitrary workload passes.
+FrankenLibC currently declares **L0 interposition over host glibc**. This guide describes the committed workload snapshot and its limitations. A recorded pass on the curated battery does not establish that an arbitrary later commit or unqualified workload passes.
 
-## Recorded Smoke Status — September 24, 2026
+## Recorded Smoke Status — November 11, 2026
 
 | Mode | Pass | Fail | Skip | Xfail |
 |------|------|------|------|-------|
-| **Strict** | 94 | 0 | 2 | 1 |
-| **Hardened** | 95 | 0 | 2 | 0 |
-| **Total** | 189 | 0 | 4 | 1 |
+| **Strict** | 175 | 0 | 2 | 0 |
+| **Hardened** | 173 | 0 | 2 | 0 |
+| **Total** | 348 | 0 | 4 | 0 |
 
-These mode assignments come from the artifact's structured fields. Its free-text notes instead assign the xfail to hardened `sed_substitute`; that disagreement remains unresolved in the artifact. The xfail and skips are not passes. The older June 3 table (60 passes / zero failures / four skips) covered a smaller battery and is superseded by this recorded corpus.
+These mode assignments come from `tests/conformance/ld_preload_smoke_summary.v1.json` (`run_id`: `20261111T134243Z-2744068`, source commit `44a61541…`). Historical snapshots (June 3 and September 24) covered smaller batteries and are superseded by this recorded corpus.
 
 The 4 skips are the optional `redis-cli --version` and `nginx -v` probes (2 per mode), skipped only when those binaries are not installed. They are tracked separately from failures.
 
@@ -28,25 +28,25 @@ The corpus includes the following workload families; consult the per-case transc
 - `sqlite3 :memory:`
 - The integration link fixture (`tests/integration/link_test.c`)
 - Repeated stress iterations of the above (5 iterations per stress case)
-- GNU `FILE` constructors, `sed`, `grep`, `awk`, `find`, archive/compression round trips, `make`, Perl, Git, C++ runtime initialization, and Python extensions/subprocesses
+- GNU `FILE` constructors, `sed`, `grep`, `awk`, `find`, archive/compression round trips, `make`, Perl, Git, C++ runtime initialization, Python extensions/subprocesses, `RLIMIT_DATA=10MB` VM-geometry probes, and warm-`TLS_CACHE` canary corruption probes
 
 ## What Works (Hardened Mode)
 
-The structured snapshot records 95 hardened-mode passes. Hardened mode can repair or deny invalid operations on explicitly wired paths; valid-program smoke cases do not establish universal memory safety. The smoke gate applies its per-run latency criterion, but this old result does not establish a current-source overhead bound.
+The structured snapshot records 173 hardened-mode passes (`0` failures, `2` optional skips, `0` xfails). Hardened mode can repair or deny invalid operations on explicitly wired paths; valid-program smoke cases do not establish universal memory safety.
 
 ## Known Issues
 
 ### Signature Guard Failures (0 cases in the checked run)
 
-No signature-guard failures are recorded in the September 24 artifact. This is a statement about that run, not a new verification result.
+No signature-guard failures are recorded in the November 11 artifact (`20261111T134243Z-2744068`). This is a statement about that run, not a blanket guarantee for unverified commits.
 
 ### Performance Failures (0 cases in the checked run)
 
-The September 24 artifact records zero `perf_failures` in both modes. Current allocator, hardened-sort and startup performance must be measured against a live incumbent in the same invocation; historical smoke timing does not discharge those tasks.
+The November 11 artifact records zero `perf_failures` in both modes (`deployed_overhead_passed: true`). Workload-specific allocator, hardened-sort and startup performance must still be measured against a live incumbent in the same invocation when evaluating new workloads.
 
 ### Optional/Skipped Binaries
 
-The following binaries are optional and skipped when not present (four of 194 cases in the recorded run):
+The following binaries are optional and skipped when not present (four of 352 cases in the recorded run):
 
 - `redis-cli` (network service)
 - `nginx` (web server)
