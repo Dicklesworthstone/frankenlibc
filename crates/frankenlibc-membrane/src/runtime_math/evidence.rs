@@ -19,8 +19,8 @@ use std::io::{self, ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::util::LazyBox;
 use crate::util::NoPoisonMutex as Mutex;
+use crate::util::{LazyBox, current_thread_id_u64};
 use serde_json::Value;
 
 use crate::config::SafetyLevel;
@@ -462,6 +462,8 @@ pub enum DecisionType {
 pub struct DecisionCardV1 {
     pub decision_id: u64,
     pub decision_type: DecisionType,
+    /// Linux kernel TID on supported native targets; a stable Rust thread
+    /// identity elsewhere. Zero means the kernel identity was unavailable.
     pub thread_id: u64,
     pub symbol_id: u32,
     pub timestamp_mono_ns: u64,
@@ -2293,24 +2295,6 @@ fn decision_reasoning_flags(
         flags |= 1 << 7;
     }
     flags
-}
-
-#[inline]
-#[cfg(feature = "owned-tls-cache")]
-fn current_thread_id_u64() -> u64 {
-    let stack_probe = 0u8;
-    let stack_addr = &stack_probe as *const u8 as usize as u64;
-    u64::from(std::process::id()).rotate_left(32) ^ stack_addr.rotate_right(4)
-}
-
-#[inline]
-#[cfg(not(feature = "owned-tls-cache"))]
-fn current_thread_id_u64() -> u64 {
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::thread::current().id().hash(&mut hasher);
-    hasher.finish()
 }
 
 #[inline]

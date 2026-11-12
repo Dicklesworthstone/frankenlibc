@@ -90,6 +90,56 @@ pub(crate) fn artifact_hash_map<K, V>() -> ArtifactHashMap<K, V> {
     ArtifactHashMap::default()
 }
 
+/// Kernel thread identity, without allocation, errno writes or compiler TLS.
+///
+/// Native clones may share a host TLS pointer, and evidence can be recorded
+/// after Rust has destroyed its thread handle. Neither a Rust `ThreadId` nor a
+/// stack address identifies those callers correctly. Zero denotes an
+/// unavailable identity if a syscall filter rejects `gettid`.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[inline]
+#[allow(unsafe_code)]
+pub(crate) fn current_thread_id_u64() -> u64 {
+    let tid: usize;
+    // SAFETY: gettid takes no arguments and accesses no user memory. Calling
+    // the kernel directly cannot reenter an interposed ABI or touch host TLS.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        std::arch::asm!(
+            "syscall",
+            inlateout("rax") 186usize => tid,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+        #[cfg(target_arch = "aarch64")]
+        std::arch::asm!(
+            "svc 0",
+            in("x8") 178usize,
+            lateout("x0") tid,
+            options(nostack),
+        );
+    }
+    u64::try_from(tid as isize).unwrap_or(0)
+}
+
+/// Stable Rust thread identity on targets without the native Linux boundary.
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+#[inline]
+pub(crate) fn current_thread_id_u64() -> u64 {
+    use std::hash::Hash;
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::thread::current().id().hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Back off under contention without linking Rust thread TLS in owned-TLS artifacts.
 #[inline]
 pub(crate) fn contention_backoff() {

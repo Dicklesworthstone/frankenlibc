@@ -1,5 +1,5 @@
-//! Reject real allocator requests while publishing runtime evidence. Both the
-//! slot buffer and LazyBox's owning allocation must fail without aborting libc.
+//! Runtime evidence remains usable across allocation failures and TLS teardown.
+//! Neither failed slot allocation nor a destroyed Rust thread handle may abort libc.
 
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::evidence::{
@@ -257,6 +257,208 @@ fn record(log: &SystematicEvidenceLog<CAPACITY>) -> u64 {
         0,
         None,
     )
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod thread_identity {
+    use super::*;
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+
+    struct TeardownProbe {
+        log: SystematicEvidenceLog<CAPACITY>,
+        key: libc::pthread_key_t,
+        tid: AtomicU64,
+        setup_error: AtomicI32,
+        rust_tls_destroyed: AtomicBool,
+        destructor_after_rust_tls: AtomicBool,
+        destructor_seqno: AtomicU64,
+        destructor_errno: AtomicI32,
+    }
+
+    struct TeardownMarker(Cell<*const TeardownProbe>);
+
+    impl Drop for TeardownMarker {
+        fn drop(&mut self) {
+            let probe = self.0.get();
+            if !probe.is_null() {
+                // SAFETY: the parent retains the probe through pthread_join,
+                // including all compiler-TLS and POSIX-key destructors.
+                unsafe { &*probe }
+                    .rust_tls_destroyed
+                    .store(true, Ordering::Release);
+            }
+        }
+    }
+
+    thread_local! {
+        static TEARDOWN_MARKER: TeardownMarker = const {
+            TeardownMarker(Cell::new(std::ptr::null()))
+        };
+    }
+
+    #[inline(never)]
+    fn record_from_another_frame(log: &SystematicEvidenceLog<CAPACITY>) -> u64 {
+        let padding = [0u8; 4096];
+        std::hint::black_box(&padding);
+        let seqno = record(log);
+        std::hint::black_box(&padding);
+        seqno
+    }
+
+    unsafe extern "C" fn record_after_rust_tls(argument: *mut c_void) {
+        // SAFETY: pthread invokes this with the registered probe, whose parent
+        // waits for this callback to finish before accessing or releasing it.
+        let probe = unsafe { &*argument.cast::<TeardownProbe>() };
+        probe.destructor_after_rust_tls.store(
+            probe.rust_tls_destroyed.load(Ordering::Acquire),
+            Ordering::Relaxed,
+        );
+        // No assertions, formatting or snapshot allocations run during teardown.
+        // The rings were initialized before the foreign thread was created.
+        // SAFETY: glibc's errno cell remains valid through its key destructors.
+        let errno = unsafe { libc::__errno_location() };
+        // SAFETY: this live thread owns its errno cell.
+        unsafe { *errno = libc::ENOTTY };
+        let seqno = record_from_another_frame(&probe.log);
+        // SAFETY: the callback has not ended this thread or invalidated its TCB.
+        probe
+            .destructor_errno
+            .store(unsafe { *errno }, Ordering::Relaxed);
+        probe.destructor_seqno.store(seqno, Ordering::Release);
+    }
+
+    extern "C" fn foreign_thread(argument: *mut c_void) -> *mut c_void {
+        // SAFETY: the parent retains its probe until this pthread is joined.
+        let probe = unsafe { &*argument.cast::<TeardownProbe>() };
+        // Initialize the Rust thread handle which the old logger depended on.
+        // GNU pthread teardown destroys compiler TLS before POSIX key values.
+        drop(std::thread::current());
+        TEARDOWN_MARKER.with(|marker| marker.0.set(probe));
+        // SAFETY: gettid has no arguments; this independently checks the
+        // production direct-syscall identity against the host syscall wrapper.
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u64;
+        probe.tid.store(tid, Ordering::Release);
+        // SAFETY: the key is live and the probe outlives all teardown callbacks.
+        let result = unsafe { libc::pthread_setspecific(probe.key, argument.cast_const()) };
+        probe.setup_error.store(result, Ordering::Release);
+        if result == 0 {
+            record(&probe.log);
+            record_from_another_frame(&probe.log);
+        }
+        std::ptr::null_mut()
+    }
+
+    #[test]
+    fn evidence_records_after_rust_tls_teardown_with_real_thread_identity() {
+        const CHILD: &str = "FRANKENLIBC_EVIDENCE_TLS_TEARDOWN_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "thread_identity::evidence_records_after_rust_tls_teardown_with_real_thread_identity",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "TLS teardown evidence child failed: {:?}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+                "the exact subprocess regression must execute once"
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "unexpected stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        // SAFETY: this isolated subprocess owns the default SIGALRM disposition.
+        unsafe { libc::alarm(10) };
+        let no_core = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: valid limit storage; a broken implementation should abort this
+        // isolated child without writing a potentially large core dump.
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_CORE, &no_core) }, 0);
+        let mut key = 0;
+        // SAFETY: writable key storage and a valid destructor with the C ABI.
+        assert_eq!(
+            unsafe { libc::pthread_key_create(&mut key, Some(record_after_rust_tls)) },
+            0
+        );
+        let probe = TeardownProbe {
+            log: SystematicEvidenceLog::new(123),
+            key,
+            tid: AtomicU64::new(0),
+            setup_error: AtomicI32::new(-1),
+            rust_tls_destroyed: AtomicBool::new(false),
+            destructor_after_rust_tls: AtomicBool::new(false),
+            destructor_seqno: AtomicU64::new(0),
+            destructor_errno: AtomicI32::new(0),
+        };
+        assert_eq!(record(&probe.log), 1);
+        // SAFETY: gettid has no arguments and cannot affect the worker's state.
+        let parent_tid = unsafe { libc::syscall(libc::SYS_gettid) } as u64;
+        let mut thread = std::mem::MaybeUninit::<libc::pthread_t>::uninit();
+        // SAFETY: the new thread receives a live probe which stays in this frame
+        // until join completes; only atomics and synchronized rings are shared.
+        let created = unsafe {
+            libc::pthread_create(
+                thread.as_mut_ptr(),
+                std::ptr::null(),
+                foreign_thread,
+                std::ptr::from_ref(&probe).cast_mut().cast(),
+            )
+        };
+        if created != 0 {
+            // SAFETY: no thread was created, so no callback can use this key.
+            unsafe { libc::pthread_key_delete(key) };
+            assert_eq!(created, 0, "foreign pthread creation");
+        }
+        // SAFETY: successful creation initialized the handle; this is its sole join.
+        let joined = unsafe { libc::pthread_join(thread.assume_init(), std::ptr::null_mut()) };
+        if joined != 0 {
+            // SAFETY: an unexpected join failure must not drop the probe while
+            // a foreign thread could still access it. Terminate the isolated child.
+            unsafe { libc::_exit(94) };
+        }
+        // SAFETY: the thread and all callbacks are finished, so the key is unused.
+        assert_eq!(unsafe { libc::pthread_key_delete(key) }, 0);
+        assert_eq!(probe.setup_error.load(Ordering::Acquire), 0);
+        assert!(probe.rust_tls_destroyed.load(Ordering::Acquire));
+        assert!(probe.destructor_after_rust_tls.load(Ordering::Relaxed));
+        assert_eq!(probe.destructor_seqno.load(Ordering::Acquire), 4);
+        assert_eq!(probe.destructor_errno.load(Ordering::Relaxed), libc::ENOTTY);
+        let tid = probe.tid.load(Ordering::Acquire);
+        assert!(tid > 0);
+        assert_ne!(
+            tid, parent_tid,
+            "simultaneously live threads have distinct IDs"
+        );
+        let cards = probe.log.decision_cards_snapshot_sorted();
+        assert_eq!(cards.len(), 4);
+        assert_eq!(cards[0].thread_id, parent_tid);
+        assert!(
+            cards[1..].iter().all(|card| card.thread_id == tid),
+            "thread identity must survive stack changes and Rust TLS destruction"
+        );
+        assert_eq!(probe.log.publication_loss_count(), 0);
+        // SAFETY: disable this isolated subprocess's watchdog after its checks.
+        unsafe { libc::alarm(0) };
+    }
 }
 
 #[test]
