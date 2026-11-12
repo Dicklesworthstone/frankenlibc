@@ -1267,10 +1267,6 @@ impl SosBarrierController {
     /// Current state.
     #[must_use]
     pub fn state(&self) -> SosBarrierState {
-        if self.observations < WARMUP {
-            return SosBarrierState::Calibrating;
-        }
-
         if !self.fragmentation_hash_valid
             || !self.thread_safety_hash_valid
             || !self.size_class_hash_valid
@@ -1286,6 +1282,13 @@ impl SosBarrierController {
             || self.last_size_class_value < 0
         {
             return SosBarrierState::Violated;
+        }
+
+        // Calibration delays healthy/warning classification, not a known
+        // certificate failure. Non-provenance evaluators do not advance this
+        // counter, so checking it first could hide their violations forever.
+        if self.observations < WARMUP {
+            return SosBarrierState::Calibrating;
         }
 
         // Warning: either barrier within 20% of threshold.
@@ -2189,6 +2192,87 @@ mod tests {
         let ctrl = SosBarrierController::new();
         assert_eq!(ctrl.state(), SosBarrierState::Calibrating);
         assert_eq!(ctrl.total_violations(), 0);
+    }
+
+    #[test]
+    fn controller_cold_certificate_failures_bypass_calibration() {
+        type Evaluate = fn(&mut SosBarrierController) -> bool;
+        let cases: [(&str, Evaluate); 5] = [
+            ("provenance", |ctrl| {
+                ctrl.evaluate_provenance(500_000, 0, 400_000, 800_000)
+            }),
+            ("quarantine", |ctrl| {
+                ctrl.evaluate_quarantine(64, 100, 500_000, 50)
+            }),
+            ("fragmentation", |ctrl| {
+                for i in 0..CADENCE_FRAGMENTATION {
+                    ctrl.note_allocator_observation(false, 1024 + i as u32);
+                }
+                ctrl.evaluate_fragmentation(900_000, 980_000)
+            }),
+            ("thread safety", |ctrl| {
+                ctrl.evaluate_thread_safety(700, 4, true, 900_000, 900_000)
+            }),
+            ("size class", |ctrl| ctrl.evaluate_size_class(64, 32, true)),
+        ];
+        for (name, evaluate) in cases {
+            let mut ctrl = SosBarrierController::new();
+            assert!(!evaluate(&mut ctrl), "{name} must actually violate");
+            assert!(ctrl.summary().total_observations < WARMUP);
+            assert_eq!(ctrl.state(), SosBarrierState::Violated, "{name}");
+            assert_eq!(ctrl.total_violations(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn controller_cold_integrity_failures_bypass_calibration() {
+        for certificate in 0..3 {
+            let mut ctrl = SosBarrierController::new();
+            match certificate {
+                0 => ctrl.fragmentation_hash_valid = false,
+                1 => ctrl.thread_safety_hash_valid = false,
+                2 => ctrl.size_class_hash_valid = false,
+                _ => unreachable!(),
+            }
+            assert_eq!(ctrl.summary().total_observations, 0);
+            assert_eq!(ctrl.state(), SosBarrierState::Violated);
+            assert_eq!(ctrl.total_violations(), 1);
+        }
+    }
+
+    #[test]
+    fn controller_healthy_and_warning_states_still_require_warmup() {
+        for (risk, warmed_state) in [
+            (10_000, SosBarrierState::Safe),
+            (90_000, SosBarrierState::Warning),
+        ] {
+            let mut ctrl = SosBarrierController::new();
+            for observation in 1..=WARMUP {
+                assert!(ctrl.evaluate_provenance(risk, 0, 0, 0));
+                let expected = if observation < WARMUP {
+                    SosBarrierState::Calibrating
+                } else {
+                    warmed_state
+                };
+                assert_eq!(ctrl.state(), expected, "observation {observation}");
+            }
+            assert_eq!(ctrl.total_violations(), 0);
+        }
+    }
+
+    #[test]
+    fn controller_cold_violation_recovers_without_losing_the_event_count() {
+        let mut ctrl = SosBarrierController::new();
+        assert!(!ctrl.evaluate_size_class(64, 32, true));
+        assert_eq!(ctrl.state(), SosBarrierState::Violated);
+
+        assert!(ctrl.evaluate_size_class(64, 64, true));
+        assert_eq!(ctrl.state(), SosBarrierState::Calibrating);
+        for _ in 0..WARMUP {
+            assert!(ctrl.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000));
+        }
+        assert_eq!(ctrl.state(), SosBarrierState::Safe);
+        assert_eq!(ctrl.total_violations(), 1);
     }
 
     #[test]

@@ -2,9 +2,9 @@ use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::heal::HealingAction;
 use frankenlibc_membrane::runtime_math::evidence::{LossEvidenceV1, SystematicEvidenceLog};
 use frankenlibc_membrane::runtime_math::{
-    ApiFamily, MembraneAction, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION, RuntimeContext,
-    RuntimeDecision, RuntimeKernelFramework, RuntimeMathKernel, RuntimeReverseRoundDiversityState,
-    ValidationProfile,
+    ApiFamily, MembraneAction, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION,
+    RUNTIME_MATH_PRODUCTION_ENABLED, RuntimeContext, RuntimeDecision, RuntimeKernelFramework,
+    RuntimeMathKernel, RuntimeReverseRoundDiversityState, ValidationProfile,
 };
 use serde_json::Value;
 
@@ -72,6 +72,50 @@ fn runtime_decision_rows(rows: &[Value]) -> Vec<&Value> {
                 .is_some_and(|event| event == "runtime_decision")
         })
         .collect()
+}
+
+#[test]
+fn e2e_cold_sos_violation_enforces_both_modes_and_recovers() {
+    assert!(RUNTIME_MATH_PRODUCTION_ENABLED);
+    let ctx = RuntimeContext::pointer_validation(0x1234, false);
+    for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        kernel.observe_size_class_mapping(64, 64, true);
+        let healthy = kernel.decide(mode, ctx);
+        assert!(!matches!(
+            healthy.action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+        assert!(kernel.snapshot(mode).sos_barrier_size_class_value > 0);
+
+        // A valid class that is smaller than the request is a concrete mapping
+        // failure. No provenance observations have warmed this fresh kernel.
+        kernel.observe_size_class_mapping(64, 32, true);
+        let violated = kernel.snapshot(mode);
+        assert!(violated.sos_barrier_size_class_value < 0);
+        assert_eq!(violated.sos_barrier_violations, 1);
+        let enforced = kernel.decide(mode, ctx);
+        let expected = match mode {
+            SafetyLevel::Strict => MembraneAction::Deny,
+            SafetyLevel::Hardened => MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            SafetyLevel::Off => unreachable!(),
+        };
+        assert_eq!(enforced.action, expected, "mode {mode:?}");
+        assert_eq!(enforced.profile, ValidationProfile::Full);
+        assert!(enforced.evidence_seqno > 0);
+
+        // A later valid mapping restores ordinary routing, while the earlier
+        // violation remains visible in telemetry.
+        kernel.observe_size_class_mapping(64, 64, true);
+        let restored = kernel.snapshot(mode);
+        assert!(restored.sos_barrier_size_class_value > 0);
+        assert_eq!(restored.sos_barrier_violations, 1);
+        let recovered = kernel.decide(mode, ctx);
+        assert!(!matches!(
+            recovered.action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+    }
 }
 
 #[test]
