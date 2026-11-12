@@ -1,0 +1,9 @@
+
+running 4 tests
+test extern_crate_counter_handles_canonical_forms ... ok
+test no_paired_gate_test_declares_extern_crate ... ok
+test test_extern_symbols_audit_rejects_phantom_extern_and_broken_zz_probe ... ok
+test test_extern_symbols_audit_passes_across_workspace_and_ci_wires_gate ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.93s
+
