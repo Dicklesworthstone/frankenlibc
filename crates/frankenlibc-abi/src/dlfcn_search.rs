@@ -155,6 +155,9 @@ struct ProcessSearchState {
 impl SearchContext {
     #[allow(dead_code)]
     pub(super) fn process() -> Self {
+        // Fork holds the same outer lock. A child must not inherit a OnceLock
+        // whose initializer belonged to a vanished parent thread.
+        let _operation = super::OPERATIONS.lock();
         static PROCESS_STATE: std::sync::OnceLock<ProcessSearchState> = std::sync::OnceLock::new();
         let state = PROCESS_STATE.get_or_init(|| {
             // Unknown security state is secure, never permission to use LD_*.

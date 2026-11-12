@@ -504,6 +504,7 @@ fn close_main_program_handle() -> c_int {
 
 #[path = "dlfcn_native.rs"]
 mod native;
+pub(crate) use native::fork_prepare as native_fork_prepare;
 #[cfg(not(feature = "standalone"))]
 use native::host_may_load_declined_object;
 #[cfg(feature = "standalone")]

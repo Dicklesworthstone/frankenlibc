@@ -96,7 +96,46 @@ mod unwind;
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
-static OPERATIONS: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+// Native clones can inherit compiler TLS, and their first creation can change
+// the allocator's fast owner key. Always use the kernel TID for this lock.
+static OPERATIONS: crate::util::AbiReentrantMutex<(), true> =
+    crate::util::AbiReentrantMutex::new_kernel_tid(());
+
+/// Serialize the loader before the fork wrappers acquire stdio, environment,
+/// arena and allocator locks. A fork from a constructor/finalizer adds one
+/// recursion level while preserving its outer operation in both processes.
+pub(crate) struct NativeForkGuard {
+    parent_tid: usize,
+    _guard: crate::util::AbiReentrantMutexGuard<'static, (), true>,
+}
+
+pub(crate) fn fork_prepare() -> NativeForkGuard {
+    let guard = OPERATIONS.lock();
+    NativeForkGuard {
+        parent_tid: crate::util::AbiReentrantMutex::<(), true>::current_owner_tid(),
+        _guard: guard,
+    }
+}
+
+impl NativeForkGuard {
+    /// Repair ownership before any child-side runtime repair can reenter the
+    /// loader. Repeating the adoption in release_in_child is harmless.
+    ///
+    /// # Safety
+    /// Only the freshly forked child may call this, before another thread
+    /// exists. This guard was acquired by the surviving forking thread.
+    pub(crate) unsafe fn adopt_in_child(&self) {
+        // SAFETY: the wrapper guarantees the fresh-child preconditions.
+        unsafe { OPERATIONS.adopt_in_fork_child(self.parent_tid) };
+    }
+
+    pub(crate) fn release_in_parent(self) {}
+
+    pub(crate) fn release_in_child(self) {
+        // SAFETY: only the fork wrappers' pid==0 branches call this method.
+        unsafe { self.adopt_in_child() };
+    }
+}
 
 // All accesses occur under OPERATIONS. Nested dlclose calls update reference
 // counts, but only the outer collector runs finalizers and retires mappings.
@@ -318,6 +357,7 @@ pub fn native_dso_handle_for_tests(handle: *mut c_void) -> bool {
     let Some(id) = native_dso_id_from_handle(handle) else {
         return false;
     };
+    let _operation = OPERATIONS.lock();
     registry()
         .lock()
         .map(|dsos| dsos.iter().any(|dso| dso.id == id))

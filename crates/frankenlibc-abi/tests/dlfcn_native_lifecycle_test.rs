@@ -4,6 +4,7 @@ use std::ffi::{CString, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -457,6 +458,177 @@ fn native_lifecycle_callbacks_can_reenter_loader() {
         // has returned; the nested dlclose updates counts without recursing.
         assert_eq!(f.events(loader, sink), [10, 1, 20, -20, -10, -1]);
         loader.close(sink);
+    }
+}
+
+#[test]
+fn native_lifecycle_constructor_fork_preserves_recursive_loader_ownership() {
+    if !child_case("native_lifecycle_constructor_fork_preserves_recursive_loader_ownership") {
+        return;
+    }
+    for loader in [Loader::Host, Loader::Native] {
+        let fixture = Fixture::new();
+        let leaf = fixture.compile("fork_leaf", "int answer(void) { return 73; }", &[], &[]);
+        let fork: unsafe extern "C" fn() -> libc::pid_t = match loader {
+            Loader::Native => frankenlibc_abi::process_abi::fork,
+            Loader::Host => unsafe {
+                dlsym_oracle::host_fn(c"fork", frankenlibc_abi::process_abi::fork as *const ())
+            },
+        };
+        CONSTRUCTOR_FORK_FUNCTION.store(fork as *const () as usize, Ordering::Relaxed);
+        CONSTRUCTOR_FORK_RESULT.store(-1, Ordering::Relaxed);
+        let bridge = fixture.compile(
+            "constructor_fork_bridge",
+            "static void (*callback)(void); void set_callback(void (*f)(void)) { callback=f; } void event_push(int ignored) { (void)ignored; callback(); }",
+            &[],
+            &[],
+        );
+        let bridge_handle = loader.open(&bridge, libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(!bridge_handle.is_null());
+        let set_callback: unsafe extern "C" fn(unsafe extern "C" fn()) =
+            unsafe { std::mem::transmute(loader.symbol(bridge_handle, "set_callback")) };
+        unsafe { set_callback(fork_from_constructor) };
+        let root = fixture.compile(
+            "fork_constructor",
+            r#"
+                extern void event_push(int);
+                __attribute__((constructor)) static void initialize(void) {
+                    event_push(1);
+                }
+            "#,
+            &[&bridge],
+            &[],
+        );
+        let handle = loader.open(&root, libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(!handle.is_null());
+        let pid = CONSTRUCTOR_FORK_RESULT.load(Ordering::Relaxed);
+        assert!(pid >= 0, "constructor fork failed");
+        if pid == 0 {
+            // The constructor has returned and its outer operation guard has
+            // dropped in the child. A stale parent TID would deadlock here.
+            let child_handle = loader.open(&leaf, libc::RTLD_NOW | libc::RTLD_LOCAL);
+            assert!(!child_handle.is_null());
+            assert_eq!(loader.value(child_handle, "answer"), 73);
+            loader.close(child_handle);
+            loader.close(handle);
+            loader.close(bridge_handle);
+            unsafe { libc::_exit(0) };
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(
+            libc::WIFEXITED(status),
+            "child stalled or crashed: {status}"
+        );
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        loader.close(handle);
+        loader.close(bridge_handle);
+    }
+}
+
+static CONSTRUCTOR_FORK_FUNCTION: AtomicUsize = AtomicUsize::new(0);
+static CONSTRUCTOR_FORK_RESULT: AtomicI32 = AtomicI32::new(-1);
+
+unsafe extern "C" fn fork_from_constructor() {
+    // The test chooses the actual owned wrapper or the separately resolved GNU
+    // provider before loading the constructor. Neither path relies on a native
+    // plugin import that could silently fall back to a host-owned DSO.
+    let fork: unsafe extern "C" fn() -> libc::pid_t =
+        unsafe { std::mem::transmute(CONSTRUCTOR_FORK_FUNCTION.load(Ordering::Relaxed)) };
+    let pid = unsafe { fork() };
+    CONSTRUCTOR_FORK_RESULT.store(pid, Ordering::Relaxed);
+    if pid == 0 {
+        unsafe { libc::alarm(5) };
+    }
+}
+
+static FORK_CONSTRUCTOR_ENTERED: AtomicBool = AtomicBool::new(false);
+static FORK_CONSTRUCTOR_RELEASE: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" fn hold_constructor_for_fork() {
+    FORK_CONSTRUCTOR_ENTERED.store(true, Ordering::Release);
+    while !FORK_CONSTRUCTOR_RELEASE.load(Ordering::Acquire) {
+        frankenlibc_core::syscall::sys_sched_yield();
+    }
+}
+
+#[test]
+fn native_lifecycle_fork_waits_for_another_threads_loader_transaction() {
+    if !child_case("native_lifecycle_fork_waits_for_another_threads_loader_transaction") {
+        return;
+    }
+    for loader in [Loader::Host, Loader::Native] {
+        FORK_CONSTRUCTOR_ENTERED.store(false, Ordering::Relaxed);
+        FORK_CONSTRUCTOR_RELEASE.store(false, Ordering::Relaxed);
+        let fixture = Fixture::new();
+        let bridge = fixture.compile(
+            "fork_bridge",
+            "static void (*callback)(void); void set_callback(void (*f)(void)) { callback=f; } void event_push(int ignored) { (void)ignored; callback(); }",
+            &[],
+            &[],
+        );
+        let bridge_handle = loader.open(&bridge, libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(!bridge_handle.is_null());
+        let set_callback: unsafe extern "C" fn(unsafe extern "C" fn()) =
+            unsafe { std::mem::transmute(loader.symbol(bridge_handle, "set_callback")) };
+        unsafe { set_callback(hold_constructor_for_fork) };
+        let blocked = fixture.compile(
+            "fork_blocked",
+            "extern void event_push(int); __attribute__((constructor)) static void initialize(void) { event_push(1); } int answer(void) { return 97; }",
+            &[&bridge],
+            &[],
+        );
+        let leaf = fixture.compile(
+            "fork_unrelated",
+            "int answer(void) { return 83; }",
+            &[],
+            &[],
+        );
+        // Create the releaser before a GNU constructor holds the host loader
+        // lock: pthread_create itself may need that lock for its TLS storage.
+        let release = std::thread::spawn(|| {
+            while !FORK_CONSTRUCTOR_ENTERED.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            FORK_CONSTRUCTOR_RELEASE.store(true, Ordering::Release);
+        });
+        let worker = std::thread::spawn(move || loader.open(&blocked, libc::RTLD_NOW) as usize);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !FORK_CONSTRUCTOR_ENTERED.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "constructor did not start");
+            std::thread::yield_now();
+        }
+        // Keep the constructor in flight across the fork attempt. A separate
+        // thread can release it while the correct fork implementation waits.
+        let pid = unsafe {
+            match loader {
+                Loader::Native => frankenlibc_abi::process_abi::fork(),
+                Loader::Host => libc::fork(),
+            }
+        };
+        assert!(pid >= 0);
+        if pid == 0 {
+            unsafe { libc::alarm(5) };
+            let handle = loader.open(&leaf, libc::RTLD_NOW | libc::RTLD_LOCAL);
+            assert!(!handle.is_null());
+            assert_eq!(loader.value(handle, "answer"), 83);
+            loader.close(handle);
+            unsafe { libc::_exit(0) };
+        }
+        release.join().unwrap();
+        let handle = worker.join().unwrap() as *mut c_void;
+        assert!(!handle.is_null());
+        assert_eq!(loader.value(handle, "answer"), 97);
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(
+            libc::WIFEXITED(status),
+            "child inherited a held loader lock: {status}"
+        );
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        loader.close(handle);
+        loader.close(bridge_handle);
     }
 }
 

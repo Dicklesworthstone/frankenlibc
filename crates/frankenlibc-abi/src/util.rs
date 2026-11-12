@@ -74,7 +74,10 @@ pub(crate) fn artifact_hash_set<T>() -> ArtifactHashSet<T> {
 /// replacement artifact. ABI startup/interpose paths only need same-thread
 /// recursion plus mutual exclusion, so this lock tracks ownership with the
 /// kernel TID and backs off with `sched_yield` under contention.
-pub(crate) struct AbiReentrantMutex<T> {
+pub(crate) struct AbiReentrantMutex<T, const KERNEL_TID: bool = false> {
+    // Kernel-TID mode packs the u32 identity and u32 depth in one word. A
+    // signal may reenter between any instructions, so publishing ownership
+    // before a separate depth store would expose an incomplete acquisition.
     owner_tid: AtomicUsize,
     recursion_depth: AtomicU32,
     value: UnsafeCell<T>,
@@ -82,9 +85,9 @@ pub(crate) struct AbiReentrantMutex<T> {
 
 // SAFETY: the lock serializes mutable access to `value`; sharing the mutex is
 // sound when the protected value can move across threads.
-unsafe impl<T: Send> Sync for AbiReentrantMutex<T> {}
+unsafe impl<T: Send, const KERNEL_TID: bool> Sync for AbiReentrantMutex<T, KERNEL_TID> {}
 // SAFETY: ownership transfer preserves the lock/value invariants.
-unsafe impl<T: Send> Send for AbiReentrantMutex<T> {}
+unsafe impl<T: Send, const KERNEL_TID: bool> Send for AbiReentrantMutex<T, KERNEL_TID> {}
 
 impl<T> AbiReentrantMutex<T> {
     pub(crate) const fn new(value: T) -> Self {
@@ -95,9 +98,28 @@ impl<T> AbiReentrantMutex<T> {
         }
     }
 
+}
+
+impl<T> AbiReentrantMutex<T, true> {
+    /// Stable kernel identity even when creating the first native thread
+    /// changes the allocator's fast owner-key strategy inside a held lock.
+    pub(crate) const fn new_kernel_tid(value: T) -> Self {
+        assert!(
+            usize::BITS == 64,
+            "native loader locking requires a 64-bit target"
+        );
+        Self {
+            owner_tid: AtomicUsize::new(0),
+            recursion_depth: AtomicU32::new(0),
+            value: UnsafeCell::new(value),
+        }
+    }
+}
+
+impl<T, const KERNEL_TID: bool> AbiReentrantMutex<T, KERNEL_TID> {
     #[inline]
-    pub(crate) fn lock(&self) -> AbiReentrantMutexGuard<'_, T> {
-        let tid = current_tid();
+    pub(crate) fn lock(&self) -> AbiReentrantMutexGuard<'_, T, KERNEL_TID> {
+        let tid = Self::current_owner_tid();
         let mut spins = 0u32;
         loop {
             if self.try_lock_for_tid(tid) {
@@ -124,8 +146,8 @@ impl<T> AbiReentrantMutex<T> {
     }
 
     #[inline]
-    pub(crate) fn try_lock(&self) -> Option<AbiReentrantMutexGuard<'_, T>> {
-        let tid = current_tid();
+    pub(crate) fn try_lock(&self) -> Option<AbiReentrantMutexGuard<'_, T, KERNEL_TID>> {
+        let tid = Self::current_owner_tid();
         self.try_lock_for_tid(tid).then(|| AbiReentrantMutexGuard {
             lock: self,
             _not_send_sync: PhantomData,
@@ -147,7 +169,7 @@ impl<T> AbiReentrantMutex<T> {
     #[inline]
     #[allow(dead_code)]
     pub(crate) unsafe fn unlock_forgotten_guard(&self) {
-        self.unlock_for_tid(current_tid());
+        self.unlock_for_tid(Self::current_owner_tid());
     }
 
     /// Call in a `fork` child for a lock the forking thread held across the
@@ -164,9 +186,26 @@ impl<T> AbiReentrantMutex<T> {
     #[allow(dead_code)]
     #[inline]
     pub(crate) unsafe fn adopt_in_fork_child(&self, parent_tid: usize) {
+        if KERNEL_TID {
+            let mut state = self.owner_tid.load(Ordering::Acquire);
+            while (state as u64 >> 32) == parent_tid as u64 {
+                let adopted =
+                    ((Self::current_owner_tid() as u64) << 32) | u64::from(state as u32);
+                match self.owner_tid.compare_exchange_weak(
+                    state,
+                    adopted as usize,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return,
+                    Err(current) => state = current,
+                }
+            }
+            return;
+        }
         let _ = self.owner_tid.compare_exchange(
             parent_tid,
-            current_tid(),
+            Self::current_owner_tid(),
             Ordering::AcqRel,
             Ordering::Relaxed,
         );
@@ -176,11 +215,40 @@ impl<T> AbiReentrantMutex<T> {
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn current_owner_tid() -> usize {
-        current_tid()
+        if KERNEL_TID {
+            (frankenlibc_core::syscall::sys_gettid().max(1) as usize) << 1
+        } else {
+            current_tid()
+        }
     }
 
     #[inline]
     fn try_lock_for_tid(&self, tid: usize) -> bool {
+        if KERNEL_TID {
+            let mut state = self.owner_tid.load(Ordering::Acquire);
+            loop {
+                let depth = if state == 0 {
+                    1
+                } else if (state as u64 >> 32) == tid as u64 {
+                    let Some(depth) = (state as u32).checked_add(1) else {
+                        return false;
+                    };
+                    depth
+                } else {
+                    return false;
+                };
+                let acquired = ((tid as u64) << 32) | u64::from(depth);
+                match self.owner_tid.compare_exchange_weak(
+                    state,
+                    acquired as usize,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return true,
+                    Err(current) => state = current,
+                }
+            }
+        }
         if self.owner_tid.load(Ordering::Acquire) == tid {
             let previous = self.recursion_depth.fetch_add(1, Ordering::Relaxed);
             debug_assert!(previous > 0);
@@ -201,6 +269,24 @@ impl<T> AbiReentrantMutex<T> {
 
     #[inline]
     fn unlock_for_tid(&self, tid: usize) {
+        if KERNEL_TID {
+            let mut state = self.owner_tid.load(Ordering::Relaxed);
+            loop {
+                if (state as u64 >> 32) != tid as u64 {
+                    return;
+                }
+                let released = if state as u32 > 1 { state - 1 } else { 0 };
+                match self.owner_tid.compare_exchange_weak(
+                    state,
+                    released,
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return,
+                    Err(current) => state = current,
+                }
+            }
+        }
         if self.owner_tid.load(Ordering::Acquire) != tid {
             return;
         }
@@ -232,12 +318,12 @@ fn current_tid() -> usize {
 /// the value while the owner recursively acquires it; sharing it would expose
 /// a non-`Sync` value concurrently. A foreign-thread drop also cannot release
 /// the owner's recursion level. Keep both auto traits disabled explicitly.
-pub(crate) struct AbiReentrantMutexGuard<'a, T> {
-    lock: &'a AbiReentrantMutex<T>,
+pub(crate) struct AbiReentrantMutexGuard<'a, T, const KERNEL_TID: bool = false> {
+    lock: &'a AbiReentrantMutex<T, KERNEL_TID>,
     _not_send_sync: PhantomData<*mut ()>,
 }
 
-impl<T> Deref for AbiReentrantMutexGuard<'_, T> {
+impl<T, const KERNEL_TID: bool> Deref for AbiReentrantMutexGuard<'_, T, KERNEL_TID> {
     type Target = T;
 
     #[inline]
@@ -247,10 +333,11 @@ impl<T> Deref for AbiReentrantMutexGuard<'_, T> {
     }
 }
 
-impl<T> Drop for AbiReentrantMutexGuard<'_, T> {
+impl<T, const KERNEL_TID: bool> Drop for AbiReentrantMutexGuard<'_, T, KERNEL_TID> {
     #[inline]
     fn drop(&mut self) {
-        self.lock.unlock_for_tid(current_tid());
+        self.lock
+            .unlock_for_tid(AbiReentrantMutex::<T, KERNEL_TID>::current_owner_tid());
     }
 }
 
@@ -496,5 +583,49 @@ mod tests {
             }
         });
         assert_eq!(lock.lock().get(), 2000);
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn kernel_tid_lock_excludes_clone_threads_sharing_compiler_tls() {
+        use frankenlibc_core::pthread::thread::{create_thread, join_thread};
+
+        unsafe extern "C" fn probe(argument: usize) -> usize {
+            // SAFETY: the parent retains the lock until joining this worker.
+            let lock =
+                unsafe { &*(argument as *const AbiReentrantMutex<Cell<usize>, true>) };
+            let Some(outer) = lock.try_lock() else {
+                return usize::MAX;
+            };
+            // Both acquisitions use this child's kernel identity. The
+            // worker deliberately performs no heap or compiler-TLS operation.
+            let Some(inner) = lock.try_lock() else {
+                return usize::MAX - 1;
+            };
+            let value = outer.get();
+            inner.set(value + 1);
+            value
+        }
+
+        let lock = AbiReentrantMutex::new_kernel_tid(Cell::new(41usize));
+        let argument = std::ptr::from_ref(&lock) as usize;
+        let run = || {
+            // SAFETY: valid C entry point; the borrowed lock outlives join.
+            let thread = unsafe { create_thread(probe as *const () as usize, argument, 0) }
+                .expect("native clone creation");
+            // SAFETY: this parent owns the sole join for this live handle.
+            unsafe { join_thread(thread) }.expect("native clone join")
+        };
+        let outer = lock.lock();
+        let inner = lock.lock();
+        assert_eq!(run(), usize::MAX);
+        drop(outer);
+        assert_eq!(run(), usize::MAX);
+        drop(inner);
+        assert_eq!(run(), 41);
+        assert_eq!(lock.lock().get(), 42);
     }
 }

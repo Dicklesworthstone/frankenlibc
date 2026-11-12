@@ -306,6 +306,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     let host_fork = host_fork_fn();
     // Run atfork prepare handlers (acquire locks in parent before fork).
     let atfork = crate::pthread_abi::run_atfork_prepare();
+    // Loader callbacks may acquire stdio, environment, and allocator locks.
+    // Hold the outer loader operation across clone so a vanished thread
+    // cannot leave a partially published DSO or an orphaned loader lock.
+    let loader_guard = crate::dlfcn_abi::native_fork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
@@ -345,6 +349,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(error) };
             runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
@@ -353,6 +358,11 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     };
 
     let pid = clone_for_fork(host_fork);
+    if pid == Ok(0) {
+        // SAFETY: only the forking thread survives, with signals blocked.
+        // Retag before inner guard cleanup can reenter the loader.
+        unsafe { loader_guard.adopt_in_child() };
+    }
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -366,6 +376,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             drop(signal_guard);
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(e) };
@@ -389,8 +400,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
+        loader_guard.release_in_child();
     } else {
         stdio_guard.release_in_parent();
+        loader_guard.release_in_parent();
     }
 
     if pid == 0 {

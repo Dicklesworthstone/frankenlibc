@@ -5493,6 +5493,8 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
     let host_fork = crate::process_abi::host_fork_fn();
     let atfork = crate::pthread_abi::run_atfork_prepare();
+    // Loader callbacks can acquire the remaining runtime locks.
+    let loader_guard = crate::dlfcn_abi::native_fork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
@@ -5513,14 +5515,18 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(error) };
             return -1;
         }
     };
 
-    // SAFETY: fork via raw syscall
     let pid = crate::process_abi::clone_for_fork(host_fork);
+    if pid == Ok(0) {
+        // SAFETY: freshly forked, single-threaded child with signals blocked.
+        unsafe { loader_guard.adopt_in_child() };
+    }
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -5532,6 +5538,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             drop(signal_guard);
             crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(error) };
@@ -5549,8 +5556,10 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
+        loader_guard.release_in_child();
     } else {
         stdio_guard.release_in_parent();
+        loader_guard.release_in_parent();
     }
 
     if pid > 0 {
@@ -9344,17 +9353,20 @@ pub unsafe extern "C" fn forkpty(
 
     let host_fork = crate::process_abi::host_fork_fn();
     let atfork = crate::pthread_abi::run_atfork_prepare();
+    // Match fork/daemon: loader, stdio, environment, pipeline, allocator.
+    let loader_guard = crate::dlfcn_abi::native_fork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
-    let _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Mirror fork()'s ENVIRON_LOCK acquisition: the forkpty child does not exec,
     // so any held environ lock from another parent thread becomes a stuck lock
     // in the child address space. Acquiring here forces serialization with any
     // in-flight setenv before the clone.
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    // setenv holds ENVIRON_LOCK while hardened copies acquire pipeline locks.
+    let _pipeline_guard =
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // Keep application handlers out of the clone-to-reopen interval, exactly
@@ -9366,6 +9378,7 @@ pub unsafe extern "C" fn forkpty(
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             crate::pthread_abi::run_atfork_parent(&atfork);
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
@@ -9375,6 +9388,10 @@ pub unsafe extern "C" fn forkpty(
     };
 
     let pid = crate::process_abi::clone_for_fork(host_fork);
+    if pid == Ok(0) {
+        // SAFETY: freshly forked, single-threaded child with signals blocked.
+        unsafe { loader_guard.adopt_in_child() };
+    }
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -9386,6 +9403,7 @@ pub unsafe extern "C" fn forkpty(
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
+            loader_guard.release_in_parent();
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
             drop(signal_guard);
@@ -9405,8 +9423,10 @@ pub unsafe extern "C" fn forkpty(
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
+        loader_guard.release_in_child();
     } else {
         stdio_guard.release_in_parent();
+        loader_guard.release_in_parent();
     }
 
     if pid == 0 {
