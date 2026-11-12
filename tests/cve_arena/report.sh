@@ -32,6 +32,57 @@ fi
 # Paths
 # ---------------------------------------------------------------------------
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [[ "${1:-}" == "--qualification" || "${1:-}" == --qualification=* ]]; then
+    QUAL_BUNDLE=""
+    QUAL_VERIFY=false
+    QUAL_DEMO=false
+    QUAL_EXTRA=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --qualification=*)
+                QUAL_BUNDLE="${1#--qualification=}"
+                shift
+                ;;
+            --qualification)
+                QUAL_BUNDLE="${2:-}"
+                shift 2
+                ;;
+            --verify)
+                QUAL_VERIFY=true
+                shift
+                ;;
+            --demo)
+                QUAL_DEMO=true
+                shift
+                ;;
+            --check-candidate-lib|--check-manifest|--check-upstream-lib)
+                QUAL_EXTRA+=("$1" "${2:-}")
+                shift 2
+                ;;
+            --check-candidate-lib=*|--check-manifest=*|--check-upstream-lib=*)
+                QUAL_EXTRA+=("$1")
+                shift
+                ;;
+            *)
+                echo "${RED}report: unknown qualification option: $1${RESET}" >&2
+                exit 2
+                ;;
+        esac
+    done
+    if [[ -z "${QUAL_BUNDLE}" ]]; then
+        echo "${RED}report: --qualification requires a bundle directory${RESET}" >&2
+        exit 2
+    fi
+    if [[ "${QUAL_DEMO}" == "true" ]]; then
+        exec python3 "${ROOT}/tests/cve_arena/libarchive_qualification.py" demo --bundle-root "${QUAL_BUNDLE}"
+    fi
+    if [[ "${QUAL_VERIFY}" == "true" ]]; then
+        exec python3 "${ROOT}/tests/cve_arena/libarchive_qualification.py" verify --bundle-root "${QUAL_BUNDLE}" "${QUAL_EXTRA[@]}"
+    fi
+    cat "${QUAL_BUNDLE}/REPORT.md"
+    exit 0
+fi
+
 RESULTS_DIR="${1:-${ROOT}/tests/cve_arena/results}"
 REPORT_MD="${RESULTS_DIR}/REPORT.md"
 SUMMARY_JSON="${RESULTS_DIR}/summary.json"

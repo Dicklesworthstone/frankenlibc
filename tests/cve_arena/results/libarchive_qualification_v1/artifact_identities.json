@@ -1,0 +1,61 @@
+{
+  "candidate_libc": {
+    "filename": "libfrankenlibc_abi.so",
+    "role": "release_candidate_libc",
+    "sha256": "c8fe407190a3a8936b3c48b4bbd9a9c5354a3b49d343554d1fdb9b4a0c29da6c",
+    "size_bytes": 16570960
+  },
+  "diagnostic_helpers": {
+    "archive_worker_sha256": "e13fe2a3cd63f4d73af2e4d6e8b1e8d45264d36f9c723ff158217aea37fc3ad2",
+    "hw_watchpoint_tracer_sha256": "cf2ef1569e0c380a58690ccc9c47623940bc8515652a375906943e7beba899ab",
+    "libwatch_alloc_notify_sha256": "36e523c2697e02fd7a19f61872bad6a4dae937df56c27b334e89c50bda9cbdf5"
+  },
+  "environment_stratum": {
+    "arch": "x86_64",
+    "c_compiler": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+    "host_libc": "ldd (Ubuntu GLIBC 2.43-2ubuntu2.4) 2.43",
+    "kernel": "7.0.0-38-generic"
+  },
+  "manifest_sha256": "bcd51288c1d27592d5c12427624687d7117398c2ca5352e92884991d06a4fc34",
+  "upstream_builds": {
+    "patched_reference": {
+      "dynamic_undef_verified": [
+        "malloc",
+        "realloc",
+        "free",
+        "memcpy"
+      ],
+      "filename": "libarchive.so.13.8.8",
+      "sha256": "bde6eabc498fb0ef4396d77b392fd2d94451de0b90eadeb43fceaa234834dbf5",
+      "size_bytes": 3405296,
+      "source_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b",
+      "tag": "v3.8.8"
+    },
+    "rar_vulnerable": {
+      "dynamic_undef_verified": [
+        "malloc",
+        "realloc",
+        "free",
+        "memcpy"
+      ],
+      "filename": "libarchive.so.13.7.9",
+      "sha256": "cd50a1418f43ec713daec638029baaee3b6c674585f75fb3d800a0a626cb6b51",
+      "size_bytes": 3317464,
+      "source_commit": "8a7a9cc527fd1d6d8664315d3bed47c4259479cc",
+      "tag": "v3.7.9"
+    },
+    "zip_vulnerable": {
+      "dynamic_undef_verified": [
+        "malloc",
+        "realloc",
+        "free",
+        "memcpy"
+      ],
+      "filename": "libarchive.so.13.8.7",
+      "sha256": "db711686fe6429d083bceb2d09666f7056b1345961f0b38d870e81aed4389794",
+      "size_bytes": 3365032,
+      "source_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+      "tag": "v3.8.7"
+    }
+  }
+}

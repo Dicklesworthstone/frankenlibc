@@ -110,6 +110,8 @@ OPT_CVE_DIR=""
 OPT_NO_DOCKER=false
 OPT_VERBOSE=false
 OPT_EVALUATE_HSFP=""
+OPT_QUALIFICATION_MANIFEST=""
+OPT_QUALIFICATION_DEMO=false
 OPT_TIMEOUT="${CVE_ARENA_TIMEOUT:-${DEFAULT_TIMEOUT}}"
 OPT_IMAGE="${CVE_ARENA_IMAGE:-${DEFAULT_IMAGE}}"
 
@@ -187,6 +189,18 @@ parse_args() {
                 OPT_EVALUATE_HSFP="${2:-}"
                 shift 2
                 ;;
+            --qualification-manifest=*)
+                OPT_QUALIFICATION_MANIFEST="${1#--qualification-manifest=}"
+                shift
+                ;;
+            --qualification-manifest)
+                OPT_QUALIFICATION_MANIFEST="${2:-}"
+                shift 2
+                ;;
+            --demo)
+                OPT_QUALIFICATION_DEMO=true
+                shift
+                ;;
             --help|-h)
                 usage
                 ;;
@@ -224,7 +238,7 @@ parse_args() {
         fi
     fi
 
-    if [[ -n "${OPT_EVALUATE_HSFP}" ]]; then
+    if [[ -n "${OPT_EVALUATE_HSFP}" || -n "${OPT_QUALIFICATION_MANIFEST}" ]]; then
         return 0
     fi
 
@@ -1150,6 +1164,21 @@ main() {
     if [[ -n "${OPT_EVALUATE_HSFP}" ]]; then
         compute_hsfp_json "${OPT_EVALUATE_HSFP}"
         exit 0
+    fi
+
+    if [[ -n "${OPT_QUALIFICATION_MANIFEST}" ]]; then
+        local -a qual_cmd=(
+            python3 "${SCRIPT_DIR}/libarchive_qualification.py" run
+            --manifest "${OPT_QUALIFICATION_MANIFEST}"
+            --results-dir "${RESULTS_DIR}"
+        )
+        if [[ -n "${FRANKENLIBC_LIB:-}" ]]; then
+            qual_cmd+=(--frankenlibc-lib "${FRANKENLIBC_LIB}")
+        fi
+        if [[ "${OPT_QUALIFICATION_DEMO}" == "true" ]]; then
+            qual_cmd+=(--demo)
+        fi
+        exec "${qual_cmd[@]}"
     fi
 
     log_info "CVE Arena Test Runner"

@@ -1,0 +1,275 @@
+{
+  "schema_version": "frankenlibc.security_qualification_manifest.v1",
+  "profile_id": "libarchive-confined-archive-worker-v1",
+  "beads": [
+    "bd-reality-202609-lx578q.15.3",
+    "bd-reality-202609-lx578q.15.4"
+  ],
+  "upstream_project": {
+    "name": "libarchive",
+    "repository_url": "https://github.com/libarchive/libarchive.git",
+    "spdx_license": "BSD-2-Clause",
+    "shared_upstream_limitation": "Both primary security cases exercise distinct memory directions (64-KiB heap overwrite in ZIP writer vs 64-byte LZSS window out-of-bounds heap read of 0x5801 bytes in RAR reader) within a single upstream C codebase (libarchive). Cross-application generalization remains a separate campaign."
+  },
+  "pinned_revisions": {
+    "zip_vulnerable": {
+      "role": "vulnerable_zip_writer",
+      "tag": "v3.8.7",
+      "tag_object": "cf3debc3fa8ca6db59e77fe99d0283f056c97004",
+      "source_commit": "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+      "advisory_id": "GHSA-xgqq-r5j8-3mch",
+      "cve_id": "CVE-2026-45308",
+      "source_path": "libarchive/archive_write_set_format_zip.c",
+      "mechanism": "cd_alloc allocates fixed 65536-byte central-directory segment via malloc(65536) and copy_path invokes memcpy(segment_ptr, pathname, pathlen) without rejecting pathlen > 0xffff"
+    },
+    "rar_vulnerable": {
+      "role": "vulnerable_rar_reader",
+      "tag": "v3.7.9",
+      "tag_object": "ccf9843f055b40e2ac9e97628ef281e8d0558c62",
+      "source_commit": "8a7a9cc527fd1d6d8664315d3bed47c4259479cc",
+      "fixing_commit": "a612bf62f86a6faa47bd57c52b94849f0a404d8c",
+      "advisory_id": "GHSA-6vpf-5947-22g5",
+      "cve_id": "CVE-2025-5915",
+      "source_path": "libarchive/archive_read_support_format_rar.c",
+      "mechanism": "copy_from_lzss_window invokes memcpy(buffer, &rar->lzss.window[0], length - firstpart) when filter blocklength (0x5801) exceeds rar->dictionary_size (64-byte realloc heap allocation for unp_size=48), causing an out-of-bounds heap read"
+    },
+    "patched_reference": {
+      "role": "patched_control_and_validator",
+      "tag": "v3.8.8",
+      "tag_object": "24d992722659c529700143e3087dee6454addecd",
+      "source_commit": "7219b0134d771dc4b51bf86b4d01761b87398b1b"
+    }
+  },
+  "confinement_policy": {
+    "backend": "bwrap-ro-root-isolated-staging",
+    "require_isolation": true,
+    "unshare_net": true,
+    "unshare_ipc": true,
+    "unshare_uts": true,
+    "die_with_parent": true,
+    "max_compressed_input_bytes": 16777216,
+    "max_staged_output_bytes": 67108864,
+    "max_pathname_bytes": 262144,
+    "max_rss_bytes": 536870912,
+    "max_open_fds": 64,
+    "deadline_seconds": 30,
+    "max_bundle_files": 512,
+    "max_bundle_bytes": 67108864
+  },
+  "build_policy": {
+    "optimization_flag": "-O2",
+    "required_dynamic_undef_symbols": [
+      "malloc",
+      "realloc",
+      "free",
+      "memcpy"
+    ]
+  },
+  "counterfactual_arms": [
+    {
+      "arm": "H",
+      "application": "vulnerable",
+      "provider": "host_glibc",
+      "mode": "none"
+    },
+    {
+      "arm": "S",
+      "application": "vulnerable",
+      "provider": "frankenlibc",
+      "mode": "strict"
+    },
+    {
+      "arm": "F",
+      "application": "vulnerable",
+      "provider": "frankenlibc",
+      "mode": "hardened"
+    },
+    {
+      "arm": "P",
+      "application": "patched_v3_8_8",
+      "provider": "host_glibc",
+      "mode": "none"
+    },
+    {
+      "arm": "PF",
+      "application": "patched_v3_8_8",
+      "provider": "frankenlibc",
+      "mode": "hardened"
+    }
+  ],
+  "matrix_cells": {
+    "zip_primary": {
+      "case_id": "S09_zip_cd_68000_overflow",
+      "pathname_length": 68000,
+      "segment_alloc_bytes": 65536,
+      "watchpoint_kind": "write",
+      "watchpoint_offset": 65536
+    },
+    "rar_primary": {
+      "case_id": "S14_rar_lzss_64_oob_read",
+      "window_alloc_bytes": 64,
+      "watchpoint_kind": "read_write",
+      "watchpoint_offset": 64,
+      "specimen_uudecode_lines": [
+        "begin 644 test_read_format_rar_overflow.rar",
+        "M4F%R(1H'`,($=```(0`@`0``,`````(````````````S`0``````,`\"_B%_:",
+        "MZ?^[:7``?S!!,`@P,KB@,T@RN33)MTEB@5Z3<`DP`K35`.0P63@P<,Q&0?#,",
+        "MA##,,\",S,(@P,#,@##`&,#\":(3`!,#\"(`9HPS,,S13`P,#`P,*`PHPS,,S1A",
+        "M,!,!,#\",\"9H@S12D#$PP!C`P`*'F03\":,,T8H`@\\,/DPJS!/,\"30,#`3N%LP",
+        "MCQ6:S3\"!,#LP22<-,$5%B\"5B$S!)(&*>G#+@!`E`%0ODC])62=DO,)BYJX'P",
+        "M=/LPZ3!!008?%S`P,#`P,#`P,#`P,#`P,#`P,#`P2$PP,#`P03!(,#`P,#`&",
+        "M,`7),#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P,#`P",
+        "-,#`P,#`P,#`P,#`P,```",
+        "`",
+        "end"
+      ],
+      "specimen_sha256": "d80f10d57fb9dd578389b755668f0c84560090088b338036b2f6c7ece46e029a"
+    },
+    "benign_corpus": [
+      {
+        "case_id": "S10_ustar_to_zip_multi_entry",
+        "input_format": "ustar",
+        "output_format": "zip",
+        "entries": [
+          {
+            "path": "alpha/readme.txt",
+            "size": 1024,
+            "seed": 101
+          },
+          {
+            "path": "alpha/sub/data.bin",
+            "size": 8192,
+            "seed": 202
+          },
+          {
+            "path": "beta/notes.md",
+            "size": 512,
+            "seed": 303
+          }
+        ]
+      },
+      {
+        "case_id": "S10_gnutar_gzip_to_zip",
+        "input_format": "gnutar_gz",
+        "output_format": "zip",
+        "entries": [
+          {
+            "path": "pkg/manifest.json",
+            "size": 2048,
+            "seed": 404
+          },
+          {
+            "path": "pkg/src/main.c",
+            "size": 4096,
+            "seed": 505
+          }
+        ]
+      },
+      {
+        "case_id": "S10_zip_to_gnutar_roundtrip",
+        "input_format": "zip",
+        "output_format": "gnutar",
+        "entries": [
+          {
+            "path": "roundtrip/item_a.txt",
+            "size": 1536,
+            "seed": 606
+          },
+          {
+            "path": "roundtrip/item_b.bin",
+            "size": 6144,
+            "seed": 707
+          }
+        ]
+      },
+      {
+        "case_id": "S10_gnutar_long_valid_pathname_4096",
+        "input_format": "gnutar",
+        "output_format": "zip",
+        "entries": [
+          {
+            "path_length": 4096,
+            "size": 256,
+            "seed": 808
+          }
+        ]
+      },
+      {
+        "case_id": "S10_gnutar_boundary_adjacent_65000",
+        "input_format": "gnutar",
+        "output_format": "zip",
+        "entries": [
+          {
+            "path_length": 65000,
+            "size": 128,
+            "seed": 909
+          }
+        ]
+      }
+    ],
+    "holdout_mutations": [
+      {
+        "case_id": "S23_holdout_zip_boundary_plus_one_65537",
+        "kind": "zip_long_path",
+        "pathname_length": 65537,
+        "chunk_size": 4096,
+        "prefix_entries": 0
+      },
+      {
+        "case_id": "S23_holdout_zip_multi_entry_reordered_72000",
+        "kind": "zip_long_path",
+        "pathname_length": 72000,
+        "chunk_size": 1024,
+        "prefix_entries": 2
+      },
+      {
+        "case_id": "S23_holdout_zip_large_segment_100000",
+        "kind": "zip_long_path",
+        "pathname_length": 100000,
+        "chunk_size": 16384,
+        "prefix_entries": 1
+      },
+      {
+        "case_id": "S23_holdout_rar_padded_trailer_mutation",
+        "kind": "rar_overflow_mutated",
+        "trailer_pad_bytes": 64
+      },
+      {
+        "case_id": "S23_holdout_boundary_inlined_direct_write_bypass",
+        "kind": "inlined_bypass_challenge",
+        "expected_qualification": "unsupported"
+      }
+    ],
+    "lifecycle_controls": [
+      "S17_symlink_swap_in_staging_rejected",
+      "S17_dotdot_traversal_in_staging_rejected",
+      "S17_oversized_input_quota_rejected_pre_exec",
+      "S17_child_crash_sigabrt_unpublished",
+      "S17_deadline_timeout_kills_process_tree_unpublished",
+      "S17_corrupt_zip_validator_rejection_unpublished"
+    ]
+  },
+  "performance_protocol": {
+    "warmup_blocks": 3,
+    "paired_blocks": 30,
+    "seed": 20261111,
+    "bootstrap_resamples": 1000,
+    "max_wall_time_ratio_ci95_upper": 2.0
+  },
+  "required_acceptances_for_s22": [
+    "S03",
+    "S05",
+    "S07",
+    "S11",
+    "S12",
+    "S14",
+    "S15",
+    "S17",
+    "S19",
+    "S20",
+    "S21",
+    "S23",
+    "S24",
+    "VR.8.4"
+  ]
+}

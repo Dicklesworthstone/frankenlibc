@@ -1,0 +1,61 @@
+{
+  "files": [
+    {
+      "rel_path": "REPORT.md",
+      "sha256": "9a8f5812a3fa56934585b796ce27e1db1a6cb831043bffa494ead74350602944",
+      "size_bytes": 4790
+    },
+    {
+      "rel_path": "artifact_identities.json",
+      "sha256": "73a73aec0da43894c059b629b7ed9537417bb27067c1fdf9663c5cd7c00b28cf",
+      "size_bytes": 2039
+    },
+    {
+      "rel_path": "benign_s10.json",
+      "sha256": "45bfcab1f4841100f28111ff8c61dc92e6fa43164ea7e60837d95d896da777a0",
+      "size_bytes": 10135
+    },
+    {
+      "rel_path": "holdout_s23.json",
+      "sha256": "cb91dc914ba548a627dd7f016b76d4a3cc39a919ee05a1ac7cc764c53d101c4f",
+      "size_bytes": 43906
+    },
+    {
+      "rel_path": "lifecycle_s17.json",
+      "sha256": "5bd6ae3ce2c2c48149f696cfd56998ac7edae059d54fc7f18a7351cef491c852",
+      "size_bytes": 1528
+    },
+    {
+      "rel_path": "observations.jsonl",
+      "sha256": "fe2f18a60ec591ebbb83d35b8e9cea23e4343458df995fe7f0d8ad7c63b1d22b",
+      "size_bytes": 44058
+    },
+    {
+      "rel_path": "performance_s15.json",
+      "sha256": "9e5f391a2c78d065c29ae06ecc7f428f736804837b48e19ddea46b6f983aff41",
+      "size_bytes": 16443
+    },
+    {
+      "rel_path": "qualification_manifest.v1.json",
+      "sha256": "bcd51288c1d27592d5c12427624687d7117398c2ca5352e92884991d06a4fc34",
+      "size_bytes": 8280
+    },
+    {
+      "rel_path": "rar_s13_s14.json",
+      "sha256": "9d454b73d2b43f767e83de7202b4489c5646e318561f42048ae1032e43da2db2",
+      "size_bytes": 9580
+    },
+    {
+      "rel_path": "s22_disposition.json",
+      "sha256": "84f35de276ba2e84178893bc3456d0ff738eac92de6d894830227e98d2c9bf67",
+      "size_bytes": 1196
+    },
+    {
+      "rel_path": "zip_s08_s11.json",
+      "sha256": "394cd69f680c7f08c8aa250c586074c025b8ea30002bd7f5b2a85f37d4c42d48",
+      "size_bytes": 9045
+    }
+  ],
+  "profile_id": "libarchive-confined-archive-worker-v1",
+  "schema_version": "frankenlibc.security_qualification_bundle.v1"
+}

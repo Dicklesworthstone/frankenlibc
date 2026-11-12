@@ -1,0 +1,61 @@
+{
+  "all_passed": true,
+  "controls": [
+    {
+      "control_id": "S17_symlink_swap_in_staging_rejected",
+      "detail": {
+        "published": false,
+        "reason": "non_regular_or_symlink_rejected"
+      },
+      "passed": true
+    },
+    {
+      "control_id": "S17_dotdot_traversal_in_staging_rejected",
+      "detail": {
+        "published": false,
+        "reason": "invalid_staged_filename"
+      },
+      "passed": true
+    },
+    {
+      "control_id": "S17_oversized_input_quota_rejected_pre_exec",
+      "detail": {
+        "admitted": false,
+        "candidate_input_bytes": 16778240,
+        "max_compressed_input_bytes": 16777216
+      },
+      "passed": true
+    },
+    {
+      "control_id": "S17_child_crash_sigabrt_unpublished",
+      "detail": {
+        "publication": {
+          "published": false,
+          "reason": "child_abnormal_exit_pre_validation"
+        },
+        "raw_exit": 134,
+        "signal": 6
+      },
+      "passed": true
+    },
+    {
+      "control_id": "S17_deadline_timeout_kills_process_tree_unpublished",
+      "detail": {
+        "signal": 9,
+        "timed_out": true,
+        "wall_ms": 506.051
+      },
+      "passed": true
+    },
+    {
+      "control_id": "S17_corrupt_zip_validator_rejection_unpublished",
+      "detail": {
+        "published": false,
+        "reason": "independent_validator_failed",
+        "staged_sha256": "4e969b96350e275005c95f78922a6ec8ce3ebe1083082259d3ba9239799f383f"
+      },
+      "passed": true
+    }
+  ],
+  "published_files_after_failures": 0
+}
