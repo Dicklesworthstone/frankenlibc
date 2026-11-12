@@ -2550,6 +2550,10 @@ impl RuntimeMathKernel {
             );
             decision.evidence_seqno = seqno;
             self.cached_evidence_seqno.store(seqno, Ordering::Relaxed);
+            self.cached_evidence_loss.fetch_max(
+                self.evidence_log.publication_loss_count(),
+                Ordering::Relaxed,
+            );
         }
 
         decision

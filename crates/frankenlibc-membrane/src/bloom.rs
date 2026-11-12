@@ -3,7 +3,8 @@
 //! Optimal sizing: m = -n*ln(p)/(ln2)^2, k = (m/n)*ln2
 //!
 //! Guarantees: zero false negatives within a generation (if we inserted it, we
-//! will find it). False positive rate is bounded and configurable.
+//! will find it). False positive rate is configurable; storage exhaustion
+//! conservatively disables negative answers until a quiesced rebuild.
 //!
 //! ## Saturation and rebuilds
 //!
@@ -20,12 +21,12 @@
 //! - The data structure exposes diagnostic and rebuild primitives
 //!   (`insert_count`, `saturation_ratio`, `is_saturated`, `clear`,
 //!   `rebuild_from`) so callers holding the authoritative live set can
-//!   atomically rebuild the filter from truth without ever observing a
-//!   false negative for a still-live pointer. `rebuild_from` is the safe
-//!   pattern: callers enumerate the current live set, hand it to the bloom,
-//!   and the bloom replaces its bit pattern in place.
+//!   rebuild the filter from truth while insertions and queries are quiesced.
+//!   Callers enumerate the current live set, hand it to `rebuild_from`, and
+//!   resume queries after the bloom replaces its bit pattern in place.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::util::LazyBox;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Default expected number of insertions. Sized for long-running consumers
 /// (4M items at 0.1% false-positive rate ≈ 7.2 MB of bit array). Callers
@@ -37,6 +38,11 @@ const DEFAULT_EXPECTED_ITEMS: usize = 4_000_000;
 /// Bits per block of the blocked layout: one 64-byte cache line.
 const BLOOM_BLOCK_BITS: usize = 512;
 
+/// Commit bit storage in 4 KiB pages, keeping every block within one page.
+const BLOOM_PAGE_WORDS: usize = 512;
+const BLOOM_PAGE_BITS: usize = BLOOM_PAGE_WORDS * u64::BITS as usize;
+const _: () = assert!(BLOOM_PAGE_BITS.is_multiple_of(BLOOM_BLOCK_BITS));
+
 /// Default false positive rate target.
 const DEFAULT_FP_RATE: f64 = 0.001; // 0.1%
 
@@ -44,8 +50,12 @@ const DEFAULT_FP_RATE: f64 = 0.001; // 0.1%
 ///
 /// Thread-safe via atomic bit operations on the underlying array.
 pub struct PointerBloomFilter {
-    /// Bit array stored as atomic u64 words.
-    bits: Box<[AtomicU64]>,
+    /// Logical bit pages, published on first insertion and retained until Drop.
+    /// The default directory is 16 KiB; its 8 MiB of bit storage is not eager.
+    pages: Box<[LazyBox<[AtomicU64; BLOOM_PAGE_WORDS]>]>,
+    /// Failed storage allocation disables negative answers until a quiesced
+    /// clear/rebuild. An unavailable directory remains conservative for life.
+    conservative: AtomicBool,
     /// Number of bits in the filter.
     num_bits: usize,
     /// Number of hash functions.
@@ -53,7 +63,7 @@ pub struct PointerBloomFilter {
     /// Sizing target the filter was constructed with — used by saturation
     /// diagnostics so callers can decide when to drive a `rebuild_from`.
     expected_items: usize,
-    /// Monotonic counter of successful `insert` calls. Reset by `clear` /
+    /// Monotonic counter of `insert` calls. Reset by `clear` /
     /// `rebuild_from`.
     insert_count: AtomicU64,
 }
@@ -84,10 +94,16 @@ impl PointerBloomFilter {
         let num_words = m.div_ceil(64).next_power_of_two();
         let num_bits = num_words * 64;
 
-        let bits: Vec<AtomicU64> = (0..num_words).map(|_| AtomicU64::new(0)).collect();
+        let page_count = num_words.div_ceil(BLOOM_PAGE_WORDS);
+        let mut pages = Vec::new();
+        let conservative = pages.try_reserve_exact(page_count).is_err();
+        if !conservative {
+            pages.resize_with(page_count, LazyBox::new);
+        }
 
         Self {
-            bits: bits.into_boxed_slice(),
+            pages: pages.into_boxed_slice(),
+            conservative: AtomicBool::new(conservative),
             num_bits,
             num_hashes: k,
             expected_items: expected_items.max(1),
@@ -97,10 +113,29 @@ impl PointerBloomFilter {
 
     /// Insert a pointer into the bloom filter.
     pub fn insert(&self, ptr: usize) {
+        self.insert_bits(ptr);
+        self.insert_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn insert_bits(&self, ptr: usize) {
+        if self.conservative.load(Ordering::Acquire) {
+            return;
+        }
         let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
+        // Blocked hashing keeps every bit of this key on the same storage
+        // page, including filters smaller than a block. Resolve it only once.
+        let page_index = self.bit_index(h1, h2, 0) / BLOOM_PAGE_BITS;
+        let Some(page) = self.pages.get(page_index).and_then(|page| {
+            page.get_or_try_init(|| Some(std::array::from_fn(|_| AtomicU64::new(0))))
+        }) else {
+            // Losing an optional precheck must never hide an owned pointer.
+            // The full page-oracle/arena validation remains authoritative.
+            self.conservative.store(true, Ordering::Release);
+            return;
+        };
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
-            let word = &self.bits[bit_idx / 64];
+            let word = &page[(bit_idx / 64) % BLOOM_PAGE_WORDS];
             let mask = 1u64 << (bit_idx % 64);
             // Plain load first: in a filled filter most bits are already set,
             // and a locked RMW costs ~20 cycles and takes the line exclusive
@@ -109,22 +144,28 @@ impl PointerBloomFilter {
                 word.fetch_or(mask, Ordering::Relaxed);
             }
         }
-        self.insert_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Query whether a pointer might be in the filter.
     ///
     /// Returns `true` if the pointer might be ours (may be false positive).
     /// Returns `false` if the pointer is definitely not ours (no false negatives).
+    /// Storage exhaustion conservatively returns `true` for every pointer.
     #[must_use]
     pub fn might_contain(&self, ptr: usize) -> bool {
         let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
+        let page_index = self.bit_index(h1, h2, 0) / BLOOM_PAGE_BITS;
+        let Some(page) = self.pages.get(page_index).and_then(LazyBox::get) else {
+            return self.conservative.load(Ordering::Acquire);
+        };
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
-            let word_idx = bit_idx / 64;
+            let word_idx = (bit_idx / 64) % BLOOM_PAGE_WORDS;
             let bit_pos = bit_idx % 64;
-            if self.bits[word_idx].load(Ordering::Relaxed) & (1u64 << bit_pos) == 0 {
-                return false;
+            if page[word_idx].load(Ordering::Relaxed) & (1u64 << bit_pos) == 0 {
+                // Check at the negative-return boundary so a failed insertion
+                // cannot be treated as an ordinary unset bit.
+                return self.conservative.load(Ordering::Acquire);
             }
         }
         true
@@ -148,7 +189,7 @@ impl PointerBloomFilter {
         self.expected_items
     }
 
-    /// Number of successful `insert` calls since the last `clear` /
+    /// Number of `insert` calls since the last `clear` /
     /// `rebuild_from`.
     #[must_use]
     pub fn insert_count(&self) -> u64 {
@@ -175,28 +216,36 @@ impl PointerBloomFilter {
 
     /// Clear every bit and reset the insert counter.
     ///
-    /// **WARNING:** this is destructive. After `clear`, `might_contain`
-    /// returns `false` for every pointer until inserts resume. Callers MUST
-    /// guarantee no concurrent `might_contain` query can observe the partial
-    /// clear and conclude "not ours" for a still-live pointer (which would
-    /// be a false negative breaking the membrane's structural invariant).
-    /// The safe pattern is `rebuild_from`: it clears, refills atomically
-    /// from the caller's live truth set, and bumps the insert counter so
-    /// observers never see an empty filter.
+    /// **WARNING:** this is destructive. Callers MUST quiesce insertions and
+    /// queries until the authoritative live set has been reinserted, normally
+    /// through `rebuild_from`. Otherwise a query could observe a partially
+    /// cleared filter and incorrectly reject a still-live pointer.
+    ///
+    /// Published pages remain allocated for reuse. A page allocation failure
+    /// can recover in the new generation; a missing directory remains
+    /// conservative for the lifetime of the filter. Otherwise, every query
+    /// returns `false` until insertions resume.
     pub fn clear(&self) {
-        for word in self.bits.iter() {
-            word.store(0, Ordering::Relaxed);
+        for page in self.pages.iter().filter_map(LazyBox::get) {
+            for word in page {
+                word.store(0, Ordering::Relaxed);
+            }
         }
         self.insert_count.store(0, Ordering::Relaxed);
+        // Existing pages stay published. A valid directory can retry failed
+        // pages in the new generation; a missing directory stays fail-open.
+        self.conservative
+            .store(self.pages.is_empty(), Ordering::Release);
     }
 
     /// Replace the filter's contents with the hashes of `items`.
     ///
     /// This is the saturation-recovery primitive: the caller (typically the
     /// allocation arena) enumerates its current live pointer set, hands it
-    /// in here, and the bloom is atomically refilled from truth. Items that
+    /// in here, and the bloom is refilled from truth. Items that
     /// were inserted but have since been freed drop out of the filter; the
-    /// false-positive rate is restored to the design `fp_rate`.
+    /// false-positive rate is restored to the design `fp_rate` if storage
+    /// is available. Allocation failure keeps every query conservative.
     ///
     /// `items` is iterated once. Each pointer's hash bits are set with the
     /// same procedure as `insert`. The insert counter is set to the count
@@ -205,8 +254,8 @@ impl PointerBloomFilter {
     /// **Synchronization:** during a rebuild a concurrent `might_contain`
     /// query *may* transiently observe an intermediate state in which some
     /// of the truth-set's bits are not yet set. Callers MUST hold a
-    /// suitable barrier (e.g. quiesce queries during the rebuild) when
-    /// false negatives would be unsafe. For the ownership-precheck use
+    /// suitable barrier (quiescing both insertions and queries during the
+    /// rebuild) when false negatives would be unsafe. For the ownership-precheck use
     /// case this is normally arranged by the arena's existing EBR /
     /// quarantine machinery.
     pub fn rebuild_from<I>(&self, items: I)
@@ -215,18 +264,10 @@ impl PointerBloomFilter {
     {
         // Zero first, then refill. Inserts during this window may race; the
         // contract above documents the requirement that callers quiesce.
-        for word in self.bits.iter() {
-            word.store(0, Ordering::Relaxed);
-        }
+        self.clear();
         let mut count: u64 = 0;
         for ptr in items {
-            let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
-            for i in 0..self.num_hashes {
-                let bit_idx = self.bit_index(h1, h2, i);
-                let word_idx = bit_idx / 64;
-                let bit_pos = bit_idx % 64;
-                self.bits[word_idx].fetch_or(1u64 << bit_pos, Ordering::Relaxed);
-            }
+            self.insert_bits(ptr);
             count = count.saturating_add(1);
         }
         self.insert_count.store(count, Ordering::Relaxed);
@@ -283,6 +324,41 @@ impl Default for PointerBloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paged_words_match_the_dense_layout_across_block_and_page_boundaries() {
+        for (capacity, fp_rate) in [
+            (1, 0.5),
+            (20, 0.01),
+            (64, 0.01),
+            (1000, 0.01),
+            (10_000, 0.001),
+        ] {
+            let filter = PointerBloomFilter::with_capacity(capacity, fp_rate);
+            let mut dense = vec![0u64; filter.num_bits() / 64];
+            for i in 0..512usize {
+                let ptr = (i + 1).wrapping_mul(0x9e37);
+                let (h1, h2) = (filter.hash1(ptr), filter.hash2(ptr));
+                let page_index = filter.bit_index(h1, h2, 0) / BLOOM_PAGE_BITS;
+                for hash in 0..filter.num_hashes() {
+                    let bit = filter.bit_index(h1, h2, hash);
+                    assert_eq!(bit / BLOOM_PAGE_BITS, page_index, "one page per key");
+                    dense[bit / 64] |= 1u64 << (bit % 64);
+                }
+                filter.insert(ptr);
+            }
+
+            for (index, expected) in dense.into_iter().enumerate() {
+                let actual = filter.pages[index / BLOOM_PAGE_WORDS]
+                    .get()
+                    .map_or(0, |page| {
+                        page[index % BLOOM_PAGE_WORDS].load(Ordering::Relaxed)
+                    });
+                assert_eq!(actual, expected, "capacity {capacity}, word {index}");
+            }
+            assert_eq!(filter.insert_count(), 512);
+        }
+    }
 
     #[test]
     fn no_false_negatives() {

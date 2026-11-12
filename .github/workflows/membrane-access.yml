@@ -78,14 +78,20 @@ jobs:
           [[test]]
           name = "allocator_quarantine_feedback_test"
           path = "$PWD/crates/frankenlibc-membrane/tests/allocator_quarantine_feedback_test.rs"
+          [[test]]
+          name = "bloom_paged_storage_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/bloom_paged_storage_test.rs"
+          [[test]]
+          name = "runtime_evidence_allocation_failure_test"
+          path = "$PWD/crates/frankenlibc-membrane/tests/runtime_evidence_allocation_failure_test.rs"
           EOF
           cp Cargo.lock artifacts/access/runtime-integration/Cargo.lock
-      - name: Execute runtime math and real quarantine feedback regressions
+      - name: Execute runtime math, quarantine, and allocation failure regressions
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e.log
-          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e.log)" -eq 2
+          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test --test bloom_paged_storage_test --test runtime_evidence_allocation_failure_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e.log
+          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e.log)" -eq 4
       - name: Execute access verdict and lifetime regressions in both modes
         shell: bash
         run: |
@@ -189,8 +195,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --release --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e-release.log
-          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e-release.log)" -eq 2
+          cargo test --manifest-path artifacts/access/runtime-integration/Cargo.toml --target-dir target --release --test runtime_math_dual_mode_e2e_test --test allocator_quarantine_feedback_test --test bloom_paged_storage_test --test runtime_evidence_allocation_failure_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e-release.log
+          test "$(grep -Ec '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e-release.log)" -eq 4
           cargo build -p frankenlibc-membrane --release --lib --message-format=json > artifacts/access/membrane-build.jsonl
           python3 - <<'PY'
           import json, subprocess

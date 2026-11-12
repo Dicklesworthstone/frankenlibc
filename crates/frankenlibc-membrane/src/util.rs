@@ -319,6 +319,42 @@ impl<T> LazyBox<T> {
         }
     }
 
+    /// Initialize without aborting if either construction or the owning box
+    /// cannot allocate. A failed attempt leaves the cell available for retry.
+    ///
+    /// As with `get_or_init`, initializers never wait for one another. A
+    /// concurrent or reentrant initializer can still install a usable value
+    /// while this attempt fails, so check for that winner before returning.
+    #[allow(unsafe_code)]
+    pub fn get_or_try_init(&self, init: impl FnOnce() -> Option<T>) -> Option<&T> {
+        if let Some(value) = self.get() {
+            return Some(value);
+        }
+        let Some(value) = init() else {
+            return self.get();
+        };
+        let Ok(value) = Box::try_new(value) else {
+            return self.get();
+        };
+        let fresh = Box::into_raw(value);
+        let installed = match self.ptr.compare_exchange(
+            std::ptr::null_mut(),
+            fresh,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => fresh,
+            Err(installed) => {
+                // SAFETY: `fresh` lost the race and was never shared.
+                drop(unsafe { Box::from_raw(fresh) });
+                installed
+            }
+        };
+        // SAFETY: the winning pointer came from `Box::into_raw` and remains
+        // installed until drop; child-only replacement excludes live refs.
+        Some(unsafe { &*installed })
+    }
+
     /// Replace an initialized value in the single-threaded child immediately
     /// after `fork`.
     ///
@@ -636,6 +672,54 @@ mod tests {
 
         drop(Arc::try_unwrap(lazy).ok().expect("sole owner"));
         assert_eq!(drops.load(Ordering::SeqCst), built, "winner freed on drop");
+    }
+
+    #[test]
+    fn fallible_lazy_box_retries_and_accepts_a_reentrant_winner() {
+        let lazy = LazyBox::<usize>::new();
+        assert!(lazy.get_or_try_init(|| None).is_none());
+        assert!(lazy.get().is_none());
+        let value = lazy.get_or_try_init(|| {
+            assert_eq!(lazy.get_or_try_init(|| Some(17)), Some(&17));
+            // An outer initializer can fail after reentry installed a value.
+            None
+        });
+        assert_eq!(value, Some(&17));
+        assert_eq!(
+            lazy.get_or_try_init(|| panic!("initialized cell must not rebuild")),
+            Some(&17)
+        );
+    }
+
+    #[test]
+    fn fallible_lazy_box_racers_drop_all_losing_values() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let lazy = Arc::new(LazyBox::<Counted>::new());
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let (lazy, drops, barrier) = (lazy.clone(), drops.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    let value = lazy
+                        .get_or_try_init(|| {
+                            // All eight initializers have entered before any
+                            // can publish, so every losing value must be freed.
+                            barrier.wait();
+                            Some(Counted(drops))
+                        })
+                        .expect("ordinary allocation");
+                    value as *const Counted as usize
+                })
+            })
+            .collect();
+        let winners: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert!(winners.iter().all(|ptr| *ptr == winners[0]));
+        assert_eq!(drops.load(Ordering::SeqCst), 7);
+        drop(Arc::try_unwrap(lazy).ok().expect("sole owner"));
+        assert_eq!(drops.load(Ordering::SeqCst), 8);
     }
 
     #[test]
