@@ -7863,6 +7863,21 @@ struct ExtensionPlan<'a> {
     count: usize,
 }
 
+#[derive(Clone, Copy)]
+enum ExtensionPlanPurpose {
+    Format,
+    TypeQuery { capacity: usize },
+}
+
+impl ExtensionPlanPurpose {
+    fn capacity(self) -> usize {
+        match self {
+            Self::Format => usize::MAX,
+            Self::TypeQuery { capacity } => capacity,
+        }
+    }
+}
+
 fn extension_decimal(bytes: &[u8], pos: &mut usize) -> Result<usize, c_int> {
     let mut value = 0usize;
     while let Some(ch) = bytes.get(*pos).filter(|ch| ch.is_ascii_digit()) {
@@ -7966,8 +7981,9 @@ unsafe fn extension_plan<'a>(
     bytes: &'a [u8],
     wide: bool,
     extensions: &PrintfExtensions,
-    capacity: usize,
+    purpose: ExtensionPlanPurpose,
 ) -> Result<ExtensionPlan<'a>, c_int> {
+    let capacity = purpose.capacity();
     let mut plan = ExtensionPlan {
         segments: Vec::new(),
         types: Vec::new(),
@@ -8024,11 +8040,14 @@ unsafe fn extension_plan<'a>(
             }
             let value = if bytes.get(pos) == Some(&b'*') {
                 pos += 1;
-                let index = extension_position(bytes, &mut pos)?.unwrap_or_else(|| {
-                    let index = next;
-                    next += 1;
-                    index
-                });
+                let index = match extension_position(bytes, &mut pos)? {
+                    Some(index) => index,
+                    None => {
+                        let index = next;
+                        next = next.checked_add(1).ok_or(errno::EOVERFLOW)?;
+                        index
+                    }
+                };
                 extension_record_type(
                     &mut plan,
                     index,
@@ -8185,6 +8204,8 @@ unsafe fn extension_plan<'a>(
             .get(specifier as usize)
             .copied()
             .flatten();
+        let first_arg = value_position.unwrap_or(next);
+        let mut arg_count = 0usize;
         let mut kinds = Vec::new();
         if let Some(callback) = conversion.filter(|c| c.arginfo != 0) {
             let mut kind = 0;
@@ -8194,45 +8215,80 @@ unsafe fn extension_plan<'a>(
             if n < 0 {
                 conversion = None;
             } else if n == 1 {
+                arg_count = 1;
                 kinds.push(PrintfArgType {
                     kind,
                     size: size.max(0) as usize,
                 });
             } else if n > 1 {
-                let n = n as usize;
-                let mut types = Vec::new();
-                let mut sizes = Vec::new();
-                types.try_reserve(n).map_err(|_| errno::ENOMEM)?;
-                sizes.try_reserve(n).map_err(|_| errno::ENOMEM)?;
-                types.resize(n, 0);
-                sizes.resize(n, 0);
-                // SAFETY: both arrays have precisely the declared capacity.
-                let actual = unsafe {
-                    extension_arginfo(callback, &info, n, types.as_mut_ptr(), sizes.as_mut_ptr())
+                arg_count = n as usize;
+                // A type query reports the complete count but only requests
+                // the caller's remaining output slots. In particular, n == 0
+                // count-only queries must never allocate the declared count.
+                // Formatting still needs every type to consume the va_list.
+                let output_capacity = match purpose {
+                    ExtensionPlanPurpose::Format => arg_count,
+                    ExtensionPlanPurpose::TypeQuery { capacity } => {
+                        capacity.saturating_sub(first_arg)
+                    }
                 };
-                if actual != n as c_int {
-                    return Err(errno::EINVAL);
-                }
-                kinds.extend(
+                if output_capacity != 0 {
+                    let mut types = Vec::new();
+                    let mut sizes = Vec::new();
                     types
-                        .into_iter()
-                        .zip(sizes)
-                        .map(|(kind, size)| PrintfArgType {
-                            kind,
-                            size: size.max(0) as usize,
-                        }),
-                );
+                        .try_reserve(output_capacity)
+                        .map_err(|_| errno::ENOMEM)?;
+                    sizes
+                        .try_reserve(output_capacity)
+                        .map_err(|_| errno::ENOMEM)?;
+                    types.resize(output_capacity, 0);
+                    sizes.resize(output_capacity, 0);
+                    // SAFETY: both arrays have exactly the capacity supplied
+                    // to this callback. No registry lock spans user code.
+                    let actual = unsafe {
+                        extension_arginfo(
+                            callback,
+                            &info,
+                            output_capacity,
+                            types.as_mut_ptr(),
+                            sizes.as_mut_ptr(),
+                        )
+                    };
+                    if matches!(purpose, ExtensionPlanPurpose::Format) && actual != n {
+                        return Err(errno::EINVAL);
+                    }
+                    // Slots beyond the declared argument count are not part
+                    // of this conversion, even when the caller has more room.
+                    kinds.extend(
+                        types
+                            .into_iter()
+                            .zip(sizes)
+                            .take(arg_count)
+                            .map(|(kind, size)| PrintfArgType {
+                                kind,
+                                size: size.max(0) as usize,
+                            }),
+                    );
+                }
             }
         } else if let Some(kind) = extension_native_type(conversion_byte, length) {
+            arg_count = 1;
             kinds.push(kind);
         }
         if conversion.is_none()
             && kinds.is_empty()
             && let Some(kind) = extension_native_type(conversion_byte, length)
         {
+            arg_count = 1;
             kinds.push(kind);
         }
-        let first_arg = value_position.unwrap_or(next);
+        if arg_count != 0 {
+            // Counting must not depend on how many types were materialized.
+            // A bounded query can describe INT_MAX arguments with no output.
+            plan.count = plan
+                .count
+                .max(first_arg.checked_add(arg_count).ok_or(errno::EOVERFLOW)?);
+        }
         for (offset, kind) in kinds.iter().copied().enumerate() {
             extension_record_type(
                 &mut plan,
@@ -8242,7 +8298,7 @@ unsafe fn extension_plan<'a>(
             )?;
         }
         if value_position.is_none() {
-            next = next.checked_add(kinds.len()).ok_or(errno::EOVERFLOW)?;
+            next = next.checked_add(arg_count).ok_or(errno::EOVERFLOW)?;
         }
         plan.segments.push(ExtensionSegment::Spec(ExtensionSpec {
             info,
@@ -8250,7 +8306,7 @@ unsafe fn extension_plan<'a>(
             width_arg,
             precision_arg,
             first_arg,
-            arg_count: kinds.len(),
+            arg_count,
             conversion,
             raw_start,
             raw_end: pos,
@@ -8268,7 +8324,9 @@ pub(crate) unsafe fn parse_printf_extensions(bytes: &[u8], n: usize, types: *mut
             bytes,
             false,
             &extensions,
-            if types.is_null() { 0 } else { n },
+            ExtensionPlanPurpose::TypeQuery {
+                capacity: if types.is_null() { 0 } else { n },
+            },
         )
     } {
         Ok(plan) => {
@@ -8640,7 +8698,8 @@ unsafe fn extension_format_stream(
 ) -> Result<c_int, c_int> {
     let extensions = printf_extensions_snapshot();
     // SAFETY: the parser calls registered arginfo functions with owned outputs.
-    let plan = unsafe { extension_plan(bytes, wide, &extensions, usize::MAX) }?;
+    let plan =
+        unsafe { extension_plan(bytes, wide, &extensions, ExtensionPlanPurpose::Format) }?;
     if ap.is_null() && plan.count != 0 {
         return Err(errno::EINVAL);
     }

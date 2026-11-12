@@ -1168,6 +1168,95 @@ static int gnu_registration(void) {
  * this compound case, although each fallback alone returns its byte length.
  * Retain the actual return value as an executable diagnostic. The acceptance
  * matrix above checks the isolated callback/fallback contracts exactly. */
+
+/* Type queries must remain bounded by the caller's output capacity, even if
+ * a conversion declares many arguments. Record callback capacities as well as
+ * the returned types: an unconditional second full-size query is observable
+ * to plugins, and can turn a count-only query into a multi-gigabyte allocation.
+ * The live GNU run is the oracle for callback ordering and available capacity.
+ */
+static size_t reg_query_capacities[16];
+static unsigned reg_query_calls;
+static int reg_query_count = 4;
+
+static int reg_query_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info; (void)sizes;
+    static const int kinds[] = { PA_INT, PA_STRING, PA_DOUBLE, PA_POINTER };
+    REG_CHECK(reg_query_calls < sizeof reg_query_capacities / sizeof reg_query_capacities[0]);
+    reg_query_capacities[reg_query_calls++] = n;
+    size_t count = (size_t)reg_query_count;
+    for (size_t i = 0; i < n && i < count; ++i) types[i] = kinds[i % 4];
+    return reg_query_count;
+}
+
+static int reg_query_legacy_info(const struct printf_info *info, size_t n, int *types) {
+    return reg_query_info(info, n, types, NULL);
+}
+
+static int gnu_registration_query_bounds(void) {
+    alarm(20);
+    REG_CHECK(check_gnu_provider("parse_printf_format") == 0);
+    REG_CHECK(check_gnu_provider("register_printf_specifier") == 0);
+    REG_CHECK(check_gnu_provider("register_printf_function") == 0);
+    int (*legacy)(int, printf_function *, printf_arginfo_function *) =
+        (int (*)(int, printf_function *, printf_arginfo_function *))dlsym(RTLD_DEFAULT, "register_printf_function");
+    REG_CHECK(legacy != NULL);
+    static const char *formats[] = {
+        "%Q", "%d%Q%s", "%3$*1$.*2$Q%6$p",
+        "%7$Q%1$d%2$d%3$d%4$d%5$d%6$d%10$p", "%Q:%Q"
+    };
+    static const size_t counts[] = { 4, 6, 6, 10, 8 };
+    for (int old_style = 0; old_style < 2; ++old_style) {
+        REG_CHECK(old_style ? legacy('Q', reg_letter, reg_query_legacy_info) == 0
+                            : register_printf_specifier('Q', reg_letter, reg_query_info) == 0);
+        for (size_t f = 0; f < sizeof formats / sizeof formats[0]; ++f) {
+            for (size_t cap = 0; cap <= 10; ++cap) {
+                int types[12];
+                for (size_t i = 0; i < 12; ++i) types[i] = -77;
+                reg_query_calls = 0;
+                errno = EACCES;
+                size_t count = parse_printf_format(formats[f], cap, types);
+                REG_CHECK(count == counts[f] && errno == EACCES);
+                for (size_t i = cap; i < 12; ++i) REG_CHECK(types[i] == -77);
+                printf("reg:query:%i:%zu:%zu:%zu:%u", old_style, f, cap, count, reg_query_calls);
+                for (unsigned i = 0; i < reg_query_calls; ++i) printf(":%zu", reg_query_capacities[i]);
+                for (size_t i = 0; i < 12; ++i) printf(":%i", types[i]);
+                putchar('\n');
+            }
+        }
+    }
+    /* Make a count-proportional allocation fail deterministically instead of
+     * provoking the OOM killer. The ceiling leaves room for the loaded library
+     * and its ordinary caches; a successful query needs only four type slots.
+     */
+    struct rlimit limit;
+    REG_CHECK(getrlimit(RLIMIT_AS, &limit) == 0);
+    rlim_t ceiling = (rlim_t)1024 * 1024 * 1024;
+    if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur > ceiling) {
+        limit.rlim_cur = ceiling;
+        REG_CHECK(setrlimit(RLIMIT_AS, &limit) == 0);
+    }
+    reg_query_count = INT_MAX;
+    for (int old_style = 0; old_style < 2; ++old_style) {
+        REG_CHECK(old_style ? legacy('Q', reg_letter, reg_query_legacy_info) == 0
+                            : register_printf_specifier('Q', reg_letter, reg_query_info) == 0);
+        for (size_t cap = 0; cap <= 4; ++cap) {
+            int types[6] = { -77, -77, -77, -77, -77, -77 };
+            reg_query_calls = 0;
+            errno = EACCES;
+            size_t count = parse_printf_format("%Q", cap, cap ? types : NULL);
+            REG_CHECK(count == INT_MAX && errno == EACCES);
+            for (size_t i = cap; i < 6; ++i) REG_CHECK(types[i] == -77);
+            printf("reg:query-huge:%i:%zu:%zu:%u", old_style, cap, count, reg_query_calls);
+            for (unsigned i = 0; i < reg_query_calls; ++i) printf(":%zu", reg_query_capacities[i]);
+            for (size_t i = 0; i < 6; ++i) printf(":%i", types[i]);
+            putchar('\n');
+        }
+    }
+    puts("reg:complete:query-bounds");
+    return 0;
+}
+
 static int gnu_registration_combined_fallback(void) {
     alarm(20);
     reg_setup();
@@ -1697,6 +1786,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-locale") == 0) return gnu_wide_locale();
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-bounds") == 0) return gnu_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-query-bounds") == 0) return gnu_registration_query_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide-bounds") == 0) return gnu_registration_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-combined-fallback") == 0) return gnu_registration_combined_fallback();
