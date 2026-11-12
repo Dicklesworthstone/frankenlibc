@@ -2287,10 +2287,12 @@ impl RuntimeMathKernel {
         {
             profile = ValidationProfile::Full;
         }
-        if self.cached_sparse_state.load(Ordering::Relaxed) >= 4 {
+        let sparse_requires_full = self.cached_sparse_state.load(Ordering::Relaxed) >= 4;
+        if sparse_requires_full {
             profile = ValidationProfile::Full;
         }
-        if self.cached_equivariant_state.load(Ordering::Relaxed) >= 3 {
+        let equivariant_requires_full = self.cached_equivariant_state.load(Ordering::Relaxed) >= 3;
+        if equivariant_requires_full {
             profile = ValidationProfile::Full;
         }
         let sos_barrier_state = self.cached_sos_barrier_state.load(Ordering::Relaxed);
@@ -2330,14 +2332,16 @@ impl RuntimeMathKernel {
 
         // Adaptive allocator guard: when quarantine depth is low under elevated
         // risk, force full validation to preserve temporal safety.
-        if matches!(ctx.family, ApiFamily::Allocator)
+        let allocator_requires_full = matches!(ctx.family, ApiFamily::Allocator)
             && mode.heals_enabled()
             && current_depth() < 128
-            && risk_upper_bound_ppm >= limits.repair_trigger_ppm / 2
-        {
+            && risk_upper_bound_ppm >= limits.repair_trigger_ppm / 2;
+        if allocator_requires_full {
             profile = ValidationProfile::Full;
         }
-        if self.cached_cvar_state[usize::from(ctx.family as u8)].load(Ordering::Relaxed) >= 3 {
+        let cvar_requires_full =
+            self.cached_cvar_state[usize::from(ctx.family as u8)].load(Ordering::Relaxed) >= 3;
+        if cvar_requires_full {
             profile = ValidationProfile::Full;
         }
 
@@ -2360,6 +2364,23 @@ impl RuntimeMathKernel {
             if cell.profile.requires_full() {
                 profile = ValidationProfile::Full;
             }
+        }
+
+        // Reapply hard depth requirements after all soft profile preferences.
+        // Latency budgets and routing recommendations cannot override a risk,
+        // certificate, critical-controller, or allocator temporal-safety guard.
+        let hard_full_profile = ConstrainedBanditRouter::requires_full_profile(
+            mode,
+            risk_upper_bound_ppm,
+            ctx.contention_hint,
+        ) || sos_barrier_state >= SosBarrierState::Warning as u8
+            || (mode.heals_enabled() && consistency_faults > 0)
+            || sparse_requires_full
+            || equivariant_requires_full
+            || allocator_requires_full
+            || cvar_requires_full;
+        if hard_full_profile {
+            profile = ValidationProfile::Full;
         }
 
         let admissible = self
@@ -2389,14 +2410,24 @@ impl RuntimeMathKernel {
             } else {
                 MembraneAction::Deny
             }
-        } else if let Some(escalated) = policy_escalation {
+        } else if let Some(escalated @ (MembraneAction::Deny | MembraneAction::Repair(_))) =
+            policy_escalation
+        {
             escalated
         } else if profile.requires_full()
             || risk_upper_bound_ppm >= limits.full_validation_trigger_ppm
+            || matches!(policy_escalation, Some(MembraneAction::FullValidate))
+            || (mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm)
         {
-            MembraneAction::FullValidate
-        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
-            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+            // Repair augments full validation; it is not a shallower alternative.
+            // The former FullValidate-first fallthrough made this upgrade
+            // unreachable whenever the router or controller required Full.
+            if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
+                profile = ValidationProfile::Full;
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+            } else {
+                MembraneAction::FullValidate
+            }
         } else {
             MembraneAction::Allow
         };
@@ -2405,6 +2436,11 @@ impl RuntimeMathKernel {
         if pressure_regime == SystemRegime::Pressured
             && matches!(action, MembraneAction::FullValidate)
             && risk_upper_bound_ppm < limits.repair_trigger_ppm
+            && risk_upper_bound_ppm < limits.full_validation_trigger_ppm
+            && !hard_full_profile
+            && consistency_faults == 0
+            && policy_escalation.is_none()
+            && policy_cell.is_none_or(|cell| !cell.profile.requires_full())
             && ctx.contention_hint >= 64
             && sos_barrier_state < SosBarrierState::Warning as u8
         {
@@ -2413,7 +2449,13 @@ impl RuntimeMathKernel {
             overload_policy_tag = OVERLOAD_POLICY_PRESSURED_FAST_ALLOW;
         } else if pressure_regime == SystemRegime::Overloaded
             && admissible
-            && !matches!(action, MembraneAction::Deny | MembraneAction::Repair(_))
+            // A generic upgrade still yields to the existing safe fallback.
+            // Explicit policy-table repairs and denials remain authoritative.
+            && (matches!(action, MembraneAction::Allow | MembraneAction::FullValidate)
+                || (matches!(
+                    action,
+                    MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+                ) && !matches!(policy_escalation, Some(MembraneAction::Repair(_)))))
             && sos_barrier_state < SosBarrierState::Warning as u8
         {
             profile = ValidationProfile::Fast;
@@ -8788,6 +8830,366 @@ mod tests {
                 decision.risk_upper_bound_ppm,
             );
         }
+    }
+
+    #[test]
+    fn decide_hardened_upgrade_after_public_feedback_and_warm_routing() {
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+        for _ in 0..4 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+        assert!(kernel.validation_feedback_enabled());
+        for i in 0..64 {
+            kernel.observe_validation_result(
+                SafetyLevel::Hardened,
+                ApiFamily::PointerValidation,
+                ValidationProfile::Full,
+                20,
+                i % 16 == 0,
+            );
+        }
+        let before = kernel.snapshot(SafetyLevel::Hardened);
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        assert!(decision.risk_upper_bound_ppm >= before.repair_trigger_ppm);
+        assert!(decision.risk_upper_bound_ppm < 900_000);
+        assert_eq!(decision.profile, ValidationProfile::Full);
+        assert_eq!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+        );
+        assert!(decision.requires_full_validation());
+        assert_ne!(decision.evidence_seqno, 0);
+        let after = kernel.snapshot(SafetyLevel::Hardened);
+        assert_eq!(
+            after.policy_action_dist[2],
+            before.policy_action_dist[2] + 1
+        );
+    }
+
+    #[test]
+    fn decide_upgrade_thresholds_preserve_full_validation() {
+        let mut below_repair = 0;
+        let mut above_repair = 0;
+        for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+            for prior in [0, 79_999, 80_000, 139_999, 140_000, 299_999, 300_000] {
+                let mut kernel = RuntimeMathKernel::new_for_mode(mode);
+                kernel.risk = ConformalRiskEngine::new(prior, 3.0);
+                kernel
+                    .cached_design_ident_ppm
+                    .store(1_000_000, Ordering::Relaxed);
+                // Every case previously requested Full; repair may strengthen it.
+                kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+                let limits = kernel.controller.limits(mode);
+                let decision =
+                    kernel.decide(mode, RuntimeContext::pointer_validation(0x1000, false));
+                assert!(decision.requires_full_validation());
+                assert_eq!(decision.profile, ValidationProfile::Full);
+                if mode.heals_enabled()
+                    && decision.risk_upper_bound_ppm >= limits.repair_trigger_ppm
+                {
+                    above_repair += 1;
+                    assert_eq!(
+                        decision.action,
+                        MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+                    );
+                } else {
+                    if mode.heals_enabled() {
+                        below_repair += 1;
+                    }
+                    assert_eq!(decision.action, MembraneAction::FullValidate);
+                }
+            }
+        }
+        assert!(below_repair > 0);
+        assert!(above_repair > 0);
+    }
+
+    #[test]
+    fn pressured_regime_preserves_hard_validation_requirements() {
+        for (mode, prior, contention_hint, fault, warning) in [
+            (SafetyLevel::Strict, 220_000, 80, false, false),
+            (SafetyLevel::Hardened, 80_000, 80, false, false),
+            (SafetyLevel::Hardened, 0, 96, false, false),
+            (SafetyLevel::Hardened, 0, 80, true, false),
+            (SafetyLevel::Strict, 0, 80, false, true),
+        ] {
+            let mut kernel = RuntimeMathKernel::new_for_mode(mode);
+            kernel.risk = ConformalRiskEngine::new(prior, 3.0);
+            kernel
+                .cached_design_ident_ppm
+                .store(1_000_000, Ordering::Relaxed);
+            kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+            if fault {
+                assert!(!kernel.cohomology.note_overlap(0, 1, 1));
+            }
+            if warning {
+                kernel
+                    .cached_sos_barrier_state
+                    .store(SosBarrierState::Warning as u8, Ordering::Relaxed);
+            }
+            drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+            let decision = kernel.decide(
+                mode,
+                RuntimeContext {
+                    contention_hint,
+                    ..RuntimeContext::pointer_validation(0x1000, false)
+                },
+            );
+            assert_eq!(
+                kernel.cached_pressure_regime.load(Ordering::Relaxed),
+                PRESSURE_REGIME_PRESSURED
+            );
+            assert_ne!(decision.action, MembraneAction::Allow);
+            assert!(decision.requires_full_validation());
+            assert_eq!(decision.profile, ValidationProfile::Full);
+            assert_eq!(
+                kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                OVERLOAD_POLICY_NONE
+            );
+        }
+    }
+
+    #[test]
+    fn pressured_regime_preserves_alarm_and_allocator_guards() {
+        const CHILD_ENV: &str = "FRANKENLIBC_TEST_PRESSURE_HARD_GUARDS";
+        // Quarantine depth and tropical metrics are process-global. Run these
+        // boundary cases alone so concurrent controller tests cannot publish
+        // unrelated state or observe our deliberately shallow quarantine.
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("test executable"),
+            )
+            .args([
+                "--exact",
+                "runtime_math::tests::pressured_regime_preserves_alarm_and_allocator_guards",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("run isolated pressure regression");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "isolated pressure regression did not pass: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        for alarm in 0..3 {
+            let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+            kernel.risk = ConformalRiskEngine::new(0, 3.0);
+            kernel
+                .cached_design_ident_ppm
+                .store(1_000_000, Ordering::Relaxed);
+            match alarm {
+                0 => kernel.cached_sparse_state.store(4, Ordering::Relaxed),
+                1 => kernel.cached_equivariant_state.store(3, Ordering::Relaxed),
+                _ => kernel.cached_cvar_state[ApiFamily::PointerValidation as usize]
+                    .store(3, Ordering::Relaxed),
+            }
+            drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+            let decision = kernel.decide(
+                SafetyLevel::Strict,
+                RuntimeContext {
+                    contention_hint: 80,
+                    ..RuntimeContext::pointer_validation(0x1000, false)
+                },
+            );
+            assert_eq!(
+                kernel.cached_pressure_regime.load(Ordering::Relaxed),
+                PRESSURE_REGIME_PRESSURED
+            );
+            assert!(
+                decision.risk_upper_bound_ppm
+                    < kernel
+                        .controller
+                        .limits(SafetyLevel::Strict)
+                        .full_validation_trigger_ppm
+            );
+            assert_eq!(decision.profile, ValidationProfile::Full, "alarm {alarm}");
+            assert_eq!(
+                decision.action,
+                MembraneAction::FullValidate,
+                "alarm {alarm}"
+            );
+            assert_eq!(
+                kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                OVERLOAD_POLICY_NONE
+            );
+        }
+
+        for depth in [64, 127, 128] {
+            crate::quarantine_controller::QUARANTINE_DEPTH.store(depth, Ordering::Release);
+            let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+            kernel.risk = ConformalRiskEngine::new(70_000, 3.0);
+            kernel
+                .cached_design_ident_ppm
+                .store(1_000_000, Ordering::Relaxed);
+            drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+            let decision = kernel.decide(
+                SafetyLevel::Hardened,
+                RuntimeContext {
+                    family: ApiFamily::Allocator,
+                    requested_bytes: 64,
+                    contention_hint: 80,
+                    ..RuntimeContext::pointer_validation(0x1000, false)
+                },
+            );
+            assert_eq!(
+                kernel.cached_pressure_regime.load(Ordering::Relaxed),
+                PRESSURE_REGIME_PRESSURED
+            );
+            assert_eq!(decision.risk_upper_bound_ppm, 70_000);
+            let (profile, action, tag) = if depth < 128 {
+                (
+                    ValidationProfile::Full,
+                    MembraneAction::FullValidate,
+                    OVERLOAD_POLICY_NONE,
+                )
+            } else {
+                (
+                    ValidationProfile::Fast,
+                    MembraneAction::Allow,
+                    OVERLOAD_POLICY_PRESSURED_FAST_ALLOW,
+                )
+            };
+            assert_eq!(decision.profile, profile, "quarantine depth {depth}");
+            assert_eq!(decision.action, action, "quarantine depth {depth}");
+            assert_eq!(
+                kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                tag
+            );
+        }
+    }
+
+    #[test]
+    fn pressured_regime_preserves_policy_table_requirements() {
+        let per_family = policy_table::RISK_BUCKETS_V1
+            * policy_table::BUDGET_BUCKETS_V1
+            * policy_table::CONSISTENCY_BUCKETS_V1;
+        let per_mode = ApiFamily::COUNT * per_family;
+        for (action, repair, hardened_action) in [
+            (0, 0, MembraneAction::FullValidate),
+            (1, 0, MembraneAction::FullValidate),
+            (
+                2,
+                6,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            ),
+            (3, 0, MembraneAction::Deny),
+        ] {
+            let mut overrides = Vec::new();
+            for i in 0..per_family {
+                let strict_action = if action == 2 { 1 } else { action };
+                overrides.push((i, 1, strict_action, 0));
+                overrides.push((per_mode + i, 1, action, repair));
+            }
+            let artifact = policy_table::build_test_pcpt(&overrides);
+            for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+                let mut kernel = RuntimeMathKernel::new_for_mode(mode);
+                kernel.risk = ConformalRiskEngine::new(0, 3.0);
+                kernel
+                    .cached_design_ident_ppm
+                    .store(1_000_000, Ordering::Relaxed);
+                kernel
+                    .load_policy_table(&artifact)
+                    .expect("load policy table");
+                drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+                let decision = kernel.decide(
+                    mode,
+                    RuntimeContext {
+                        contention_hint: 80,
+                        ..RuntimeContext::pointer_validation(0x1000, false)
+                    },
+                );
+                assert_eq!(decision.profile, ValidationProfile::Full);
+                assert_eq!(
+                    decision.action,
+                    if mode.heals_enabled() {
+                        hardened_action
+                    } else {
+                        MembraneAction::FullValidate
+                    }
+                );
+                assert_eq!(
+                    kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+                    OVERLOAD_POLICY_NONE
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decide_upgrade_preserves_policy_and_barrier_precedence() {
+        let per_family = policy_table::RISK_BUCKETS_V1
+            * policy_table::BUDGET_BUCKETS_V1
+            * policy_table::CONSISTENCY_BUCKETS_V1;
+        let per_mode = ApiFamily::COUNT * per_family;
+        for (action, repair, expected) in [
+            (
+                1,
+                0,
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+            ),
+            (
+                2,
+                6,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            ),
+            (3, 0, MembraneAction::Deny),
+        ] {
+            let mut overrides = Vec::new();
+            for i in 0..per_family {
+                let strict_action = if action == 2 { 1 } else { action };
+                overrides.push((i, 1, strict_action, 0));
+                overrides.push((per_mode + i, 1, action, repair));
+            }
+            let artifact = policy_table::build_test_pcpt(&overrides);
+            let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+            kernel.risk = ConformalRiskEngine::new(300_000, 3.0);
+            kernel
+                .load_policy_table(&artifact)
+                .expect("load policy table");
+            let ctx = RuntimeContext::pointer_validation(0x1000, false);
+            let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+            assert!(decision.risk_upper_bound_ppm >= 300_000);
+            assert_eq!(decision.action, expected);
+            assert_eq!(decision.profile, ValidationProfile::Full);
+            let blocked = kernel.decide(
+                SafetyLevel::Hardened,
+                RuntimeContext {
+                    requested_bytes: 512 * 1024 * 1024,
+                    ..ctx
+                },
+            );
+            assert_eq!(
+                blocked.action,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+            );
+        }
+    }
+
+    #[test]
+    fn overloaded_regime_keeps_safe_fallback_above_repair_threshold() {
+        let mut kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        kernel.risk = ConformalRiskEngine::new(300_000, 3.0);
+        drive_pressure_sensor_to(&kernel, SystemRegime::Overloaded);
+        let decision = kernel.decide(
+            SafetyLevel::Hardened,
+            RuntimeContext::pointer_validation(0x1000, false),
+        );
+        assert!(decision.risk_upper_bound_ppm >= 300_000);
+        assert_eq!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        );
+        assert_eq!(
+            kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+            OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK
+        );
     }
 
     /// Decision-law invariant (behavioral): in hardened mode, risk above

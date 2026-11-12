@@ -53,6 +53,12 @@ jobs:
           set -euo pipefail
           cargo test -p frankenlibc-membrane --lib -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/membrane-lib.log
           grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/membrane-lib.log
+      - name: Execute runtime math interposition and routing regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-membrane --test runtime_math_dual_mode_e2e_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e.log
       - name: Execute access verdict and lifetime regressions in both modes
         shell: bash
         run: |
@@ -152,6 +158,38 @@ jobs:
           python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --output artifacts/access/preload 2>&1 | tee artifacts/access/preload.log
           python3 scripts/check_allocation_integrity.py target/release/libfrankenlibc_abi.so --output artifacts/access/allocation-integrity 2>&1 | tee artifacts/access/allocation-integrity.log
           git diff --exit-code
+      - name: Verify release runtime math and emitted-code isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-membrane --release --test runtime_math_dual_mode_e2e_test -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/runtime-math-e2e-release.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/runtime-math-e2e-release.log
+          cargo build -p frankenlibc-membrane --release --lib --message-format=json > artifacts/access/membrane-build.jsonl
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+
+          output = Path('artifacts/access')
+          archives = set()
+          for line in (output / 'membrane-build.jsonl').read_text().splitlines():
+              event = json.loads(line)
+              if event.get('reason') == 'compiler-artifact' and event.get('target', {}).get('name') == 'frankenlibc_membrane':
+                  archives.update(path for path in event['filenames'] if path.endswith('.rlib'))
+          assert len(archives) == 1, f'expected one freshly selected membrane archive: {archives}'
+          archive = next(iter(archives))
+          members = subprocess.run(['ar', 't', archive], check=True, capture_output=True, text=True).stdout
+          (output / 'membrane-archive-members.txt').write_text(members)
+          objects = [name for name in members.splitlines() if name.endswith('.o')]
+          assert objects, 'membrane archive contains no compiled objects'
+          result = subprocess.run(['nm', '--undefined-only', '--extern-only', archive],
+                                  check=True, capture_output=True, text=True)
+          (output / 'membrane-undefined-symbols.txt').write_text(result.stdout)
+          forbidden = {'log', 'log1p', 'log2', 'exp', 'acos', 'pow'}
+          references = {line.split()[-1].split('@')[0] for line in result.stdout.splitlines()
+                        if len(line.split()) >= 2 and line.split()[-2] == 'U'}
+          assert not (references & forbidden), f'interposable math references: {references & forbidden}'
+          print(f'PASS: {len(objects)} objects in {archive} have no undefined C transcendental references')
+          PY
       - name: Check deployed startup under a 10 MiB data limit
         shell: bash
         run: |

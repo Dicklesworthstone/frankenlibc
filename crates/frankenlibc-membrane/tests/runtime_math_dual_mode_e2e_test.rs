@@ -907,3 +907,203 @@ fn e2e_framework_decision_cards_export_contains_all_decisions() {
         }
     }
 }
+
+// These symbols are deliberate interposers in this test executable only. The
+// integration target links the ordinary (cfg(not(test))) membrane library, so
+// an accidental f64 intrinsic -> C libm call cannot hide behind a unit-test
+// implementation. Real Rust libm computes the result while the spy poisons
+// errno, reproducing the deployed self-interposition failure deterministically.
+#[cfg(target_os = "linux")]
+mod math_abi_isolation {
+    use super::*;
+    use std::cell::Cell;
+    use std::hint::black_box;
+
+    thread_local! {
+        static ACTIVE: Cell<bool> = const { Cell::new(false) };
+        static CALLS: Cell<usize> = const { Cell::new(0) };
+        static SEEN: Cell<u8> = const { Cell::new(0) };
+    }
+
+    fn record_call(symbol: u8) {
+        if ACTIVE.get() {
+            CALLS.set(CALLS.get() + 1);
+            SEEN.set(SEEN.get() | symbol);
+            // SAFETY: __errno_location returns this thread's live errno slot.
+            unsafe { *libc::__errno_location() = libc::EDOM };
+        }
+    }
+
+    macro_rules! unary_interposer {
+        ($name:ident, $symbol:literal, $bit:literal, $implementation:path) => {
+            #[unsafe(export_name = $symbol)]
+            pub extern "C" fn $name(value: f64) -> f64 {
+                let result = $implementation(value);
+                record_call($bit);
+                result
+            }
+        };
+    }
+
+    unary_interposer!(interposed_log, "log", 1, libm::log);
+    unary_interposer!(interposed_log1p, "log1p", 2, libm::log1p);
+    unary_interposer!(interposed_log2, "log2", 4, libm::log2);
+    unary_interposer!(interposed_exp, "exp", 8, libm::exp);
+    unary_interposer!(interposed_acos, "acos", 16, libm::acos);
+
+    #[unsafe(export_name = "pow")]
+    pub extern "C" fn interposed_pow(base: f64, exponent: f64) -> f64 {
+        let result = libm::pow(base, exponent);
+        record_call(32);
+        result
+    }
+
+    struct Spy {
+        saved_errno: libc::c_int,
+    }
+
+    impl Spy {
+        fn enter() -> Self {
+            assert!(!ACTIVE.replace(true), "math spies must not nest");
+            CALLS.set(0);
+            SEEN.set(0);
+            // SAFETY: the slot belongs to the current test thread.
+            let saved_errno = unsafe { *libc::__errno_location() };
+            Self { saved_errno }
+        }
+    }
+
+    impl Drop for Spy {
+        fn drop(&mut self) {
+            ACTIVE.set(false);
+            // SAFETY: restore the same thread's errno, including on panic.
+            unsafe { *libc::__errno_location() = self.saved_errno };
+        }
+    }
+
+    fn isolated<T>(caller_errno: libc::c_int, operation: impl FnOnce() -> T) -> T {
+        CALLS.set(0);
+        SEEN.set(0);
+        // SAFETY: seed and inspect only this thread's errno slot.
+        unsafe { *libc::__errno_location() = caller_errno };
+        let result = operation();
+        let observed_errno = unsafe { *libc::__errno_location() };
+        let calls = CALLS.get();
+        assert_eq!(
+            calls,
+            0,
+            "membrane computation called interposable C math (symbol mask={})",
+            SEEN.get()
+        );
+        assert_eq!(
+            observed_errno, caller_errno,
+            "membrane computation changed caller errno"
+        );
+        result
+    }
+
+    #[test]
+    fn e2e_math_spies_detect_every_real_c_abi_symbol() {
+        unsafe extern "C" {
+            #[link_name = "log"]
+            fn linked_log(value: f64) -> f64;
+            #[link_name = "log1p"]
+            fn linked_log1p(value: f64) -> f64;
+            #[link_name = "log2"]
+            fn linked_log2(value: f64) -> f64;
+            #[link_name = "exp"]
+            fn linked_exp(value: f64) -> f64;
+            #[link_name = "acos"]
+            fn linked_acos(value: f64) -> f64;
+            #[link_name = "pow"]
+            fn linked_pow(base: f64, exponent: f64) -> f64;
+        }
+        let _spy = Spy::enter();
+        let unary: [(unsafe extern "C" fn(f64) -> f64, u8); 5] = [
+            (linked_log, 1),
+            (linked_log1p, 2),
+            (linked_log2, 4),
+            (linked_exp, 8),
+            (linked_acos, 16),
+        ];
+        for (function, symbol) in unary {
+            CALLS.set(0);
+            SEEN.set(0);
+            // SAFETY: every linked function has the declared C signature.
+            // Opaque pointers keep these controls from being constant-folded;
+            // referencing each symbol also prevents linker garbage collection.
+            let value = unsafe { black_box(function)(black_box(0.5)) };
+            assert!(value.is_finite());
+            assert_eq!(
+                CALLS.get(),
+                1,
+                "the control must reach exactly one interposer"
+            );
+            assert_eq!(SEEN.get(), symbol);
+            assert_eq!(unsafe { *libc::__errno_location() }, libc::EDOM);
+        }
+        CALLS.set(0);
+        SEEN.set(0);
+        let power: unsafe extern "C" fn(f64, f64) -> f64 = linked_pow;
+        // SAFETY: pow is called through its declared two-argument C signature.
+        let value = unsafe { black_box(power)(black_box(2.0), black_box(3.0)) };
+        assert_eq!(value, 8.0);
+        assert_eq!(CALLS.get(), 1);
+        assert_eq!(SEEN.get(), 32);
+        assert_eq!(unsafe { *libc::__errno_location() }, libc::EDOM);
+    }
+
+    #[test]
+    fn e2e_runtime_math_avoids_c_abi_and_preserves_errno() {
+        use frankenlibc_membrane::runtime_math::kernel_mmd::KernelMmdMonitor;
+
+        let _spy = Spy::enter();
+        for caller_errno in [0, libc::EACCES] {
+            for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+                let kernel = isolated(caller_errno, || RuntimeMathKernel::new_for_mode(mode));
+                isolated(caller_errno, || {
+                    // Cross the design-plan and sampled-controller cadences
+                    // using the public API of the production library.
+                    for step in 0..8192 {
+                        let context = scripted_ctx(step);
+                        let decision = kernel.decide(mode, context);
+                        kernel.observe_validation_result(
+                            mode,
+                            context.family,
+                            decision.profile,
+                            25 + (step as u64 % 257),
+                            step % 17 == 0,
+                        );
+                    }
+                });
+                let snapshot = isolated(caller_errno, || kernel.snapshot(mode));
+                assert_eq!(snapshot.decisions, 8192);
+            }
+
+            // Force the RBF exponential below the normal and subnormal ranges.
+            // The old C exp path sets ERANGE on this legitimate internal input.
+            isolated(caller_errno, || {
+                let mut monitor = KernelMmdMonitor::new();
+                for _ in 0..64 {
+                    monitor.observe_and_update(&[0; 25]);
+                }
+                for _ in 0..256 {
+                    monitor.observe_and_update(&[u8::MAX; 25]);
+                }
+                black_box(monitor);
+            });
+
+            let pipeline = isolated(caller_errno, frankenlibc_membrane::ValidationPipeline::new);
+            let allocation = isolated(caller_errno, || pipeline.allocate(256))
+                .expect("small membrane allocation");
+            isolated(caller_errno, || {
+                for _ in 0..64 {
+                    for offset in [0, 64, 255] {
+                        black_box(pipeline.validate(allocation as usize + offset));
+                    }
+                }
+                black_box(pipeline.free(allocation));
+            });
+        }
+    }
+}
