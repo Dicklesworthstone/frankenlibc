@@ -305,6 +305,67 @@ pub mod demand_storage_tests {
         assert_eq!(table.load(3 * WORDS - 1, Ordering::Acquire), 0x2468);
     }
 
+    pub fn segment_refill_geometry_bounds_new_writable_pages() {
+        let granule = segment_mapping::GRANULE;
+        for class_index in 0..NUM_SIZE_CLASSES {
+            let class_size = bin_size(class_index);
+            let chunk_slots = segment_bump_chunk_slots(class_size);
+            let slot_count = ((SEGMENT_SIZE - SEGMENT_HEADER_BYTES) / class_size) as u32;
+            assert!((1..=SEGMENT_BUMP_CHUNK).contains(&chunk_slots));
+            if class_size <= granule / SEGMENT_BUMP_CHUNK as usize {
+                assert_eq!(chunk_slots, SEGMENT_BUMP_CHUNK);
+            }
+            // Include every possible cursor, not just the aligned cursors
+            // reached by one thread. This covers non-divisor classes, racing
+            // claims, and the segment's final partial chunk.
+            for start in 0..slot_count {
+                let end = start.saturating_add(chunk_slots).min(slot_count);
+                let first_byte = SEGMENT_HEADER_BYTES + start as usize * class_size;
+                let end_byte = SEGMENT_HEADER_BYTES + end as usize * class_size;
+                assert!(start < end && end <= slot_count);
+                assert!(end_byte <= SEGMENT_SIZE);
+                assert!(end_byte - first_byte <= granule);
+                // Earlier contiguous claims already made the prefix writable.
+                // The next refill may overlap its final granule, but it must
+                // never charge more than one additional granule to RLIMIT_DATA.
+                assert!(end_byte.div_ceil(granule) - first_byte.div_ceil(granule) <= 1);
+            }
+        }
+    }
+
+    pub fn large_segment_refills_leave_unused_payload_inaccessible() {
+        let class_index = small_bin_index(MAX_SMALL_SIZE).unwrap().get();
+        let index = initialize_segment(class_index).expect("new large-class segment");
+        let base = segment_base(index).unwrap();
+        let payload = base + SEGMENT_HEADER_BYTES;
+        let granule = segment_mapping::GRANULE;
+        assert_eq!(&permissions(payload)[..3], "---");
+
+        let (start, end) = claim_segment_bump_chunk(index, class_index).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!((end - start) as usize * MAX_SMALL_SIZE, granule);
+        assert_eq!(&permissions(payload)[..3], "rw-");
+        assert_eq!(&permissions(payload + granule)[..3], "---");
+        // SAFETY: this fresh segment and the claimed chunk are test-owned;
+        // the successful claim has enabled every byte in this first granule.
+        unsafe {
+            (payload as *mut u8).write_volatile(0x35);
+            ((payload + granule - 1) as *mut u8).write_volatile(0x79);
+        }
+
+        let (next_start, next_end) = claim_segment_bump_chunk(index, class_index).unwrap();
+        assert_eq!(next_start, end);
+        assert_eq!((next_end - next_start) as usize * MAX_SMALL_SIZE, granule);
+        assert_eq!(&permissions(payload + granule)[..3], "rw-");
+        assert_eq!(&permissions(payload + 2 * granule)[..3], "---");
+        // SAFETY: later permission upgrades preserve the still-live first
+        // chunk. No allocator operation can claim this test's private slots.
+        unsafe {
+            assert_eq!((payload as *const u8).read_volatile(), 0x35);
+            assert_eq!(((payload + granule - 1) as *const u8).read_volatile(), 0x79);
+        }
+    }
+
     pub fn concurrent_first_touch_preserves_published_values() {
         const WORKERS: usize = 16;
         const WORDS: usize = DemandZeroRegion::GRANULE / std::mem::size_of::<AtomicUsize>();
@@ -1740,6 +1801,15 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     Some(raw_index)
 }
 
+/// Bound a refill by writable bytes as well as by slot count. A fixed 64-slot
+/// refill charged 2 MiB to RLIMIT_DATA for the first 32 KiB request, even when
+/// the other 63 slots were never used. Small classes keep their existing batch.
+#[inline]
+fn segment_bump_chunk_slots(class_size: usize) -> u32 {
+    let slots_per_granule = (segment_mapping::GRANULE / class_size).max(1);
+    SEGMENT_BUMP_CHUNK.min(slots_per_granule as u32)
+}
+
 #[cold]
 fn claim_segment_bump_chunk(segment_index: usize, class_index: usize) -> Option<(u32, u32)> {
     let header = segment_header(segment_index)?;
@@ -1747,14 +1817,13 @@ fn claim_segment_bump_chunk(segment_index: usize, class_index: usize) -> Option<
         return None;
     }
     let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
+    let chunk_slots = segment_bump_chunk_slots(header.class_size as usize);
     loop {
         let start = descriptor.next_unused_slot.load(Ordering::Acquire);
         if start >= header.slot_count {
             return None;
         }
-        let end = start
-            .saturating_add(SEGMENT_BUMP_CHUNK)
-            .min(header.slot_count);
+        let end = start.saturating_add(chunk_slots).min(header.slot_count);
         let base = segment_base(segment_index)?;
         let first_byte = SEGMENT_HEADER_BYTES + start as usize * header.class_size as usize;
         let end_byte = SEGMENT_HEADER_BYTES + end as usize * header.class_size as usize;

@@ -2372,6 +2372,17 @@ fn demand_storage_only_requested_granules_are_writable() {
 }
 
 #[test]
+fn demand_storage_segment_refill_geometry_bounds_new_writable_pages() {
+    frankenlibc_abi::malloc_abi::demand_storage_tests::segment_refill_geometry_bounds_new_writable_pages();
+}
+
+#[test]
+fn demand_storage_large_segment_refills_leave_unused_payload_inaccessible() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::demand_storage_tests::large_segment_refills_leave_unused_payload_inaccessible();
+}
+
+#[test]
 fn demand_storage_concurrent_first_touch_preserves_published_values() {
     frankenlibc_abi::malloc_abi::demand_storage_tests::concurrent_first_touch_preserves_published_values();
 }
