@@ -664,30 +664,41 @@ fn abi_guarantee_boundary_probe_child() {
         free(p0.cast::<c_void>());
         let double_free_healed = policy.double_frees.load(Ordering::Relaxed) > df_before;
 
-        // 4. Drain quarantine (`> 64 MiB` + shard batch flush) -> `known_remaining` transitions
-        //    from `Some(0)` (quarantined) to `None` (drained / foreign), and `free` heals via
-        //    `IgnoreForeignFree`.
-        let filler = malloc(63 * 1024 * 1024);
-        assert!(!filler.is_null());
+        // 4. Drain quarantine (`> 64 MiB` on `addr0`'s exact shard `(addr >> 12) % 16`) ->
+        //    `known_remaining` transitions from `Some(0)` (quarantined) to `None` (drained /
+        //    foreign), and `free` heals via `IgnoreForeignFree`.
+        let target_shard = (addr0 >> 12) & 15;
+        let mut held_other_shards = Vec::new();
+        let filler = loop {
+            let candidate = malloc(63 * 1024 * 1024);
+            assert!(!candidate.is_null());
+            if ((candidate as usize) >> 12) & 15 != target_shard {
+                break candidate;
+            }
+            // Rare 1/16 ASLR match on `target_shard`: hold live until `addr0` is drained.
+            held_other_shards.push(candidate);
+        };
+        // Parks 63 MiB in `filler`'s non-target shard (`<= 64 MiB`, so no drain yet).
         free(filler);
-        let mut flushers = Vec::with_capacity(32);
-        for _ in 0..32 {
-            let q = malloc(256 * 1024);
-            if !q.is_null() {
-                flushers.push(q);
+
+        // Allocate `64 KiB` blocks until we have 24 blocks (`1.5 MiB`) on `target_shard`.
+        // Freeing them exclusively on `target_shard` pushes `quarantine_total_bytes` above
+        // `64 MiB` while holding `target_shard`'s lock, deterministically popping `addr0`
+        // from the FIFO front of `target_shard.quarantine` regardless of ASLR layout.
+        let mut target_shard_flushers = Vec::with_capacity(24);
+        while target_shard_flushers.len() < 24 {
+            let q = malloc(64 * 1024);
+            assert!(!q.is_null());
+            if ((q as usize) >> 12) & 15 == target_shard {
+                target_shard_flushers.push(q);
+            } else {
+                held_other_shards.push(q);
             }
         }
-        for q in flushers {
+        for q in target_shard_flushers {
             free(q);
         }
-        let mut shard_flush = Vec::with_capacity(1024);
-        for _ in 0..1024 {
-            let q = malloc(1536);
-            if !q.is_null() {
-                shard_flush.push(q);
-            }
-        }
-        for q in shard_flush {
+        for q in held_other_shards {
             free(q);
         }
         // Advance EBR grace period via >= 1 MiB retire batches.
@@ -704,7 +715,7 @@ fn abi_guarantee_boundary_probe_child() {
             free(p0.cast::<c_void>());
         }
         let foreign_free_healed =
-            !drained_is_none || policy.foreign_frees.load(Ordering::Relaxed) > ff_before;
+            drained_is_none && policy.foreign_frees.load(Ordering::Relaxed) > ff_before;
 
         // 5. Same-address reuse C-ABI provenance boundary: allocate 48B blocks; any reused
         //    `user_base` (and every new live 48B block) reports `Some(48)`, clamping 64B writes
