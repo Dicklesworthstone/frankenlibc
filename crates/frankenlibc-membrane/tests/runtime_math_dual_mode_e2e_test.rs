@@ -1,5 +1,8 @@
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::heal::HealingAction;
+use frankenlibc_membrane::runtime_math::allocator_telemetry::{
+    SegmentSizeClassMapping, SegmentSizeClassTelemetry,
+};
 use frankenlibc_membrane::runtime_math::evidence::{LossEvidenceV1, SystematicEvidenceLog};
 use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION,
@@ -116,6 +119,210 @@ fn e2e_cold_sos_violation_enforces_both_modes_and_recovers() {
             MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
         ));
     }
+}
+
+#[test]
+fn e2e_segment_class_samples_retain_cold_faults_and_recover() {
+    assert!(RUNTIME_MATH_PRODUCTION_ENABLED);
+    let healthy = SegmentSizeClassMapping {
+        requested_size: 64,
+        mapped_class_size: 64,
+        class_membership_valid: true,
+    };
+    let invalid = SegmentSizeClassMapping {
+        mapped_class_size: 32,
+        ..healthy
+    };
+    for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+        let telemetry = SegmentSizeClassTelemetry::new();
+        for _ in 0..255 {
+            assert!(!telemetry.record(healthy));
+        }
+        assert!(!telemetry.has_pending());
+        assert!(telemetry.record(healthy));
+        assert!(telemetry.record(invalid));
+        // A later healthy sample may coalesce with a healthy sample, but must
+        // never overwrite the urgent mapping waiting for initialization.
+        for _ in 0..256 {
+            telemetry.record(healthy);
+        }
+        let queued = telemetry.snapshot();
+        assert_eq!(queued.selections, 513);
+        assert_eq!(queued.sampled_selections, 2);
+        assert_eq!(queued.urgent_selections, 1);
+        assert_eq!(queued.coalesced_samples, 1);
+        assert_eq!(queued.consumed_samples, 0);
+        assert_eq!(queued.pending_urgent, Some(invalid));
+
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 2);
+        assert!(!telemetry.has_pending());
+        assert_eq!(telemetry.snapshot().last_consumed, Some(invalid));
+        let violated = kernel.snapshot(mode);
+        assert!(violated.sos_barrier_size_class_value < 0);
+        assert_eq!(violated.sos_barrier_violations, 1);
+        let ctx = RuntimeContext::pointer_validation(0x1234, false);
+        let expected = match mode {
+            SafetyLevel::Strict => MembraneAction::Deny,
+            SafetyLevel::Hardened => MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            SafetyLevel::Off => unreachable!(),
+        };
+        assert_eq!(kernel.decide(mode, ctx).action, expected);
+
+        for _ in 0..256 {
+            telemetry.record(healthy);
+        }
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
+        let recovered = kernel.snapshot(mode);
+        assert!(recovered.sos_barrier_size_class_value > 0);
+        assert_eq!(recovered.sos_barrier_violations, 1);
+        assert_eq!(telemetry.snapshot().consumed_samples, 3);
+        assert!(!matches!(
+            kernel.decide(mode, ctx).action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+    }
+}
+
+#[test]
+fn e2e_segment_class_mailboxes_count_concurrent_producers_exactly() {
+    const THREADS: u64 = 8;
+    const SELECTIONS_PER_THREAD: u64 = 2048;
+    let telemetry = SegmentSizeClassTelemetry::new();
+    std::thread::scope(|scope| {
+        for index in 0..THREADS {
+            let telemetry = &telemetry;
+            scope.spawn(move || {
+                let mapping = SegmentSizeClassMapping {
+                    requested_size: 64 + index as u16,
+                    mapped_class_size: 80,
+                    class_membership_valid: true,
+                };
+                for _ in 0..SELECTIONS_PER_THREAD {
+                    telemetry.record(mapping);
+                }
+            });
+        }
+    });
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.selections, THREADS * SELECTIONS_PER_THREAD);
+    assert_eq!(snapshot.sampled_selections, snapshot.selections / 256);
+    assert_eq!(snapshot.urgent_selections, 0);
+    assert_eq!(snapshot.coalesced_samples, snapshot.sampled_selections - 1);
+    assert_eq!(snapshot.consumed_samples, 0);
+    let pending = snapshot.pending_healthy.expect("real healthy sample");
+    assert!((64..64 + THREADS as u16).contains(&pending.requested_size));
+    assert_eq!(pending.mapped_class_size, 80);
+    assert!(pending.class_membership_valid);
+    let kernel = RuntimeMathKernel::new();
+    assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
+    let consumed = telemetry.snapshot();
+    assert_eq!(consumed.last_consumed, Some(pending));
+    assert_eq!(consumed.consumed_samples, 1);
+    assert!(!telemetry.has_pending());
+}
+
+#[test]
+fn e2e_segment_class_concurrent_drain_never_replays_an_older_healthy_sample() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let telemetry = SegmentSizeClassTelemetry::new();
+    let kernel = RuntimeMathKernel::new();
+    let finished = AtomicBool::new(false);
+    let mut latest_applied_fault = 0;
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // One producer gives the published mappings an unambiguous order.
+            // Compete with the consumer specifically at the two mailbox swaps.
+            for iteration in 0..2048u16 {
+                let healthy_size = 32 + 2 * iteration;
+                for _ in 0..256 {
+                    telemetry.record(SegmentSizeClassMapping {
+                        requested_size: healthy_size,
+                        mapped_class_size: u32::from(healthy_size),
+                        class_membership_valid: true,
+                    });
+                }
+                telemetry.record(SegmentSizeClassMapping {
+                    requested_size: healthy_size + 1,
+                    mapped_class_size: 0,
+                    class_membership_valid: true,
+                });
+                std::thread::yield_now();
+            }
+            finished.store(true, Ordering::Release);
+        });
+        while !finished.load(Ordering::Acquire) || telemetry.has_pending() {
+            if kernel.observe_pending_allocator_size_classes(&telemetry) != 0 {
+                let applied = telemetry.snapshot().last_consumed.expect("applied sample");
+                if applied.mapped_class_size == 0 {
+                    latest_applied_fault = applied.requested_size;
+                } else {
+                    assert!(
+                        applied.requested_size > latest_applied_fault,
+                        "an older healthy sample cleared a newer mapping fault"
+                    );
+                }
+            }
+            std::hint::spin_loop();
+        }
+    });
+    assert_eq!(latest_applied_fault, 32 + 2 * 2047 + 1);
+    assert!(!telemetry.has_pending());
+}
+
+#[test]
+fn e2e_segment_class_negative_mappings_never_wait_for_sampling() {
+    use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
+    // Adjacent waste values straddle the actual artifact's negative boundary.
+    for (mapped_class_size, urgent) in [(2287, false), (2288, true)] {
+        let telemetry = SegmentSizeClassTelemetry::new();
+        assert_eq!(
+            telemetry.record(SegmentSizeClassMapping {
+                requested_size: 1000,
+                mapped_class_size,
+                class_membership_valid: true,
+            }),
+            urgent
+        );
+    }
+    let mut negative_mappings = 0;
+    for requested_size in [1u16, 16, 17, 64, 4097, 32768, u16::MAX] {
+        for mapped_class_size in [
+            0u32,
+            15,
+            16,
+            32,
+            64,
+            80,
+            1024,
+            8192,
+            65535,
+            65536,
+            65537,
+            u32::MAX,
+        ] {
+            for class_membership_valid in [true, false] {
+                let mapping = SegmentSizeClassMapping {
+                    requested_size,
+                    mapped_class_size,
+                    class_membership_valid,
+                };
+                let telemetry = SegmentSizeClassTelemetry::new();
+                let queued = telemetry.record(mapping);
+                if evaluate_size_class_barrier(
+                    usize::from(requested_size),
+                    mapped_class_size as usize,
+                    class_membership_valid,
+                ) < 0
+                {
+                    negative_mappings += 1;
+                    assert!(queued, "negative mapping was sampled away: {mapping:?}");
+                    assert_eq!(telemetry.snapshot().pending_urgent, Some(mapping));
+                }
+            }
+        }
+    }
+    assert!(negative_mappings > 0, "negative cases must execute");
 }
 
 #[test]

@@ -2388,6 +2388,106 @@ fn demand_storage_concurrent_first_touch_preserves_published_values() {
 }
 
 #[test]
+fn segment_class_feedback_reaches_the_runtime_without_initializing_from_malloc() {
+    const CHILD: &str = "FRANKENLIBC_SEGMENT_CLASS_FEEDBACK_CHILD";
+    const TEST: &str =
+        "segment_class_feedback_reaches_the_runtime_without_initializing_from_malloc";
+    if std::env::var_os(CHILD).is_none() {
+        // Isolate the strict allocator from earlier tests that explicitly
+        // initialize controllers, and prove this production target executes.
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "strict")
+            .env("FRANKENLIBC_RUNTIME_MATH", "on")
+            .output()
+            .expect("run isolated segment class feedback regression");
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(
+            child.status.success(),
+            "{}\n{stdout}\n{stderr}",
+            child.status
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "no regression executed: {stdout}"
+        );
+        return;
+    }
+
+    use frankenlibc_abi::malloc_abi::{
+        malloc_runtime_kernel_ready_for_tests, malloc_size_class_telemetry_snapshot,
+    };
+    signal_runtime_ready_for_tests();
+    assert!(!malloc_runtime_kernel_ready_for_tests());
+    let before = malloc_size_class_telemetry_snapshot(false);
+    assert_eq!(before.consumed_samples, 0, "strict startup built a kernel");
+    for _ in 0..256 {
+        let pointer = unsafe { malloc(17) };
+        assert!(!pointer.is_null());
+        assert!(malloc_segment_owned_for_tests(pointer));
+        unsafe { free(pointer) };
+    }
+    let pending = malloc_size_class_telemetry_snapshot(false);
+    assert!(!malloc_runtime_kernel_ready_for_tests());
+    assert!(pending.selections >= before.selections + 256);
+    assert!(pending.sampled_selections > before.sampled_selections);
+    assert_eq!(pending.consumed_samples, 0, "malloc initialized the kernel");
+    assert!(pending.pending_healthy.is_some());
+    assert_eq!(pending.urgent_selections, before.urgent_selections);
+
+    // This explicit diagnostic request, not malloc, pays for initialization.
+    let initialized = malloc_size_class_telemetry_snapshot(true);
+    assert!(malloc_runtime_kernel_ready_for_tests());
+    assert!(initialized.consumed_samples > 0);
+    assert!(initialized.pending_healthy.is_none());
+    assert!(initialized.pending_urgent.is_none());
+    for _ in 0..256 {
+        let pointer = unsafe { calloc(1, 17) };
+        assert!(!pointer.is_null());
+        assert!(malloc_segment_owned_for_tests(pointer));
+        assert_eq!(unsafe { pointer.cast::<u8>().read() }, 0);
+        unsafe { free(pointer) };
+    }
+    let live = malloc_size_class_telemetry_snapshot(false);
+    assert!(live.consumed_samples > initialized.consumed_samples);
+    let mapping = live
+        .last_consumed
+        .expect("actual calloc mapping reached SOS");
+    assert_eq!(mapping.requested_size, 17);
+    assert_eq!(mapping.mapped_class_size, 32);
+    assert!(mapping.class_membership_valid);
+
+    // Shrinking an existing 8 KiB slot to one byte retains capacity. It is not
+    // a new class selection and must not be misreported as extreme waste.
+    let pointer = unsafe { malloc(8192) };
+    assert!(!pointer.is_null());
+    let before_shrink = malloc_size_class_telemetry_snapshot(false);
+    let shrunk = unsafe { realloc(pointer, 1) };
+    assert_eq!(shrunk, pointer);
+    let after_shrink = malloc_size_class_telemetry_snapshot(false);
+    assert_eq!(after_shrink.selections, before_shrink.selections);
+    assert_eq!(
+        after_shrink.urgent_selections,
+        before_shrink.urgent_selections
+    );
+    unsafe { free(shrunk) };
+
+    // The host-backed large path supplies no known slot class.
+    let large = unsafe { malloc(128 * 1024) };
+    assert!(!large.is_null());
+    unsafe { free(large) };
+    let before_large = malloc_size_class_telemetry_snapshot(false);
+    let large = unsafe { malloc(128 * 1024) };
+    assert!(!large.is_null());
+    assert!(!malloc_segment_owned_for_tests(large));
+    let after_large = malloc_size_class_telemetry_snapshot(false);
+    assert_eq!(after_large.selections, before_large.selections);
+    unsafe { free(large) };
+}
+
+#[test]
 fn demand_storage_fork_child_extends_inherited_mapping_without_locks() {
     frankenlibc_abi::malloc_abi::demand_storage_tests::fork_child_extends_inherited_mapping_without_locks();
 }

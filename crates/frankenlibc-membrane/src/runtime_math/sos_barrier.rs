@@ -606,6 +606,39 @@ fn evaluate_size_class_barrier_from_basis(basis: &[i64; SIZE_CLASS_CERT_DIM]) ->
     SIZE_CLASS_BARRIER_BUDGET_MILLI.saturating_sub(score)
 }
 
+/// Cheap producer-side routing for a size-class observation.
+///
+/// Hard mapping failures are always urgent. With valid range, membership and
+/// capacity only the waste basis can be nonzero, so its single diagonal term
+/// determines whether sampling could hide a negative certificate value.
+/// This routes observations; the controller still evaluates the full artifact.
+pub(crate) fn size_class_mapping_requires_immediate_evaluation(
+    requested_size: usize,
+    mapped_class_size: usize,
+    class_membership_valid: bool,
+) -> bool {
+    let requested = requested_size.clamp(16, SIZE_CLASS_MAX_CERTIFIED_REQUEST);
+    if !class_membership_valid
+        || mapped_class_size == 0
+        || mapped_class_size > SIZE_CLASS_MAX_CERTIFIED_REQUEST
+        || mapped_class_size < requested
+    {
+        return true;
+    }
+    let scaled_waste = ((mapped_class_size - requested) as u64) * 1_000_000;
+    if scaled_waste <= (requested as u64) * u64::from(SIZE_CLASS_MAX_WASTE_RATIO_PPM) {
+        return false;
+    }
+    let waste_ppm = (scaled_waste / requested as u64) as u32;
+    let basis = i128::from(ppm_excess_to_score(
+        waste_ppm,
+        SIZE_CLASS_MAX_WASTE_RATIO_PPM,
+    ));
+    let score = i128::from(SIZE_CLASS_GRAM_MATRIX[0][0]) * basis * basis
+        / i128::from(SIZE_CLASS_SCORE_SCALE);
+    score > i128::from(SIZE_CLASS_BARRIER_BUDGET_MILLI)
+}
+
 /// Evaluate size-class admissibility barrier certificate.
 ///
 /// Inputs:

@@ -26,6 +26,9 @@ use frankenlibc_membrane::decision_contract::{
     DecisionAction as DecisionContractAction, DecisionContractMachine,
     DecisionEvent as DecisionContractEvent, TsmState,
 };
+use frankenlibc_membrane::runtime_math::allocator_telemetry::{
+    SegmentSizeClassMapping, SegmentSizeClassTelemetry, SegmentSizeClassTelemetrySnapshot,
+};
 use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeEvidenceContractSnapshot,
     RuntimeKernelSnapshot, RuntimeMathKernel, ValidationProfile,
@@ -90,6 +93,7 @@ pub(crate) const FFI_PCC_STRNCPY_INDEX: u8 = 23;
 // sees INITIALIZING returns None (passthrough).
 static KERNEL_STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
 static KERNEL_PTR: AtomicPtr<RuntimeMathKernel> = AtomicPtr::new(std::ptr::null_mut());
+static ALLOCATOR_SIZE_CLASS_TELEMETRY: SegmentSizeClassTelemetry = SegmentSizeClassTelemetry::new();
 static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);
 static PANIC_HOOK_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_UNSET);
 static PANIC_HOOK_WRITE_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_WRITE_IDLE);
@@ -2656,23 +2660,71 @@ fn record_pcc_explainability(
     }
 }
 
+/// Record an actual fresh segment class selection without constructing a kernel.
+/// The producer is integer-only, allocation-free, lock-free and TLS-free. An
+/// unresolved switch or busy controller leaves bounded pending telemetry.
+#[inline]
+pub(crate) fn observe_allocator_size_class_selection(
+    requested_size: u16,
+    mapped_class_size: u32,
+    class_membership_valid: bool,
+) {
+    if !frankenlibc_membrane::runtime_math::RUNTIME_MATH_PRODUCTION_ENABLED
+        || RUNTIME_MATH_STATE.load(AtomicOrdering::Relaxed) == RUNTIME_MATH_OFF
+    {
+        return;
+    }
+    if !ALLOCATOR_SIZE_CLASS_TELEMETRY.record(SegmentSizeClassMapping {
+        requested_size,
+        mapped_class_size,
+        class_membership_valid,
+    }) {
+        return;
+    }
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        // SAFETY: READY publishes an immutable, process-lifetime kernel.
+        let kernel = unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) };
+        flush_pending_allocator_size_classes(kernel);
+    }
+}
+
+#[inline]
+fn flush_pending_allocator_size_classes(kernel: &RuntimeMathKernel) {
+    // Resolving the environment switch can log/allocate. Only explicit kernel
+    // initialization/export paths resolve it; malloc never does that work.
+    if RUNTIME_MATH_STATE.load(AtomicOrdering::Acquire) == RUNTIME_MATH_ON {
+        let _ = kernel.observe_pending_allocator_size_classes(&ALLOCATOR_SIZE_CLASS_TELEMETRY);
+    }
+}
+
+pub(crate) fn allocator_size_class_telemetry_snapshot() -> SegmentSizeClassTelemetrySnapshot {
+    ALLOCATOR_SIZE_CLASS_TELEMETRY.snapshot()
+}
+
+pub(crate) fn runtime_kernel_is_ready() -> bool {
+    KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY
+}
+
 /// Build the runtime-math kernel now if no call has yet. Process startup does
 /// this before main: built lazily, the kernel's first use can come after the
 /// program has capped RLIMIT_AS, where its ~158 KiB construction frame cannot
 /// grow the stack and faults (gnulib test-dprintf-posix2 under strict).
 pub(crate) fn prewarm_kernel() {
-    let _ = kernel();
+    if runtime_math_enabled() {
+        let _ = kernel();
+    }
 }
 
 #[inline]
 fn kernel() -> Option<&'static RuntimeMathKernel> {
-    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
-        // Fast path: already initialized.
+    let kernel = if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
         // SAFETY: once READY, KERNEL_PTR is valid and never changes.
-        let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
-        return Some(unsafe { &*ptr });
-    }
-    kernel_init()
+        unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) }
+    } else {
+        kernel_init()?
+    };
+    flush_pending_allocator_size_classes(kernel);
+    Some(kernel)
 }
 
 /// [`kernel`]'s initialization path, kept out of line. With the kernel's
@@ -2749,6 +2801,9 @@ fn kernel_init() -> Option<&'static RuntimeMathKernel> {
 
 #[inline]
 fn kernel_with_retry(spins: usize) -> Option<&'static RuntimeMathKernel> {
+    // Explicit diagnostic/export calls may initialize the kernel. Resolve the
+    // switch here too so pre-init allocator observations have a real consumer.
+    let _ = runtime_math_enabled();
     for _ in 0..spins {
         if let Some(k) = kernel() {
             return Some(k);

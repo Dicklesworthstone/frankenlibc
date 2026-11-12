@@ -169,6 +169,7 @@ mod floating_environment {
 pub use floating_environment::Guard as RuntimeMathEnvironmentGuard;
 
 pub mod admm_budget;
+pub mod allocator_telemetry;
 pub mod alpha_investing;
 pub mod approachability;
 pub mod atiyah_bott;
@@ -3971,7 +3972,7 @@ impl RuntimeMathKernel {
             // Evaluates provenance + quarantine + fragmentation + thread-safety
             // barriers using cached runtime signals.
             {
-                let barrier_code = {
+                {
                     let mut barrier = self.sos_barrier.lock();
                     // Provenance barrier: use cached risk and profile.
                     let risk_ppm = risk_bound_ppm;
@@ -4044,15 +4045,17 @@ impl RuntimeMathKernel {
                             allocation_epoch_lag_ppm,
                         );
                     }
-                    match barrier.state() {
+                    let barrier_code = match barrier.state() {
                         SosBarrierState::Calibrating => 0u8,
                         SosBarrierState::Safe => 1u8,
                         SosBarrierState::Warning => 2u8,
                         SosBarrierState::Violated => 3u8,
-                    }
-                };
-                self.cached_sos_barrier_state
-                    .store(barrier_code, Ordering::Relaxed);
+                    };
+                    // Publish before unlocking: a later allocator fault must
+                    // not be overwritten by this observer's older state.
+                    self.cached_sos_barrier_state
+                        .store(barrier_code, Ordering::Relaxed);
+                }
             }
 
             // Feed spectral-sequence obstruction detector.
@@ -4841,6 +4844,50 @@ impl RuntimeMathKernel {
     pub fn note_overlap(&self, left_shard: usize, right_shard: usize, witness_hash: u64) -> bool {
         self.cohomology
             .note_overlap(left_shard, right_shard, witness_hash)
+    }
+
+    /// Apply bounded observations from actual segment class selections.
+    ///
+    /// An allocator must never wait on a controller already held by interrupted
+    /// or reentrant code. A busy controller leaves both mailboxes untouched for
+    /// the next sample or kernel lookup. The existing mutex is fork-aware.
+    /// This path uses integer arithmetic only and does not allocate or touch TLS.
+    pub fn observe_pending_allocator_size_classes(
+        &self,
+        telemetry: &allocator_telemetry::SegmentSizeClassTelemetry,
+    ) -> u32 {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED
+            || !self.validation_feedback_enabled()
+            || !telemetry.has_pending()
+        {
+            return 0;
+        }
+        let Some(mut barrier) = self.sos_barrier.try_lock() else {
+            return 0;
+        };
+        let mut consumed = 0;
+        // Healthy first, urgent last, under one controller lock: a coalesced
+        // healthy sample cannot erase an unconsumed mapping failure.
+        for mapping in telemetry.take_pending().into_iter().flatten() {
+            barrier.evaluate_size_class(
+                usize::from(mapping.requested_size),
+                mapping.mapped_class_size as usize,
+                mapping.class_membership_valid,
+            );
+            telemetry.note_consumed(mapping);
+            consumed += 1;
+        }
+        if consumed != 0 {
+            let barrier_code = match barrier.state() {
+                SosBarrierState::Calibrating => 0,
+                SosBarrierState::Safe => 1,
+                SosBarrierState::Warning => 2,
+                SosBarrierState::Violated => 3,
+            };
+            self.cached_sos_barrier_state
+                .store(barrier_code, Ordering::Relaxed);
+        }
+        consumed
     }
 
     /// Report a size-class mapping event to the SOS barrier certificate controller.
@@ -6184,6 +6231,27 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::collections::{BTreeSet, HashMap};
+
+    #[test]
+    fn allocator_class_feedback_defers_without_losing_a_fault_when_sos_is_busy() {
+        use allocator_telemetry::{SegmentSizeClassMapping, SegmentSizeClassTelemetry};
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+        let telemetry = SegmentSizeClassTelemetry::new();
+        let invalid = SegmentSizeClassMapping {
+            requested_size: 64,
+            mapped_class_size: 32,
+            class_membership_valid: true,
+        };
+        assert!(telemetry.record(invalid));
+        let controller = kernel.sos_barrier.lock();
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 0);
+        assert_eq!(telemetry.snapshot().pending_urgent, Some(invalid));
+        assert_eq!(telemetry.snapshot().consumed_samples, 0);
+        drop(controller);
+        assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
+        assert!(!telemetry.has_pending());
+        assert_eq!(kernel.cached_sos_barrier_state.load(Ordering::Relaxed), 3);
+    }
 
     fn snapshot_struct_field_names(source: &str) -> Vec<String> {
         let struct_start = source

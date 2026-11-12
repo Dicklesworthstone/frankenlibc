@@ -1892,10 +1892,21 @@ fn activate_segment_slot_parts(
     zeroed: bool,
     origin: SegmentSlotOrigin,
 ) -> Option<*mut c_void> {
-    if requested == 0 || requested > class_size || requested > u16::MAX as usize {
+    if requested == 0 || requested > u16::MAX as usize {
         return None;
     }
     let requested = requested as u16;
+    let mapped_class_size = u32::try_from(class_size).ok()?;
+    let class_membership_valid =
+        small_bin_index(class_size).is_some_and(|class| bin_size(class.get()) == class_size);
+    if usize::from(requested) > class_size || !class_membership_valid {
+        runtime_policy::observe_allocator_size_class_selection(
+            requested,
+            mapped_class_size,
+            class_membership_valid,
+        );
+        return None;
+    }
     debug_assert!(matches!(
         (origin, meta.requested_size.load(Ordering::Relaxed)),
         (SegmentSlotOrigin::Fresh, 0) | (SegmentSlotOrigin::Recycled, SEGMENT_SLOT_FREE)
@@ -1934,6 +1945,11 @@ fn activate_segment_slot_parts(
     // disjoint proofs of exclusive slot ownership.  Publish with one store;
     // the warmed malloc path therefore performs no shared metadata RMW.
     meta.requested_size.store(requested, Ordering::Release);
+    runtime_policy::observe_allocator_size_class_selection(
+        requested,
+        mapped_class_size,
+        class_membership_valid,
+    );
     Some(user_base as *mut c_void)
 }
 
@@ -2074,6 +2090,26 @@ fn allocate_from_local_class(
             return Some(ptr);
         }
     }
+}
+
+/// Snapshot actual segment-class feedback without allocating by default.
+///
+/// Setting `initialize_kernel` explicitly opts into the diagnostic slow path:
+/// initialize the runtime kernel and drain observations retained by strict
+/// allocation. Allocation hooks never request this initialization.
+#[must_use]
+pub fn malloc_size_class_telemetry_snapshot(
+    initialize_kernel: bool,
+) -> frankenlibc_membrane::runtime_math::allocator_telemetry::SegmentSizeClassTelemetrySnapshot {
+    if initialize_kernel {
+        runtime_policy::prewarm_kernel();
+    }
+    runtime_policy::allocator_size_class_telemetry_snapshot()
+}
+
+#[doc(hidden)]
+pub fn malloc_runtime_kernel_ready_for_tests() -> bool {
+    runtime_policy::runtime_kernel_is_ready()
 }
 
 /// Allocate from the segment arena, returning the pointer AND the size class it
