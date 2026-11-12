@@ -29450,6 +29450,209 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.51",
+      "title": "Reconcile canonical docs, semantic_contract_inventory drift, rustfmt, and durable post-cutoff closure receipts",
+      "priority": 1,
+      "status": "in_progress",
+      "assignee": "antigravity",
+      "labels": [
+        "closure-gate",
+        "docs-truth",
+        "reality-check-202611",
+        "semantic-drift"
+      ],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Reconcile canonical docs, semantic_contract_inventory export surface and line markers, rustfmt, and durable repo-relative closure receipts for all post-cutoff closed beads"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "check_docs_semantic_claims.sh and check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "docs_semantic_claims.log.jsonl"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": false,
+          "scope": ""
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test docs_semantic_claims_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/check_docs_semantic_claims.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "target/conformance/docs_semantic_claims.log.jsonl"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "not_required"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 3,
+        "complete": 3,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.51",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test docs_semantic_claims_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_docs_semantic_claims.sh",
+          "bash scripts/check_semantic_contract_drift.sh",
+          "bash scripts/check_closure_gate.sh"
+        ],
+        "expected_assertions": [
+          "Reconcile canonical docs, semantic_contract_inventory export surface and line markers, rustfmt, and durable repo-relative closure receipts for all post-cutoff closed beads"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "README.md",
+          "AGENTS.md",
+          "DEPLOYMENT.md",
+          "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "FEATURE_PARITY.md",
+          "docs/planning/COMPATIBILITY.md",
+          "docs/planning/PARITY-COVERAGE.md",
+          "crates/frankenlibc-core/src/lib.rs",
+          "tests/conformance/replacement_levels.json",
+          "tests/conformance/semantic_contract_inventory.v1.json",
+          "scripts/check_docs_semantic_claims.sh",
+          "scripts/check_closure_gate.sh",
+          "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.51/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit 42e088b5ccddada68d7c5663f28e7b29f4484c13.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.51/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Reconcile canonical docs, semantic_contract_inventory export surface and line markers, rustfmt, and durable repo-relative closure receipts for all post-cutoff closed beads",
+          "acceptance_sha256": "ed2840b1ac1368a1891d24af5c5bf6301d3b6bea39fca234ec12512af2cf282b",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "README.md",
+            "AGENTS.md",
+            "DEPLOYMENT.md",
+            "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+            "FEATURE_PARITY.md",
+            "docs/planning/COMPATIBILITY.md",
+            "docs/planning/PARITY-COVERAGE.md",
+            "crates/frankenlibc-core/src/lib.rs",
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/semantic_contract_inventory.v1.json",
+            "scripts/check_docs_semantic_claims.sh",
+            "scripts/check_closure_gate.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs"
+          ],
+          "source": {
+            "commit": "42e088b5ccddada68d7c5663f28e7b29f4484c13",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "AGENTS.md": "e3f165f60b01d1f4132df665fd4608776fd9d399aed7e3bec0947cfe51929213",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "DEPLOYMENT.md": "e7aeea84c3edd41cb0cf2d6fdd92efbeb83537ee3ced1b86362f27e47f141b72",
+              "FEATURE_PARITY.md": "374a9e085f8b099c17137f0b2e8287620564eaa6f14deb7f0736ec4b43d37202",
+              "PLAN_TO_PORT_GLIBC_TO_RUST.md": "d44cc5888f343f2632fdcb434ce5148631b540a7771ea4707787c0e1b629d0ec",
+              "README.md": "43b7b91c72b1a0869364dd493a77f9d861c5edf00ccecc7b9b9433b17d9a9fa8",
+              "crates/frankenlibc-core/src/lib.rs": "2fbcf74a6555c33992a329f02715d9ea8f9d0d32223a9c8a08b909b43a157cef",
+              "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs": "c06fef3a305d3326b00c0229699441c514690fe896a3f705106b3414e9845e2b",
+              "docs/planning/COMPATIBILITY.md": "ac30b9396570561d34ef4c790d7eecf5d4e306cc2128833096c54319c5740f5b",
+              "docs/planning/PARITY-COVERAGE.md": "3e598604a86db7e2028c24b3ef583872bbe5ed3dc896d93480a0e1f2b38a00fd",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+              "scripts/check_docs_semantic_claims.sh": "71fbc7087a43b2edc3898cd7cfbddacc5eac25fc163811deb2e78e348a03d9f4",
+              "tests/conformance/replacement_levels.json": "cd4f42ab583108e886914965f8d8bde28dc35c1287999e1a36eca8ecd28784e6",
+              "tests/conformance/semantic_contract_inventory.v1.json": "9d9b2bc4d8d96111be9bb4823eff0e97f4cd451615451a7671a0bb6abb033c43"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-11-11T06:56:02.127957585Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "docs_semantic_claims_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "gate_passes_current_docs_and_emits_report_and_log",
+              "operator_guides_reject_planted_l1_and_stale_claims",
+              "operator_guides_reject_missing_l0_scope_phrase",
+              "readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {

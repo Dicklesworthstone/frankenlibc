@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.51",
+  "contract": {
+    "behavior": "Reconcile canonical docs, semantic_contract_inventory export surface and line markers, rustfmt, and durable repo-relative closure receipts for all post-cutoff closed beads",
+    "acceptance_sha256": "ed2840b1ac1368a1891d24af5c5bf6301d3b6bea39fca234ec12512af2cf282b",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "README.md",
+      "AGENTS.md",
+      "DEPLOYMENT.md",
+      "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+      "FEATURE_PARITY.md",
+      "docs/planning/COMPATIBILITY.md",
+      "docs/planning/PARITY-COVERAGE.md",
+      "crates/frankenlibc-core/src/lib.rs",
+      "tests/conformance/replacement_levels.json",
+      "tests/conformance/semantic_contract_inventory.v1.json",
+      "scripts/check_docs_semantic_claims.sh",
+      "scripts/check_closure_gate.sh"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs"
+    ],
+    "source": {
+      "commit": "42e088b5ccddada68d7c5663f28e7b29f4484c13",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "AGENTS.md": "e3f165f60b01d1f4132df665fd4608776fd9d399aed7e3bec0947cfe51929213",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "DEPLOYMENT.md": "e7aeea84c3edd41cb0cf2d6fdd92efbeb83537ee3ced1b86362f27e47f141b72",
+        "FEATURE_PARITY.md": "374a9e085f8b099c17137f0b2e8287620564eaa6f14deb7f0736ec4b43d37202",
+        "PLAN_TO_PORT_GLIBC_TO_RUST.md": "d44cc5888f343f2632fdcb434ce5148631b540a7771ea4707787c0e1b629d0ec",
+        "README.md": "43b7b91c72b1a0869364dd493a77f9d861c5edf00ccecc7b9b9433b17d9a9fa8",
+        "crates/frankenlibc-core/src/lib.rs": "2fbcf74a6555c33992a329f02715d9ea8f9d0d32223a9c8a08b909b43a157cef",
+        "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs": "c06fef3a305d3326b00c0229699441c514690fe896a3f705106b3414e9845e2b",
+        "docs/planning/COMPATIBILITY.md": "ac30b9396570561d34ef4c790d7eecf5d4e306cc2128833096c54319c5740f5b",
+        "docs/planning/PARITY-COVERAGE.md": "3e598604a86db7e2028c24b3ef583872bbe5ed3dc896d93480a0e1f2b38a00fd",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+        "scripts/check_docs_semantic_claims.sh": "71fbc7087a43b2edc3898cd7cfbddacc5eac25fc163811deb2e78e348a03d9f4",
+        "tests/conformance/replacement_levels.json": "cd4f42ab583108e886914965f8d8bde28dc35c1287999e1a36eca8ecd28784e6",
+        "tests/conformance/semantic_contract_inventory.v1.json": "9d9b2bc4d8d96111be9bb4823eff0e97f4cd451615451a7671a0bb6abb033c43"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-11-11T06:56:02.127957585Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "docs_semantic_claims_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "gate_passes_current_docs_and_emits_report_and_log",
+        "operator_guides_reject_planted_l1_and_stale_claims",
+        "operator_guides_reject_missing_l0_scope_phrase",
+        "readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "docs_semantic_claims_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:37:17.732487+00:00",
+    "finished_at": "2026-11-12T06:37:18.101837+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "3ab094da2c371cffeeff1440bdd6a8ac57d3354a8cc6eaf0f5b3fc9a8af8ee9a",
+    "stderr_sha256": "69d81c6710480224f0cc69da23ac02b3a4f35477ebe370efadc2ed88b65628d0",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-12T06:37:18.105101+00:00",
+    "finished_at": "2026-11-12T06:37:35.839611+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "cdfd1c1ef045de666f68290246eabadca8db1c8cab2eb17058743aff1994e549",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 14
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359": "ebb6a61d8ce02272239cee072d4101105eee71d8e8762e78be640f1fe4c19d72"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/41e907684c3b2359/out/docs_semantic_claims_test-41e907684c3b2359": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "AGENTS.md": "e3f165f60b01d1f4132df665fd4608776fd9d399aed7e3bec0947cfe51929213",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "DEPLOYMENT.md": "e7aeea84c3edd41cb0cf2d6fdd92efbeb83537ee3ced1b86362f27e47f141b72",
+    "FEATURE_PARITY.md": "374a9e085f8b099c17137f0b2e8287620564eaa6f14deb7f0736ec4b43d37202",
+    "PLAN_TO_PORT_GLIBC_TO_RUST.md": "d44cc5888f343f2632fdcb434ce5148631b540a7771ea4707787c0e1b629d0ec",
+    "README.md": "43b7b91c72b1a0869364dd493a77f9d861c5edf00ccecc7b9b9433b17d9a9fa8",
+    "crates/frankenlibc-core/src/lib.rs": "2fbcf74a6555c33992a329f02715d9ea8f9d0d32223a9c8a08b909b43a157cef",
+    "crates/frankenlibc-harness/tests/docs_semantic_claims_test.rs": "c06fef3a305d3326b00c0229699441c514690fe896a3f705106b3414e9845e2b",
+    "docs/planning/COMPATIBILITY.md": "ac30b9396570561d34ef4c790d7eecf5d4e306cc2128833096c54319c5740f5b",
+    "docs/planning/PARITY-COVERAGE.md": "3e598604a86db7e2028c24b3ef583872bbe5ed3dc896d93480a0e1f2b38a00fd",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/check_closure_gate.sh": "cc26072427ef39588742e9e155fb45a2095ad7f7d10a791655b96b2e76b29b82",
+    "scripts/check_docs_semantic_claims.sh": "71fbc7087a43b2edc3898cd7cfbddacc5eac25fc163811deb2e78e348a03d9f4",
+    "tests/conformance/replacement_levels.json": "cd4f42ab583108e886914965f8d8bde28dc35c1287999e1a36eca8ecd28784e6",
+    "tests/conformance/semantic_contract_inventory.v1.json": "9d9b2bc4d8d96111be9bb4823eff0e97f4cd451615451a7671a0bb6abb033c43"
+  },
+  "executable_sha256": "ebb6a61d8ce02272239cee072d4101105eee71d8e8762e78be640f1fe4c19d72"
+}

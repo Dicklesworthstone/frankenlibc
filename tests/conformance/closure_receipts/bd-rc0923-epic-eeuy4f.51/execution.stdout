@@ -1,0 +1,19 @@
+
+running 14 tests
+test artifact_declares_claim_fields_inputs_replays_and_log_contract ... ok
+test dated_historical_snapshots_remain_permitted ... ok
+test gate_passes_current_docs_and_emits_report_and_log ... ok
+test forbidden_full_replacement_claim_fails ... ok
+test declared_source_identity_survives_a_worker_without_matching_git_metadata ... ok
+test malformed_declared_source_fails_instead_of_using_worker_head ... ok
+test readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims ... ok
+test operator_guides_reject_missing_l0_scope_phrase ... ok
+test operator_guides_reject_planted_l1_and_stale_claims ... ok
+test missing_claim_field_fails ... ok
+test readme_rejects_removal_of_required_semantic_architecture_facts ... ok
+test stale_overlay_taxonomy_counts_fails ... ok
+test stale_semantic_join_fails ... ok
+test undeclared_source_requires_an_observed_git_head ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.68s
+

@@ -1,0 +1,1565 @@
+# AGENTS.md — FrankenLibC
+
+> Guidelines for AI coding agents working in this Rust codebase.
+
+---
+
+## RULE 0 - THE FUNDAMENTAL OVERRIDE PREROGATIVE
+
+If I tell you to do something, even if it goes against what follows below, YOU MUST LISTEN TO ME. I AM IN CHARGE, NOT YOU.
+
+---
+
+## RULE 0.5 - SUITE-WIDE RULES LIVE IN /data/projects/AGENTS.md
+
+The suite-wide rules in **`/data/projects/AGENTS.md`** bind you here too. Read it. Two sections
+are load-bearing for perf work and are NOT duplicated below, so they cannot drift out of sync:
+
+> **VERIFIED 2026-09-18 (bd-reality-202609-lx578q.10):** the suite file currently does NOT contain
+> either named section below (its headings are the generic flywheel rules: RULE 0, NO FILE
+> DELETION, git, toolchain, testing). Treat the inline summary in this section as the operative
+> law for this repo, and treat the suite pointer as aspirational until the suite file gains those
+> sections. Do not invent suite-wide rules on the suite file's behalf.
+
+- **`## Named Reward-Hacking Patterns (ALL FORBIDDEN)`** — 12 named patterns, several already
+  observed in this suite: gate self-weakening (and the exact price of a legitimate gate fix),
+  proof-class inflation, golden regeneration reflex, commit-stream pumping, tautological tests,
+  easy-lever cherry-picking, close-pump abuse, scope-splitting, spec-editing as progress,
+  conformance metastasis, dependency smuggling, bench-path hardcoding.
+- **`### Work-Graph Discipline`** — JSONL is truth and `beads.db` is disposable, `br sync
+  --import-only` after every pull, single-writer on graph structure, closure on cited evidence
+  with blocker beads gated on their named probe, `br dep cycles` stays empty.
+
+The three that most often decide whether a number here is real: a **self-speedup is
+MAINTENANCE, not a win** — a win needs the incumbent live in the SAME invocation; **never
+weaken a gate to land a change**, and if a gate is genuinely defective, meet the evidence
+standard and publish the win/lose split of what the fix admits; and **reporting a loss is a
+success** — one line, revert, next lever, no retraction narrative.
+
+Note: the null-gate straddle defect was FOUND here, and the standard the suite now uses for a
+legitimate gate fix is the one this repo set. Hold to it.
+
+### Closing a bead marked "BLOCKER: superseded by `<sha>`" — DO NOT trust the comment
+
+A comment sweep on 2026-08-04 attached `BLOCKER: superseded by <sha>` to many open beads. **Four of
+the first seven audited were wrong** (bd-02gcfy has the per-bead breakdown). Two named fixes that
+had since been silently deleted; one named a gate belonging to a different bead; one named coverage
+too weak to catch a defect that was still live. Before closing on such a comment:
+
+1. **Read the source at HEAD.** A function can survive while a rule inside it was deleted — that is
+   exactly what happened to `syslog`'s setlogmask filter (bd-c7cs3h).
+2. **Open the cited gate** and confirm it drives *this* behaviour, not a neighbouring one.
+3. **If the source is right but nothing could fail on the original bug, the bead is not done** —
+   write the gate, then close on it.
+
+**FOUR** commits on 2026-06-26 silently deleted shipped work: `e634aff2a` and `bd829b12f`
+(~1300 lines, including tests); `517d0a233` — found 2026-08-06, **−6914 lines**, larger than
+the other two combined, which took the entire f128 math engine and the C23 `fromfp` family with it;
+and `51c39dec3` — found 2026-08-24 (bd-nas5rt), **787 insertions against 3964 deletions**, which
+took the qsort fast/radix lanes.
+That is why the sweep's premises decayed. `git log -S '<expression>' -- <file>` names the adding
+and deleting commit in one command. See bd-bldxfy, bd-ocwiw9, bd-nas5rt.
+
+**THE COUNT IS STILL INCOMPLETE, AND `--since`/`--until` CANNOT FIND THEM.** All four were
+*authored* 2026-06-26 but *committed* 2026-08-03 — they were replayed onto the branch — and
+`git log --since=.. --until=..` filters on COMMIT date, so a 2026-06-25..28 window returns none of
+them. Verified 2026-09-01. Filter on AUTHOR date and rank by deletion excess instead:
+
+```
+git log --format='%h|%ad|%s' --date=short --shortstat |
+  awk/py: keep author-date 2026-06-26, keep deletions > insertions, sort by (deletions - insertions)
+```
+
+That query returns **NINE** commits, of which only four are listed above. The five others, largest
+first, are CANDIDATES and not yet adjudicated — deletions exceeding insertions is a screen, not a
+verdict, since a faithful rewrite legitimately deletes more than it adds:
+
+| excess | commit | subject |
+|---|---|---|
+| +8007 | `73c8da5cd` | abi/stdio: glibc-faithful printf/scanf narrow+wide string (−9431, **larger than any listed above**) |
+| +1689 | `325855a09` | abi/time: strptime full month/weekday names with exact-name … |
+| +944 | `ff2ef56aa` | string/wctype: glibc-exact iswctype + towupper/towlower … |
+| +16 | `26fcdc3a0` | stdlib/strto*: C-locale whitespace + signed-zero conformance |
+
+(The fifth candidate, unlisted above because its excess is tiny, is `67f406e74` (+6), "deps: pin
+asupersync-conformance to =0.3.4".)
+
+**Adjudicated 2026-09-01, three of the five.** All three deleted named perf work added DAYS or
+weeks earlier, none of it carrying a banked ledger row, and some of it since restored in a different
+form. Deletions exceeding insertions really is only a screen:
+
+- `73c8da5cd` removed `strict_direct_snprintf_fused` and its `fused_render_*` helpers. **Restored
+  2026-08-30 by `89c356d7e` as `macro_rules! strict_direct_snprintf_fused`** — a `grep "fn fused_"`
+  at HEAD finds nothing and would have produced a false conclusion. The render helpers really are
+  gone; the macro renders differently.
+- `325855a09` removed `try_strftime_strict_literal_copy` (added the day before by `d225aa099`,
+  "SIMD pure-literal strftime formats") and `try_strftime_strict_fused_single_name` (added
+  2026-07-31 by `47668eeed`). A pure-literal path still exists at HEAD, inline in
+  `time_abi.rs` (`if !fmt.contains(&b'%')`), but it is a plain `copy_nonoverlapping`, not the SIMD
+  form.
+- `ff2ef56aa` removed `towupper_search`/`towlower_search` and the direct-BMP ctype/case tables added
+  2026-06-13 by `3d48c9b7c` and `cbde329b0`, whose own messages claim "~4.2x, beats glibc" and
+  "~6-7x, now beats glibc". At HEAD `towcase_table.rs` is back to the 2026-06-08 design: a binary
+  search over 1477/1460 delta pairs.
+
+**Adjudicated 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d), the last two of the five —
+SCREEN NOW FULLY DISPOSED, all nine commits have verdicts:**
+- `26fcdc3a0` (+16): **BENIGN.** Touches only its own four `*differential_fuzz.rs` test files
+  (generator restructure, extern-block formatting). Source at HEAD matches its claims:
+  `wide_is_space` is the ASCII/C-locale set (`conversion.rs:602`), the bare-`0x` sign-capture
+  rewind exists in the hex path, and all four fuzz files exist (note: `wcstol_differential_fuzz.rs`
+  lives under `crates/frankenlibc-core/tests/`, not abi).
+- `67f406e74` (+6): **BENIGN.** Manifest-only. It REMOVED a `[patch.crates-io]` section that pinned
+  `asupersync-conformance` to a machine-local path (`/data/projects/asupersync/conformance`) — a
+  portability fix in the direction of reproducibility, not smuggling. HEAD has since moved the pin
+  forward normally (`=0.5.0`).
+
+**ADJUDICATED-COMMIT CASUALTY UPDATE 2026-09-19 (bd-stale-win-silent-revert-audit-xezk5d):** the
+systematic ledger×fix-commit join found two more victims of ALREADY-ADJUDICATED deletion commits
+that their original adjudications did not inventory. `51c39dec3` took the memchr + memrchr 512B
+fold tiers (added 2026-07-04 by `5bf5b6217`/`acd9cc282`; bd-nas5rt restored only sort.rs) —
+restoration bead bd-sjvs5n. `e634aff2a` took the rseq `cpu_id` sched_getcpu read (added 2026-07-11
+by `0ad88f4c8`, 19.0→2.3 ns, fl/glibc 9.383→1.262) — restoration bead bd-muijos. Both ledger rows
+carry dated CORRECTION blocks in `docs/NEGATIVE_EVIDENCE.md`. Lesson: adjudicating one of these
+deletion commits means diffing its FULL file list against everything added after its author date,
+not just the subsystem that prompted the audit.
+
+**None of the three cost a banked ledger row** — those perf claims live only in commit messages,
+which is why the ledger audit did not surface them and why no retraction is warranted. `325855a09`
+and `ff2ef56aa` remain unadjudicated as to whether the deletions were intentional.
+
+**They also take LEDGER ROWS, and that half had never been audited.** Three banked wins in
+`docs/NEGATIVE_EVIDENCE.md` were falsified by that one day and stood unretracted for ten weeks:
+the `rand`/`random` single-threaded lock-skip (L11481, killed by `bd829b12f`) and both 2026-06-25
+qsort radix rows (L8184, L8199, killed by `51c39dec3` the day after they were banked). Retracted
+2026-09-01 in `c35a87323` and `dda9885f4`. When auditing a deletion commit, ask what it removed from
+the LEDGER as well as from the tree — the method is on bd-stale-win-silent-revert-audit-xezk5d.
+
+Audit this class by **per-commit deletion size, never by reading commit messages** — all four
+messages are accurate about what they *added*. `git log --shortstat` and flag any commit whose
+deletions dwarf its insertions.
+
+### A bead may not close on a gate whose COMPILATION was not observed
+
+This is the rule that would have caught all of the above, and it has now been broken four times:
+bd-9z5ikz, bd-8f6gck, bd-t5d6h2 and bd-r71n1b all closed on gates that could not link — so the
+gates reported nothing while the fix was reverted underneath them. **An unlinkable target is
+silent, not green.**
+
+Concretely:
+
+- **`cargo check --all-targets` STOPS at the first failing target.** On 2026-08-06 it reported 2
+  failures; with `--keep-going` the true count was **62**. Always pass `--keep-going`, or you are
+  measuring where cargo gave up rather than what is broken.
+- Before closing, run the named gate and **observe it compile and execute**. Quote its
+  `test result:` line in the closure, not a `cargo check` that never built it.
+- A `test result: ok.` line is **not** sufficient on its own: libtest prints exactly that for a
+  filter matching zero tests (`0 passed; …; 296 filtered out`). Assert a non-zero passed count.
+  See bd-1l9rlp.
+
+---
+
+## RULE NUMBER 1: NO FILE DELETION
+
+**YOU ARE NEVER ALLOWED TO DELETE A FILE WITHOUT EXPRESS PERMISSION.** Even a new file that you yourself created, such as a test code file. You have a horrible track record of deleting critically important files or otherwise throwing away tons of expensive work. As a result, you have permanently lost any and all rights to determine that a file or folder should be deleted.
+
+**YOU MUST ALWAYS ASK AND RECEIVE CLEAR, WRITTEN PERMISSION BEFORE EVER DELETING A FILE OR FOLDER OF ANY KIND.**
+
+---
+
+## Irreversible Git & Filesystem Actions — DO NOT EVER BREAK GLASS
+
+1. **Absolutely forbidden commands:** `git reset --hard`, `git clean -fd`, `rm -rf`, or any command that can delete or overwrite code/data must never be run unless the user explicitly provides the exact command and states, in the same message, that they understand and want the irreversible consequences.
+2. **No guessing:** If there is any uncertainty about what a command might delete or overwrite, stop immediately and ask the user for specific approval. "I think it's safe" is never acceptable.
+3. **Safer alternatives first:** When cleanup or rollbacks are needed, request permission to use non-destructive options (`git status`, `git diff`, `git stash`, copying to backups) before ever considering a destructive command.
+4. **Mandatory explicit plan:** Even after explicit user authorization, restate the command verbatim, list exactly what will be affected, and wait for a confirmation that your understanding is correct. Only then may you execute it—if anything remains ambiguous, refuse and escalate.
+5. **Document the confirmation:** When running any approved destructive command, record (in the session notes / final response) the exact user text that authorized it, the command actually run, and the execution time. If that record is absent, the operation did not happen.
+
+---
+
+## Git Branch: ONLY Use `main`, NEVER `master`
+
+**The default branch is `main`. The `master` branch exists only for legacy URL compatibility.**
+
+- **All work happens on `main`** — commits, PRs, feature branches all merge to `main`
+- **Never reference `master` in code or docs** — if you see `master` anywhere, it's a bug that needs fixing
+- **The `master` branch must stay synchronized with `main`** — after pushing to `main`, also push to `master`:
+  ```bash
+  git push origin main:master
+  ```
+
+**If you see `master` referenced anywhere:**
+1. Update it to `main`
+2. Ensure `master` is synchronized: `git push origin main:master`
+
+---
+
+## Toolchain: Rust & Cargo
+
+We only use **Cargo** in this project, NEVER any other package manager.
+
+- **Edition:** Rust 2024 (nightly required — see `rust-toolchain.toml`)
+- **Dependency versions:** Explicit versions for stability
+- **Configuration:** Cargo.toml workspace with `workspace = true` pattern
+
+### Companion Crates (Build Tooling Only — NOT Runtime Dependencies)
+
+This project leverages companion crates for build/test tooling roles only. These are NOT runtime libc dependencies:
+
+- `/dp/asupersync` — Async runtime with deterministic testing, oracles, conformance harness orchestration, and traceability/reporting primitives
+- `/dp/frankentui` — TUI framework for deterministic diff/snapshot-oriented harness output and TUI-driven analysis tooling
+
+### Key Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `parking_lot` | Fast synchronization primitives (`Mutex`, `RwLock`) in `frankenlibc-abi` (`stdio_abi`, `dlfcn_native`, `runtime_policy`) and legacy `frankenlibc` (not used in `frankenlibc-membrane`) |
+| `blake3` | BLAKE3 digest hashing for runtime-math policy-table verification (`policy_table.rs`) and harness artifacts (allocation fingerprints use SipHash in `fingerprint.rs`, not `blake3`) |
+| `sha2` | SHA-2 hashing for conformance fixture verification |
+| `serde` + `serde_json` | Serialization for fixtures and conformance data |
+| `thiserror` | Ergonomic error type derivation |
+| `clap` | CLI argument parsing for harness binary |
+| `criterion` | Criterion benchmarks for performance regression gates |
+| `libc` | libc type definitions for ABI compatibility layer |
+| `libm` | Pure Rust math implementations declared directly in `frankenlibc-core/Cargo.toml` (no C dependency) |
+| `asupersync-conformance` | Deterministic conformance orchestration (build tooling) |
+| `ftui-harness` | TUI-driven harness output (build tooling) |
+
+### Release Profile
+
+`Cargo.toml` defines `[profile.release.package.frankenlibc-abi]` with `codegen-units = 1`, while other crates use Cargo's release defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, no strip). Two derived profiles exist: `release-perf` (release + `debug = "line-tables-only"`, `strip = false`, for profiling) and `bench` (release + `lto = "thin"`, `codegen-units = 1`). The default build targets **baseline x86-64** (`.cargo/config.toml` adds no target features), so the shipped `.so` runs on any x86_64 CPU (bd-rc0923-epic-eeuy4f.13). All crates are built with `-Cllvm-args=-enable-tlsdesc` (TLS descriptors: an interposed malloc must not reach `__tls_get_addr`, which ld.so's DTV update re-enters through `free`; see the comment there). Code that needs SSE4.x/AVX/AVX2/FMA/AVX-512 must be a `#[target_feature]` function reached only after a run-time check (`is_x86_feature_detected!`), or a math kernel declared through `avx2_fma_dispatch!` (core `math/mod.rs`); nothing may assume a "crate-wide AVX2" any more. `scripts/check_baseline_isa.sh` enforces this (objdump allow-list + qemu `-cpu Nehalem`/`qemu64` fixture runs). The `release-x86-64-v3` profile (`+avx2,+fma`, output `target/release-x86-64-v3/`) exists only for A/B benchmarking against the old x86-64-v3 build; it refuses to start on older CPUs. Workspace-wide LTO and strip for the shipped `libc.so` remain untried tuning (`codegen-units = 1` is already active for `frankenlibc-abi`).
+
+---
+
+## Code Editing Discipline
+
+### No Script-Based Changes
+
+**NEVER** run a script that processes/changes code files in this repo. Brittle regex-based transformations create far more problems than they solve.
+
+- **Always make code changes manually**, even when there are many instances
+- For many simple changes: use parallel subagents
+- For subtle/complex changes: do them methodically yourself
+
+### No File Proliferation
+
+If you want to change something or add a feature, **revise existing code files in place**.
+
+**NEVER** create variations like:
+- `mainV2.rs`
+- `main_improved.rs`
+- `main_enhanced.rs`
+
+New files are reserved for **genuinely new functionality** that makes zero sense to include in any existing file. The bar for creating new files is **incredibly high**.
+
+---
+
+## Backwards Compatibility
+
+We do not care about backwards compatibility—we're in early development with no users. We want to do things the **RIGHT** way with **NO TECH DEBT**.
+
+- Never create "compatibility shims"
+- Never create wrapper functions for deprecated APIs
+- Just fix the code directly
+
+---
+
+## Compiler Checks (CRITICAL)
+
+**After any substantive code changes, you MUST verify no errors were introduced:**
+
+```bash
+# Check for compiler errors and warnings (workspace-wide)
+cargo check --workspace --all-targets
+
+# Check for clippy lints
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Verify formatting
+cargo fmt --check
+```
+
+If you see errors, **carefully understand and resolve each issue**. Read sufficient context to fix them the RIGHT way.
+
+---
+
+## Testing
+
+### Testing Policy
+
+Every component crate includes inline `#[cfg(test)]` unit tests alongside the implementation. Tests must cover:
+- Happy path
+- Edge cases (empty input, max values, boundary conditions)
+- Error conditions
+
+Cross-component integration tests live in the workspace `tests/` directory.
+
+### Unit Tests
+
+```bash
+# Run all tests across the workspace
+cargo test --workspace
+
+# Run with output
+cargo test --workspace -- --nocapture
+
+# Run tests for a specific crate
+cargo test -p frankenlibc-membrane
+cargo test -p frankenlibc-core
+cargo test -p frankenlibc-abi
+cargo test -p frankenlibc-harness
+cargo test -p frankenlibc-bench
+
+# Run tests with all features enabled
+cargo test --workspace --all-features
+```
+
+### Test Categories
+
+| Crate | Focus Areas |
+|-------|-------------|
+| `frankenlibc-membrane` | Safety lattice operations, Galois connection, fingerprint/canary integrity, arena generational correctness, bloom filter false-positive rate, TLS cache hit/miss, page oracle bitmap, healing policy completeness, runtime math kernel correctness, validation pipeline ordering |
+| `frankenlibc-core` | POSIX function correctness (string, stdlib, stdio, math, ctype, pthread, etc.), edge cases per spec section, membrane integration |
+| `frankenlibc-abi` | ABI symbol export correctness, version script compliance, extern "C" calling convention, and path-appropriate validate/dispatch behavior |
+| `frankenlibc-harness` | Fixture capture/verify round-trip, traceability mapping, healing oracle trigger/verify, report generation |
+| `frankenlibc-bench` | String ops throughput, malloc throughput, membrane overhead budget, runtime math kernel latency, stdio throughput, mutex/condvar contention |
+| `tests/conformance/` | Fixture-based conformance against host glibc |
+| `tests/integration/` | C program link tests against produced `libc.so` |
+
+### Test Fixtures
+
+Conformance fixtures are captured from host glibc (JSON-serialized input/output pairs) and stored in `tests/conformance/fixtures/`. The harness compares FrankenLibC outputs against these fixtures.
+
+---
+
+## Third-Party Library Usage
+
+If you aren't 100% sure how to use a third-party library, **SEARCH ONLINE** to find the latest documentation and current best practices.
+
+---
+
+## FrankenLibC — This Project
+
+**This is the project you're working on.** FrankenLibC is a clean-room Rust reimplementation of glibc targeting full POSIX coverage plus GNU extensions. It currently produces a glibc-shaped `libc.so` for `LD_PRELOAD` interposition; full ABI-compatible drop-in replacement and universal memory-safety enforcement are project goals, not established properties of the current hybrid artifact. See `README.md`, `FEATURE_PARITY.md`, and `support_matrix.json` for the checked scope.
+
+### The Core Innovation: Transparent Safety Membrane (TSM)
+
+C code thinks it has full control over raw pointers. On entrypoints explicitly wired through the membrane, FrankenLibC can validate, sanitize, and mechanically repair or deny invalid operations. Coverage is path- and mode-specific: many strict-mode compatibility paths bypass the full validation pipeline, so do not infer universal safety from the architecture alone.
+
+**TSM Pipeline:**
+1. **Validate:** Classify incoming pointers/regions/fd/context via fingerprints, bloom filters, arena lookups, and canary checks.
+2. **Sanitize:** Transform invalid/ambiguous inputs into safe, explicit forms.
+3. **Repair:** Apply deterministic fallback behavior (clamp/truncate/quarantine/safe-default) instead of allowing corruption.
+4. **Audit:** Emit evidence via atomic metrics counters for every repaired/denied unsafe path.
+
+### Non-Negotiable Goals
+
+1. Full POSIX coverage target (with GNU/glibc compatibility where required).
+2. ABI compatibility, including symbol/version behavior for supported targets.
+3. Transparent safety target: expand explicit validation and deterministic repair coverage without changing the C ABI.
+4. Conformance harness + feature parity tracking + benchmark regression gates.
+5. Mandatory build-tooling leverage of `/dp/asupersync` and `/dp/frankentui`.
+
+### Architecture
+
+```
+C caller → extern "C" ABI boundary → path-specific TSM gate → Safe Rust Core / syscall / host wrapper
+                                          │
+                     ┌────────────────────┤
+                     ▼                    ▼
+              Validation Pipeline    Self-Healing Engine
+              ┌──────────────┐      ┌────────────────────────┐
+              │ null check   │      │ ClampSize              │
+              │ TLS cache    │      │ TruncateWithNull       │
+              │ bloom filter │      │ IgnoreDoubleFree       │
+              │ arena lookup │      │ IgnoreForeignFree      │
+              │ fingerprint  │      │ ReallocAsMalloc        │
+              │ canary check │      │ ReturnSafeDefault      │
+              │ bounds check │      │ UpgradeToSafeVariant   │
+              └──────────────┘      └────────────────────────┘
+```
+
+### Workspace Structure
+
+```
+FrankenLibC/
+├── Cargo.toml                    # Workspace root
+├── rust-toolchain.toml           # nightly
+├── build.rs                      # Version metadata
+├── AGENTS.md                     # This file
+├── README.md
+├── PLAN_TO_PORT_GLIBC_TO_RUST.md
+├── docs/planning/EXISTING_GLIBC_STRUCTURE.md
+├── PROPOSED_ARCHITECTURE.md
+├── FEATURE_PARITY.md
+├── crates/
+│   ├── frankenlibc-membrane/     # THE INNOVATION — TSM validation pipeline
+│   ├── frankenlibc-core/         # Safe Rust default (#![deny(unsafe_code)] + explicit boundary exemptions)
+│   ├── frankenlibc-abi/          # extern "C" cdylib boundary (produces libc.so)
+│   ├── frankenlibc-fixture-exec/ # Fixture execution helper
+│   ├── frankenlibc-harness/      # Conformance testing framework
+│   ├── frankenlibc-bench/        # Criterion benchmarks
+│   ├── frankenlibc-fuzz/         # cargo-fuzz targets
+│   ├── frankenlibc/              # Legacy crate (kept for migration compatibility)
+│   └── frankenlibc_conformance/  # Legacy conformance (kept for migration compatibility)
+├── tests/
+│   ├── conformance/fixtures/     # Reference fixture JSONs
+│   └── integration/              # C program link tests
+└── scripts/                      # CI, symbol extraction, ABI comparison
+```
+
+### Key Files by Crate
+
+| Crate | Key Files | Purpose |
+|-------|-----------|---------|
+| `frankenlibc-membrane` | `src/lattice.rs` | `SafetyState` enum with join/meet lattice operations |
+| `frankenlibc-membrane` | `src/galois.rs` | Galois connection: C flat model <-> rich safety model |
+| `frankenlibc-membrane` | `src/fingerprint.rs` | SipHash allocation fingerprints (24-byte header + 8-byte canary) |
+| `frankenlibc-membrane` | `src/arena.rs` | Generational arena with quarantine queue |
+| `frankenlibc-membrane` | `src/bloom.rs` | Bloom filter for O(1) pointer ownership pre-check |
+| `frankenlibc-membrane` | `src/tls_cache.rs` | Thread-local validation cache (1024-entry direct-mapped) |
+| `frankenlibc-membrane` | `src/page_oracle.rs` | Two-level page bitmap |
+| `frankenlibc-membrane` | `src/heal.rs` | Self-healing policy engine + `HealingAction` enum |
+| `frankenlibc-membrane` | `src/config.rs` | Runtime mode config (`strict`/`hardened`) from env var |
+| `frankenlibc-membrane` | `src/metrics.rs` | Atomic counters for heals/validations/cache stats |
+| `frankenlibc-membrane` | `src/ptr_validator.rs` | Full validation pipeline |
+| `frankenlibc-membrane` | `src/runtime_math/` | Online control-plane orchestration (risk, bandit, control, barrier, etc.) |
+| `frankenlibc-core` | `src/string/` | mem*, str*, wide string functions |
+| `frankenlibc-core` | `src/stdlib/` | Conversion, sort, env, random, exit |
+| `frankenlibc-core` | `src/stdio/` | printf engine, scanf, file I/O, buffering |
+| `frankenlibc-core` | `src/math/` | Trig, exp, special functions, float utils |
+| `frankenlibc-core` | `src/malloc/` | Size-class allocator, thread cache, large alloc |
+| `frankenlibc-core` | `src/pthread/` | Mutex, condvar, rwlock, thread, TLS |
+| `frankenlibc-abi` | `src/macros.rs` | Helper macros for ABI declarations |
+| `frankenlibc-abi` | `src/runtime_policy.rs` | Shared runtime-kernel gate for ABI entrypoints |
+| `frankenlibc-abi` | `src/*_abi.rs` | One file per function family |
+| `frankenlibc-abi` | `version_scripts/libc.map`, `version_scripts/fromfp.map` | GNU ld version scripts (full `libc.map` + interpose C23 `fromfp.map`) |
+| `frankenlibc-harness` | `src/runner.rs` | Test execution engine |
+| `frankenlibc-harness` | `src/capture.rs` | Host libc fixture capture |
+| `frankenlibc-harness` | `src/verify.rs` | Output comparison |
+| `frankenlibc-harness` | `src/healing_oracle.rs` | Intentional unsafe trigger + healing verification |
+
+### Support Taxonomy (support_matrix.json)
+
+Status meanings used throughout the repo:
+- `Implemented`: Native Rust behavior; no host libc dependency.
+- `RawSyscall`: ABI path marshals directly to Linux syscalls.
+- `WrapsHostLibc`: Native wrapper that still calls host libc symbols internally.
+- `GlibcCallThrough`: Delegates to host glibc after membrane validation.
+- `Stub`: Deterministic fallback/error contract.
+
+### Feature Flags
+
+```toml
+# frankenlibc-membrane
+[features]
+default = ["runtime-math-production"]
+runtime-math-production = []             # Production runtime math kernels
+runtime-math-research = ["runtime-math-production"]  # Research-only extensions
+
+# frankenlibc-harness
+[features]
+default = ["asupersync-tooling", "frankentui-ui"]
+asupersync-tooling = ["dep:asupersync-conformance"]  # Deterministic conformance orchestration
+frankentui-ui = [...]                                 # TUI-driven analysis output
+```
+
+### Unsafe Code Policy
+
+| Crate | Policy | Notes |
+|-------|--------|-------|
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust by default; `407` `#[allow(unsafe_code)]` / `#![allow(unsafe_code)]` attributes across `11` explicit boundary/SIMD files (`lib.rs`, `syscall/mod.rs`, `pthread/{mod,cond,thread,tls}.rs`, `rcu/mod.rs`, `string/str.rs`, `termios/mod.rs`, `float128.rs`, `math/mod.rs`) with `// SAFETY:` comments. |
+| `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena/fingerprint modules get `#[allow(unsafe_code)]` for raw pointer ops. Every unsafe block must have `// SAFETY:` comment. |
+| `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Entrypoints use a mixture of membrane-gated delegation, raw-syscall veneers, and host-backed wrappers. |
+| `frankenlibc-harness` | `#![forbid(unsafe_code)]` | Test harness never needs unsafe. |
+| `frankenlibc-bench` | `#![allow(unsafe_code)]` | Benchmarks call extern "C" functions. |
+| `frankenlibc-fuzz` | `#![allow(unsafe_code)]` | Fuzz harnesses call extern "C" functions. |
+
+Rules:
+1. Unsafe is permitted only in explicitly documented boundary modules.
+2. All unsafe blocks require written invariants and safety preconditions (`// SAFETY:` comment).
+3. Core algorithmic behavior must stay in safe Rust.
+4. Memory-safety enforcement is explicit and path-specific: use the TSM where wired, document bypasses, and never pretend FFI unsafe does not exist.
+
+### TSM Architecture Details
+
+#### Runtime Modes (Hard Requirement)
+
+- `strict` (default): strict ABI-compatible behavior, no repair rewrites.
+- `hardened`: TSM repair behavior for invalid/unsafe patterns.
+- Runtime selection is process-level and immutable after init (`FRANKENLIBC_MODE=strict|hardened`).
+
+#### Safety State Lattice
+
+```
+          Valid (6)
+         /         \
+  Readable (5)   Writable (4)      <- incomparable diamond peers
+         \         /
+       Quarantined (3)
+            |
+         Freed (2)
+            |
+        Invalid (1)
+            |
+        Unknown (0)
+```
+
+`Readable` and `Writable` are incomparable: the lattice is a diamond, not one linear chain. Join takes the lower rank except on the diamond pair (`join(Readable, Writable) = Quarantined`); meet takes the higher rank except `meet(Readable, Writable) = Valid`. States flow monotonically toward more restrictive on new information. Join is commutative, associative, idempotent.
+
+#### Galois Connection
+
+For any C operation `c`: `gamma(alpha(c)) >= c`. The safe interpretation is always at least as permissive as what a correct program needs.
+
+#### Validation Pipeline
+
+```
+null check (1ns) -> TLS cache (5ns) -> bloom filter (10ns) -> arena lookup (30ns)
+-> fingerprint check (20ns) -> canary check (10ns) -> bounds check (5ns)
+```
+
+Fast exits at each stage. Budget target: strict overhead <20ns/call, hardened overhead <200ns/call for membrane-gated hot paths.
+
+#### Allocation Integrity
+
+- 24-byte SipHash fingerprint header + 8-byte canary on hardened-arena allocations
+- Generational arena with quarantine queue for UAF detection
+- Two-level page bitmap for O(1) "is this pointer ours?" pre-check
+- Thread-local 1024-entry validation cache to avoid global lock
+
+#### Self-Healing Actions
+
+`ClampSize | TruncateWithNull | IgnoreDoubleFree | IgnoreForeignFree | ReallocAsMalloc | ReturnSafeDefault | UpgradeToSafeVariant`
+
+### Runtime Math Kernel (Hard Requirement)
+
+The advanced math stack executes at runtime via compact control kernels, not only offline reports.
+
+Runtime decision law (for calls routed through the kernel):
+`mode + context + risk + budget + pareto + design + barrier + consistency -> Allow | FullValidate | Repair | Deny`
+
+Mandatory live modules in `frankenlibc-membrane/src/runtime_math/`:
+
+| Module | Purpose |
+|--------|---------|
+| `risk.rs` | Online conformal-style risk upper bounds per API family |
+| `bandit.rs` | Constrained routing of `Fast` vs `Full` validation profiles |
+| `control.rs` | Primal-dual threshold controller for full-check/repair triggers |
+| `barrier.rs` | Constant-time admissibility guard |
+| `cohomology.rs` | Overlap-consistency monitor for sharded metadata |
+| `pareto.rs` | Mode-aware latency/risk Pareto selector with cumulative regret tracking |
+| `design.rs` | Runtime D-optimal probe scheduler under strict/hardened budget constraints |
+| `sparse.rs` | Online L1 sparse-recovery controller for latent fault-source concentration |
+| `fusion.rs` | Online robust signal-fusion controller over runtime math kernels |
+| `equivariant.rs` | Representation-stability/group-action symmetry monitor for cross-family semantic drift |
+| `eprocess.rs` | Bounded likelihood-ratio-style alarming; production `log(e)` is clamped to `[-20, 50]`, so the unclamped anytime-valid guarantee does not carry through |
+| `cvar.rs` | Distributionally-robust CVaR tail-risk guard |
+| `hji_reachability.rs` | HJI differential game safety certificates |
+| `mean_field_game.rs` | Mean-field Nash equilibrium congestion controller |
+
+Developer transparency remains mandatory:
+- Contributors write normal Rust APIs/tests/policies
+- Runtime executes compact deterministic kernels
+- Heavy theorem machinery stays in synthesis/proof pipelines
+
+### Performance Targets
+
+| Operation | Target |
+|-----------|--------|
+| Strict mode membrane overhead | <20ns/call |
+| Hardened mode membrane overhead | <200ns/call |
+| Null check (fast exit) | ~1ns |
+| TLS cache lookup | ~5ns |
+| Bloom filter check | ~10ns |
+| Arena lookup | ~30ns |
+| Fingerprint check | ~20ns |
+| Canary check | ~10ns |
+| Bounds check | ~5ns |
+
+### Key Formal Properties (Alien-Artifact Quality)
+
+1. **Monotonic Safety:** Lattice join is commutative, associative, idempotent. States only decrease on new information.
+2. **Galois Connection:** `gamma(alpha(c)) >= c`. Safe interpretation is at least as permissive as what correct programs need.
+3. **Allocation Integrity:** For a hardened-arena allocation whose fingerprint is checked, a targeted 64-bit SipHash forgery has probability at most 2^-64 under the keyed-hash assumptions.
+4. **UAF Detection:** Deterministic for a freed block while it is in the hardened arena's quarantine queue. A raw C pointer carries no generation, so after same-address reuse a stale pointer resolves to the new allocation and is NOT detected (`arena.rs` module doc). Strict-mode (segment) allocations have no quarantine.
+5. **Buffer Overflow Detection:** Hardened-arena trailing canaries detect changed bytes when a later checked operation reaches the block (including sampled `1-in-16` and near-tail warm `TLS_CACHE` write checks). Allocation fingerprints and trailing canaries use CSPRNG-seeded (`SYS_getrandom`) dual-key SipHash domain separation (`H = SipHash24(K_hdr, user_base || user_size || generation)` and `C_tail = SipHash13(K_tail, user_base || user_size || generation || H)` with independent 128-bit `K_tail != K_hdr`), so disclosing the 24-byte header does not reveal `C_tail`. A single blind 64-bit canary guess has probability 2^-64 under SipHash PRF assumptions; direct writes that never reach a checked path or full arbitrary-read/write compromise remain outside this detection boundary.
+6. **Healing Scope:** Explicitly membrane-gated families have defined policy-table actions for their wired validation outcomes. Universal per-function/per-invalid-input completeness is not yet established.
+
+### Key Design Decisions
+
+- **Clean-room implementation** — spec-first, never line-by-line translate legacy glibc source
+- **TSM validates selected ABI paths** — core implementations stay in safe Rust; each entrypoint's actual routing must be checked
+- **Generational arena** with quarantine queue for temporal safety (UAF detection)
+- **SipHash fingerprints** (24-byte header + 8-byte canary) for hardened-arena allocation integrity
+- **Two-level page bitmap** for O(1) pointer ownership pre-check
+- **Thread-local validation cache** (1024-entry direct-mapped) to avoid global lock on hot paths
+- **Process-level runtime mode** (`strict`/`hardened`) immutable after init
+- **Self-healing in hardened mode** — deterministic fallback instead of UB or crash
+- **Atomic metrics counters** — every repair/denial emits evidence for auditability
+- **Companion crates for tooling only** — asupersync and frankentui are build/test dependencies, not runtime libc deps
+
+---
+
+## Module Inventory (Full)
+
+### frankenlibc-membrane — Safety Substrate
+
+**Core modules:**
+- `lattice.rs` — SafetyState enum with join/meet lattice operations
+- `galois.rs` — Galois connection: C flat model <-> rich safety model
+- `fingerprint.rs` — SipHash allocation fingerprints (24-byte header + 8-byte canary)
+- `arena.rs` — Generational arena with quarantine queue
+- `bloom.rs` — Bloom filter for O(1) pointer ownership pre-check
+- `tls_cache.rs` — Thread-local validation cache (1024-entry direct-mapped)
+- `page_oracle.rs` — Two-level page bitmap
+- `heal.rs` — Self-healing policy engine + HealingAction enum
+- `config.rs` — Runtime mode config (`strict`/`hardened`) from env var
+- `metrics.rs` — Atomic counters for heals/validations/cache stats
+- `ptr_validator.rs` — Full validation pipeline
+
+**Runtime math control plane (`runtime_math/`):**
+- `mod.rs` — Online control-plane orchestration
+- `risk.rs` — Per-family risk envelope
+- `bandit.rs` — Validation-depth router
+- `control.rs` — Threshold controller
+- `barrier.rs` — Admissibility oracle
+- `cohomology.rs` — Shard-overlap consistency monitor
+- `pareto.rs` — Latency/risk frontier + regret accounting
+- `eprocess.rs` — Bounded likelihood-ratio-style risk monitor (`log(e)` clamp means no unclamped anytime-valid claim)
+- `cvar.rs` — Distributionally-robust CVaR tail controller
+- `design.rs` — D-optimal probe scheduling + identifiability control
+- `sobol.rs` — Sobol low-discrepancy sequence generator for deterministic probe scheduling
+- `redundancy_tuner.rs` — Adaptive evidence redundancy tuner using bounded e-process-style updates
+- `sparse.rs` — Online sparse latent-cause recovery + concentration state
+- `fusion.rs` — Robust weighted fusion + entropy/drift telemetry
+- `equivariant.rs` — Representation-stability transport + symmetry-break detection
+- `higher_topos.rs` — Higher-topos descent diagnostics for locale/catalog coherence
+- `commitment_audit.rs` — Commitment-algebra + martingale-audit tamper-evident session traces
+- `changepoint.rs` — Bayesian online change-point detection (Adams & MacKay 2007)
+- `conformal.rs` — Split conformal prediction risk controller (Vovk et al. 2005)
+- `ktheory.rs` — K-theory transport ABI compatibility controller (Atiyah-Singer families index)
+- `covering_array.rs` — Covering-array matroid conformance interaction coverage scheduler
+- `derived_tstructure.rs` — Derived-category t-structure bootstrap ordering invariant controller
+- `atiyah_bott.rs` — Atiyah-Bott fixed-point localization meta-controller
+- `localization_chooser.rs` — Localization fixed-point policy chooser for concentrated anomaly regimes
+- `pomdp_repair.rs` — Constrained POMDP repair policy controller with Bayesian belief tracking
+- `sos_invariant.rs` — Sum-of-squares polynomial invariant runtime guard
+- `sos_barrier.rs` — SOS barrier certificate runtime polynomial evaluator
+- `admm_budget.rs` — ADMM operator-splitting budget allocator
+- `obstruction_detector.rs` — Spectral-sequence obstruction detector for cross-layer consistency defects
+- `operator_norm.rs` — Operator-norm spectral radius stability monitor
+- `malliavin_sensitivity.rs` — Discrete Malliavin calculus sensitivity controller
+- `info_geometry.rs` — Fisher-Rao geodesic distance monitor for structural regime shifts
+- `matrix_concentration.rs` — Matrix Bernstein inequality spectral bounds
+- `nerve_complex.rs` — Cech nerve theorem correlation coherence monitor with Betti number tracking
+- `wasserstein_drift.rs` — 1-Wasserstein distance on severity histograms
+- `kernel_mmd.rs` — Maximum Mean Discrepancy with RBF kernel
+- `provenance_info.rs` — Information-theoretic provenance tag monitor (Shannon/Renyi/min-entropy)
+- `policy_table.rs` — Proof-carrying policy table loader/verifier (`.pcpt` artifacts)
+- `grobner_normalizer.rs` — Grobner-basis constraint normalizer
+- `grothendieck_glue.rs` — Grothendieck site cocycle/descent/stackification coherence monitor
+- `clifford.rs` — Clifford algebra + Spin/Pin symmetry methods for SIMD/alignment correctness
+- `coupling.rs` — Probabilistic coupling + Azuma-Hoeffding concentration bounds
+- `hodge_decomposition.rs` — Combinatorial Hodge decomposition for cyclic inconsistency detection
+- `loss_minimizer.rs` — Decision-theoretic loss minimization for repair policy selection
+- `lyapunov_stability.rs` — Maximal Lyapunov exponent estimation for chaotic dynamics detection
+- `microlocal.rs` — Kashiwara-Schapira microlocal sheaf propagation
+- `pac_bayes.rs` — PAC-Bayes generalization bound monitor
+- `rademacher_complexity.rs` — Data-dependent Rademacher complexity bound
+- `serre_spectral.rs` — Serre spectral sequence methods for cross-layer consistency
+- `stein_discrepancy.rs` — Kernelized Stein Discrepancy for goodness-of-fit testing
+- `transfer_entropy.rs` — Directed information-theoretic causality detection (Schreiber)
+- `azuma_hoeffding.rs` — Azuma-Hoeffding martingale concentration monitor
+- `bifurcation_detector.rs` — Bifurcation proximity detector for controller regime shifts
+- `birkhoff_ergodic.rs` — Birkhoff ergodic convergence monitor
+- `borel_cantelli.rs` — Borel-Cantelli recurrence monitor
+- `dispersion_index.rs` — Fisher index-of-dispersion monitor
+- `dobrushin_contraction.rs` — Dobrushin contraction coefficient monitor
+- `doob_decomposition.rs` — Doob decomposition martingale monitor
+- `entropy_rate.rs` — Shannon entropy-rate monitor for temporal complexity
+- `evidence.rs` — Runtime evidence symbol record format and ring buffer
+- `fano_bound.rs` — Fano mutual information bound monitor
+- `hurst_exponent.rs` — Hurst exponent (R/S) monitor for long-range dependence
+- `ito_quadratic_variation.rs` — Ito quadratic variation monitor for volatility
+- `lempel_ziv.rs` — Lempel-Ziv complexity monitor for sequence compressibility
+- `ornstein_uhlenbeck.rs` — Ornstein-Uhlenbeck mean-reversion monitor
+- `renewal_theory.rs` — Renewal theory monitor for inter-arrival dynamics
+- `spectral_gap.rs` — Spectral gap mixing-time monitor
+- `submodular_coverage.rs` — Submodular validation stage coverage monitor
+- `alpha_investing.rs` — Alpha-Investing FDR controller (Foster & Stine 2008)
+- `approachability.rs` — Blackwell approachability controller
+
+**Standalone membrane modules:**
+- `risk_engine.rs` — Conformal risk scoring per API family
+- `check_oracle.rs` — Beta-posterior contextual bandit for validation stage ordering (greedy Weitzman index on posterior means; no sampling)
+- `quarantine_controller.rs` — Primal-dual quarantine depth optimizer
+- `tropical_latency.rs` — Min-plus algebra worst-case latency bounds
+- `spectral_monitor.rs` — Marchenko-Pastur/Tracy-Widom phase transition detection
+- `rough_path.rs` — Truncated depth-3 path signatures for noncommutative feature extraction
+- `persistence.rs` — 0-dimensional Vietoris-Rips persistent homology
+- `schrodinger_bridge.rs` — Entropy-regularized optimal transport regime-transition detector
+- `large_deviations.rs` — Cramer rate-function rare-event monitor
+- `hji_reachability.rs` — Hamilton-Jacobi-Isaacs differential game reachability controller
+- `mean_field_game.rs` — Mean-field game Nash equilibrium contention controller
+- `padic_valuation.rs` — Non-Archimedean p-adic valuation error calculus
+- `symplectic_reduction.rs` — GIT/symplectic reduction IPC admissibility and deadlock detection
+
+### frankenlibc-core — Safe Implementations
+
+- `string/` — mem*, str*, wide string functions
+- `stdlib/` — conversion, sort, env, random, exit
+- `stdio/` — printf engine, scanf, file I/O, buffering
+- `math/` — trig, exp, special functions, float utils
+- `ctype/` — character classification
+- `errno/` — thread-local errno
+- `signal/` — signal handling
+- `unistd/` — POSIX syscall wrappers
+- `time/` — time/date functions
+- `locale/` — locale support
+- `pthread/` — mutex, condvar, rwlock, thread, TLS
+- `malloc/` — size-class allocator, thread cache, large alloc
+- `dirent/` — directory operations
+- `socket/` — socket operations
+- `inet/` — network address functions
+- `resolv/` — DNS resolution
+- `resource/` — resource limits
+- `termios/` — terminal control
+- `setjmp/` — non-local jumps
+- `dlfcn/` — dynamic linking
+- `iconv/` — character encoding conversion
+- `io/` — low-level I/O
+
+### frankenlibc-abi — ABI Boundary
+
+- `macros.rs` — Helper macros for ABI declarations
+- `runtime_policy.rs` — Shared runtime-kernel gate for ABI entrypoints
+- `*_abi.rs` — One file per function family
+- `version_scripts/libc.map`, `version_scripts/fromfp.map` — GNU ld version scripts (full `libc.map` + interpose C23 `fromfp.map`)
+
+### frankenlibc-harness — Conformance Testing
+
+- `runner.rs` — Test execution engine
+- `capture.rs` — Host libc fixture capture
+- `verify.rs` — Output comparison
+- `report.rs` — Report generation
+- `traceability.rs` — Spec section mapping
+- `fixtures.rs` — Fixture loading/management
+- `diff.rs` — Diff rendering
+- `membrane_tests.rs` — TSM-specific tests
+- `healing_oracle.rs` — Intentional unsafe trigger + healing verification
+
+---
+
+## Required Methodology
+
+### Clean-Room Porting
+
+1. Spec-first: extract behavior into spec docs before implementation.
+2. Never line-by-line translate legacy glibc source.
+3. During implementation, work from extracted spec and standards contracts.
+
+### Innovation Constraint
+
+For memory safety architecture, do **not** search for existing off-the-shelf solutions as the primary design source. Invent from first principles for this project.
+
+### Mandatory Skills
+
+When designing safety mechanisms and performance architecture, explicitly apply:
+- `alien-artifact-coding` — mathematical rigor, formal guarantees, lattice-theoretic safety
+- `extreme-software-optimization` — profile-driven perf, behavior proofs, mandatory baseline/verify loop
+
+### Reverse-Round Legacy Anchors (Keep Expanding)
+
+All high-math design work must stay grounded in real legacy subsystem pressure points:
+- `elf`, `sysdeps/*/dl-*` (loader/symbol/relocation)
+- `malloc`, `nptl` (allocator/threading/temporal safety)
+- `stdio-common`, `libio`, `io`, `posix` (streams/syscalls/parser surfaces)
+- `locale`, `localedata`, `iconv`, `iconvdata`, `wcsmbs` (encoding/collation/transliteration)
+- `nss`, `resolv`, `nscd`, `sunrpc` (identity/network lookup/cache/RPC)
+- `math`, `soft-fp`, `sysdeps/ieee754` (numeric/fenv correctness)
+- `time`, `timezone` (temporal discontinuity semantics)
+- `signal`, `setjmp`, `nptl` cancellation (async/nonlocal control transfer)
+- `termios`, `login`, `io`, `posix` (terminal/session/ioctl/process-tty edges)
+- `elf` `dl-*`, hwcaps, tunables, audit (loader security and policy channels)
+- `spawn/exec`, `glob/fnmatch/regex`, env/path (launch and pattern complexity surfaces)
+
+If a proposed mathematical mechanism cannot be tied to one of these (or similarly concrete) legacy anchors, it is out of scope.
+
+### Reverse Core Map (Do Not Drift)
+
+For strategy discussions and architecture edits, use this direction:
+surface -> failure class to eliminate -> alien math -> compiled runtime artifact.
+
+1. Loader/symbol/IFUNC: eliminate global compatibility drift; ship resolver automata + compatibility witness ledgers.
+2. Allocator: eliminate temporal/provenance corruption; ship allocator policy tables + admissibility guards.
+3. Hot string/memory kernels: eliminate overlap/alignment/dispatch edge faults; ship regime classifiers + certified routing tables.
+4. Futex/pthread/cancellation: eliminate race/starvation/timeout inconsistency; ship transition kernels + fairness budgets.
+5. stdio/parser/locale formatting: eliminate parser-state explosions and locale drift; ship generated parser/transducer tables.
+6. signal/setjmp control transfer: eliminate invalid non-local transitions; ship admissible jump/signal/cancel transition matrices.
+7. time/timezone/rt timers: eliminate discontinuity/overrun semantic drift; ship temporal transition DAGs + timing envelopes.
+8. nss/resolv/nscd/sunrpc: eliminate poisoning/retry/cache instability; ship deterministic lookup DAGs + calibrated thresholds.
+9. locale/iconv/transliteration: eliminate conversion-state inconsistency; ship minimized codec automata + consistency certs.
+10. ABI/time64/layout bridges: eliminate release-time compatibility fractures; ship invariant ledgers + drift alarms.
+11. VM transitions: eliminate unsafe map/protection trajectories; ship VM transition guard complexes.
+12. strict/hardened decision calibration: eliminate threshold drift; ship coverage-certified decision sets + abstain/escalate gates.
+13. process bootstrap (`csu`, TLS init, auxv, secure mode): eliminate init-order races and secure-mode misclassification; ship startup dependency DAG + secure-mode policy automaton + init witness hashes.
+14. cross-ISA syscall glue (`sysdeps/*`): eliminate architecture-specific semantic drift; ship per-ISA obligation matrices + dispatch witness caches.
+15. System V IPC (`sysvipc`): eliminate capability drift and deadlock trajectories; ship semaphore admissibility guard polytopes + deadlock-cut certificates.
+16. i18n catalog stack (`intl`, `catgets`, `localedata`): eliminate fallback/version incoherence; ship catalog-resolution automata + locale-consistency witness hashes.
+17. diagnostics/unwinding (`debug`, backtrace): eliminate unsafe/non-deterministic frame-walk behavior; ship unwind stratification tables + safe-cut fallback matrices.
+18. session accounting (`login`, utmp/wtmp): eliminate replay/tamper ambiguity and racey state transitions; ship deterministic session-ledger transitions + anomaly thresholds.
+19. profiling hooks (`gmon`, sampling/probe): eliminate probe-induced benchmark distortion; ship minimal probe schedules + deterministic debias weights.
+20. floating-point exceptional paths (`soft-fp`, `fenv`): eliminate denormal/NaN/payload drift across regimes; ship regime-indexed numeric guard tables + certified fallback kernels.
+
+All of this must remain developer-transparent: contributors work with normal Rust modules/tests/policy tables, while the alien math remains in offline synthesis/proof artifacts.
+
+### Mandatory Modern Math Stack (No Hand-Wavy Heuristics)
+
+Use and document these explicitly in design/proof artifacts:
+1. Abstract interpretation + Galois maps for pointer/lifetime domains.
+2. Separation-logic style heap invariants for allocator and concurrency boundaries.
+3. SMT-backed refinement checks for strict vs hardened semantics.
+4. Decision-theoretic loss minimization for hardened repair policy selection.
+5. Anytime-valid sequential testing (e-values/e-processes) for regression monitoring.
+6. Bayesian change-point detection for drift in performance and repair-rate behavior.
+7. Robust optimization targeting worst-case tail latency, not only mean latency.
+8. Constrained POMDP policy design for hardened repair decisions.
+9. CHC + CEGAR proof loops with automatic counterexample fixture generation.
+10. Equality-saturation superoptimization with SMT equivalence certificates for hot kernels.
+11. Information-theoretic provenance tag design with quantified collision/corruption bounds.
+12. Wasserstein distributionally robust control + CVaR tail-risk optimization.
+13. Barrier-certificate invariance constraints on runtime action admissibility.
+14. Iris-style concurrent separation-logic proofs for lock-free/sharded metadata.
+15. Hamilton-Jacobi-Isaacs reachability analysis for attacker-controller safety boundaries.
+16. Sheaf-cohomology diagnostics for global metadata consistency across overlapping local views.
+17. Covering-array + matroid combinatorics for high-order conformance interaction coverage.
+18. Probabilistic coupling + concentration bounds for strict/hardened divergence certification.
+19. Mean-field game control for thread-population contention dynamics.
+20. Schrodinger-bridge entropic optimal transport for stable policy regime transitions.
+21. Sum-of-squares certificate synthesis (SDP-backed) for nonlinear invariants.
+22. Large-deviations rare-event analysis for catastrophic failure budgeting.
+23. Persistent-homology topology-shift diagnostics for anomaly class detection.
+24. Rough-path signature embeddings for long-horizon trace dynamics.
+25. Tropical/min-plus algebra for compositional worst-case latency bounds.
+26. Primal-dual operator-splitting with convergence certificates for online constrained tuning.
+27. Conformal prediction/risk-control methods for finite-sample decision guarantees.
+28. Spectral-sequence and obstruction-theory diagnostics for cross-layer consistency defects.
+29. Semigroup/group-action/representation-theory methods for canonical behavior normalization.
+30. Grobner-basis constraint normalization for reproducible proof kernels.
+31. Noncommutative probability + random-matrix tail control for burst concurrency risk.
+32. Serre spectral-sequence methods for multi-layer invariant lifting.
+33. Grothendieck site/topos/descent/stackification methods for local-to-global coherence and compatibility gluing.
+34. Atiyah-Singer families index and K-theory transport methods for compatibility integrity.
+35. Atiyah-Bott localization methods for fixed-point compression of proof/benchmark obligations.
+36. Clifford/geometric algebra + Spin/Pin symmetry methods for SIMD/alignment/overlap kernel correctness.
+37. Microlocal sheaf-theoretic propagation methods (Kashiwara-Schapira style) for unwind/signal fault-surface control.
+38. Derived-category/t-structure decomposition methods for process-bootstrap ordering invariants.
+39. Geometric invariant theory + symplectic reduction for System V IPC admissibility and deadlock elimination.
+40. Non-Archimedean (p-adic valuation) error calculus for exceptional floating-point regime control.
+41. Optimal experimental design + sparse recovery methods for low-perturbation profiling/probe scheduling.
+42. Higher-topos internal logic and descent diagnostics for locale/catalog coherence proofs.
+43. Representation-stability and equivariant transport methods for cross-ISA syscall semantic alignment.
+44. Commitment-algebra + martingale-audit methods for tamper-evident session/accounting traces.
+
+Branch-diversity rule:
+1. Every major subsystem milestone must use at least 3 distinct math families.
+2. Each milestone must include at least one obligation from conformal statistics, algebraic topology, abstract algebra, and Grothendieck-Serre methods.
+3. No single family should dominate more than 40% of the milestone obligations.
+4. SIMD/ABI/compatibility milestones must include Atiyah-Singer/K-theory/localization and Clifford/geometric algebra obligations.
+
+### Developer Transparency Contract
+
+Regular contributors must not need to understand the alien-math internals.
+1. Expose only normal Rust APIs and plain policy tables in day-to-day code.
+2. Keep advanced math in generated artifacts, proof reports, and CI checks.
+3. Any mathematically-derived runtime logic must compile down to simple deterministic guards/dispatch.
+
+---
+
+## Conformance & Benchmark Discipline
+
+### Testing & Conformance Workflow
+
+1. **Fixture capture:** Run test vectors against host glibc, serialize inputs/outputs as JSON.
+2. **Fixture verify:** Run same vectors against our implementation, compare outputs.
+3. **Traceability:** Map every test to POSIX/C11 spec sections + TSM spec sections.
+4. **Healing oracle:** Intentionally trigger unsafe conditions, verify healing behavior.
+5. **Benchmark gate:** No regressions; membrane overhead within budget.
+
+### Quality Gates (Run After Every Substantive Change)
+
+```bash
+cargo fmt --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+```
+
+### Rules
+
+1. No feature is "DONE" without fixture-based conformance proof.
+2. No optimization claims without baseline/profile/verify loop.
+3. Keep `FEATURE_PARITY.md` synchronized with reality (no aspirational DONE entries).
+
+### Required Docs (Keep Updated)
+
+- `PLAN_TO_PORT_GLIBC_TO_RUST.md`
+- `docs/planning/EXISTING_GLIBC_STRUCTURE.md`
+- `PROPOSED_ARCHITECTURE.md`
+- `FEATURE_PARITY.md`
+
+---
+
+## MCP Agent Mail — Multi-Agent Coordination
+
+A mail-like layer that lets coding agents coordinate asynchronously via MCP tools and resources. Provides identities, inbox/outbox, searchable threads, and advisory file reservations with human-auditable artifacts in Git.
+
+### Why It's Useful
+
+- **Prevents conflicts:** Explicit file reservations (leases) for files/globs
+- **Token-efficient:** Messages stored in per-project archive, not in context
+- **Quick reads:** `resource://inbox/...`, `resource://thread/...`
+
+### Same Repository Workflow
+
+1. **Register identity:**
+   ```
+   ensure_project(project_key=<abs-path>)
+   register_agent(project_key, program, model)
+   ```
+
+2. **Reserve files before editing:**
+   ```
+   file_reservation_paths(project_key, agent_name, ["src/**"], ttl_seconds=3600, exclusive=true)
+   ```
+
+3. **Communicate with threads:**
+   ```
+   send_message(..., thread_id="FEAT-123")
+   fetch_inbox(project_key, agent_name)
+   acknowledge_message(project_key, agent_name, message_id)
+   ```
+
+4. **Quick reads:**
+   ```
+   resource://inbox/{Agent}?project=<abs-path>&limit=20
+   resource://thread/{id}?project=<abs-path>&include_bodies=true
+   ```
+
+### Macros vs Granular Tools
+
+- **Prefer macros for speed:** `macro_start_session`, `macro_prepare_thread`, `macro_file_reservation_cycle`, `macro_contact_handshake`
+- **Use granular tools for control:** `register_agent`, `file_reservation_paths`, `send_message`, `fetch_inbox`, `acknowledge_message`
+
+### Common Pitfalls
+
+- `"from_agent not registered"`: Always `register_agent` in the correct `project_key` first
+- `"FILE_RESERVATION_CONFLICT"`: Adjust patterns, wait for expiry, or use non-exclusive reservation
+- **Auth errors:** If JWT+JWKS enabled, include bearer token with matching `kid`
+
+---
+
+## Beads (br) — Dependency-Aware Issue Tracking
+
+Beads provides a lightweight, dependency-aware issue database and CLI (`br` - beads_rust) for selecting "ready work," setting priorities, and tracking status. It complements MCP Agent Mail's messaging and file reservations.
+
+**Important:** `br` is non-invasive—it NEVER runs git commands automatically. You must manually commit changes after `br sync --flush-only`.
+
+### Conventions
+
+- **Single source of truth:** Beads for task status/priority/dependencies; Agent Mail for conversation and audit
+- **Shared identifiers:** Use Beads issue ID (e.g., `br-123`) as Mail `thread_id` and prefix subjects with `[br-123]`
+- **Reservations:** When starting a task, call `file_reservation_paths()` with the issue ID in `reason`
+
+### Typical Agent Flow
+
+1. **Pick ready work (Beads):**
+   ```bash
+   br ready --json  # Choose highest priority, no blockers
+   ```
+
+2. **Reserve edit surface (Mail):**
+   ```
+   file_reservation_paths(project_key, agent_name, ["src/**"], ttl_seconds=3600, exclusive=true, reason="br-123")
+   ```
+
+3. **Announce start (Mail):**
+   ```
+   send_message(..., thread_id="br-123", subject="[br-123] Start: <title>", ack_required=true)
+   ```
+
+4. **Work and update:** Reply in-thread with progress
+
+5. **Complete and release:**
+   ```bash
+   br close 123 --reason "Completed"
+   br sync --flush-only  # Export to JSONL (no git operations)
+   ```
+   ```
+   release_file_reservations(project_key, agent_name, paths=["src/**"])
+   ```
+   Final Mail reply: `[br-123] Completed` with summary
+
+### Mapping Cheat Sheet
+
+| Concept | Value |
+|---------|-------|
+| Mail `thread_id` | `br-###` |
+| Mail subject | `[br-###] ...` |
+| File reservation `reason` | `br-###` |
+| Commit messages | Include `br-###` for traceability |
+
+---
+
+## bv — Graph-Aware Triage Engine
+
+bv is a graph-aware triage engine for Beads projects (`.beads/beads.jsonl`). It computes PageRank, betweenness, critical path, cycles, HITS, eigenvector, and k-core metrics deterministically.
+
+**Scope boundary:** bv handles *what to work on* (triage, priority, planning). For agent-to-agent coordination (messaging, work claiming, file reservations), use MCP Agent Mail.
+
+**CRITICAL: Use ONLY `--robot-*` flags. Bare `bv` launches an interactive TUI that blocks your session.**
+
+### The Workflow: Start With Triage
+
+**`bv --robot-triage` is your single entry point.** It returns:
+- `quick_ref`: at-a-glance counts + top 3 picks
+- `recommendations`: ranked actionable items with scores, reasons, unblock info
+- `quick_wins`: low-effort high-impact items
+- `blockers_to_clear`: items that unblock the most downstream work
+- `project_health`: status/type/priority distributions, graph metrics
+- `commands`: copy-paste shell commands for next steps
+
+```bash
+bv --robot-triage        # THE MEGA-COMMAND: start here
+bv --robot-next          # Minimal: just the single top pick + claim command
+```
+
+### Command Reference
+
+**Planning:**
+| Command | Returns |
+|---------|---------|
+| `--robot-plan` | Parallel execution tracks with `unblocks` lists |
+| `--robot-priority` | Priority misalignment detection with confidence |
+
+**Graph Analysis:**
+| Command | Returns |
+|---------|---------|
+| `--robot-insights` | Full metrics: PageRank, betweenness, HITS, eigenvector, critical path, cycles, k-core, articulation points, slack |
+| `--robot-label-health` | Per-label health: `health_level`, `velocity_score`, `staleness`, `blocked_count` |
+| `--robot-label-flow` | Cross-label dependency: `flow_matrix`, `dependencies`, `bottleneck_labels` |
+| `--robot-label-attention [--attention-limit=N]` | Attention-ranked labels |
+
+**History & Change Tracking:**
+| Command | Returns |
+|---------|---------|
+| `--robot-history` | Bead-to-commit correlations |
+| `--robot-diff --diff-since <ref>` | Changes since ref: new/closed/modified issues, cycles |
+
+**Other:**
+| Command | Returns |
+|---------|---------|
+| `--robot-burndown <sprint>` | Sprint burndown, scope changes, at-risk items |
+| `--robot-forecast <id\|all>` | ETA predictions with dependency-aware scheduling |
+| `--robot-alerts` | Stale issues, blocking cascades, priority mismatches |
+| `--robot-suggest` | Hygiene: duplicates, missing deps, label suggestions |
+| `--robot-graph [--graph-format=json\|dot\|mermaid]` | Dependency graph export |
+| `--export-graph <file.html>` | Interactive HTML visualization |
+
+### Scoping & Filtering
+
+```bash
+bv --robot-plan --label backend              # Scope to label's subgraph
+bv --robot-insights --as-of HEAD~30          # Historical point-in-time
+bv --recipe actionable --robot-plan          # Pre-filter: ready to work
+bv --recipe high-impact --robot-triage       # Pre-filter: top PageRank
+bv --robot-triage --robot-triage-by-track    # Group by parallel work streams
+bv --robot-triage --robot-triage-by-label    # Group by domain
+```
+
+### Understanding Robot Output
+
+**All robot JSON includes:**
+- `data_hash` — Fingerprint of source beads.jsonl
+- `status` — Per-metric state: `computed|approx|timeout|skipped` + elapsed ms
+- `as_of` / `as_of_commit` — Present when using `--as-of`
+
+**Two-phase analysis:**
+- **Phase 1 (instant):** degree, topo sort, density
+- **Phase 2 (async, 500ms timeout):** PageRank, betweenness, HITS, eigenvector, cycles
+
+### jq Quick Reference
+
+```bash
+bv --robot-triage | jq '.quick_ref'                        # At-a-glance summary
+bv --robot-triage | jq '.recommendations[0]'               # Top recommendation
+bv --robot-plan | jq '.plan.summary.highest_impact'        # Best unblock target
+bv --robot-insights | jq '.status'                         # Check metric readiness
+bv --robot-insights | jq '.Cycles'                         # Circular deps (must fix!)
+```
+
+---
+
+## UBS — Ultimate Bug Scanner
+
+**Golden Rule:** `ubs <changed-files>` before every commit. Exit 0 = safe. Exit >0 = fix & re-run.
+
+### Commands
+
+```bash
+ubs file.rs file2.rs                    # Specific files (< 1s) — USE THIS
+ubs $(git diff --name-only --cached)    # Staged files — before commit
+ubs --only=rust,toml src/               # Language filter (3-5x faster)
+ubs --ci --fail-on-warning .            # CI mode — before PR
+ubs .                                   # Whole project (ignores target/, Cargo.lock)
+```
+
+### Output Format
+
+```
+Warning  Category (N errors)
+    file.rs:42:5 - Issue description
+    Suggested fix
+Exit code: 1
+```
+
+Parse: `file:line:col` -> location | fix suggestion -> how to fix | Exit 0/1 -> pass/fail
+
+### Fix Workflow
+
+1. Read finding -> category + fix suggestion
+2. Navigate `file:line:col` -> view context
+3. Verify real issue (not false positive)
+4. Fix root cause (not symptom)
+5. Re-run `ubs <file>` -> exit 0
+6. Commit
+
+### Bug Severity
+
+- **Critical (always fix):** Memory safety, use-after-free, data races, SQL injection
+- **Important (production):** Unwrap panics, resource leaks, overflow checks
+- **Contextual (judgment):** TODO/FIXME, println! debugging
+
+---
+
+## RCH — Remote Compilation Helper
+
+RCH offloads `cargo build`, `cargo test`, `cargo clippy`, and other compilation commands to a fleet of 8 remote Contabo VPS workers instead of building locally. This prevents compilation storms from overwhelming csd when many agents run simultaneously.
+
+**RCH is installed at `~/.local/bin/rch` and is hooked into Claude Code's PreToolUse automatically.** Most of the time you don't need to do anything if you are Claude Code — builds are intercepted and offloaded transparently.
+
+To manually offload a build:
+```bash
+rch exec -- cargo build --release
+rch exec -- cargo test
+rch exec -- cargo clippy
+```
+
+Quick commands:
+```bash
+rch doctor                    # Health check
+rch workers probe --all       # Test connectivity to all 8 workers
+rch status                    # Overview of current state
+rch queue                     # See active/waiting builds
+```
+
+If rch or its workers are unavailable, it fails open — builds run locally as normal.
+
+**Note for Codex/GPT-5.2:** Codex does not have the automatic PreToolUse hook, but you can (and should) still manually offload compute-intensive compilation commands using `rch exec -- <command>`. This avoids local resource contention when multiple agents are building simultaneously.
+
+---
+
+## ast-grep vs ripgrep
+
+**Use `ast-grep` when structure matters.** It parses code and matches AST nodes, ignoring comments/strings, and can **safely rewrite** code.
+
+- Refactors/codemods: rename APIs, change import forms
+- Policy checks: enforce patterns across a repo
+- Editor/automation: LSP mode, `--json` output
+
+**Use `ripgrep` when text is enough.** Fastest way to grep literals/regex.
+
+- Recon: find strings, TODOs, log lines, config values
+- Pre-filter: narrow candidate files before ast-grep
+
+### Rule of Thumb
+
+- Need correctness or **applying changes** -> `ast-grep`
+- Need raw speed or **hunting text** -> `rg`
+- Often combine: `rg` to shortlist files, then `ast-grep` to match/modify
+
+### Rust Examples
+
+```bash
+# Find structured code (ignores comments)
+ast-grep run -l Rust -p 'fn $NAME($$$ARGS) -> $RET { $$$BODY }'
+
+# Find all unwrap() calls
+ast-grep run -l Rust -p '$EXPR.unwrap()'
+
+# Quick textual hunt
+rg -n 'println!' -t rust
+
+# Combine speed + precision
+rg -l -t rust 'unwrap\(' | xargs ast-grep run -l Rust -p '$X.unwrap()' --json
+```
+
+---
+
+## Morph Warp Grep — AI-Powered Code Search
+
+**Use `mcp__morph-mcp__warp_grep` for exploratory "how does X work?" questions.** An AI agent expands your query, greps the codebase, reads relevant files, and returns precise line ranges with full context.
+
+**Use `ripgrep` for targeted searches.** When you know exactly what you're looking for.
+
+**Use `ast-grep` for structural patterns.** When you need AST precision for matching/rewriting.
+
+### When to Use What
+
+| Scenario | Tool | Why |
+|----------|------|-----|
+| "How does the TSM validation pipeline work?" | `warp_grep` | Exploratory; don't know where to start |
+| "Where is the healing policy implemented?" | `warp_grep` | Need to understand architecture |
+| "Find all uses of `SafetyState::join`" | `ripgrep` | Targeted literal search |
+| "Find files with `println!`" | `ripgrep` | Simple pattern |
+| "Replace all `unwrap()` with `expect()`" | `ast-grep` | Structural refactor |
+
+### warp_grep Usage
+
+```
+mcp__morph-mcp__warp_grep(
+  repoPath: "/dp/frankenlibc",
+  query: "How does the transparent safety membrane validate pointers?"
+)
+```
+
+Returns structured results with file paths, line ranges, and extracted code snippets.
+
+### Anti-Patterns
+
+- **Don't** use `warp_grep` to find a specific function name -> use `ripgrep`
+- **Don't** use `ripgrep` to understand "how does X work" -> wastes time with manual reads
+- **Don't** use `ripgrep` for codemods -> risks collateral edits
+
+<!-- bv-agent-instructions-v1 -->
+
+---
+
+## Beads Workflow Integration
+
+This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking. Issues are stored in `.beads/` and tracked in git.
+
+**Important:** `br` is non-invasive—it NEVER executes git commands. After `br sync --flush-only`, you must manually run `git add .beads/ && git commit`.
+
+### Essential Commands
+
+```bash
+# View issues (launches TUI - avoid in automated sessions)
+bv
+
+# CLI commands for agents (use these instead)
+br ready              # Show issues ready to work (no blockers)
+br list --status=open # All open issues
+br show <id>          # Full issue details with dependencies
+br create --title="..." --type=task --priority=2
+br update <id> --status=in_progress
+br close <id> --reason "Completed"
+br close <id1> <id2>  # Close multiple issues at once
+br sync --flush-only  # Export to JSONL (NO git operations)
+```
+
+### Workflow Pattern
+
+1. **Start**: Run `br ready` to find actionable work
+2. **Claim**: Use `br update <id> --status=in_progress`
+3. **Work**: Implement the task
+4. **Complete**: Use `br close <id>`
+5. **Sync**: Run `br sync --flush-only` then manually commit
+
+### One-Bead Handoff Checklist
+
+Use this checklist before claiming any `bd-bp8fl` implementation bead. It is intentionally short and operational: the next agent should know the next safe action, the evidence target, and the exact validation lane without inventing process.
+
+1. **Onboard once**: Read `/dp/AGENTS.md`, this `AGENTS.md`, and `README.md`. Do not keep reading architecture docs unless the chosen bead points at a specific file.
+2. **Read the tracker from JSONL first when instructed**:
+   ```bash
+   br --no-db ready --json
+   br --no-db list --status in_progress --json
+   br --no-db show <id> --json
+   ```
+   If ready is empty, run:
+   ```bash
+   br --no-db list --status open --json
+   ```
+3. **Check graph health without blocking**:
+   ```bash
+   bv --robot-triage
+   bv --robot-insights
+   br --no-db dep cycles --json
+   ```
+   Record timeouts or disagreement as tracker state, not code failure.
+4. **Inspect dependencies and parent state**: `br --no-db show <id> --json` must show closed blockers or a deliberate no-db/stale-tracker reason for proceeding. Parent epics can stay open.
+5. **Claim one bead**:
+   ```bash
+   br --no-db update <id> --status=in_progress
+   ```
+   Work on that bead only until it is closed or a real blocker is surfaced.
+6. **Reserve the exact edit surface if Agent Mail works**: reserve only the files or globs you will edit, with `reason=<id>`. If Agent Mail is unavailable, keep moving and note the tool failure in closure.
+7. **Define the work surface before editing**: list touched files, expected generated artifacts, source-of-truth gates, required unit tests, and required e2e, fixture, or harness scripts. If the bead is docs-only, name the existing doc section as the artifact and state that no machine-readable checklist was introduced.
+8. **Use scoped remote validation**: never run bare `cargo` for build, test, check, or clippy in this repo. Use an isolated target dir and `rch exec -- cargo ... -p <crate>`.
+   ```bash
+   export CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_<agent>_<bead>
+   RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p <crate> <test_name> -- --nocapture
+   RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings
+   RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo check -p <crate> --all-targets
+   ```
+   Use `cargo fmt --check` only through `rch exec -- cargo fmt --check` when formatting validation is needed.
+9. **Keep unrelated changes intact**: do not stash, revert, delete, overwrite, or tidy files changed by other agents. Mention unrelated dirty paths only if they affect the bead-owned validation result.
+10. **Close with evidence**: closure notes must include exact commands, artifact paths, source commit, target dir, known limitations, pre-existing failures, and a statement that unrelated user or agent changes were not reverted.
+11. **Commit and push**: set `AGENT_NAME` before committing. Include the bead id in the commit message.
+
+Every checklist log or closure note for this workflow must carry these fields where applicable:
+
+```text
+trace_id=<stable run id>
+bead_id=<bd-bp8fl.*>
+dependency_state=<closed|blocked|stale|unknown>
+tracker_state=<normal|stale_db|no_db_fallback|split_brain|timeout>
+workstream=<semantic-overlay|tracker-repair|feature-parity|fixture-pack|hard-parts|replacement-level|validation|performance|runtime-math|user-workload|workflow>
+required_tests=<unit or none>
+required_e2e=<script/harness path or none>
+artifact_refs=<paths>
+source_commit=<git rev-parse HEAD>
+target_dir=<CARGO_TARGET_DIR or none>
+failure_signature=<none or stable signature>
+next_safe_action=<claim|implement|validate|close|surface_blocker|pick_different_bead>
+```
+
+Branch decisions:
+
+| State | Required action |
+|---|---|
+| Normal tracker | Choose from `br --no-db ready --json`, skip IDs in `in_progress`, claim one bead, reserve files, implement. |
+| Ready empty | Use `br --no-db list --status open --json`, avoid blocked and in-progress IDs, then choose the narrowest concrete open bead. |
+| Stale DB or split-brain | Prefer `--no-db` read evidence. Try the exact `br --no-db update`; if it times out, record the timeout and proceed only when JSONL clearly shows the bead is unclaimed and ready. |
+| Already shipped but open dotted ID | Verify the claimed artifact or commit first. If shipped, close with exact evidence instead of duplicating work. |
+| Unrelated dirty files | Ignore them unless they overlap the claimed surface. Never revert or clean them. |
+| Pre-existing workspace failures | Run the smallest bead-owned gate. Record the pre-existing failure separately and do not attribute it to the bead. |
+| Blocked bead | Do not force it. Pick a different ready bead or create a specific repair bead only when the queue is genuinely empty. |
+
+Dry-run transcript: clean ready bead.
+
+```text
+$ br --no-db ready --json
+[
+  {"id":"bd-bp8fl.4.4","status":"open","priority":2,"title":"Expand low-risk high-count fixture families before hard-parts campaigns"}
+]
+$ br --no-db list --status in_progress --json
+{"issues":[]}
+$ br --no-db show bd-bp8fl.4.4 --json
+{"id":"bd-bp8fl.4.4","dependencies":[{"id":"bd-bp8fl.2.1","status":"closed"}],"parent":"bd-bp8fl"}
+$ bv --robot-triage | jq '.triage.quick_ref.top_picks | map(.id)'
+["bd-bp8fl.4.4"]
+$ br --no-db dep cycles --json
+{"cycles":[],"count":0}
+$ br --no-db update bd-bp8fl.4.4 --status=in_progress
+Updated bd-bp8fl.4.4: status: open -> in_progress
+next_safe_action=reserve exact files, implement fixture slice, validate with rch scoped to the touched crate.
+```
+
+Dry-run transcript: stale tracker fallback.
+
+```text
+$ br --no-db ready --json
+[]
+$ br --no-db list --status open --json
+[
+  {"id":"bd-bp8fl.12","status":"open","priority":1,"title":"Add agent handoff checklist for one-bead-at-a-time implementation"}
+]
+$ br --no-db list --status in_progress --json
+{"issues":[{"id":"bd-bp8fl.10.1","status":"in_progress"}]}
+$ br --no-db show bd-bp8fl.12 --json
+{"id":"bd-bp8fl.12","status":"open","dependencies":[{"id":"bd-bp8fl.11","status":"closed"},{"id":"bd-bp8fl.2.1","status":"closed"}]}
+$ bv --robot-insights | jq '{cycles: .advanced_insights.cycle_break.cycle_count, page_rank: .status.PageRank.state}'
+{"cycles":0,"page_rank":"computed"}
+$ br --no-db update bd-bp8fl.12 --status=in_progress
+Updated bd-bp8fl.12: status: open -> in_progress
+next_safe_action=reserve AGENTS.md, patch existing checklist section, validate docs diff, close with command transcript.
+```
+
+### Key Concepts
+
+- **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
+- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers, not words)
+- **Types**: task, bug, feature, epic, question, docs
+- **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
+
+### Session Protocol
+
+**Before ending any session, run this checklist:**
+
+```bash
+git status              # Check what changed
+git add <files>         # Stage code changes
+br sync --flush-only    # Export beads to JSONL
+git add .beads/         # Stage beads changes
+git commit -m "..."     # Commit everything together
+git push                # Push to remote
+```
+
+### Best Practices
+
+- Check `br ready` at session start to find available work
+- Update status as you work (in_progress -> closed)
+- Create new issues with `br create` when you discover tasks
+- Use descriptive titles and set appropriate priority/type
+- Always `br sync --flush-only && git add .beads/` before ending session
+
+<!-- end-bv-agent-instructions -->
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **Sync beads** - `br sync --flush-only` to export to JSONL
+5. **Hand off** - Provide context for next session
+
+
+---
+
+## Adversarial-Verifier Agent Role (Anti-Recurrence)
+
+A standing agent role whose objective is to **disprove closure claims** rather than produce them. This is a structural counterweight to closure-optimizing agents who may (inadvertently or through Goodhart drift) close beads that lack genuine completion evidence.
+
+### Role Definition
+
+| Property | Value |
+|----------|-------|
+| Objective | Falsify closure claims via independent verification |
+| Trigger | Any bead closed in the last 24h with `status=closed` |
+| Scope | Reality-check beads (`bd-*`) and any bead claiming artifact delivery |
+| Authority | Can reopen beads or file defect beads against false closures |
+| Frequency | At least once per day, or on-demand via `/verify <bead-id>` |
+
+### Concrete Verification Protocol
+
+For each bead selected for verification, the adversarial-verifier executes:
+
+1. **Evidence Audit**
+   - Does the closure reason cite a specific commit SHA?
+   - Does that commit exist and contain changes matching the bead description?
+   - Are claimed artifacts present at the stated paths?
+
+2. **Gate Replay**
+   - Re-run the bead's stated verification command (if any)
+   - If no command stated, identify the minimal gate that would catch a non-implementation
+   - Record pass/fail and any output divergence from closure notes
+
+3. **Semantic Spot-Check**
+   - For code beads: read the touched files and verify the described behavior is implemented
+   - For docs beads: verify the claimed doc section exists and matches the description
+   - For test beads: run the test and verify it exercises the stated condition
+
+4. **Cross-Reference Consistency**
+   - Check that parent epics/children have consistent state
+   - Verify no orphan artifacts (files referenced in closure that don't exist)
+   - Check that dependencies marked closed are genuinely closed
+
+5. **Verdict Emission**
+   ```
+   VERIFIED: <bead-id> — evidence consistent with closure claim
+   DISPUTED: <bead-id> — <specific falsification reason>
+   INCONCLUSIVE: <bead-id> — <reason verification could not complete>
+   ```
+
+### Reopen Criteria
+
+A bead may be reopened (via `br update <id> --status=open`) if:
+
+- The claimed artifact does not exist
+- The verification gate fails
+- The closure commit does not match the bead description
+- Evidence suggests the bead was closed by the same agent that created it with no independent verification
+
+### Filing Defects
+
+When a false closure is detected, file a child bead:
+```bash
+br create --title="[DEFECT] <original-title> closure lacks evidence" \
+  --type=bug --priority=1 \
+  --description="Closure of <bead-id> disputed: <specific reason>. Reopening parent."
+br dep add <new-id> <original-id>
+br update <original-id> --status=open
+```
+
+### Protocol Activation
+
+The adversarial-verifier role activates when:
+- Invoked explicitly via `/verify <bead-id>` or `/verify recent`
+- The bead queue empties (mandatory reality-check trigger per WS-9)
+- A milestone is claimed complete
+- Any agent self-closes more than 3 beads in a single session without independent review
+
+This role is **not adversarial to agents** — it is adversarial to **false closure**. The goal is to make truthful closure the dominant strategy by ensuring that premature or unfounded closures are caught and corrected.
+
+---
+
+## cass — Cross-Agent Session Search
+
+`cass` indexes prior agent conversations (Claude Code, Codex, Cursor, Gemini, ChatGPT, etc.) so we can reuse solved problems.
+
+**Rules:** Never run bare `cass` (TUI). Always use `--robot` or `--json`.
+
+### Examples
+
+```bash
+cass health
+cass search "async runtime" --robot --limit 5
+cass view /path/to/session.jsonl -n 42 --json
+cass expand /path/to/session.jsonl -n 42 -C 3 --json
+cass capabilities --json
+cass robot-docs guide
+```
+
+### Tips
+
+- Use `--fields minimal` for lean output
+- Filter by agent with `--agent`
+- Use `--days N` to limit to recent history
+
+stdout is data-only, stderr is diagnostics; exit code 0 means success.
+
+Treat cass as a way to avoid re-solving problems other agents already handled.
+
+---
+
+Note for Codex/GPT-5.2:
+
+You constantly bother me and stop working with concerned questions that look similar to this:
+
+```
+Unexpected changes (need guidance)
+
+- Working tree still shows edits I did not make in Cargo.toml, Cargo.lock, src/cli/commands/upgrade.rs, src/storage/sqlite.rs, tests/conformance.rs, tests/storage_deps.rs. Please advise whether to keep/commit/revert these before any further work. I did not touch them.
+
+Next steps (pick one)
+
+1. Decide how to handle the unrelated modified files above so we can resume cleanly.
+2. Triage beads_rust-orko (clippy/cargo warnings) and beads_rust-ydqr (rustfmt failures).
+3. If you want a full suite run later, fix conformance/clippy blockers and re-run cargo test --all.
+```
+
+NEVER EVER DO THAT AGAIN. The answer is literally ALWAYS the same: those are changes created by the potentially dozen of other agents working on the project at the same time. This is not only a common occurence, it happens multiple times PER MINUTE. The way to deal with it is simple: you NEVER, under ANY CIRCUMSTANCE, stash, revert, overwrite, or otherwise disturb in ANY way the work of other agents. Just treat those changes identically to changes that you yourself made. Just fool yourself into thinking YOU made the changes and simply don't recall it for some reason.
+
+---
+
+## Note on Built-in TODO Functionality
+
+Also, if I ask you to explicitly use your built-in TODO functionality, don't complain about this and say you need to use beads. You can use built-in TODOs if I tell you specifically to do so. Always comply with such orders.
+
+For any web requests you must make with curl or otherwise, identify yourself honestly: use a User-Agent that names this project, e.g. "frankenlibc-agent (+https://github.com/Dicklesworthstone/frankenlibc)". Never borrow another product's or company's crawler or client User-Agent, and never spoof a client to get past a block.
