@@ -261,7 +261,7 @@ fn summarize(pairs: &[PersistencePair], diameter: f64) -> PersistenceSummary {
         for pair in pairs {
             let frac = pair.persistence() / total;
             if frac > 1e-15 {
-                h -= frac * frac.ln();
+                h -= frac * crate::util::ln_f64(frac);
             }
         }
         h

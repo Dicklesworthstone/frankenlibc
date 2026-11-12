@@ -47,6 +47,12 @@ jobs:
           git rev-parse HEAD | tee artifacts/access/source-commit.txt
           sha256sum crates/frankenlibc-membrane/src/ptr_validator.rs crates/frankenlibc-abi/src/malloc_abi.rs crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs | tee artifacts/access/source-sha256.txt
           git diff --exit-code
+      - name: Execute all membrane controller and policy math regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-membrane --lib -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/membrane-lib.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/membrane-lib.log
       - name: Execute access verdict and lifetime regressions in both modes
         shell: bash
         run: |

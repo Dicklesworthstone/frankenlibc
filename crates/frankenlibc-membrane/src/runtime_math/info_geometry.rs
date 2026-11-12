@@ -158,7 +158,7 @@ impl CategoricalDist {
             .sum();
         // Bhattacharyya coefficient should be in [0, 1], clamp for
         // numerical safety.
-        2.0 * bc.clamp(0.0, 1.0).acos()
+        2.0 * crate::util::acos_f64(bc.clamp(0.0, 1.0))
     }
 }
 

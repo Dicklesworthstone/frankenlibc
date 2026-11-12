@@ -202,7 +202,7 @@ impl PacBayesMonitor {
         let eta = 2.0; // temperature parameter
         let mut raw_weights = [0.0_f64; N];
         for (i, w) in raw_weights.iter_mut().enumerate() {
-            *w = PRIOR_WEIGHT * (-eta * self.error_rate[i]).exp();
+            *w = PRIOR_WEIGHT * crate::util::exp_f64(-eta * self.error_rate[i]);
         }
         // Normalize to form a valid distribution.
         let total: f64 = raw_weights.iter().sum();
@@ -216,7 +216,7 @@ impl PacBayesMonitor {
         self.kl_divergence = 0.0;
         for &p in &self.posterior {
             if p > 1e-15 {
-                self.kl_divergence += p * (p / PRIOR_WEIGHT).ln();
+                self.kl_divergence += p * crate::util::ln_f64(p / PRIOR_WEIGHT);
             }
         }
         // KL should be non-negative; clamp for numerical safety.
@@ -237,7 +237,7 @@ impl PacBayesMonitor {
         } else {
             (2.0 / ALPHA - 1.0).min(self.count as f64)
         };
-        let complexity_term = self.kl_divergence + (2.0 * n.sqrt() / DELTA).ln();
+        let complexity_term = self.kl_divergence + crate::util::ln_f64(2.0 * n.sqrt() / DELTA);
         let slack = (complexity_term / (2.0 * n)).sqrt();
         self.bound = (self.empirical_error + slack).clamp(0.0, 1.0);
 

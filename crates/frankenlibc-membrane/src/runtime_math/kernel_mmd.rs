@@ -148,7 +148,7 @@ impl KernelMmdMonitor {
             .zip(y.iter())
             .map(|(&a, &b)| (a - b) * (a - b))
             .sum();
-        (-sq_dist / (2.0 * SIGMA_SQ)).exp()
+        crate::util::exp_f64(-sq_dist / (2.0 * SIGMA_SQ))
     }
 
     /// Feed a severity vector and update MMD estimates.
@@ -201,7 +201,7 @@ impl KernelMmdMonitor {
             .zip(self.current_var.iter())
             .map(|(&bv, &cv)| {
                 let ratio = if bv > 1e-6 { cv / bv } else { 1.0 };
-                (ratio.ln()).abs()
+                crate::util::ln_f64(ratio).abs()
             })
             .sum::<f64>()
             / N as f64;

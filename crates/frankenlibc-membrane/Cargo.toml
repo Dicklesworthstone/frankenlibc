@@ -17,6 +17,9 @@ blake3 = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Internal policy math must not call the public C math ABI or mutate errno.
+# The core crate already uses this pure-Rust implementation.
+libm = "0.2.16"
 
 [dev-dependencies]
 proptest = "1.11.0"

@@ -105,7 +105,7 @@ fn gibbs_kernel() -> [[f64; ACT]; ACT] {
     let mut k = [[0.0f64; ACT]; ACT];
     for i in 0..ACT {
         for j in 0..ACT {
-            k[i][j] = (-COST[i][j] / EPSILON).exp();
+            k[i][j] = crate::util::exp_f64(-COST[i][j] / EPSILON);
         }
     }
     k

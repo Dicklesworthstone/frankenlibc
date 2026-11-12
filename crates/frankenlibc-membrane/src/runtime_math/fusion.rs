@@ -70,7 +70,7 @@ impl KernelFusionController {
                 // Active signals should be discounted on clean outcomes.
                 0.2 + 0.8 * s
             };
-            *w *= (-ETA * loss).exp();
+            *w *= crate::util::exp_f64(-ETA * loss);
         }
 
         renormalize(&mut self.weights);
@@ -163,10 +163,10 @@ fn entropy(w: [f64; SIGNALS]) -> f64 {
     let mut h = 0.0;
     for p in w {
         if p > 1e-12 {
-            h -= p * p.ln();
+            h -= p * crate::util::ln_f64(p);
         }
     }
-    let h_max = (SIGNALS as f64).ln();
+    let h_max = crate::util::ln_f64(SIGNALS as f64);
     if h_max <= 1e-12 {
         return 0.0;
     }

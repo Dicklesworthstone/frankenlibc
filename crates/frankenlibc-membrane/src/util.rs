@@ -8,6 +8,16 @@ use std::sync::{
     RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
 };
 
+// Controller math must not resolve through the C ABI that this library
+// interposes: std's f64 transcendentals can call math_abi and change errno.
+// These are the same pure-Rust algorithms used by frankenlibc-core, with no
+// libc calls or errno writes. RuntimeMathKernel's floating-environment guard
+// separately preserves the caller's rounding mode and sticky exception flags.
+pub(crate) use libm::{
+    acos as acos_f64, exp as exp_f64, log as ln_f64, log1p as ln_1p_f64, log2 as log2_f64,
+    pow as pow_f64,
+};
+
 /// Deterministic, integer-fast hasher for the crate's internal maps.
 ///
 /// Was `#[cfg(feature = "owned-tls-cache")]`, so the DEPLOYED build (which does not enable
@@ -457,7 +467,10 @@ pub fn round_f64(x: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LazyBox, ceil_f64, floor_f64, round_f64, trunc_f64};
+    use super::{
+        LazyBox, acos_f64, ceil_f64, exp_f64, floor_f64, ln_1p_f64, ln_f64, log2_f64, pow_f64,
+        round_f64, trunc_f64,
+    };
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -466,6 +479,116 @@ mod tests {
     impl Drop for Counted {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn assert_math_close(actual: f64, expected: f64, operation: &str, input: f64) {
+        if expected.is_nan() {
+            assert!(actual.is_nan(), "{operation}({input}) must be NaN");
+            return;
+        }
+        if actual.to_bits() == expected.to_bits() {
+            return;
+        }
+        assert!(
+            actual.is_finite() && expected.is_finite(),
+            "{operation}({input})"
+        );
+        let ordered = |value: f64| {
+            let bits = value.to_bits();
+            if value.is_sign_negative() {
+                !bits
+            } else {
+                bits | (1 << 63)
+            }
+        };
+        let ulps = ordered(actual).abs_diff(ordered(expected));
+        assert!(
+            ulps <= 4,
+            "{operation}({input}): {actual} vs {expected} differ by {ulps} ULP",
+        );
+    }
+
+    #[test]
+    fn policy_math_matches_host_reference_across_dynamic_range() {
+        let boundary = [
+            f64::from_bits(1),
+            f64::from_bits((1 << 52) - 1),
+            f64::MIN_POSITIVE,
+            1.0 - f64::EPSILON,
+            1.0,
+            1.0 + f64::EPSILON,
+            f64::MAX,
+            0.0,
+            -0.0,
+            -1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        for x in boundary {
+            let x = std::hint::black_box(x);
+            assert_math_close(ln_f64(x), x.ln(), "ln", x);
+            assert_math_close(log2_f64(x), x.log2(), "log2", x);
+            assert_math_close(ln_1p_f64(x), x.ln_1p(), "ln_1p", x);
+            assert_math_close(exp_f64(x), x.exp(), "exp", x);
+            assert_math_close(acos_f64(x), x.acos(), "acos", x);
+        }
+
+        // Deterministic mantissas throughout the positive binary exponent range
+        // and controller-sized exp/acos/pow domains, against the host libm.
+        let mut state = 0xa496_379c_4d20_a12bu64;
+        for exponent in 1..2047u64 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let positive = f64::from_bits((exponent << 52) | (state & ((1 << 52) - 1)));
+            assert_math_close(ln_f64(positive), positive.ln(), "ln", positive);
+            assert_math_close(log2_f64(positive), positive.log2(), "log2", positive);
+            let fraction = (state >> 11) as f64 / ((1u64 << 53) as f64);
+            let signed = 2.0 * fraction - 1.0;
+            let exp_input = fraction * 1440.0 - 740.0;
+            assert_math_close(exp_f64(exp_input), exp_input.exp(), "exp", exp_input);
+            assert_math_close(ln_1p_f64(signed), signed.ln_1p(), "ln_1p", signed);
+            assert_math_close(acos_f64(signed), signed.acos(), "acos", signed);
+            let base = 0.01 + 100.0 * fraction;
+            assert_math_close(pow_f64(base, 4.0 / 3.0), base.powf(4.0 / 3.0), "pow", base);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[allow(unsafe_code)]
+    fn policy_math_preserves_errno_at_underflow_and_domain_boundaries() {
+        struct RestoreErrno(*mut i32, i32);
+        impl Drop for RestoreErrno {
+            fn drop(&mut self) {
+                // SAFETY: this pointer is the current test thread's errno slot.
+                unsafe { self.0.write(self.1) };
+            }
+        }
+        // SAFETY: libc supplies the calling thread's valid errno cell.
+        let errno = unsafe { libc::__errno_location() };
+        let _restore = RestoreErrno(errno, unsafe { errno.read() });
+        let cases: [(fn(f64) -> f64, f64); 7] = [
+            (exp_f64, -1000.0),
+            (exp_f64, 1000.0),
+            (ln_f64, 0.0),
+            (ln_f64, -1.0),
+            (log2_f64, -1.0),
+            (ln_1p_f64, -1.0),
+            (acos_f64, 2.0),
+        ];
+        for sentinel in [0, libc::EACCES] {
+            for (operation, input) in cases {
+                // SAFETY: the errno cell belongs to this thread.
+                unsafe { errno.write(sentinel) };
+                std::hint::black_box(operation(std::hint::black_box(input)));
+                assert_eq!(unsafe { errno.read() }, sentinel);
+            }
+            unsafe { errno.write(sentinel) };
+            std::hint::black_box(pow_f64(std::hint::black_box(-1.0), 0.5));
+            assert_eq!(unsafe { errno.read() }, sentinel);
         }
     }
 

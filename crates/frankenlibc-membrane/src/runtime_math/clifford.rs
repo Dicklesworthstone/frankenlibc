@@ -716,7 +716,7 @@ fn embed(prev: [f64; DIM], current: [f64; DIM]) -> Multivector {
 
     // Grade-0: scalar (magnitude of alignment stability).
     let mag = diff.iter().map(|d| d * d).sum::<f64>().sqrt();
-    let stability = (-mag).exp(); // Near 1 when stable.
+    let stability = crate::util::exp_f64(-mag); // Near 1 when stable.
 
     // Grade-1: vector components (directional change).
     // Grade-2: bivector components (rotational change = wedge products).

@@ -2978,7 +2978,7 @@ impl RuntimeMathKernel {
             ) / 2.0;
             let hit_rate = if adverse { 1.0 } else { 0.0 };
             let risk_score = f64::from(risk_bound_ppm) / 1_000_000.0;
-            let latency = (estimated_cost_ns as f64).ln_1p();
+            let latency = crate::util::ln_1p_f64(estimated_cost_ns as f64);
             let mut spectral = self.spectral.lock();
             spectral.observe(risk_score, latency, contention, hit_rate);
             // Cache the phase state for the hot-path decision.
@@ -2998,7 +2998,7 @@ impl RuntimeMathKernel {
         let run_persistence = ProbePlan::includes_mask(probe_mask, Probe::Persistence);
         if run_rough || run_persistence {
             let rp_risk = f64::from(risk_bound_ppm) / 1_000_000.0;
-            let rp_latency = (estimated_cost_ns as f64).ln_1p();
+            let rp_latency = crate::util::ln_1p_f64(estimated_cost_ns as f64);
             let rp_contention = f64::from(
                 self.cached_oracle_bias[usize::from(family as u8)].load(Ordering::Relaxed),
             ) / 2.0;

@@ -165,7 +165,7 @@ fn feature_vector(
     risk_bound_ppm: u32,
 ) -> [f64; FEATURES] {
     let risk = f64::from(risk_bound_ppm) / 1_000_000.0;
-    let latency = (estimated_cost_ns as f64).ln_1p() / 8.0;
+    let latency = crate::util::ln_1p_f64(estimated_cost_ns as f64) / 8.0;
     let adverse_f = if adverse { 1.0 } else { 0.0 };
     let policy = match (mode, profile) {
         (SafetyLevel::Strict, ValidationProfile::Fast) => 0.1,

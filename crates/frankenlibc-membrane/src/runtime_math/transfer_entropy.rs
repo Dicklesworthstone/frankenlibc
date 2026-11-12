@@ -209,7 +209,7 @@ impl PairTracker {
                     let p_x_next_given_xy = self.joint[x_next][x_curr][y_curr] / (p_x_y + eps);
 
                     if p_joint > eps && p_x_next_given_xy > eps && p_x_next_given_x > eps {
-                        te += p_joint * (p_x_next_given_xy / p_x_next_given_x).ln();
+                        te += p_joint * crate::util::ln_f64(p_x_next_given_xy / p_x_next_given_x);
                     }
                 }
             }

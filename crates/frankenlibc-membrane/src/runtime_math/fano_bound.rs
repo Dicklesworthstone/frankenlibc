@@ -160,7 +160,7 @@ impl ControllerJoint {
                 let p_x = p_next[next] / total;
                 let p_y = p_curr[curr] / total;
                 if p_xy > eps && p_x > eps && p_y > eps {
-                    mi += p_xy * (p_xy / (p_x * p_y)).ln();
+                    mi += p_xy * crate::util::ln_f64(p_xy / (p_x * p_y));
                 }
             }
         }
@@ -170,13 +170,13 @@ impl ControllerJoint {
     /// Compute Fano error lower bound from MI.
     fn fano_bound(&self) -> f64 {
         let mi = self.mutual_information();
-        let log_k = (K as f64).ln();
+        let log_k = crate::util::ln_f64(K as f64);
         if log_k < 1e-12 {
             return 0.0;
         }
         // P(error) >= 1 - [I(X;Y) + ln(2)] / ln(K)
         // Clamp to [0, 1].
-        let bound = 1.0 - (mi + 2.0_f64.ln()) / log_k;
+        let bound = 1.0 - (mi + crate::util::ln_f64(2.0)) / log_k;
         bound.clamp(0.0, 1.0)
     }
 }

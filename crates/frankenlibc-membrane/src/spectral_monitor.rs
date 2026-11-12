@@ -290,9 +290,10 @@ impl SpectralMonitor {
         let mp_edge = sigma2.max(1e-12) * (1.0 + sqrt_gamma).powi(2);
 
         // TW-like normalization scale (finite-sample edge fluctuations).
-        let tw_scale =
-            (sigma2.max(1e-12) * (1.0 + sqrt_gamma).powf(4.0 / 3.0) * n_f.powf(-2.0 / 3.0))
-                .max(1e-9);
+        let tw_scale = (sigma2.max(1e-12)
+            * crate::util::pow_f64(1.0 + sqrt_gamma, 4.0 / 3.0)
+            * crate::util::pow_f64(n_f, -2.0 / 3.0))
+        .max(1e-9);
         let tw_z = (max_ev - mp_edge) / tw_scale;
         let tw_delta = if self.baseline_ready {
             tw_z - self.baseline_tw_z

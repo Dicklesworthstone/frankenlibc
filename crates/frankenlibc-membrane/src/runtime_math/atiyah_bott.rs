@@ -219,7 +219,7 @@ impl AtiyahBottController {
 
     /// Compute the Euler weight: L × f^α.
     fn euler_weight(&self) -> f64 {
-        self.smoothed_localization * self.smoothed_fp_fraction.powf(FP_EXPONENT)
+        self.smoothed_localization * crate::util::pow_f64(self.smoothed_fp_fraction, FP_EXPONENT)
     }
 
     /// Current state.

@@ -217,9 +217,9 @@ impl FamilyTracker {
         let is_outlier = score > self.full_threshold;
         let expected_rate = DEFAULT_ALPHA;
         let e_value = if is_outlier {
-            (1.0 / expected_rate).ln()
+            crate::util::ln_f64(1.0 / expected_rate)
         } else {
-            ((1.0 - 1.0 / (self.count as f64)) / (1.0 - expected_rate)).ln()
+            crate::util::ln_f64((1.0 - 1.0 / (self.count as f64)) / (1.0 - expected_rate))
         };
 
         self.e_process_log += e_value;
