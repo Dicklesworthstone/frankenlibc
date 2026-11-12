@@ -54,6 +54,10 @@ fn native_allocator_fallbacks_keep_owned_mapping_provenance() {
         return;
     }
     let _guard = test_lock().lock().unwrap();
+    // Debug integration binaries use the host startup entrypoint, so the
+    // environment switch alone does not select the native pthread backend.
+    // Keep the worker's handle check below to reject accidental delegation.
+    frankenlibc_abi::pthread_abi::pthread_threading_force_native_for_tests();
     // SAFETY: this isolated test process owns its watchdog disposition.
     unsafe { libc::alarm(15) };
     struct Probe { retained: usize }
