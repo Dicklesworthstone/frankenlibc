@@ -245,3 +245,10 @@ tests/cve_arena/results/logs/
 tests/conformance/*.bak
 .beads/.br-wal-index-*/
 
+# Retained closure gate receipts and portable qualification bundles must stay git-tracked
+!tests/conformance/closure_receipts/**/
+!tests/conformance/closure_receipts/**
+!tests/cve_arena/results/libarchive_qualification_v1/**/
+!tests/cve_arena/results/libarchive_qualification_v1/**
+
+
