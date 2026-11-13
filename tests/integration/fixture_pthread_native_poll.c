@@ -1931,9 +1931,373 @@ static int receive_contract_main(char **argv) {
     return 0;
 }
 
+enum send_kind {
+    SEND_BLOCKED, SEND_PENDING, SEND_DISABLED, SEND_READY, SEND_READY_LATE,
+    SEND_NONBLOCK, SEND_DONTWAIT, SEND_TIMEOUT, SEND_SIGNAL, SEND_SIGNAL_RESTART,
+    SEND_ERRORS, SEND_LENGTH_ZERO, SEND_PEER_CLOSED, SEND_PARTIAL,
+    SEND_PARTIAL_CANCEL, SEND_PARTIAL_ERROR, SEND_ADDRESS, SEND_OVERSIZE, SEND_SEQPACKET
+};
+struct send_probe {
+    struct state observed;
+    enum send_kind kind;
+    int fd, to, flags;
+    size_t length;
+    unsigned char data[65536];
+    struct sockaddr_in address;
+    socklen_t address_length;
+};
+static ssize_t (*selected_send)(int, const void *, size_t, int);
+static ssize_t (*selected_sendto)(int, const void *, size_t, int,
+                                 const struct sockaddr *, socklen_t);
+
+static int pin_send_provider(const char *expected, int to, int alias) {
+    int base = pin_providers(expected, 0, EVENT_NONE);
+    if (base != 0) return base;
+    const char *name = to ? (alias ? "__sendto" : "sendto") : alias ? "__send" : "send";
+    Dl_info info = {0};
+    struct stat actual, wanted;
+    void *symbol = dlsym(RTLD_DEFAULT, name);
+    if (!symbol || !dladdr(symbol, &info) || !info.dli_fname ||
+        stat(expected, &wanted) || stat(info.dli_fname, &actual) ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
+        return 86;
+    }
+    if (to) selected_sendto = (__typeof__(selected_sendto))symbol;
+    else selected_send = (__typeof__(selected_send))symbol;
+    return 0;
+}
+
+static ssize_t send_call(struct send_probe *probe) {
+    if (probe->to)
+        return selected_sendto(probe->fd, probe->data, probe->length, probe->flags,
+                               probe->address_length ? (struct sockaddr *)&probe->address : NULL,
+                               probe->address_length);
+    return selected_send(probe->fd, probe->data, probe->length, probe->flags);
+}
+
+static void send_cleanup(void *argument) {
+    struct send_probe *probe = argument;
+    sigset_t mask;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0 &&
+                sigismember(&mask, SIGUSR1) == 0 && sigismember(&mask, SIGUSR2) == 1,
+            "send cleanup preserves the complete original signal mask");
+    REQUIRE(atomic_fetch_add_explicit(&probe->observed.cleaned, 1, memory_order_release) == 0,
+            "send cleanup executes exactly once");
+}
+
+static void *send_worker(void *argument) {
+    struct send_probe *probe = argument;
+    struct state *state = &probe->observed;
+    capture_identity(state);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0,
+            "deferred send cancellation");
+    if (probe->kind == SEND_DISABLED)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0,
+                "disable send cancellation");
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "send entry signal mask");
+    pthread_cleanup_push(send_cleanup, probe);
+    atomic_store_explicit(&state->ready, 1, memory_order_release);
+    while (!atomic_load_explicit(&state->release, memory_order_acquire))
+        (void)syscall(SYS_sched_yield);
+    errno = EDOM;
+    int64_t started = monotonic_ns();
+    if (probe->kind == SEND_ERRORS) {
+        int original = probe->fd;
+        probe->fd = -1;
+        REQUIRE(send_call(probe) == -1 && errno == EBADF, "invalid send fd retains EBADF");
+        int pipefd[2];
+        REQUIRE(pipe(pipefd) == 0, "send error pipe");
+        probe->fd = pipefd[1];
+        REQUIRE(send_call(probe) == -1 && errno == ENOTSOCK,
+                "send metadata probes do not replace ENOTSOCK");
+        REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close send error pipe");
+        probe->fd = original;
+        state->result = 0;
+    } else {
+        state->result = (int)send_call(probe);
+    }
+    state->error = errno;
+    state->elapsed_ns = monotonic_ns() - started;
+    atomic_store_explicit(&state->returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (probe->kind == SEND_DISABLED || probe->kind == SEND_PARTIAL_CANCEL) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0,
+                "reenable send cancellation");
+        pthread_testcancel();
+        fail("completed send lost its pending cancellation");
+    }
+    return state;
+}
+
+static void send_initialize(struct send_probe *probe, enum send_kind kind, int fd, int to) {
+    memset(probe, 0, sizeof(*probe));
+    probe->kind = kind;
+    probe->fd = fd;
+    probe->to = to;
+    probe->flags = kind == SEND_DONTWAIT ? MSG_DONTWAIT | MSG_NOSIGNAL :
+                   kind == SEND_PARTIAL_ERROR ? 0 : MSG_NOSIGNAL;
+    probe->length = kind == SEND_LENGTH_ZERO ? 0 :
+                    kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL ||
+                    kind == SEND_PARTIAL_ERROR || kind == SEND_OVERSIZE ? sizeof(probe->data) : 1;
+    memset(probe->data, 'D', sizeof(probe->data));
+    probe->observed.result = -222;
+    atomic_init(&probe->observed.ready, 0);
+    atomic_init(&probe->observed.release, 0);
+    atomic_init(&probe->observed.returned, 0);
+    atomic_init(&probe->observed.cleaned, 0);
+}
+
+static size_t fill_send_socket(int fd) {
+    unsigned char bytes[4096];
+    memset(bytes, 'F', sizeof(bytes));
+    size_t total = 0;
+    for (size_t length = sizeof(bytes); length != 0; length = length == 1 ? 0 : 1) {
+        for (;;) {
+            ssize_t sent = syscall(SYS_sendto, fd, bytes, length,
+                                   MSG_DONTWAIT | MSG_NOSIGNAL, NULL, 0);
+            if (sent < 0) {
+                REQUIRE(errno == EAGAIN, "fill sender until kernel backpressure");
+                break;
+            }
+            REQUIRE(sent > 0 && (size_t)sent <= length, "positive send-buffer fill");
+            total += (size_t)sent;
+        }
+    }
+    REQUIRE(total > 0, "nonempty backpressure payload");
+    return total;
+}
+
+static void drain_send_socket(int fd, size_t *filler, size_t *payload, int *empty_records) {
+    unsigned char bytes[8192];
+    for (;;) {
+        ssize_t received = syscall(SYS_recvfrom, fd, bytes, sizeof(bytes), MSG_DONTWAIT, NULL, NULL);
+        if (received < 0) {
+            REQUIRE(errno == EAGAIN, "drain only available send payload");
+            return;
+        }
+        if (received == 0) {
+            ++*empty_records;
+            return;
+        }
+        for (ssize_t i = 0; i < received; ++i) {
+            REQUIRE(bytes[i] == 'F' || bytes[i] == 'D', "send preserves payload bytes");
+            if (bytes[i] == 'F') ++*filler;
+            else ++*payload;
+        }
+    }
+}
+
+static void observe_send_parked(struct send_probe *probe, int memory) {
+    struct state *state = &probe->observed;
+    int sliced = expect_native && probe->kind != SEND_DISABLED &&
+                 probe->kind != SEND_TIMEOUT && probe->kind != SEND_SIGNAL &&
+                 probe->kind != SEND_SIGNAL_RESTART;
+    int64_t deadline = monotonic_ns() + 2000000000;
+    while (monotonic_ns() < deadline) {
+        REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
+                "send returned before its intended blocked operation");
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long args[6] = {0};
+        if (!read_proc(state, "syscall", call, sizeof(call)) ||
+            sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
+                   &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 5)
+            goto retry_send;
+        if (sliced) {
+            struct pollfd interest;
+            struct timespec duration;
+            uint64_t mask;
+            if (number != SYS_ppoll || args[1] != 1 ||
+                !snapshot(memory, args[0], &interest, sizeof(interest)) ||
+                interest.fd != probe->fd || interest.events != POLLOUT ||
+                args[2] == 0 || !snapshot(memory, args[2], &duration, sizeof(duration)) ||
+                args[3] == 0 || !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_send;
+            REQUIRE(duration.tv_sec == 0 && duration.tv_nsec > 0 && duration.tv_nsec <= 50000000,
+                    "native send waits in bounded nonzero slices");
+            REQUIRE(args[4] == sizeof(mask) && ((mask >> (SIGUSR2 - 1)) & 1) == 1 &&
+                        ((mask >> (SIGUSR1 - 1)) & 1) == 0,
+                    "native send atomically reinstates the complete original mask");
+        } else if (number != SYS_sendto || args[0] != (unsigned)probe->fd ||
+                   args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
+            goto retry_send;
+        }
+        if (!read_proc(state, "stat", status, sizeof(status))) goto retry_send;
+        char *end = strrchr(status, ')');
+        if (end != NULL && end[1] == ' ' && end[2] == 'S') return;
+retry_send:
+        pause_briefly();
+    }
+    fail("no observed socket send with the expected native/hosted wait arguments");
+}
+
+static int send_contract_main(char **argv) {
+    int to = strncmp(case_name, "sendto-", 7) == 0;
+    const char *suffix = case_name + (to ? 7 : 5);
+    int alias = strncmp(suffix, "alias-", 6) == 0;
+    if (alias) suffix += 6;
+    const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late",
+                          "nonblock", "dontwait", "timeout", "signal", "signal-restart",
+                          "errors", "length-zero", "peer-closed", "partial",
+                          "partial-cancel", "partial-error", "address", "oversize", "seqpacket"};
+    int value = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(suffix, names[i]) == 0) value = (int)i;
+    if (value < 0 ||
+        (to && (value == SEND_PARTIAL || value == SEND_PARTIAL_CANCEL || value == SEND_PARTIAL_ERROR)) ||
+        (!to && (value == SEND_ADDRESS || value == SEND_OVERSIZE))) return 2;
+    enum send_kind kind = (enum send_kind)value;
+    int pin = pin_send_provider(argv[2], to, alias);
+    if (pin != 0) return pin;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART ? user_signal : SIG_DFL;
+    action.sa_flags = kind == SEND_SIGNAL_RESTART ? SA_RESTART : 0;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "send signal disposition");
+    action.sa_handler = SIG_DFL;
+    action.sa_flags = 0;
+    REQUIRE(sigaction(SIGPIPE, &action, NULL) == 0, "default SIGPIPE catches duplicated send errors");
+    alarm(15);
+    int pair[2];
+    int type = kind == SEND_SEQPACKET ? SOCK_SEQPACKET : to ? SOCK_DGRAM : SOCK_STREAM;
+    struct sockaddr_in address = {0};
+    if (kind == SEND_ADDRESS) {
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        pair[0] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        pair[1] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        REQUIRE(pair[0] >= 0 && pair[1] >= 0, "create addressed send endpoints");
+        REQUIRE(bind(pair[1], (struct sockaddr *)&address, sizeof(address)) == 0,
+                "bind addressed send receiver");
+        socklen_t length = sizeof(address);
+        REQUIRE(getsockname(pair[1], (struct sockaddr *)&address, &length) == 0,
+                "resolve send destination");
+    } else {
+        REQUIRE(socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, pair) == 0,
+                "create socket send endpoints");
+    }
+    int send_buffer = 8192;
+    REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer)) == 0,
+            "bound the kernel send buffer");
+    if (kind == SEND_NONBLOCK)
+        REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
+                "set caller-owned send nonblocking flag");
+    if (kind == SEND_TIMEOUT) {
+        struct timeval timeout = {0, 150000};
+        REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0,
+                "set caller-owned send timeout");
+    }
+    int original_flags = fcntl(pair[0], F_GETFL);
+    REQUIRE(original_flags >= 0, "capture original sender flags");
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("socket-send-wait-snapshot-unavailable");
+    size_t initial = 0, filler = 0, payload = 0;
+    int empty_records = 0;
+    if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
+        kind == SEND_NONBLOCK || kind == SEND_DONTWAIT || kind == SEND_TIMEOUT ||
+        kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET)
+        initial = fill_send_socket(pair[0]);
+    if (kind == SEND_PEER_CLOSED)
+        REQUIRE(close(pair[1]) == 0, "close send peer");
+    struct send_probe probe;
+    send_initialize(&probe, kind, pair[0], to);
+    if (kind == SEND_ADDRESS) {
+        probe.address = address;
+        probe.address_length = sizeof(address);
+    }
+    REQUIRE(pthread_create(&probe.observed.thread, NULL, send_worker, &probe) == 0,
+            "create send worker");
+    wait_ready(&probe.observed);
+    if (kind == SEND_PENDING)
+        REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request pending send cancellation");
+    atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
+    int partial = kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL || kind == SEND_PARTIAL_ERROR;
+    if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
+        kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET || partial) {
+        observe_send_parked(&probe, memory);
+        if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL)
+            REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request blocked send cancellation");
+        if (kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART) {
+            REQUIRE(pthread_kill(probe.observed.thread, SIGUSR1) == 0, "interrupt socket send");
+            int64_t deadline = monotonic_ns() + 2000000000;
+            while (!atomic_load_explicit(&signals_delivered, memory_order_acquire)) {
+                REQUIRE(monotonic_ns() < deadline, "send signal delivery deadline");
+                pause_briefly();
+            }
+            if (kind == SEND_SIGNAL_RESTART) observe_send_parked(&probe, memory);
+        }
+        if (kind == SEND_PARTIAL_ERROR)
+            REQUIRE(shutdown(pair[1], SHUT_RD) == 0, "fail send after its accepted prefix");
+        if (kind == SEND_DISABLED || kind == SEND_READY_LATE || kind == SEND_SIGNAL_RESTART ||
+            kind == SEND_PARTIAL || kind == SEND_SEQPACKET) {
+            int64_t deadline = monotonic_ns() + 2000000000;
+            while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire)) {
+                REQUIRE(monotonic_ns() < deadline, "send completion after draining backpressure");
+                drain_send_socket(pair[1], &filler, &payload, &empty_records);
+                pause_briefly();
+            }
+        }
+    }
+    void *result = join_bounded(&probe.observed);
+    int canceled = kind == SEND_PENDING || kind == SEND_BLOCKED ||
+                   kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL;
+    REQUIRE(result == (canceled ? PTHREAD_CANCELED : &probe.observed), "send join result");
+    REQUIRE(probe.observed.cleaned == 1, "send cleanup count");
+    if (kind == SEND_PENDING || kind == SEND_BLOCKED) {
+        REQUIRE(!probe.observed.returned, "cancellation precedes any send result");
+    } else if (kind == SEND_NONBLOCK || kind == SEND_DONTWAIT || kind == SEND_TIMEOUT) {
+        REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
+                "caller nonblocking and send timeout contracts preserve EAGAIN");
+        if (kind == SEND_TIMEOUT)
+            REQUIRE(probe.observed.elapsed_ns >= 100000000 && probe.observed.elapsed_ns < 2000000000,
+                    "send timeout retains its kernel deadline");
+    } else if (kind == SEND_SIGNAL) {
+        REQUIRE(probe.observed.result == -1 && probe.observed.error == EINTR,
+                "non-restarting send preserves EINTR");
+    } else if (kind == SEND_PEER_CLOSED) {
+        REQUIRE(probe.observed.result == -1 &&
+                    probe.observed.error == (to ? ECONNREFUSED : EPIPE),
+                "closed peer preserves its socket error without SIGPIPE");
+    } else if (kind == SEND_PARTIAL_CANCEL || kind == SEND_PARTIAL_ERROR) {
+        REQUIRE(probe.observed.returned && probe.observed.result > 0 &&
+                    probe.observed.result < (int)probe.length && probe.observed.error == EDOM,
+                "interrupted partial send returns its committed prefix");
+    } else if (kind == SEND_OVERSIZE) {
+        REQUIRE(probe.observed.result == -1 && probe.observed.error == EMSGSIZE,
+                "oversized atomic datagram preserves EMSGSIZE");
+    } else if (kind != SEND_ERRORS) {
+        REQUIRE(probe.observed.result == (int)probe.length && probe.observed.error == EDOM,
+                "send completes the entire payload without changing errno");
+    }
+    if (kind != SEND_PEER_CLOSED && kind != SEND_PARTIAL_ERROR) {
+        drain_send_socket(pair[1], &filler, &payload, &empty_records);
+        size_t accepted = probe.observed.result > 0 ? (size_t)probe.observed.result : 0;
+        REQUIRE(payload == accepted, "each accepted send byte is delivered exactly once");
+        REQUIRE(empty_records == (kind == SEND_LENGTH_ZERO && type != SOCK_STREAM),
+                "zero-byte sends preserve datagram records and stream behavior");
+    }
+    REQUIRE(filler == initial, "send cancellation does not consume queued peer data");
+    REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "send never changes shared O_NONBLOCK flags");
+    REQUIRE(close(memory) == 0 && close(pair[0]) == 0, "release sender fixture descriptors");
+    if (kind != SEND_PEER_CLOSED) REQUIRE(close(pair[1]) == 0, "release sender peer");
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
+    if (strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0)
+        return send_contract_main(argv);
     if (strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0)
         return receive_contract_main(argv);
     if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);

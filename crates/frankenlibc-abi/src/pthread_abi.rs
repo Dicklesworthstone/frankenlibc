@@ -7752,6 +7752,78 @@ unsafe fn cancellation_receive_window(
     }
 }
 
+/// Socket send cancellation, including requests arriving while the send buffer
+/// is full. Preserve the external caller through send/sendto and their aliases.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sendto(
+    fd: c_int,
+    buffer: *const u8,
+    length: usize,
+    flags: c_int,
+    address: *const u8,
+    address_length: usize,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_send_window(
+            caller,
+            cancel_poll::SendTo {
+                fd,
+                buffer,
+                length,
+                flags,
+                address,
+                address_length,
+            },
+        )
+    }
+}
+
+/// This frame owns no drop state across hosted asynchronous cancellation.
+/// Partial sends remain successful; a pending request then belongs to the next
+/// cancellation point, exactly as for an interrupted raw send with progress.
+#[inline(never)]
+unsafe fn cancellation_send_window(
+    caller: usize,
+    operation: cancel_poll::SendTo,
+) -> Result<isize, c_int> {
+    if caller != 0
+        && let Some(cancel) = core_current_cancellation_wait()
+        && !address_is_inside_this_object(caller)
+    {
+        if cancel.pending() {
+            // SAFETY: no payload has been transmitted yet.
+            unsafe { pthread_testcancel() };
+        }
+        match unsafe {
+            cancel_poll::wait_send(
+                operation,
+                cancel,
+                crate::signal_abi::supports_native_child_wait,
+            )
+        }? {
+            cancel_poll::SendResult::Ready(sent) => return Ok(sent),
+            cancel_poll::SendResult::Cancel => unsafe { pthread_testcancel() },
+            cancel_poll::SendResult::Unsupported => {}
+        }
+    }
+    // No bytes were accepted by an unsupported adapter, so the unchanged raw
+    // operation cannot replay a prefix. Disabled/internal/hosted calls also use
+    // this path without changing socket flags or timeout/handler semantics.
+    unsafe {
+        cancellation_window(caller, || {
+            raw_syscall::sys_sendto(
+                operation.fd,
+                operation.buffer,
+                operation.length,
+                operation.flags,
+                operation.address,
+                operation.address_length,
+            )
+        })
+    }
+}
+
 /// A cancellation point that can wake an already-parked native thread. Keep
 /// every frame up to the exported entry inlined so admission uses its caller.
 #[inline(always)]
@@ -7848,8 +7920,8 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     // output or acquire a semaphore token. Internal libc I/O must still finish
     // without unwinding through non-cancelling Rust callers. The shared native
     // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex, poll, epoll, signal, child, supported socket receive and sleep points use
-    // their windows to observe a request arriving while parked; other syscalls
+    // Native futex, poll, epoll, signal, child, supported socket send/receive and
+    // sleep points observe a request arriving while parked; other syscalls
     // remain pending-request cancellation points until they gain an interruptible
     // native path.
     // With no native threads, current_thread_handle exits at its atomic flag

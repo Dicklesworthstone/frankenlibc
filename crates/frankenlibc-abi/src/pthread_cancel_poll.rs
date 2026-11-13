@@ -659,6 +659,215 @@ pub(super) enum ReceiveResult {
     Unsupported,
 }
 
+/// A send uses per-call nonblocking probes, never F_SETFL: changing the open
+/// file description would also change another thread's socket operations.
+#[derive(Clone, Copy)]
+pub(super) struct SendTo {
+    pub fd: c_int,
+    pub buffer: *const u8,
+    pub length: usize,
+    pub flags: c_int,
+    pub address: *const u8,
+    pub address_length: usize,
+}
+
+impl SendTo {
+    fn supports_slices(self) -> bool {
+        // Preserve record/cork/urgent/fast-open semantics and Linux's clipping
+        // of enormous iov lengths in the original single syscall. The limit
+        // below is no larger than MAX_RW_COUNT on either 4 KiB or 64 KiB pages.
+        if self.flags & !libc::MSG_NOSIGNAL != 0 || self.length > 0x7fff_0000 {
+            return false;
+        }
+        // SAFETY: F_GETFL has no pointer argument and does not mutate the fd.
+        let Ok(status) = (unsafe { syscall::sys_fcntl(self.fd, libc::F_GETFL, 0) }) else {
+            return false;
+        };
+        if status & libc::O_NONBLOCK != 0 {
+            return false;
+        }
+        let socket_type = socket_integer_option(self.fd, libc::SO_TYPE);
+        let domain = socket_integer_option(self.fd, libc::SO_DOMAIN);
+        let protocol = socket_integer_option(self.fd, libc::SO_PROTOCOL);
+        if !matches!(
+            (domain, socket_type, protocol),
+            (
+                Some(libc::AF_UNIX),
+                Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET),
+                Some(0)
+            ) | (
+                Some(libc::AF_INET | libc::AF_INET6),
+                Some(libc::SOCK_STREAM),
+                Some(libc::IPPROTO_TCP)
+            ) | (
+                Some(libc::AF_INET | libc::AF_INET6),
+                Some(libc::SOCK_DGRAM),
+                Some(libc::IPPROTO_UDP)
+            )
+        ) {
+            return false;
+        }
+        let mut timeout = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
+        let mut size = core::mem::size_of::<libc::timeval>() as u32;
+        // SAFETY: the query writes only to aligned, owned kernel ABI storage.
+        // Finite send deadlines retain their original kernel implementation.
+        unsafe {
+            syscall::sys_getsockopt(
+                self.fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDTIMEO,
+                core::ptr::from_mut(&mut timeout).cast(),
+                &mut size,
+            )
+        }
+        .is_ok()
+            && size as usize == core::mem::size_of::<libc::timeval>()
+            && timeout.tv_sec == 0
+            && timeout.tv_usec == 0
+    }
+
+    unsafe fn probe(self, sent: usize) -> Result<isize, c_int> {
+        // A blocking stream send returns its accepted prefix on a later error,
+        // without raising SIGPIPE for that error. Subsequent probes must not
+        // manufacture SIGPIPE merely because that prefix used a separate call.
+        let flags =
+            self.flags | libc::MSG_DONTWAIT | if sent == 0 { 0 } else { libc::MSG_NOSIGNAL };
+        // SAFETY: sent is bounded by length and counts bytes accepted by prior
+        // kernel calls. wrapping_add keeps inaccessible caller pointers under
+        // kernel validation rather than forming a Rust slice/reference to them.
+        unsafe {
+            syscall::sys_sendto(
+                self.fd,
+                self.buffer.wrapping_add(sent),
+                self.length - sent,
+                flags,
+                self.address,
+                self.address_length,
+            )
+        }
+    }
+}
+
+pub(super) enum SendResult {
+    Ready(isize),
+    Cancel,
+    Unsupported,
+}
+
+/// Send ordinary stream or atomic-message data with bounded cancellation.
+/// Stream prefixes are accumulated until the original request completes. A
+/// later cancellation/error returns the already accepted prefix, as a single
+/// interrupted blocking send does; it must never replay or hide those bytes.
+/// Caught signals and nondefault flags/timeouts retain their kernel contracts.
+/// As with receives, concurrent installation and delivery of a new handler
+/// inside a slice is outside this cooperative path's supported scope.
+///
+/// # Safety
+/// The ABI supplies its original send arguments and the enabled descriptor for
+/// this native thread. The signal check inspects actual kernel dispositions.
+pub(super) unsafe fn wait_send(
+    operation: SendTo,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SendResult, c_int> {
+    if !operation.supports_slices() {
+        return Ok(SendResult::Unsupported);
+    }
+    let Ok(mut mask) = SignalMaskGuard::block_all() else {
+        return Ok(SendResult::Unsupported);
+    };
+    // SAFETY: the original arguments and mask remain live across every probe;
+    // cancellation unwinds only after this helper restores the entry mask.
+    let result = unsafe { send_slices(operation, cancel, supports_handlers, &mut mask) };
+    let restored = mask.restore();
+    match result {
+        // Even an adapter-only restoration error cannot erase a committed
+        // send: reporting failure would invite the caller to duplicate bytes
+        // (or an accepted zero-length datagram) by retrying the operation.
+        Ok(SendResult::Ready(sent)) => Ok(SendResult::Ready(sent)),
+        other => restored.and(other),
+    }
+}
+
+#[inline(never)]
+unsafe fn send_slices(
+    operation: SendTo,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+    mask: &mut SignalMaskGuard,
+) -> Result<SendResult, c_int> {
+    let mut sent = 0;
+    loop {
+        if cancel.pending() {
+            return Ok(if sent == 0 {
+                SendResult::Cancel
+            } else {
+                SendResult::Ready(sent as isize)
+            });
+        }
+        if !supports_handlers(mask.original) || !operation.supports_slices() {
+            return Ok(if sent == 0 {
+                SendResult::Unsupported
+            } else {
+                SendResult::Ready(sent as isize)
+            });
+        }
+        // Datagram/SEQPACKET sends are atomic; only stream probes can accept a
+        // prefix. Do not turn a temporary lack of space into a short success.
+        match unsafe { operation.probe(sent) } {
+            Ok(written) => {
+                sent += written as usize;
+                if written == 0 || sent == operation.length {
+                    return Ok(SendResult::Ready(sent as isize));
+                }
+                continue;
+            }
+            Err(libc::EAGAIN) => {}
+            Err(_) if sent != 0 => return Ok(SendResult::Ready(sent as isize)),
+            Err(error) => return Err(error),
+        }
+        let mut interest = libc::pollfd {
+            fd: operation.fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        let mut slice = Timespec {
+            tv_sec: 0,
+            tv_nsec: SLICE_NS,
+        };
+        // A concurrently installed handler may unwind; do not restore its
+        // handler mask during that unwind. Ordinary return reblocks signals.
+        mask.armed = false;
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::from_mut(&mut interest).cast(),
+                1,
+                core::ptr::from_mut(&mut slice).cast(),
+                core::ptr::from_ref(&mask.original).cast(),
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        mask.armed = true;
+        if let Err(error) = result {
+            if sent != 0 {
+                return Ok(SendResult::Ready(sent as isize));
+            }
+            if cancel.pending() {
+                return Ok(SendResult::Cancel);
+            }
+            if error == libc::EINTR {
+                return Err(error);
+            }
+            // A missing/blocked adapter syscall must not replace sendto's own
+            // behavior. Only a zero-progress operation may use the raw fallback.
+            return Ok(SendResult::Unsupported);
+        }
+    }
+}
+
 /// Receive ordinary socket data with bounded native cancellation, leaving every
 /// successful receive committed even if a cancellation request races completion.
 /// Nondefault timeout/low-water/flag contracts and deliverable caught signals

@@ -308,9 +308,14 @@ pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flag
     }
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
-        })
+        crate::pthread_abi::cancellation_point_sendto(
+            sockfd,
+            buf as *const u8,
+            len,
+            flags,
+            std::ptr::null(),
+            0,
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -443,16 +448,14 @@ pub(crate) unsafe fn sendto_cp(
     }
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendto(
-                sockfd,
-                buf as *const u8,
-                len,
-                flags,
-                dest_addr as *const u8,
-                addrlen as usize,
-            )
-        })
+        crate::pthread_abi::cancellation_point_sendto(
+            sockfd,
+            buf as *const u8,
+            len,
+            flags,
+            dest_addr as *const u8,
+            addrlen as usize,
+        )
     } {
         Ok(n) => (n, false),
         Err(e) => {
