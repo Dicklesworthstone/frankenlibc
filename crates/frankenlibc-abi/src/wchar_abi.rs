@@ -20,6 +20,7 @@ use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::stdio_abi::PrintfArgumentBuffer;
+use crate::string_abi::known_remaining_for_write;
 use crate::util::{ArtifactHashMap, artifact_hash_map, scan_c_string};
 
 #[inline]
@@ -2501,7 +2502,7 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         None
     };
     let dst_bound = if repair {
-        known_remaining(dst as usize).map(bytes_to_wchars)
+        known_remaining_for_write(dst as usize, n.saturating_mul(4)).map(bytes_to_wchars)
     } else {
         None
     };
@@ -2588,7 +2589,7 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
         let src_rem = known_remaining(src as usize)
             .map(bytes_to_wchars)
             .unwrap_or(usize::MAX);
-        let dst_rem = known_remaining(dst as usize)
+        let dst_rem = known_remaining_for_write(dst as usize, n.saturating_mul(4))
             .map(bytes_to_wchars)
             .unwrap_or(usize::MAX);
         let limit = src_rem.min(dst_rem);
@@ -2665,7 +2666,7 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
     let mut clamped = false;
 
     if repair {
-        let dst_rem = known_remaining(dst as usize)
+        let dst_rem = known_remaining_for_write(dst as usize, n.saturating_mul(4))
             .map(bytes_to_wchars)
             .unwrap_or(usize::MAX);
         if n > dst_rem {

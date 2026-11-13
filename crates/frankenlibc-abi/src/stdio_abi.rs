@@ -31,6 +31,7 @@ use crate::io_internal_abi::{self, NativeFileBufMode};
 use crate::locale_abi::NumericLocale;
 use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
+use crate::string_abi::known_remaining_for_write;
 use crate::unistd_abi::sys_write_fd;
 use crate::util::{ArtifactHashMap, artifact_hash_map};
 
@@ -8614,7 +8615,7 @@ unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize)
         return;
     }
     if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
-        && known_remaining(pointer).is_some_and(|remaining| remaining < size)
+        && known_remaining_for_write(pointer, size).is_some_and(|remaining| remaining < size)
     {
         global_healing_policy().record(
             "stdio",
@@ -9130,7 +9131,8 @@ unsafe fn registered_snprintf(
     };
     let mut capacity = size;
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(remaining) = known_remaining(dst as usize)
+        && let Some(remaining) =
+            known_remaining_for_write(dst as usize, size.min(buffer.state.len.saturating_add(1)))
         && remaining < capacity
     {
         capacity = remaining;
@@ -10049,7 +10051,7 @@ pub(crate) unsafe fn render_segments(
                                 // non-Deny we trust the caller's pointer.
                                 // (bd-xx2j1: POSIX %n must write to the
                                 // count slot even for untracked pointers.)
-                                if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val)
+                                if let Some(rem) = known_remaining_for_write(ptr_val, size)
                                     && rem < size
                                 {
                                     should_write = false;
@@ -11668,7 +11670,8 @@ unsafe fn direct_snprintf_s(
     let mut has_room = size > 0 && !str_buf.is_null();
 
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(bound) = known_remaining(str_buf as usize)
+        && let Some(bound) =
+            known_remaining_for_write(str_buf as usize, size.min(total_len.saturating_add(1)))
     {
         let safe_size = size.min(bound);
         if safe_size == 0 {
@@ -12567,7 +12570,8 @@ pub unsafe extern "C-unwind" fn snprintf(
     let mut has_room = size > 0 && !str_buf.is_null();
 
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(bound) = known_remaining(str_buf as usize)
+        && let Some(bound) =
+            known_remaining_for_write(str_buf as usize, size.min(total_len.saturating_add(1)))
     {
         let safe_size = size.min(bound);
         if safe_size == 0 {
@@ -12760,7 +12764,8 @@ pub unsafe extern "C-unwind" fn sprintf(
     let mut has_room = true;
 
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(bound) = known_remaining(str_buf as usize)
+        && let Some(bound) =
+            known_remaining_for_write(str_buf as usize, total_len.saturating_add(1))
     {
         if bound == 0 {
             has_room = false;
@@ -14213,7 +14218,8 @@ pub unsafe extern "C-unwind" fn vsnprintf(
     let mut has_room = size > 0 && !str_buf.is_null();
 
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(bound) = known_remaining(str_buf as usize)
+        && let Some(bound) =
+            known_remaining_for_write(str_buf as usize, size.min(total_len.saturating_add(1)))
     {
         let safe_size = size.min(bound);
         if safe_size == 0 {
@@ -14374,7 +14380,8 @@ pub unsafe extern "C-unwind" fn vsprintf(
     let mut has_room = true;
 
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(bound) = known_remaining(str_buf as usize)
+        && let Some(bound) =
+            known_remaining_for_write(str_buf as usize, total_len.saturating_add(1))
     {
         if bound == 0 {
             has_room = false;

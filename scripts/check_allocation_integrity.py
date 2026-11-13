@@ -28,11 +28,19 @@ CASE_IDS = (
     "corrupt-after-warm-tls-strncpy", "corrupt-after-warm-tls-stpncpy",
     "corrupt-after-warm-tls-strcat", "corrupt-after-warm-tls-strncat",
     "corrupt-after-warm-tls-strlcpy", "corrupt-after-warm-tls-strlcat",
+    "corrupt-after-warm-tls-snprintf", "corrupt-after-warm-tls-snprintf-string",
+    "corrupt-after-warm-tls-vsnprintf", "corrupt-after-warm-tls-sprintf",
+    "corrupt-after-warm-tls-vsprintf", "corrupt-after-warm-tls-count-store",
+    "corrupt-header-after-warm-tls-snprintf", "corrupt-after-warm-tls-snprintf-terminator",
+    "corrupt-after-warm-tls-wmemcpy", "corrupt-after-warm-tls-wmemmove",
+    "corrupt-after-warm-tls-wmemset",
 )
 PROVIDERS = {
     "malloc", "free", "mprobe", "memcpy", "__frankenlibc_healing_action_count",
     "__frankenlibc_is_runtime_ready", "strlen", "strcpy", "memset", "memmove",
     "strncpy", "stpncpy", "strcat", "strncat", "strlcpy", "strlcat",
+    "snprintf", "vsnprintf", "sprintf", "vsprintf",
+    "wmemcpy", "wmemmove", "wmemset",
 }
 OBSERVATIONS = (
     "allocation_address", "capacity", "header_generation", "header_size",
@@ -60,10 +68,13 @@ def required_checks(case_id: str, mode: str) -> set[str]:
     if mode == "hardened":
         names.update(("header_layout_24b", "tail_not_disclosed_by_header", "tail_not_legacy_fold"))
     if case_id == "intact":
-        names.update(("memcpy_intact_allowed", "intact_boundary_writes_emit_no_clamp"))
+        names.update(("memcpy_intact_allowed", "intact_boundary_writes_emit_no_clamp",
+                      "intact_snprintf_zero_size_no_write", "intact_snprintf_size_one_terminator"))
         names.update(f"intact_boundary_{symbol}_allowed" for symbol in (
             "memcpy", "memmove", "memset", "strcpy", "strncpy", "stpncpy",
             "strcat", "strncat", "strlcpy", "strlcat",
+            "snprintf", "vsnprintf", "sprintf", "vsprintf", "snprintf_literal",
+            "wmemcpy", "wmemmove", "wmemset",
         ))
     elif case_id == "corrupt-legacy-fold":
         names.update(("mprobe_detects_legacy_fold_tail", "membrane_rejects_legacy_fold_canary",
@@ -79,6 +90,8 @@ def required_checks(case_id: str, mode: str) -> set[str]:
                       "mprobe_agrees_with_warm_rejection", "corrupt_free_emits_quarantine_clamp"))
         names.add("warm_read_detected_within_16_calls" if case_id.endswith("-read")
                   else "boundary_write_denied_immediately")
+        if any(symbol in case_id for symbol in ("printf", "count-store")):
+            names.add("format_return_preserves_required_length")
     return names
 
 
@@ -173,7 +186,8 @@ def validate_audit(path: Path, data: dict, case_id: str) -> dict:
     access_repairs = [record for record in records
                      if record.get("event") == "repair"
                      and (record.get("api_family"), record.get("symbol")) in {
-                         ("string_memory", "memcpy"), ("pointer_validation", cached_symbol)}
+                         ("string_memory", "memcpy"), ("stdio", "snprintf"),
+                         ("pointer_validation", cached_symbol)}
                      and record.get("runtime_mode") == "hardened"
                      and record.get("address") == access_address
                      and record.get("healing_action") == "ClampSize"
@@ -233,7 +247,8 @@ def run(args: argparse.Namespace) -> int:
     cases = [("strict", "intact", False)]
     cases.extend(("hardened", case_id, False) for case_id in CASE_IDS)
     cases.extend(("hardened", case_id, True) for case_id in (
-        "corrupt-after-warm-tls-write", "corrupt-header-after-warm-tls"))
+        "corrupt-after-warm-tls-write", "corrupt-header-after-warm-tls",
+        "corrupt-after-warm-tls-snprintf", "corrupt-header-after-warm-tls-snprintf"))
     records = []
     for mode, case_id, logging in cases:
         label = f"{mode}-{case_id}-{'audit' if logging else 'cache'}"

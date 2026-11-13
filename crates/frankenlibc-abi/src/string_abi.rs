@@ -2283,6 +2283,29 @@ fn maybe_clamp_copy_len_fast(
 /// A write reaching the last cache line must not rely on a previously cached
 /// integrity verdict. The arena performs the check under its lifetime lock;
 /// foreign/strict-allocator bounds continue through their usual lookup path.
+///
+/// Formatting and wide-character entrypoints do not already hold the string
+/// membrane guard. Give them the same write admission without re-entering the
+/// validator from a signal handler, allocator, or policy callback.
+#[inline]
+pub(crate) fn known_remaining_for_write(addr: usize, requested: usize) -> Option<usize> {
+    let remaining = known_remaining(addr);
+    let Some(bound) = remaining else {
+        return remaining;
+    };
+    if runtime_policy::strict_passthrough_active()
+        || requested == 0
+        || requested < bound.saturating_sub(64)
+    {
+        return remaining;
+    }
+    let Some(_guard) = enter_string_membrane_guard() else {
+        return remaining;
+    };
+    recheck_write_boundary(addr, requested, remaining)
+}
+
+/// Recheck a destination while the caller holds the string membrane guard.
 #[inline]
 fn recheck_write_boundary(
     addr: usize,
