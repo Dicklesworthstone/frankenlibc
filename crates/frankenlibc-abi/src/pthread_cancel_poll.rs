@@ -563,37 +563,66 @@ pub(super) enum ChildWaitResult {
 /// Never follow readiness with a blocking receive: another receiver may consume
 /// the data first. MSG_DONTWAIT makes that race an ordinary retry instead.
 #[derive(Clone, Copy)]
-pub(super) struct ReceiveFrom {
-    pub fd: c_int,
-    pub buffer: *mut u8,
-    pub length: usize,
-    pub flags: c_int,
-    pub address: *mut u8,
-    pub address_length: *mut u32,
+pub(super) enum Receive {
+    From {
+        fd: c_int,
+        buffer: *mut u8,
+        length: usize,
+        flags: c_int,
+        address: *mut u8,
+        address_length: *mut u32,
+    },
+    Message {
+        fd: c_int,
+        message: *mut u8,
+        flags: c_int,
+    },
 }
 
-impl ReceiveFrom {
+impl Receive {
+    fn fd(self) -> c_int {
+        match self {
+            Self::From { fd, .. } | Self::Message { fd, .. } => fd,
+        }
+    }
+
+    fn flags(self) -> c_int {
+        match self {
+            Self::From { flags, .. } | Self::Message { flags, .. } => flags,
+        }
+    }
+
     fn supports_slices(self) -> bool {
         // WAITALL, urgent/error-queue data, caller-requested nonblocking I/O,
         // and unfamiliar protocol flags keep the original kernel operation.
-        if self.flags & !(libc::MSG_PEEK | libc::MSG_TRUNC) != 0 {
+        // recvmsg's CLOEXEC changes only acquired descriptor flags, not waiting
+        // behavior. Keep it on every probe so SCM_RIGHTS publication stays atomic.
+        let supported_flags = libc::MSG_PEEK
+            | libc::MSG_TRUNC
+            | if matches!(self, Self::Message { .. }) {
+                libc::MSG_CMSG_CLOEXEC
+            } else {
+                0
+            };
+        if self.flags() & !supported_flags != 0 {
             return false;
         }
+        let fd = self.fd();
         // SAFETY: F_GETFL has no pointer argument and does not mutate the open
         // file description. A failed query must not replace recv's own error.
-        let Ok(status) = (unsafe { syscall::sys_fcntl(self.fd, libc::F_GETFL, 0) }) else {
+        let Ok(status) = (unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) }) else {
             return false;
         };
         if status & libc::O_NONBLOCK != 0 {
             return false;
         }
         if !matches!(
-            socket_integer_option(self.fd, libc::SO_TYPE),
+            socket_integer_option(fd, libc::SO_TYPE),
             Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
         ) || !matches!(
-            socket_integer_option(self.fd, libc::SO_DOMAIN),
+            socket_integer_option(fd, libc::SO_DOMAIN),
             Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
-        ) || socket_integer_option(self.fd, libc::SO_RCVLOWAT) != Some(1)
+        ) || socket_integer_option(fd, libc::SO_RCVLOWAT) != Some(1)
         {
             return false;
         }
@@ -607,7 +636,7 @@ impl ReceiveFrom {
         // readiness waits; finite timeouts retain their exact kernel contract.
         unsafe {
             syscall::sys_getsockopt(
-                self.fd,
+                fd,
                 libc::SOL_SOCKET,
                 libc::SO_RCVTIMEO,
                 core::ptr::from_mut(&mut timeout).cast(),
@@ -621,17 +650,42 @@ impl ReceiveFrom {
     }
 
     unsafe fn probe(self) -> Result<isize, c_int> {
+        // SAFETY: retain the original buffer/header graph through the kernel
+        // call; no payload, address or control metadata is copied in Rust.
+        unsafe { self.call(libc::MSG_DONTWAIT) }
+    }
+
+    pub(super) unsafe fn blocking(self) -> Result<isize, c_int> {
+        // SAFETY: the originating entry keeps all caller or prepared storage live.
+        unsafe { self.call(0) }
+    }
+
+    unsafe fn call(self, additional_flags: c_int) -> Result<isize, c_int> {
         // SAFETY: the public entry retains all original pointer arguments.
-        // The kernel validates them and owns all payload/address publication.
-        unsafe {
-            syscall::sys_recvfrom(
-                self.fd,
-                self.buffer,
-                self.length,
-                self.flags | libc::MSG_DONTWAIT,
-                self.address,
-                self.address_length,
-            )
+        // The kernel validates them and owns payload/address/control publication.
+        // A successful recvmsg may transfer SCM_RIGHTS ownership, so the caller
+        // must publish its result without retrying or acting on a racing cancel.
+        match self {
+            Self::From {
+                fd,
+                buffer,
+                length,
+                flags,
+                address,
+                address_length,
+            } => unsafe {
+                syscall::sys_recvfrom(
+                    fd,
+                    buffer,
+                    length,
+                    flags | additional_flags,
+                    address,
+                    address_length,
+                )
+            },
+            Self::Message { fd, message, flags } => unsafe {
+                syscall::sys_recvmsg(fd, message, flags | additional_flags)
+            },
         }
     }
 }
@@ -880,7 +934,7 @@ unsafe fn send_slices(
 /// descriptor belonging to the calling native thread. `supports_handlers`
 /// inspects actual kernel dispositions while the original mask is blocked.
 pub(super) unsafe fn wait_receive(
-    operation: ReceiveFrom,
+    operation: Receive,
     cancel: CancellationWait,
     supports_handlers: fn(u64) -> bool,
 ) -> Result<ReceiveResult, c_int> {
@@ -895,12 +949,18 @@ pub(super) unsafe fn wait_receive(
     // SAFETY: operation's pointers and the owned mask remain live across every
     // nonblocking probe and bounded wait; no cancellation unwinds in this helper.
     let result = unsafe { receive_slices(operation, cancel, supports_handlers, &mut mask) };
-    mask.restore().and(result)
+    let restored = mask.restore();
+    match result {
+        // A successful receive has already consumed bytes and may have installed
+        // descriptors. An adapter-only error must not hide that ownership transfer.
+        Ok(ReceiveResult::Ready(received)) => Ok(ReceiveResult::Ready(received)),
+        other => restored.and(other),
+    }
 }
 
 #[inline(never)]
 unsafe fn receive_slices(
-    operation: ReceiveFrom,
+    operation: Receive,
     cancel: CancellationWait,
     supports_handlers: fn(u64) -> bool,
     mask: &mut SignalMaskGuard,
@@ -920,7 +980,7 @@ unsafe fn receive_slices(
             Err(error) => return Err(error),
         }
         let mut interest = libc::pollfd {
-            fd: operation.fd,
+            fd: operation.fd(),
             events: libc::POLLIN,
             revents: 0,
         };

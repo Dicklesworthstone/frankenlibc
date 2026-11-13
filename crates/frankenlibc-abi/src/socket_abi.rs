@@ -985,9 +985,7 @@ pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_
         .map_or(msg, |message| message.as_mut_ptr());
 
     let (rc, adverse) = match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_recvmsg(sockfd, submitted.cast(), flags)
-        })
+        crate::pthread_abi::cancellation_point_recvmsg(sockfd, submitted.cast(), flags)
     } {
         Ok(n) => {
             if let Some(message) = prepared.as_ref() {

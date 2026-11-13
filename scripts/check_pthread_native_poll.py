@@ -98,6 +98,16 @@ RECEIVE_CASES = tuple(
     "recv-alias-blocked", "recv-alias-pending",
     "recv-fortified-blocked", "recv-fortified-pending",
     "recvfrom-fortified-blocked", "recvfrom-fortified-pending",
+) + tuple(
+    f"recvmsg-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "peek",
+        "nonblock", "dontwait", "timeout", "signal", "signal-restart", "competing", "errors",
+        "length-zero", "waitall", "lowat", "eof", "alias-blocked", "alias-pending",
+        "datagram-blocked", "datagram-pending", "datagram-ready-late", "datagram-zero",
+        "datagram-truncate", "rights", "rights-cloexec", "control-truncate",
+        "mapped-blocked", "mapped-pending", "mapped-ready-late",
+    )
 )
 SEND_CASES = tuple(
     f"{entry}-{case}"
@@ -232,7 +242,9 @@ def main() -> int:
             "pselect-alias-", "pselect-"
         ).replace("select-alias-", "select-").replace(
             "recv-alias-", "recv-"
-        ).replace("send-alias-", "send-").replace("sendto-alias-", "sendto-").replace(
+        ).replace("recvmsg-alias-", "recvmsg-").replace(
+            "send-alias-", "send-"
+        ).replace("sendto-alias-", "sendto-").replace(
             "pause-alias-", "pause-"
         ).replace("sigsuspend-alias-", "sigsuspend-")
         if "-alias-" in case and not case.endswith("-alias-remainder"):

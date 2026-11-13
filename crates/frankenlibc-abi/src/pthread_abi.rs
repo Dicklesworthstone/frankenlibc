@@ -7816,7 +7816,7 @@ pub(crate) unsafe fn cancellation_point_recvfrom(
     unsafe {
         cancellation_receive_window(
             caller,
-            cancel_poll::ReceiveFrom {
+            cancel_poll::Receive::From {
                 fd,
                 buffer,
                 length,
@@ -7828,13 +7828,28 @@ pub(crate) unsafe fn cancellation_point_recvfrom(
     }
 }
 
+/// Message receives share the same bounded native wait while the kernel owns
+/// iovec, source-address and ancillary publication. Capture the external caller
+/// before entering the shared window, including the reserved-namespace alias.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_recvmsg(
+    fd: c_int,
+    message: *mut u8,
+    flags: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(caller, cancel_poll::Receive::Message { fd, message, flags })
+    }
+}
+
 /// Own no drop state across the unchanged hosted asynchronous window. Native
 /// cancellation happens only after the adapter restores the entry signal mask;
 /// a completed receive always returns its bytes and source-address publication.
 #[inline(never)]
 unsafe fn cancellation_receive_window(
     caller: usize,
-    operation: cancel_poll::ReceiveFrom,
+    operation: cancel_poll::Receive,
 ) -> Result<isize, c_int> {
     if caller != 0
         && let Some(cancel) = core_current_cancellation_wait()
@@ -7859,18 +7874,7 @@ unsafe fn cancellation_receive_window(
     // Disabled, internal, hosted and unsupported socket contracts retain the
     // original syscall. A returning testcancel also follows this path if a
     // signal handler disabled cancellation while the entry mask was restored.
-    unsafe {
-        cancellation_window(caller, || {
-            raw_syscall::sys_recvfrom(
-                operation.fd,
-                operation.buffer,
-                operation.length,
-                operation.flags,
-                operation.address,
-                operation.address_length,
-            )
-        })
-    }
+    unsafe { cancellation_window(caller, || operation.blocking()) }
 }
 
 /// Socket send cancellation, including requests arriving while the send buffer

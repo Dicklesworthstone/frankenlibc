@@ -1545,27 +1545,37 @@ enum receive_kind {
     RECEIVE_READY_LATE, RECEIVE_PEEK, RECEIVE_NONBLOCK, RECEIVE_DONTWAIT,
     RECEIVE_TIMEOUT, RECEIVE_SIGNAL, RECEIVE_SIGNAL_RESTART, RECEIVE_COMPETING,
     RECEIVE_WAITALL, RECEIVE_LOWAT, RECEIVE_EOF, RECEIVE_ZERO, RECEIVE_ERRORS,
-    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE
+    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE, RECEIVE_RIGHTS, RECEIVE_RIGHTS_CLOEXEC,
+    RECEIVE_CONTROL_TRUNCATE
 };
 struct receive_probe {
     struct state observed;
     enum receive_kind kind;
-    int fd, from, fortified, flags;
+    int fd, from, fortified, flags, message, mapped;
     size_t length;
     unsigned char data[8];
     struct sockaddr_storage address;
     socklen_t address_length;
+    struct msghdr header;
+    struct iovec vectors[9];
+    union {
+        struct cmsghdr align;
+        unsigned char bytes[CMSG_SPACE(sizeof(int))];
+    } control;
 };
 static ssize_t (*selected_recv)(int, void *, size_t, int);
 static ssize_t (*selected_recvfrom)(int, void *, size_t, int, struct sockaddr *, socklen_t *);
 static ssize_t (*selected_recv_chk)(int, void *, size_t, size_t, int);
 static ssize_t (*selected_recvfrom_chk)(int, void *, size_t, size_t, int,
                                       struct sockaddr *, socklen_t *);
+static ssize_t (*selected_recvmsg)(int, struct msghdr *, int);
 
-static int pin_receive_provider(const char *expected, int from, int alias, int fortified) {
+static int pin_receive_provider(const char *expected, int from, int alias, int fortified,
+                                int message) {
     int base = pin_providers(expected, 0, EVENT_NONE);
     if (base != 0) return base;
-    const char *name = from ? (fortified ? "__recvfrom_chk" : "recvfrom") :
+    const char *name = message ? (alias ? "__recvmsg" : "recvmsg") :
+                      from ? (fortified ? "__recvfrom_chk" : "recvfrom") :
                              fortified ? "__recv_chk" : alias ? "__recv" : "recv";
     Dl_info info = {0};
     struct stat actual, wanted;
@@ -1576,7 +1586,8 @@ static int pin_receive_provider(const char *expected, int from, int alias, int f
         fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
         return 86;
     }
-    if (from && fortified) selected_recvfrom_chk = (__typeof__(selected_recvfrom_chk))symbol;
+    if (message) selected_recvmsg = (__typeof__(selected_recvmsg))symbol;
+    else if (from && fortified) selected_recvfrom_chk = (__typeof__(selected_recvfrom_chk))symbol;
     else if (from) selected_recvfrom = (__typeof__(selected_recvfrom))symbol;
     else if (fortified) selected_recv_chk = (__typeof__(selected_recv_chk))symbol;
     else selected_recv = (__typeof__(selected_recv))symbol;
@@ -1584,6 +1595,7 @@ static int pin_receive_provider(const char *expected, int from, int alias, int f
 }
 
 static ssize_t receive_call(struct receive_probe *probe) {
+    if (probe->message) return selected_recvmsg(probe->fd, &probe->header, probe->flags);
     if (probe->from && probe->fortified)
         return selected_recvfrom_chk(probe->fd, probe->data, probe->length, sizeof(probe->data),
                                      probe->flags, (struct sockaddr *)&probe->address,
@@ -1685,6 +1697,8 @@ static void observe_receive_parked(struct receive_probe *probe, int memory) {
             REQUIRE(args[4] == sizeof(mask) && ((mask >> (SIGUSR2 - 1)) & 1) == 1 &&
                         ((mask >> (SIGUSR1 - 1)) & 1) == 0,
                     "native receive atomically reinstates the complete original mask");
+        } else if (probe->message) {
+            if (number != SYS_recvmsg || args[0] != (unsigned)probe->fd) goto retry_receive;
         } else if (number != SYS_recvfrom || args[0] != (unsigned)probe->fd ||
                    args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
             goto retry_receive;
@@ -1703,22 +1717,65 @@ static void send_receive_bytes(int fd, const char *bytes, size_t length) {
             "send exact receive payload");
 }
 
+static void send_receive_rights(int fd, int transferred) {
+    union {
+        struct cmsghdr align;
+        unsigned char bytes[CMSG_SPACE(sizeof(int))];
+    } control = {0};
+    struct iovec vector = {(void *)"DATA", 4};
+    struct msghdr message = {
+        .msg_iov = &vector, .msg_iovlen = 1,
+        .msg_control = control.bytes, .msg_controllen = sizeof(control.bytes),
+    };
+    struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    header->cmsg_len = CMSG_LEN(sizeof(transferred));
+    memcpy(CMSG_DATA(header), &transferred, sizeof(transferred));
+    REQUIRE(syscall(SYS_sendmsg, fd, &message, MSG_NOSIGNAL) == 4,
+            "queue one independently owned descriptor with its payload");
+}
+
 static void receive_initialize(struct receive_probe *probe, enum receive_kind kind,
-                               int fd, int from, int fortified) {
+                               int fd, int from, int fortified, int message, int mapped) {
     memset(probe, 0, sizeof(*probe));
     probe->kind = kind;
     probe->fd = fd;
     probe->from = from;
     probe->fortified = fortified;
+    probe->message = message;
+    probe->mapped = mapped;
     probe->flags = kind == RECEIVE_PEEK ? MSG_PEEK :
                    kind == RECEIVE_DONTWAIT ? MSG_DONTWAIT :
                    kind == RECEIVE_WAITALL ? MSG_WAITALL :
-                   kind == RECEIVE_TRUNCATE ? MSG_TRUNC : 0;
+                   kind == RECEIVE_TRUNCATE ? MSG_TRUNC :
+                   kind == RECEIVE_RIGHTS_CLOEXEC ? MSG_CMSG_CLOEXEC : 0;
     probe->length = kind == RECEIVE_LENGTH_ZERO ? 0 :
-                    kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT ? 4 : 1;
+                    kind == RECEIVE_TRUNCATE ? 1 :
+                    kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || message ? 4 : 1;
     probe->address_length = sizeof(probe->address);
     memset(probe->data, 0xa5, sizeof(probe->data));
     memset(&probe->address, 0xa5, sizeof(probe->address));
+    if (message) {
+        /* A zero-length middle vector and a split payload exercise the actual
+         * recvmsg scatter path, including a header retained across EAGAIN probes.
+         * Nine vectors exceed the hardened importer's inline capacity, so its
+         * mapping and Rust cleanup landing pad must survive native cancellation. */
+        probe->vectors[0] = (struct iovec){probe->data, probe->length != 0 ? 1 : 0};
+        probe->vectors[1] = (struct iovec){probe->data + 1, 0};
+        probe->vectors[2] = (struct iovec){probe->data + 1,
+                                         probe->length != 0 ? probe->length - 1 : 0};
+        memset(&probe->control, 0xa5, sizeof(probe->control));
+        probe->header = (struct msghdr){
+            .msg_name = from ? &probe->address : NULL,
+            .msg_namelen = from ? sizeof(probe->address) : 0,
+            .msg_iov = probe->vectors,
+            .msg_iovlen = mapped ? 9 : 3,
+            .msg_control = probe->control.bytes,
+            .msg_controllen = kind == RECEIVE_CONTROL_TRUNCATE ? 1 : sizeof(probe->control.bytes),
+            .msg_flags = 0x13579,
+        };
+    }
     probe->observed.result = -222;
     atomic_init(&probe->observed.ready, 0);
     atomic_init(&probe->observed.release, 0);
@@ -1737,32 +1794,60 @@ static void check_received_payload(const struct receive_probe *probe,
         REQUIRE(probe->data[i] == 0xa5, "receive leaves trailing buffer bytes alone");
     if (probe->from) {
         const struct sockaddr_in *address = (const struct sockaddr_in *)&probe->address;
-        REQUIRE(probe->address_length == sizeof(*address) && address->sin_family == AF_INET &&
+        socklen_t length = probe->message ? probe->header.msg_namelen : probe->address_length;
+        REQUIRE(length == sizeof(*address) && address->sin_family == AF_INET &&
                     address->sin_addr.s_addr == peer->sin_addr.s_addr &&
                     address->sin_port == peer->sin_port,
                 "recvfrom publishes the actual sender address exactly once");
     }
+    if (probe->message) {
+        REQUIRE(probe->header.msg_iov == probe->vectors &&
+                    probe->header.msg_iovlen == (probe->mapped ? 9U : 3U) &&
+                    probe->header.msg_control == probe->control.bytes &&
+                    probe->header.msg_name == (probe->from ? &probe->address : NULL),
+                "recvmsg publishes output scalars without replacing the caller's pointer graph");
+        int expected_flags = probe->kind == RECEIVE_TRUNCATE ? MSG_TRUNC :
+                             probe->kind == RECEIVE_CONTROL_TRUNCATE ? MSG_CTRUNC : 0;
+        /* Linux echoes MSG_CMSG_CLOEXEC in msg_flags when it was requested. */
+        expected_flags |= probe->flags & MSG_CMSG_CLOEXEC;
+        REQUIRE(probe->header.msg_flags == expected_flags,
+                "recvmsg preserves truncation and close-on-exec result flags");
+        if (probe->kind != RECEIVE_RIGHTS && probe->kind != RECEIVE_RIGHTS_CLOEXEC)
+            REQUIRE(probe->header.msg_controllen == 0,
+                    "recvmsg reports zero ancillary bytes when none fit or none were sent");
+    }
 }
 
 static int receive_contract_main(char **argv) {
+    int message = strncmp(case_name, "recvmsg-", 8) == 0;
     int from = strncmp(case_name, "recvfrom-", 9) == 0;
-    const char *suffix = case_name + (from ? 9 : 5);
+    const char *suffix = case_name + (message ? 8 : from ? 9 : 5);
+    int mapped = strncmp(suffix, "mapped-", 7) == 0;
+    if (mapped) suffix += 7;
     int alias = strncmp(suffix, "alias-", 6) == 0;
     int fortified = strncmp(suffix, "fortified-", 10) == 0;
     if (alias) suffix += 6;
     if (fortified) suffix += 10;
+    if (message && strncmp(suffix, "datagram-", 9) == 0) {
+        from = 1;
+        suffix += 9;
+    }
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late", "peek",
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "competing", "waitall", "lowat", "eof", "zero", "errors",
-                          "length-zero", "truncate"};
+                          "length-zero", "truncate", "rights", "rights-cloexec",
+                          "control-truncate"};
     int value = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) value = (int)i;
-    if (value < 0 || (from && alias) || (!from && (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE)) ||
-        (from && (value == RECEIVE_WAITALL || value == RECEIVE_LOWAT || value == RECEIVE_EOF)))
+    if (value < 0 || (from && alias && !message) || (message && fortified) ||
+        (mapped && !message) ||
+        (!from && (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE)) ||
+        (from && (value == RECEIVE_WAITALL || value == RECEIVE_LOWAT || value == RECEIVE_EOF)) ||
+        (value >= RECEIVE_RIGHTS && (!message || from)))
         return 2;
     enum receive_kind kind = (enum receive_kind)value;
-    int pin = pin_receive_provider(argv[2], from, alias, fortified);
+    int pin = pin_receive_provider(argv[2], from, alias, fortified, message);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
                     strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
@@ -1815,10 +1900,18 @@ static int receive_contract_main(char **argv) {
     int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
     if (memory < 0) skip("socket-wait-snapshot-unavailable");
     struct receive_probe probe;
-    receive_initialize(&probe, kind, pair[0], from, fortified);
+    receive_initialize(&probe, kind, pair[0], from, fortified, message, mapped);
+    size_t sent_length = kind == RECEIVE_LENGTH_ZERO ? 1 : probe.length;
+    int rights[2] = {-1, -1};
+    if (kind >= RECEIVE_RIGHTS) {
+        REQUIRE(pipe2(rights, O_CLOEXEC) == 0, "create the transferred descriptor's pipe");
+        REQUIRE(syscall(SYS_write, rights[1], "R", 1) == 1,
+                "queue an independent descriptor-identity marker");
+    }
+    size_t original_descriptors = descriptor_count();
     if (kind == RECEIVE_PENDING || kind == RECEIVE_READY || kind == RECEIVE_PEEK ||
         kind == RECEIVE_LENGTH_ZERO)
-        send_receive_bytes(pair[1], "DATA", 1);
+        send_receive_bytes(pair[1], "DATA", sent_length);
     if (kind == RECEIVE_TRUNCATE) send_receive_bytes(pair[1], "DATA", 4);
     if (kind == RECEIVE_ZERO) send_receive_bytes(pair[1], "", 0);
     if (kind == RECEIVE_EOF)
@@ -1831,14 +1924,14 @@ static int receive_contract_main(char **argv) {
     atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
     if (kind == RECEIVE_COMPETING) {
         struct receive_probe competitor;
-        receive_initialize(&competitor, kind, pair[0], from, fortified);
+        receive_initialize(&competitor, kind, pair[0], from, fortified, message, mapped);
         REQUIRE(pthread_create(&competitor.observed.thread, NULL, receive_worker, &competitor) == 0,
                 "create competing socket receiver");
         wait_ready(&competitor.observed);
         atomic_store_explicit(&competitor.observed.release, 1, memory_order_release);
         observe_receive_parked(&probe, memory);
         observe_receive_parked(&competitor, memory);
-        send_receive_bytes(pair[1], "DATA", 1);
+        send_receive_bytes(pair[1], "DATA", sent_length);
         int64_t deadline = monotonic_ns() + 2000000000;
         while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire) &&
                !atomic_load_explicit(&competitor.observed.returned, memory_order_acquire)) {
@@ -1860,8 +1953,20 @@ static int receive_contract_main(char **argv) {
     } else {
         if (kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
             kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART ||
-            kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT) {
+            kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || kind >= RECEIVE_RIGHTS) {
             observe_receive_parked(&probe, memory);
+            if (kind >= RECEIVE_RIGHTS) {
+                /* Cross several empty native retries before acquiring control
+                 * data, proving EAGAIN did not shrink the caller's capacity. */
+                int64_t deadline = monotonic_ns() + 120000000;
+                while (monotonic_ns() < deadline) pause_briefly();
+                observe_receive_parked(&probe, memory);
+                REQUIRE(probe.header.msg_controllen ==
+                            (kind == RECEIVE_CONTROL_TRUNCATE ? 1 : sizeof(probe.control.bytes)) &&
+                            probe.header.msg_flags == 0x13579,
+                        "empty recvmsg probes leave the output header untouched");
+                send_receive_rights(pair[1], rights[0]);
+            }
             if (kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED)
                 REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request blocked receive cancellation");
             if (kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART) {
@@ -1887,7 +1992,7 @@ static int receive_contract_main(char **argv) {
                 send_receive_bytes(pair[1], "ATA", 3);
             } else if (kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
                        kind == RECEIVE_SIGNAL_RESTART) {
-                send_receive_bytes(pair[1], "DATA", 1);
+                send_receive_bytes(pair[1], "DATA", sent_length);
             }
         }
         void *result = join_bounded(&probe.observed);
@@ -1898,6 +2003,11 @@ static int receive_contract_main(char **argv) {
             REQUIRE(!probe.observed.returned && probe.data[0] == 0xa5 &&
                         probe.address_length == sizeof(probe.address),
                     "cancellation precedes payload and address publication");
+            if (message)
+                REQUIRE(probe.header.msg_flags == 0x13579 &&
+                            probe.header.msg_controllen == sizeof(probe.control.bytes) &&
+                            probe.header.msg_namelen == (from ? sizeof(probe.address) : 0),
+                        "cancelled recvmsg publishes no ancillary or source metadata");
         } else if (kind == RECEIVE_NONBLOCK || kind == RECEIVE_DONTWAIT || kind == RECEIVE_TIMEOUT) {
             REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
                     "caller nonblocking and timeout contracts preserve EAGAIN");
@@ -1913,11 +2023,35 @@ static int receive_contract_main(char **argv) {
         } else if (kind != RECEIVE_ERRORS) {
             check_received_payload(&probe, &peer);
         }
+        if (kind == RECEIVE_RIGHTS || kind == RECEIVE_RIGHTS_CLOEXEC) {
+            struct cmsghdr *control = CMSG_FIRSTHDR(&probe.header);
+            REQUIRE(control != NULL && control->cmsg_level == SOL_SOCKET &&
+                        control->cmsg_type == SCM_RIGHTS && control->cmsg_len == CMSG_LEN(sizeof(int)) &&
+                        CMSG_NXTHDR(&probe.header, control) == NULL,
+                    "recvmsg publishes exactly one complete SCM_RIGHTS record");
+            int acquired = -1;
+            memcpy(&acquired, CMSG_DATA(control), sizeof(acquired));
+            REQUIRE(acquired >= 0 && descriptor_count() == original_descriptors + 1,
+                    "recvmsg acquires exactly one descriptor without retries or leaks");
+            int descriptor_flags = fcntl(acquired, F_GETFD);
+            REQUIRE(descriptor_flags >= 0 && ((descriptor_flags & FD_CLOEXEC) != 0) ==
+                        (kind == RECEIVE_RIGHTS_CLOEXEC),
+                    "MSG_CMSG_CLOEXEC atomically controls received descriptor inheritance");
+            char marker = 0;
+            REQUIRE(syscall(SYS_read, acquired, &marker, 1) == 1 && marker == 'R',
+                    "the published descriptor refers to the transmitted object");
+            REQUIRE(close(acquired) == 0, "release received descriptor");
+        }
+        if (kind >= RECEIVE_RIGHTS)
+            REQUIRE(descriptor_count() == original_descriptors,
+                    "truncated or accepted ancillary data leaves no hidden descriptor");
     }
     if (kind == RECEIVE_PENDING || kind == RECEIVE_PEEK || (kind == RECEIVE_LENGTH_ZERO && !from)) {
-        unsigned char remaining = 0;
-        REQUIRE(syscall(SYS_recvfrom, pair[0], &remaining, 1, MSG_DONTWAIT, NULL, NULL) == 1 &&
-                    remaining == 'D', "pending cancellation, PEEK and empty stream reads preserve payload");
+        unsigned char remaining[8] = {0};
+        REQUIRE(syscall(SYS_recvfrom, pair[0], remaining, sizeof(remaining), MSG_DONTWAIT,
+                        NULL, NULL) == (ssize_t)sent_length &&
+                    memcmp(remaining, "DATA", sent_length) == 0,
+                "pending cancellation, PEEK and empty stream reads preserve payload");
     }
     if (kind != RECEIVE_EOF) {
         unsigned char remaining;
@@ -1925,6 +2059,9 @@ static int receive_contract_main(char **argv) {
                     errno == EAGAIN, "receive consumes each queued payload at most once");
     }
     REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "receive never changes shared O_NONBLOCK flags");
+    if (kind >= RECEIVE_RIGHTS)
+        REQUIRE(close(rights[0]) == 0 && close(rights[1]) == 0,
+                "release transferred descriptor source");
     REQUIRE(close(memory) == 0 && close(pair[0]) == 0 && close(pair[1]) == 0,
             "release receive fixture descriptors");
     printf("pthread-native-poll:%s:PASS\n", case_name);
@@ -2298,7 +2435,8 @@ int main(int argc, char **argv) {
     case_name = argv[1];
     if (strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0)
         return send_contract_main(argv);
-    if (strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0)
+    if (strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0 ||
+        strncmp(case_name, "recvmsg-", 8) == 0)
         return receive_contract_main(argv);
     if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);
     if (strncmp(case_name, "select-", 7) == 0 || strncmp(case_name, "pselect-", 8) == 0)
