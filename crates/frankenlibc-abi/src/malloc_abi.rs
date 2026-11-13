@@ -2305,8 +2305,8 @@ pub fn malloc_segment_retire_for_tests(ptr: *mut c_void) -> bool {
 /// reentry protection as the public allocator entrypoints.
 pub(crate) unsafe fn raw_alloc(size: usize) -> *mut c_void {
     let ptr = unsafe { native_libc_malloc(size) };
-    fallback_insert_sized(ptr, size.max(1));
-    ptr
+    // SAFETY: this fresh allocation has not escaped to the caller.
+    unsafe { register_fallback_allocation(None, ptr, size.max(1)) }
 }
 
 /// Raw free for internally-allocated memory.
@@ -3390,9 +3390,10 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
 /// Returns the host allocator's physical capacity for a fallback-tracked pointer.
 ///
-/// A pointer reaches this helper only after the fallback table proved it came from the
-/// host allocator.  Returning `None` makes callers retain the conservative realloc
-/// path when resolution is unavailable or this call would re-enter the allocator.
+/// Callers establish host ownership through the fallback table or the valid
+/// realloc contract after excluding all of our native ownership classes.
+/// Returning `None` leaves the old allocation intact when resolution is
+/// unavailable or this call would re-enter the allocator.
 #[inline]
 unsafe fn native_libc_malloc_usable_size(ptr: *mut c_void) -> Option<usize> {
     #[cfg(feature = "standalone")]
@@ -3548,12 +3549,17 @@ unsafe fn native_libc_posix_memalign(
         return EINVAL as c_int;
     }
     let req = size.max(1);
+    // This interface reports allocation errors through its return value.
+    // Keep native allocation and provenance rollback from changing errno.
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     // SAFETY: direct call to libc allocator symbol.
     let ptr = unsafe { native_libc_memalign(alignment, req) };
+    // SAFETY: registration owns this fresh allocation until it publishes it.
+    let ptr = unsafe { register_fallback_allocation(None, ptr, req) };
+    unsafe { set_abi_errno(saved_errno) };
     if ptr.is_null() {
         return ENOMEM as c_int;
     }
-    fallback_insert_sized(ptr, req);
     // SAFETY: memptr non-null and caller-provided writable out pointer.
     unsafe { *memptr = ptr };
     0
@@ -4940,7 +4946,7 @@ fn fallback_insert_sized_for_slot(
     slot: &'static AllocatorReentrySlot,
     ptr: *mut c_void,
     size: usize,
-) {
+) -> bool {
     // Single-threaded fast path, mirroring what `fallback_remove_sized_for_slot`
     // has always done on the free side. malloc took a global spin-CAS on EVERY
     // call while free skipped its lock in ST — an asymmetry recorded on
@@ -4967,9 +4973,90 @@ fn fallback_insert_sized_for_slot(
     };
     if let Some(idx) = indexed {
         remember_fallback_cache(slot, ptr, idx);
+        true
     } else {
         clear_fallback_cache(slot);
+        false
     }
+}
+
+/// Publish provenance before a fresh fallback allocation can escape. Host
+/// allocation and metadata commitment can fail independently: a tcache hit can
+/// succeed even when RLIMIT_DATA denies the table's first writable page.
+/// Returning that untracked pointer would make hardened free ignore it and
+/// hardened realloc discard its contents as a foreign-pointer repair.
+///
+/// # Safety
+/// `ptr` is null or a fresh, unexposed allocation from the native/bump backend.
+/// A supplied slot is protected by the caller's allocator reentry guard.
+#[inline]
+unsafe fn register_fallback_allocation(
+    slot: Option<&'static AllocatorReentrySlot>,
+    ptr: *mut c_void,
+    size: usize,
+) -> *mut c_void {
+    if ptr.is_null() {
+        return ptr;
+    }
+    let registered = match slot {
+        Some(slot) => fallback_insert_sized_for_slot(slot, ptr, size),
+        None => fallback_insert_sized_index(ptr, size).is_some(),
+    };
+    if registered || is_bump_ptr(ptr) {
+        // Bump allocations carry authoritative provenance in their own header
+        // or live mapping registry. Their table row is only a secondary index.
+        return ptr;
+    }
+    // SAFETY: the failed metadata publication left this fresh host allocation
+    // private to us. Release it before reporting ENOMEM; free may change errno.
+    unsafe {
+        native_libc_free(ptr);
+        set_abi_errno(ENOMEM as c_int);
+    }
+    std::ptr::null_mut()
+}
+
+/// Resize a host fallback transactionally where provenance is required for
+/// later hardened operations. Host realloc may retire the old block before we
+/// discover that its replacement cannot be indexed. Allocate and register first
+/// so either failure leaves the old pointer, contents and table row intact.
+/// The ordinary strict host-realloc fast path keeps its existing behavior.
+///
+/// # Safety
+/// `ptr` is a live exact host allocation, `size` is nonzero, and the caller has
+/// excluded segment/arena/bump ownership and signal/table-lock reentry.
+unsafe fn realloc_tracked_fallback(ptr: *mut c_void, size: usize) -> *mut c_void {
+    let tracked_size = fallback_size(ptr);
+    if let Some(old_size) = tracked_size
+        && size <= old_size
+    {
+        let updated = fallback_update_size(ptr, size);
+        debug_assert!(updated, "live fallback row disappeared during realloc");
+        return ptr;
+    }
+    // A host API can supply a valid block that did not cross public malloc.
+    // Only use the native allocator's capacity after callers have established
+    // this ownership class; an unavailable resolver must preserve the old block.
+    let Some(old_size) = tracked_size.or_else(|| unsafe { native_libc_malloc_usable_size(ptr) })
+    else {
+        unsafe { set_abi_errno(ENOMEM as c_int) };
+        return std::ptr::null_mut();
+    };
+    let out = unsafe { native_libc_malloc(size) };
+    // SAFETY: out has not escaped, and ptr is still live and independently owned.
+    let out = unsafe { register_fallback_allocation(None, out, size) };
+    if out.is_null() {
+        return out;
+    }
+    // SAFETY: old_size is trusted metadata or native allocator capacity; the
+    // fresh replacement is disjoint and valid for size bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+    }
+    let _ = fallback_remove(ptr);
+    // SAFETY: the replacement now owns the preserved prefix and its provenance.
+    unsafe { native_libc_free(ptr) };
+    out
 }
 
 fn fallback_remove(ptr: *mut c_void) -> bool {
@@ -5735,6 +5822,10 @@ unsafe fn strict_small_or_host_allocate(
         // bounded-segment-arena exhaustion.
         unsafe { native_libc_malloc(requested) }
     };
+    // SAFETY: no caller has observed this host allocation yet. Publishing its
+    // metadata here also protects segment-to-host realloc before the old slot
+    // is retired; the segment path above needs no fallback-table entry.
+    let ptr = unsafe { register_fallback_allocation(Some(slot), ptr, requested) };
     (ptr, None)
 }
 
@@ -5809,7 +5900,7 @@ unsafe fn realloc_segment_owned(
         return ptr;
     }
 
-    let (out, segment_class) = match slot {
+    let (mut out, segment_class) = match slot {
         Some(slot) => match segment_allocate(slot, requested, false) {
             Some((out, class_index)) => (out, Some(class_index)),
             None => {
@@ -5842,6 +5933,10 @@ unsafe fn realloc_segment_owned(
         }
         None => (unsafe { native_libc_malloc(requested) }, None),
     };
+    if segment_class.is_none() {
+        // SAFETY: the replacement is still private and the old segment is live.
+        out = unsafe { register_fallback_allocation(slot, out, requested) };
+    }
     if out.is_null() {
         return out;
     }
@@ -5853,9 +5948,6 @@ unsafe fn realloc_segment_owned(
             out.cast::<u8>(),
             old_requested.min(requested),
         );
-    }
-    if segment_class.is_none() {
-        fallback_insert_sized(out, requested);
     }
     if let SegmentFreeResult::Freed { size, bin } = segment_free(slot, ptr) {
         record_free_stats_binned(slot, size as usize, bin as usize);
@@ -5877,7 +5969,8 @@ unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
     // SAFETY: early loader/bootstrap allocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_malloc(req) };
-    fallback_insert_sized(out, req);
+    // SAFETY: this fresh fallback has not escaped the bootstrap path.
+    let out = unsafe { register_fallback_allocation(None, out, req) };
     if !out.is_null() {
         record_alloc_stats(None, req);
     }
@@ -5897,7 +5990,8 @@ unsafe fn bootstrap_calloc_passthrough(nmemb: usize, size: usize) -> *mut c_void
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_calloc(nmemb, size) };
     let req = nmemb.saturating_mul(size).max(1);
-    fallback_insert_sized(out, req);
+    // SAFETY: this fresh fallback has not escaped the bootstrap path.
+    let out = unsafe { register_fallback_allocation(None, out, req) };
     if !out.is_null() {
         record_alloc_stats(None, req);
     }
@@ -5985,13 +6079,12 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         }
         return out;
     }
-    // SAFETY: early loader/bootstrap reallocations must bypass runtime policy
-    // and use the same native/bump fallback path as reentrant allocator calls.
-    let out = unsafe { native_libc_realloc(ptr, size) };
+    let old_size = fallback_size(ptr);
+    // SAFETY: native, arena and signal/table-held cases were handled above.
+    // Registration must succeed before the old host block can be retired.
+    let out = unsafe { realloc_tracked_fallback(ptr, size) };
     if !out.is_null() {
-        let old_size = fallback_remove_sized(ptr);
         let req = size.max(1);
-        fallback_insert_sized(out, req);
         if let Some(old_size) = old_size {
             record_free_stats(None, old_size);
         }
@@ -6543,7 +6636,6 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
                     }
                     None => {
                         bump_path_counter(&FALLBACK_PATH_ALLOCS);
-                        fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                         record_alloc_stats(Some(reentry_guard.slot), req);
                     }
                 }
@@ -6573,7 +6665,6 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
                 }
                 None => {
                     bump_path_counter(&FALLBACK_PATH_ALLOCS);
-                    fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                     record_alloc_stats(Some(reentry_guard.slot), req);
                 }
             }
@@ -6610,7 +6701,8 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_malloc(req) };
-            fallback_insert_sized(out, req);
+            // SAFETY: no caller has observed the fresh allocation yet.
+            let out = unsafe { register_fallback_allocation(None, out, req) };
             // bd-mqgee7: this arm was UNCOUNTED — malloc_path_counters_full's
             // "exhaustive" four-way split read all-zero for any environment
             // without an initialized membrane pipeline (plain test binaries),
@@ -6956,7 +7048,6 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
                     record_alloc_stats_binned(Some(reentry_guard.slot), total, class_index)
                 }
                 None => {
-                    fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
                     record_alloc_stats(Some(reentry_guard.slot), total);
                 }
             }
@@ -6997,8 +7088,8 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_calloc_with_slot(reentry_guard.slot, nmemb, size) };
-            fallback_insert_sized(out, total);
-            out
+            // SAFETY: no caller has observed the fresh allocation yet.
+            unsafe { register_fallback_allocation(Some(reentry_guard.slot), out, total) }
         }
     };
     if !out.is_null() {
@@ -7074,6 +7165,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
     if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
         let out = unsafe { native_libc_malloc(size.max(1)) };
+        // SAFETY: register before copying or releasing the old bump allocation.
+        let out = unsafe { register_fallback_allocation(None, out, size.max(1)) };
         if out.is_null() {
             return out; // POSIX: failure leaves the old allocation live.
         }
@@ -7085,7 +7178,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: ownership transferred successfully to `out`; retire its old
         // table entry before the address can be reused by another allocation.
         let _ = unsafe { bump_mmap_release(ptr) };
-        fallback_insert_sized(out, size.max(1));
         return out;
     }
 
@@ -7131,6 +7223,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             // the old/new allocation bounds, then the legacy membrane allocation
             // is retired through the pipeline.
             let out = unsafe { native_libc_malloc(size.max(1)) };
+            // SAFETY: metadata failure must leave the old arena block intact.
+            let out = unsafe { register_fallback_allocation(None, out, size.max(1)) };
             if out.is_null() {
                 return out;
             }
@@ -7139,7 +7233,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
             let _ = pipeline.free(ptr.cast());
-            fallback_insert_sized(out, size.max(1));
             record_alloc_stats(Some(reentry_guard.slot), size.max(1));
             return out;
         }
@@ -7179,13 +7272,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     }
 
     let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
-        // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
-        let out = unsafe { native_libc_realloc(ptr, size) };
-        if !out.is_null() {
-            let _ = fallback_remove(ptr);
-            fallback_insert_sized(out, size.max(1));
-        }
-        return out;
+        // SAFETY: segment/bump ownership was excluded above; the valid realloc
+        // argument is host-backed while the membrane pipeline is unavailable.
+        return unsafe { realloc_tracked_fallback(ptr, size) };
     };
     let arena: &AllocationArena = &pipeline.arena;
 
@@ -7249,12 +7338,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         None => {
             if fallback_contains(ptr) {
                 // Pointer originated from native fallback allocation path.
-                // Preserve realloc copy semantics by delegating to native realloc.
-                let out = unsafe { native_libc_realloc(ptr, size) };
-                if !out.is_null() {
-                    let _ = fallback_remove(ptr);
-                    fallback_insert_sized(out, size.max(1));
-                }
+                // Keep the old block live until replacement provenance commits.
+                // SAFETY: the fallback table establishes exact host ownership.
+                let out = unsafe { realloc_tracked_fallback(ptr, size) };
                 record_allocator_stage_outcome(
                     &ordering,
                     aligned,
@@ -7443,13 +7529,7 @@ pub unsafe extern "C" fn posix_memalign(
     if allocator_bootstrap_passthrough_active() {
         // SAFETY: early loader/bootstrap aligned allocations must avoid
         // runtime-policy trace state until the runtime-ready boundary.
-        let rc = unsafe { native_libc_posix_memalign(memptr, alignment, size) };
-        if rc == 0 {
-            // SAFETY: successful posix_memalign stores an allocation pointer.
-            let out = unsafe { *memptr };
-            fallback_insert_sized(out, size.max(1));
-        }
-        return rc;
+        return unsafe { native_libc_posix_memalign(memptr, alignment, size) };
     }
 
     if strict_allocator_host_path_active() {
@@ -7463,9 +7543,7 @@ pub unsafe extern "C" fn posix_memalign(
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let rc = unsafe { native_libc_posix_memalign(memptr, alignment, size) };
         if rc == 0 {
-            // SAFETY: rc==0 guarantees *memptr holds a valid allocation pointer.
-            let out = unsafe { *memptr };
-            fallback_insert_sized_for_slot(_reentry_guard.slot, out, size.max(1));
+            // The native helper publishes provenance before writing *memptr.
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }
         return rc;
@@ -7500,10 +7578,8 @@ pub unsafe extern "C" fn posix_memalign(
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let ptr = unsafe { native_libc_memalign(alignment, req) };
-            if !ptr.is_null() {
-                fallback_insert_sized(ptr, req);
-            }
-            ptr
+            // SAFETY: registration retains ownership until publication succeeds.
+            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), ptr, req) }
         }
     };
     if !out.is_null() {
@@ -7564,16 +7640,16 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         }
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_memalign(alignment, size) };
-        fallback_insert_sized(out, size.max(1));
-        return out;
+        // SAFETY: no caller has observed the fresh allocation yet.
+        return unsafe { register_fallback_allocation(None, out, size.max(1)) };
     };
 
     if allocator_bootstrap_passthrough_active() {
         // SAFETY: early loader/bootstrap aligned allocations must avoid
         // runtime-policy trace state until the runtime-ready boundary.
         let out = unsafe { native_libc_memalign(alignment, size) };
-        fallback_insert_sized(out, size.max(1));
-        return out;
+        // SAFETY: no caller has observed the fresh allocation yet.
+        return unsafe { register_fallback_allocation(None, out, size.max(1)) };
     }
 
     if strict_allocator_host_path_active() {
@@ -7582,8 +7658,11 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         // fallback table for size tracking.
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let out = unsafe { native_libc_memalign(alignment, size) };
+        // SAFETY: publish before reporting success to the caller.
+        let out = unsafe {
+            register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1))
+        };
         if !out.is_null() {
-            fallback_insert_sized_for_slot(_reentry_guard.slot, out, size.max(1));
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }
         return out;
@@ -7618,10 +7697,8 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         },
         None => {
             let out = unsafe { native_libc_memalign(alignment, req) };
-            if !out.is_null() {
-                fallback_insert_sized(out, req);
-            }
-            out
+            // SAFETY: registration retains ownership until publication succeeds.
+            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), out, req) }
         }
     };
     if !out.is_null() {
@@ -7678,16 +7755,16 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         }
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
-        fallback_insert_sized(out, size.max(1));
-        return out;
+        // SAFETY: no caller has observed the fresh allocation yet.
+        return unsafe { register_fallback_allocation(None, out, size.max(1)) };
     };
 
     if allocator_bootstrap_passthrough_active() {
         // SAFETY: early loader/bootstrap aligned allocations must avoid
         // runtime-policy trace state until the runtime-ready boundary.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
-        fallback_insert_sized(out, size.max(1));
-        return out;
+        // SAFETY: no caller has observed the fresh allocation yet.
+        return unsafe { register_fallback_allocation(None, out, size.max(1)) };
     }
 
     if strict_allocator_host_path_active() {
@@ -7696,8 +7773,11 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         // fallback table for size tracking.
         // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
+        // SAFETY: publish before reporting success to the caller.
+        let out = unsafe {
+            register_fallback_allocation(Some(_reentry_guard.slot), out, size.max(1))
+        };
         if !out.is_null() {
-            fallback_insert_sized_for_slot(_reentry_guard.slot, out, size.max(1));
             record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
         }
         return out;
@@ -7732,10 +7812,8 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         },
         None => {
             let out = unsafe { native_libc_aligned_alloc(alignment, req) };
-            if !out.is_null() {
-                fallback_insert_sized(out, req);
-            }
-            out
+            // SAFETY: registration retains ownership until publication succeeds.
+            unsafe { register_fallback_allocation(Some(_reentry_guard.slot), out, req) }
         }
     };
     if !out.is_null() {

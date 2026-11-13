@@ -2511,6 +2511,268 @@ fn demand_storage_concurrent_first_touch_preserves_published_values() {
 }
 
 #[test]
+fn fallback_metadata_failure_does_not_publish_untracked_allocation() {
+    const NAME: &str = "fallback_metadata_failure_does_not_publish_untracked_allocation";
+    const CHILD: &str = "FRANKENLIBC_FALLBACK_METADATA_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        for operation in [
+            "malloc",
+            "calloc",
+            "memalign",
+            "aligned_alloc",
+            "posix_memalign",
+        ] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD, operation)
+                .env("FRANKENLIBC_MODE", "hardened")
+                .output()
+                .expect("run isolated fallback metadata regression");
+            assert!(
+                output.status.success(),
+                "{operation} metadata child failed: {:?}\n{}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        }
+        return;
+    }
+
+    let operation = std::env::var(CHILD).unwrap();
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    // Debug integration binaries retain host malloc for ordinary Rust/C
+    // allocation. Prime a host tcache entry before denying *new* writable
+    // mappings: host malloc can still succeed while the provenance table's
+    // first demand-zero permission upgrade must fail.
+    let mut original = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let mut aligned_output = 0x1234usize as *mut c_void;
+    let mut aligned_status = 0;
+    // SAFETY: all pointers below name owned live allocations or rlimit cells.
+    let (host_succeeded, candidate, candidate_errno) = unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_DATA, &mut original), 0);
+        let cached = libc::malloc(80);
+        assert!(!cached.is_null());
+        libc::free(cached);
+        let limited = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: original.rlim_max,
+        };
+        assert_eq!(libc::setrlimit(libc::RLIMIT_DATA, &limited), 0);
+        let host = match operation.as_str() {
+            "calloc" => libc::calloc(1, 80),
+            "memalign" | "aligned_alloc" | "posix_memalign" => libc::memalign(16, 80),
+            _ => libc::malloc(80),
+        };
+        let host_succeeded = !host.is_null();
+        libc::free(host);
+        *libc::__errno_location() = libc::EINTR;
+        let candidate = match operation.as_str() {
+            "calloc" => calloc(1, 80),
+            "memalign" => memalign(16, 80),
+            "aligned_alloc" => aligned_alloc(16, 80),
+            "posix_memalign" => {
+                aligned_status = posix_memalign(&mut aligned_output, 16, 80);
+                if aligned_status == 0 {
+                    aligned_output
+                } else {
+                    ptr::null_mut()
+                }
+            }
+            _ => malloc(80),
+        };
+        let candidate_errno = *libc::__errno_location();
+        let restored = libc::setrlimit(libc::RLIMIT_DATA, &original);
+        assert_eq!(restored, 0);
+        (host_succeeded, candidate, candidate_errno)
+    };
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    let tracked = fallback_size_for_bench(candidate);
+    if !candidate.is_null() {
+        // The negative control returns an untracked host allocation. Reclaim
+        // it directly instead of asking hardened free to accept foreign data.
+        fallback_remove_sized_for_bench(candidate);
+        unsafe { libc::free(candidate) };
+    }
+    assert!(
+        host_succeeded,
+        "host tcache control must allocate under the limit"
+    );
+    assert!(
+        candidate.is_null(),
+        "allocator returned a host pointer after provenance publication failed: tracked={tracked:?}"
+    );
+    if operation == "posix_memalign" {
+        assert_eq!(aligned_status, libc::ENOMEM);
+        assert_eq!(candidate_errno, libc::EINTR);
+        assert_eq!(
+            aligned_output, 0x1234usize as *mut c_void,
+            "posix_memalign must not change the output pointer on failure"
+        );
+    } else {
+        assert_eq!(candidate_errno, libc::ENOMEM);
+    }
+}
+
+#[test]
+fn fallback_realloc_metadata_failure_preserves_old_block() {
+    const NAME: &str = "fallback_realloc_metadata_failure_preserves_old_block";
+    const CHILD: &str = "FRANKENLIBC_REALLOC_METADATA_LIMIT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env(CHILD, "1")
+            .env("FRANKENLIBC_MODE", "hardened")
+            .output()
+            .expect("run isolated realloc metadata regression");
+        assert!(
+            output.status.success(),
+            "realloc metadata child failed: {:?}\n{}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        return;
+    }
+
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    let mut original = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: this fresh subprocess owns these blocks and its resource limit.
+    let (old, padding, fence, replacement, host_succeeded, saved_errno) = unsafe {
+        assert_eq!(libc::getrlimit(libc::RLIMIT_DATA, &mut original), 0);
+        // Keep these allocations in the host arena, and retain a fence after
+        // the replacement so freeing it cannot trim away its writable pages.
+        assert_ne!(libc::mallopt(libc::M_MMAP_THRESHOLD, 4 * 1024 * 1024), 0);
+        let old = malloc(80);
+        assert!(!old.is_null());
+        assert_eq!(fallback_size_for_bench(old), Some(80));
+        old.cast::<u8>().write_bytes(0xa7, 80);
+        let padding = libc::malloc(256 * 1024);
+        assert!(!padding.is_null());
+        let spare = libc::malloc(4096);
+        let fence = libc::malloc(80);
+        assert!(!spare.is_null() && !fence.is_null());
+        // A table granule covers 128 KiB of address keys. The replacement must
+        // need a different metadata granule from the already indexed old block.
+        let granule = |p: *mut c_void| ((p as usize >> 4) % 262_144) / 8192;
+        assert_ne!(
+            granule(old),
+            granule(spare),
+            "host fixture did not separate metadata pages"
+        );
+        libc::free(spare);
+        let limited = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: original.rlim_max,
+        };
+        assert_eq!(libc::setrlimit(libc::RLIMIT_DATA, &limited), 0);
+        let host = libc::malloc(4096);
+        let host_succeeded = !host.is_null() && granule(host) == granule(spare);
+        libc::free(host);
+        *libc::__errno_location() = 0;
+        let replacement = realloc(old, 4096);
+        let saved_errno = *libc::__errno_location();
+        let restored = libc::setrlimit(libc::RLIMIT_DATA, &original);
+        assert_eq!(restored, 0);
+        (
+            old,
+            padding,
+            fence,
+            replacement,
+            host_succeeded,
+            saved_errno,
+        )
+    };
+    let old_tracked = fallback_size_for_bench(old);
+    let preserved = replacement.is_null() && old_tracked == Some(80)
+        // SAFETY: failed realloc must leave the old allocation live.
+        && unsafe { std::slice::from_raw_parts(old.cast::<u8>(), 80) }.iter().all(|b| *b == 0xa7);
+    // SAFETY: after success only replacement is live; after failure old remains
+    // live. Direct host cleanup makes the pre-fix negative control safe too.
+    unsafe {
+        let live = if replacement.is_null() {
+            old
+        } else {
+            replacement
+        };
+        fallback_remove_sized_for_bench(live);
+        libc::free(live);
+        libc::free(padding);
+        libc::free(fence);
+    }
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    assert!(
+        host_succeeded,
+        "host control must reuse the retained replacement block"
+    );
+    assert!(
+        replacement.is_null(),
+        "metadata failure must not commit a moved realloc"
+    );
+    assert_eq!(saved_errno, libc::ENOMEM);
+    assert!(
+        preserved,
+        "failed realloc must preserve both the old contents and provenance"
+    );
+}
+
+#[test]
+fn fallback_realloc_retains_contents_and_provenance_through_resize() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    struct ReentryDepthGuard(u32);
+    impl Drop for ReentryDepthGuard {
+        fn drop(&mut self) {
+            malloc_restore_reentry_depth_for_tests(self.0);
+        }
+    }
+    let _depth_guard = ReentryDepthGuard(malloc_swap_reentry_depth_for_tests(1));
+    // SAFETY: forced allocator reentry selects the host fallback; each resize
+    // retains ownership until the final zero-size realloc releases the block.
+    unsafe {
+        let initial = realloc(ptr::null_mut(), 80);
+        assert!(!initial.is_null());
+        assert_eq!(fallback_size_for_bench(initial), Some(80));
+        initial.cast::<u8>().write_bytes(0x5b, 80);
+
+        assert_eq!(realloc(initial, 80), initial);
+        assert_eq!(realloc(initial, 16), initial);
+        assert_eq!(fallback_size_for_bench(initial), Some(16));
+
+        let grown = realloc(initial, 8192);
+        assert!(!grown.is_null());
+        assert!(
+            std::slice::from_raw_parts(grown.cast::<u8>(), 16)
+                .iter()
+                .all(|byte| *byte == 0x5b)
+        );
+        assert_eq!(fallback_size_for_bench(grown), Some(8192));
+        assert_eq!(fallback_size_for_bench(initial), None);
+
+        assert!(realloc(grown, usize::MAX).is_null());
+        assert_eq!(fallback_size_for_bench(grown), Some(8192));
+        assert!(
+            std::slice::from_raw_parts(grown.cast::<u8>(), 16)
+                .iter()
+                .all(|byte| *byte == 0x5b)
+        );
+
+        assert!(realloc(grown, 0).is_null());
+        assert_eq!(fallback_size_for_bench(grown), None);
+    }
+}
+
+#[test]
 fn segment_class_feedback_reaches_the_runtime_without_initializing_from_malloc() {
     const CHILD: &str = "FRANKENLIBC_SEGMENT_CLASS_FEEDBACK_CHILD";
     const TEST: &str =
