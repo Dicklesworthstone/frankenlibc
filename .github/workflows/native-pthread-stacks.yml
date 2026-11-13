@@ -36,9 +36,12 @@ on:
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
       - 'tests/integration/fixture_pthread_key_destructors.c'
+      - 'tests/integration/fixture_host_allocator_startup.c'
+      - 'tests/integration/fixture_app_malloc_spawns_thread.c'
       - 'tests/integration/fixture_exit_tls.cpp'
       - 'tests/integration/fixture_posix_timers.c'
       - 'scripts/check_pthread_extensions_native.sh'
+      - 'scripts/check_host_allocator_startup.py'
       - 'scripts/check_posix_timers.py'
       - '.github/workflows/native-pthread-stacks.yml'
       - 'Cargo.toml'
@@ -191,6 +194,13 @@ jobs:
           python3 scripts/check_pthread_native_poll.py --send-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/send"
+      - name: Initialize the real host heap before constructor-created threads
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_host_allocator_startup.py \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/host-allocator-startup"
       - name: Preserve owned cache state through application thread destructors
         if: always() && matrix.feature == 'owned-tls-cache'
         shell: bash

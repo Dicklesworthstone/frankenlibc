@@ -4229,6 +4229,9 @@ pub unsafe extern "C" fn pthread_create(
     // Host pthreads are an explicit compatibility opt-out. The default and
     // standalone paths stay on the native lifecycle.
     let result = if !force_native && let Some(host_create) = resolved_thread_create_raw() {
+        // Constructors may start workers before the startup prewarm runs.
+        // Initialize the real host heap before its first concurrent users.
+        crate::malloc_abi::ensure_host_allocator_initialized();
         ensure_strict_host_thread_tls_gap();
         unsafe {
             dispatch_host_thread_create_with_managed_attr(host_create, thread_out, attr, start, arg)

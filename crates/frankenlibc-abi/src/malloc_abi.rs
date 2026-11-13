@@ -58,6 +58,8 @@ static HOST_MEMALIGN_FN: OnceLock<usize> = OnceLock::new();
 static HOST_MALLOC_USABLE_SIZE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_ALLOCATOR_RAW_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
 static HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(feature = "standalone"))]
+static HOST_ALLOCATOR_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Bootstrap-safe, immortal storage whose unused pages are not charged to
 /// RLIMIT_DATA. Permissions only increase. There is deliberately no initializing
@@ -3041,7 +3043,57 @@ host_fn_accessor!(
     HostMallocUsableSizeFn
 );
 
-/// Resolve and cache host allocator symbols.
+/// Finish the host allocator's cold initialization before hosted workers run.
+///
+/// Resolving its symbols does not initialize its arena state. Interposing the
+/// public allocation entrypoints can leave that state cold until two workers
+/// concurrently reach hidden host allocations, including stdio cleanup. The
+/// startup prewarm and the first hosted `pthread_create` must perform one real
+/// allocation on their creator thread before publishing another thread.
+pub(crate) fn ensure_host_allocator_initialized() {
+    #[cfg(not(feature = "standalone"))]
+    {
+        if HOST_ALLOCATOR_INITIALIZED.load(Ordering::Acquire)
+            || frankenlibc_core::pthread::thread::current_thread_handle().is_some()
+        {
+            // Native clones still borrow their creator's hardware TLS and
+            // must not enter the host allocator through its arena/tcache.
+            return;
+        }
+
+        // SAFETY: this leaf addresses the caller's canonical errno slot
+        // without allocating or resolving a symbol. Initialization is an
+        // internal operation and must preserve the caller's error state.
+        let errno = unsafe { crate::errno_abi::__errno_location() };
+        let saved_errno = unsafe { std::ptr::read_volatile(errno) };
+        let mut initialized = false;
+        if let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC)
+            && let (Some(host_malloc), Some(host_free)) = (
+                crate::host_resolve::host_malloc_raw(),
+                crate::host_resolve::host_free_raw(),
+            )
+        {
+            // SAFETY: both functions resolve directly from the same host
+            // libc. A raw pair avoids the application's interposed allocator
+            // and our bootstrap fallback, neither of which warms that heap.
+            let ptr = unsafe { host_malloc(1) };
+            if !ptr.is_null() {
+                unsafe { host_free(ptr) };
+                initialized = true;
+            }
+        }
+        // SAFETY: this caller still owns the errno slot obtained above.
+        unsafe { std::ptr::write_volatile(errno, saved_errno) };
+        if initialized {
+            // Record completion only: a fork child or recursive caller must
+            // never wait for an inherited in-progress initialization latch.
+            // The first hosted create calls here before any worker starts.
+            HOST_ALLOCATOR_INITIALIZED.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Resolve, cache and initialize the host allocator.
 /// Called from __libc_start_main AFTER _dl_init, when dlvsym is safe.
 pub(crate) fn prewarm_host_allocator_symbols() {
     crate::host_resolve::bootstrap_host_symbols();
@@ -3075,6 +3127,7 @@ pub(crate) fn prewarm_host_allocator_symbols() {
         let _ = HOST_MALLOC_USABLE_SIZE_FN.get_or_init(|| malloc_usable_size_ptr);
     }
     let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
+    ensure_host_allocator_initialized();
 }
 
 #[doc(hidden)]
