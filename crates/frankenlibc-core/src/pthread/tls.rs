@@ -6,11 +6,11 @@
 //!
 //! ## Design
 //!
-//! - **Key registry**: A fixed array of `PTHREAD_KEYS_MAX` (1024) slots protected
-//!   by a `Mutex`. Each slot tracks in-use state and optional destructor.
+//! - **Key registry**: 1024 public POSIX slots, plus private scratch-cache slots
+//!   in the owned-cache experiment, with serialized publication.
 //!
 //! - **Per-thread values**: A static open-addressed hash table mapping kernel TID
-//!   to a pointer to a `[u64; PTHREAD_KEYS_MAX]` array. For clone-based threads,
+//!   to a pointer to a `[TlsEntry; TLS_KEY_SLOTS]` array. For clone-based threads,
 //!   the array is embedded in `ThreadHandle` (allocated by the parent). For the
 //!   main thread, a separate static block is used.
 //!
@@ -33,10 +33,19 @@ use crate::syscall;
 use crate::rcu;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 /// Maximum number of TLS keys (POSIX requires >= 128; glibc uses 1024).
 pub const PTHREAD_KEYS_MAX: usize = 1024;
+
+// Internal libc scratch state must remain available to application key
+// destructors, and exhausting public keys must not break an unrelated libc
+// call. Keep a separate, bounded key domain in the owned-cache experiment.
+#[cfg(feature = "owned-tls-cache")]
+const INTERNAL_TLS_KEYS_MAX: usize = 128;
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) const TLS_KEY_SLOTS: usize = PTHREAD_KEYS_MAX + INTERNAL_TLS_KEYS_MAX;
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) const TLS_KEY_SLOTS: usize = PTHREAD_KEYS_MAX;
 
 /// Maximum destructor-call iterations on thread exit (POSIX requires >= 4).
 pub const PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4;
@@ -61,6 +70,14 @@ pub struct PthreadKey {
     pub id: u32,
 }
 
+/// Private libc key domain, reclaimed after application thread destructors.
+#[cfg(feature = "owned-tls-cache")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Default)]
+pub struct InternalTlsKey {
+    pub id: u32,
+}
+
 /// A thread-local entry containing the generation sequence and the value.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
@@ -82,25 +99,45 @@ struct KeySlot {
     seq: u32,
 }
 
-const EMPTY_SLOT: KeySlot = KeySlot {
-    in_use: false,
-    destructor: None,
-    seq: 0,
-};
-
-#[derive(Clone)]
 struct KeyRegistry {
-    slots: [KeySlot; PTHREAD_KEYS_MAX],
+    slots: [KeySlot; TLS_KEY_SLOTS],
 }
 
 /// RCU-protected key registry for lock-free reads on the hot path.
-/// Writers serialize via KEY_WRITE_LOCK and publish new versions atomically.
+/// Writers serialize via KEY_WRITE_OWNER and publish new versions atomically.
 /// Old versions are intentionally leaked (bounded: ~16KB per key lifecycle
 /// call, typically < 100 calls in a program's lifetime).
 static KEY_REGISTRY_RCU: rcu::RcuDomain<KeyRegistry> = rcu::RcuDomain::new();
 
-/// Writer serialization lock for pthread_key_create / pthread_key_delete.
-static KEY_WRITE_LOCK: Mutex<()> = Mutex::new(());
+/// PID/TID of the key-registry writer. A fork child may take ownership from a
+/// vanished parent writer instead of inheriting a permanently locked mutex.
+static KEY_WRITE_OWNER: AtomicU64 = AtomicU64::new(0);
+
+struct KeyRegistryWriteGuard;
+
+impl KeyRegistryWriteGuard {
+    fn lock() -> Self {
+        let pid = syscall::sys_getpid() as u32 as u64;
+        let owner = (pid << 32) | syscall::sys_gettid() as u32 as u64;
+        loop {
+            let current = KEY_WRITE_OWNER.load(Ordering::Acquire);
+            if (current == 0 || current >> 32 != pid)
+                && KEY_WRITE_OWNER
+                    .compare_exchange(current, owner, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            {
+                return Self;
+            }
+            syscall::sys_sched_yield();
+        }
+    }
+}
+
+impl Drop for KeyRegistryWriteGuard {
+    fn drop(&mut self) {
+        KEY_WRITE_OWNER.store(0, Ordering::Release);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Per-thread value storage — allocation-free concurrent table
@@ -113,7 +150,7 @@ static KEY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 ///   not terminate lookups.
 static TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
 
-/// Pointer array (paired with TLS_TIDS). Stores `*mut [TlsEntry; PTHREAD_KEYS_MAX]`
+/// Pointer array (paired with TLS_TIDS). Stores `*mut [TlsEntry; TLS_KEY_SLOTS]`
 /// cast to usize. 0 = no pointer.
 static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
 
@@ -290,7 +327,22 @@ static FALLBACK_TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] =
 
 #[cfg(feature = "owned-tls-cache")]
 fn allocate_fallback_tls_block() -> *mut TlsEntry {
-    Box::into_raw(Box::new([TlsEntry::default(); PTHREAD_KEYS_MAX])) as *mut TlsEntry
+    // Internal owned caches use this table during allocator/policy bootstrap.
+    // A Box allocation here would reenter those caches before their first
+    // value can be published. Anonymous mappings are already zero initialized.
+    // SAFETY: one page-aligned, zero-valid array with no host allocator or TLS.
+    unsafe {
+        syscall::sys_mmap(
+            core::ptr::null_mut(),
+            core::mem::size_of::<[TlsEntry; TLS_KEY_SLOTS]>(),
+            3,    // PROT_READ | PROT_WRITE
+            0x22, // MAP_PRIVATE | MAP_ANONYMOUS
+            -1,
+            0,
+        )
+        .unwrap_or_else(|_| std::process::abort())
+        .cast()
+    }
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -303,21 +355,30 @@ fn fallback_tls_block_for_slot(index: usize) -> *mut TlsEntry {
     // This caller has claimed the slot, so no live thread can access the old
     // values. Clear every key before giving the block to its new owner.
     // SAFETY: only owned fallback allocations are retained in this table;
-    // each block contains exactly PTHREAD_KEYS_MAX entries, all zero-valid.
-    unsafe { core::ptr::write_bytes(values, 0, PTHREAD_KEYS_MAX) };
+    // each block contains exactly TLS_KEY_SLOTS entries, all zero-valid.
+    for index in 0..TLS_KEY_SLOTS {
+        // Do not call an interposed memset before an internal cache can
+        // publish its first value into this newly claimed fallback table.
+        unsafe {
+            let entry = values.add(index);
+            core::ptr::addr_of_mut!((*entry).seq).write_volatile(0);
+            core::ptr::addr_of_mut!((*entry).value).write_volatile(0);
+        }
+    }
     values
 }
 
 #[cfg(feature = "owned-tls-cache")]
 unsafe fn drop_fallback_tls_block(values_ptr: *mut TlsEntry) {
     if !values_ptr.is_null() {
-        // SAFETY: values_ptr was produced by allocate_fallback_tls_block and has
-        // not been dropped yet; table_remove/reset ensure single ownership.
-        unsafe {
-            drop(Box::from_raw(
-                values_ptr as *mut [TlsEntry; PTHREAD_KEYS_MAX],
-            ));
-        }
+        // SAFETY: allocation created exactly this anonymous mapping;
+        // table_remove/reset transfer its unique ownership to this call.
+        let _ = unsafe {
+            syscall::sys_munmap(
+                values_ptr.cast(),
+                core::mem::size_of::<[TlsEntry; TLS_KEY_SLOTS]>(),
+            )
+        };
     }
 }
 
@@ -499,7 +560,7 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
 
 /// Look up the TLS values pointer for a given TID.
 ///
-/// Returns a raw pointer to `[TlsEntry; PTHREAD_KEYS_MAX]`, or null if not found.
+/// Returns a raw pointer to `[TlsEntry; TLS_KEY_SLOTS]`, or null if not found.
 /// **Allocation-free.**
 pub(crate) fn table_lookup(tid: i32) -> *mut TlsEntry {
     if tid <= 0 {
@@ -655,21 +716,31 @@ fn table_remove(tid: i32) -> *mut TlsEntry {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline]
 pub fn current_tid() -> i32 {
-    if TID_CACHE_DISABLED.load(Ordering::Relaxed) {
-        return syscall::sys_gettid();
-    }
-    let epoch = TID_CACHE_EPOCH.load(Ordering::Acquire);
-    if let Ok((tid, cached_epoch)) = CACHED_TID.try_with(core::cell::Cell::get)
-        && tid > 0
-        && cached_epoch == epoch
+    #[cfg(feature = "owned-tls-cache")]
     {
-        return tid;
+        // This lookup is part of owned-cache bootstrap. Even the small host
+        // TLS cache can call __tls_get_addr before our key value is published.
+        syscall::sys_gettid()
     }
-    let tid = syscall::sys_gettid();
-    let _ = CACHED_TID.try_with(|cached| cached.set((tid, epoch)));
-    tid
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if TID_CACHE_DISABLED.load(Ordering::Relaxed) {
+            return syscall::sys_gettid();
+        }
+        let epoch = TID_CACHE_EPOCH.load(Ordering::Acquire);
+        if let Ok((tid, cached_epoch)) = CACHED_TID.try_with(core::cell::Cell::get)
+            && tid > 0
+            && cached_epoch == epoch
+        {
+            return tid;
+        }
+        let tid = syscall::sys_gettid();
+        let _ = CACHED_TID.try_with(|cached| cached.set((tid, epoch)));
+        tid
+    }
 }
 
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     /// This thread's kernel tid and the fork epoch it was read in. Every
     /// pthread_getspecific/setspecific needs the tid, and asking the kernel
@@ -800,9 +871,9 @@ pub(crate) fn native_threads_may_exist() -> bool {
 fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
     let ptr = table_lookup(tid);
     if !ptr.is_null() {
-        // SAFETY: ptr points to a valid `[TlsEntry; PTHREAD_KEYS_MAX]` that is either
+        // SAFETY: ptr points to a valid `[TlsEntry; TLS_KEY_SLOTS]` that is either
         // embedded in a ThreadHandle (alive while the thread runs) or in a
-        // test-allocated block. key_id < PTHREAD_KEYS_MAX checked by caller.
+        // test-allocated block. key_id < TLS_KEY_SLOTS checked by caller.
         let entry = unsafe { *ptr.add(key_id) };
         if entry.seq == expected_seq {
             entry.value
@@ -829,7 +900,7 @@ fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
                 return 0;
             }
             // SAFETY: fallback_ptr points to an owned fallback block for this
-            // kernel TID. key_id < PTHREAD_KEYS_MAX checked by caller.
+            // kernel TID. key_id < TLS_KEY_SLOTS checked by caller.
             let entry = unsafe { *fallback_ptr.add(key_id) };
             if entry.seq == expected_seq {
                 entry.value
@@ -845,13 +916,12 @@ fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
 fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
     let ptr = table_lookup(tid);
     if !ptr.is_null() {
-        // SAFETY: ptr points to a valid `[TlsEntry; PTHREAD_KEYS_MAX]` owned by this
+        // SAFETY: ptr points to a valid `[TlsEntry; TLS_KEY_SLOTS]` owned by this
         // thread. Only the owning thread writes to its own values.
         unsafe {
-            *ptr.add(key_id) = TlsEntry {
-                seq: expected_seq,
-                value,
-            }
+            let entry = ptr.add(key_id);
+            (*entry).seq = expected_seq;
+            (*entry).value = value;
         };
     } else {
         // Unregistered thread: use thread-local fallback storage.
@@ -876,10 +946,9 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
             // SAFETY: fallback_ptr points to an owned fallback block for this
             // kernel TID. Only the owning thread writes its fallback values.
             unsafe {
-                *fallback_ptr.add(key_id) = TlsEntry {
-                    seq: expected_seq,
-                    value,
-                };
+                let entry = fallback_ptr.add(key_id);
+                (*entry).seq = expected_seq;
+                (*entry).value = value;
             }
         }
     }
@@ -889,8 +958,8 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Publish `registry` as the new RCU version, allocating it with `mmap`
-/// rather than on the heap.
+/// Copy a registry into fresh anonymous storage without calling the allocator
+/// or an interposed string routine.
 ///
 /// pthread_key_create must not call malloc: a program that brings its own
 /// allocator creates keys while initialising it (jemalloc's malloc_tsd_boot0,
@@ -899,8 +968,10 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
 /// handler aborted the process ('memory allocation of 16384 bytes failed').
 /// glibc keeps its keys in static storage. Versions are never freed (the RCU
 /// update leaks the old one by design), so a private anonymous mapping per
-/// version costs nothing extra; the heap is only the fallback if mmap fails.
-fn publish_registry(registry: KeyRegistry) -> *mut KeyRegistry {
+/// version costs nothing extra. Scalar volatile stores also prevent LLVM from
+/// turning a registry copy into memcpy while the writer lock is held: memcpy
+/// can initialize an internal owned cache, which needs another POSIX key.
+fn copy_registry(registry: Option<&KeyRegistry>) -> Result<*mut KeyRegistry, i32> {
     use crate::mmap::{MAP_ANONYMOUS, MAP_PRIVATE, PROT_READ, PROT_WRITE};
     // SAFETY: a fresh private anonymous mapping, owned by nobody else.
     let mapped = unsafe {
@@ -913,14 +984,27 @@ fn publish_registry(registry: KeyRegistry) -> *mut KeyRegistry {
             0,
         )
     };
-    let new_ptr = match mapped {
-        // Page-aligned, so aligned for KeyRegistry.
-        Ok(address) => address.cast::<KeyRegistry>(),
-        Err(_) => return Box::into_raw(Box::new(registry)),
-    };
-    // SAFETY: `new_ptr` is a writable, suitably aligned KeyRegistry-sized block.
-    unsafe { new_ptr.write(registry) };
-    new_ptr
+    // Page-aligned, so aligned for KeyRegistry. Allocation failure must not
+    // fall back into an allocator that might itself be creating a TLS key.
+    let new_ptr = mapped.map_err(|_| EAGAIN)?.cast::<KeyRegistry>();
+    for index in 0..TLS_KEY_SLOTS {
+        let (in_use, destructor, seq) = match registry {
+            Some(old) => {
+                let slot = &old.slots[index];
+                (slot.in_use, slot.destructor, slot.seq)
+            }
+            None => (false, None, 0),
+        };
+        // SAFETY: the mapping covers the complete array and is not published.
+        // Initialize fields individually; never read uninitialized padding.
+        unsafe {
+            let slot = core::ptr::addr_of_mut!((*new_ptr).slots[index]);
+            core::ptr::addr_of_mut!((*slot).in_use).write_volatile(in_use);
+            core::ptr::addr_of_mut!((*slot).destructor).write_volatile(destructor);
+            core::ptr::addr_of_mut!((*slot).seq).write_volatile(seq);
+        }
+    }
+    Ok(new_ptr)
 }
 
 /// Creates a thread-local storage key.
@@ -928,34 +1012,56 @@ fn publish_registry(registry: KeyRegistry) -> *mut KeyRegistry {
 /// Equivalent to C `pthread_key_create`. The optional `destructor` is called
 /// when a thread exits with a non-null value for this key.
 ///
-/// Returns 0 on success, `EAGAIN` if all keys are in use.
+/// Returns 0 on success, `EAGAIN` if keys or registry storage are exhausted.
 pub fn pthread_key_create(
     key: &mut PthreadKey,
     destructor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> i32 {
-    let _write_guard = KEY_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    create_key_in_domain(&mut key.id, destructor, 0, PTHREAD_KEYS_MAX)
+}
 
-    // Read current registry via RCU and clone it.
-    let mut new_reg = unsafe {
-        match KEY_REGISTRY_RCU.read() {
-            Some(r) => (*r).clone(),
-            None => KeyRegistry {
-                slots: [EMPTY_SLOT; PTHREAD_KEYS_MAX],
-            },
-        }
-    };
+/// Allocate a private key without consuming the public POSIX key budget.
+#[cfg(feature = "owned-tls-cache")]
+#[doc(hidden)]
+pub fn internal_tls_key_create(
+    key: &mut InternalTlsKey,
+    destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> i32 {
+    create_key_in_domain(
+        &mut key.id,
+        destructor,
+        PTHREAD_KEYS_MAX,
+        INTERNAL_TLS_KEYS_MAX,
+    )
+}
 
-    for i in 0..PTHREAD_KEYS_MAX {
-        if !new_reg.slots[i].in_use {
-            new_reg.slots[i].in_use = true;
-            new_reg.slots[i].destructor = destructor;
-            new_reg.slots[i].seq = new_reg.slots[i].seq.wrapping_add(1);
-            let seq = new_reg.slots[i].seq;
-            key.id = (seq << 10) | (i as u32);
+fn create_key_in_domain(
+    key: &mut u32,
+    destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+    offset: usize,
+    capacity: usize,
+) -> i32 {
+    let _write_guard = KeyRegistryWriteGuard::lock();
+    // SAFETY: published versions remain live permanently, and this guard
+    // serializes every writer. No large stack temporary or memcpy is needed.
+    let current = unsafe { KEY_REGISTRY_RCU.read() };
+
+    for i in offset..offset + capacity {
+        if current.is_none_or(|registry| !registry.slots[i].in_use) {
+            let new_ptr = match copy_registry(current) {
+                Ok(ptr) => ptr,
+                Err(error) => return error,
+            };
+            // SAFETY: this unpublished version is uniquely owned here.
+            let slot = unsafe { &mut (*new_ptr).slots[i] };
+            slot.in_use = true;
+            slot.destructor = destructor;
+            slot.seq = slot.seq.wrapping_add(1);
+            let id = (slot.seq << 10) | ((i - offset) as u32);
 
             // Publish new version via RCU.
-            let new_ptr = publish_registry(new_reg);
             let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
+            *key = id;
             // Old version is intentionally leaked. key_create is called O(1)
             // times; each version is ~16KB. Avoids QSBR synchronize deadlocks.
             return 0;
@@ -976,25 +1082,25 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
     if id >= PTHREAD_KEYS_MAX {
         return EINVAL;
     }
-    let _write_guard = KEY_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-    // Read current registry via RCU and clone it.
-    let mut new_reg = unsafe {
-        match KEY_REGISTRY_RCU.read() {
-            Some(r) => (*r).clone(),
-            None => return EINVAL, // No registry = no keys exist.
-        }
+    let _write_guard = KeyRegistryWriteGuard::lock();
+    // SAFETY: published versions remain live and writers are serialized.
+    let Some(current) = (unsafe { KEY_REGISTRY_RCU.read() }) else {
+        return EINVAL;
     };
-
-    if !new_reg.slots[id].in_use || new_reg.slots[id].seq != expected_seq {
+    if !current.slots[id].in_use || current.slots[id].seq != expected_seq {
         return EINVAL;
     }
-    new_reg.slots[id].in_use = false;
-    new_reg.slots[id].destructor = None;
-    new_reg.slots[id].seq = new_reg.slots[id].seq.wrapping_add(1);
+    let new_ptr = match copy_registry(Some(current)) {
+        Ok(ptr) => ptr,
+        Err(error) => return error,
+    };
+    // SAFETY: this unpublished version is uniquely owned here.
+    let slot = unsafe { &mut (*new_ptr).slots[id] };
+    slot.in_use = false;
+    slot.destructor = None;
+    slot.seq = slot.seq.wrapping_add(1);
 
     // Publish new version via RCU.
-    let new_ptr = publish_registry(new_reg);
     let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
     // Old version intentionally leaked (same rationale as key_create).
     0
@@ -1026,6 +1132,37 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
     if id >= PTHREAD_KEYS_MAX {
         return EINVAL;
     }
+    set_specific_entry(id, expected_seq, value)
+}
+
+/// Read only the calling thread's private libc key value.
+#[cfg(feature = "owned-tls-cache")]
+#[doc(hidden)]
+pub fn internal_tls_getspecific(key: InternalTlsKey) -> u64 {
+    let id = (key.id & 1023) as usize;
+    if id >= INTERNAL_TLS_KEYS_MAX {
+        return 0;
+    }
+    read_tls_value(current_tid(), PTHREAD_KEYS_MAX + id, key.id >> 10)
+}
+
+/// Set only the calling thread's private libc key value.
+///
+/// # Safety
+/// The caller must own this private key. A nonzero value must satisfy the
+/// registered destructor's contract and remain valid until replaced or torn
+/// down by this thread; overwriting another cache's key violates its ownership.
+#[cfg(feature = "owned-tls-cache")]
+#[doc(hidden)]
+pub unsafe fn internal_tls_setspecific(key: InternalTlsKey, value: u64) -> i32 {
+    let id = (key.id & 1023) as usize;
+    if id >= INTERNAL_TLS_KEYS_MAX {
+        return EINVAL;
+    }
+    set_specific_entry(PTHREAD_KEYS_MAX + id, key.id >> 10, value)
+}
+
+fn set_specific_entry(id: usize, expected_seq: u32, value: u64) -> i32 {
     let tid = current_tid();
 
     // Ensure RCU registration for lock-free reads.
@@ -1055,7 +1192,7 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
 
 /// Register a thread's TLS values pointer in the global table.
 ///
-/// `values_ptr` must point to a `[u64; PTHREAD_KEYS_MAX]` array that lives
+/// `values_ptr` must point to a `[TlsEntry; TLS_KEY_SLOTS]` array that lives
 /// at least as long as the thread. For clone-based threads, this is the
 /// `tls_values` field in `ThreadHandle`.
 ///
@@ -1103,8 +1240,7 @@ pub(crate) fn teardown_native_thread_tls(tid: i32) {
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
-    let values_ptr = table_lookup(tid);
+fn run_thread_key_destructor_rounds(tid: i32, values_ptr: *mut TlsEntry, first: usize, end: usize) {
     // Native threads own the block in their ThreadHandle. Their inherited
     // hardware TLS can still belong to the creator, so neither access nor
     // reclaim fallback storage when this registered block exists.
@@ -1123,7 +1259,7 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
 
     for _iteration in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
         let mut called = false;
-        for index in 0..PTHREAD_KEYS_MAX {
+        for index in first..end {
             rcu::rcu_read_lock();
             // SAFETY: the read section protects the immutable registry. Copy
             // one slot so no registry reference escapes into a destructor.
@@ -1202,6 +1338,13 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
             break;
         }
     }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
+    let values_ptr = table_lookup(tid);
+    let registered = !values_ptr.is_null();
+    run_thread_key_destructor_rounds(tid, values_ptr, 0, PTHREAD_KEYS_MAX);
 
     if native_exit {
         let blocked = u64::MAX;
@@ -1226,6 +1369,13 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
         // between its final drain and reclamation.
         super::thread::reclaim_native_runtime_tls(tid);
     }
+
+    // Locale, parser cursors, scratch buffers, and policy state must remain
+    // live through every application destructor, including late native C++
+    // callbacks. Only then reclaim private cache values, keeping their lookup
+    // table registered so cache Drop implementations can reenter safely.
+    #[cfg(feature = "owned-tls-cache")]
+    run_thread_key_destructor_rounds(tid, values_ptr, PTHREAD_KEYS_MAX, TLS_KEY_SLOTS);
 
     if registered {
         table_remove(tid);
@@ -1254,12 +1404,9 @@ pub(crate) fn reset_tls_state() {
     // Reset RCU global state (epoch, reader slots, callbacks).
     crate::rcu::reset_rcu_state();
 
-    // Publish a fresh empty registry. The old version is leaked like every
-    // other: versions come from `publish_registry` (mmap, heap only as a
-    // fallback), so there is no single right way to free one.
-    let fresh = publish_registry(KeyRegistry {
-        slots: [EMPTY_SLOT; PTHREAD_KEYS_MAX],
-    });
+    // Publish a fresh empty registry. Readers may still retain the old
+    // immutable version, which is leaked like every production update.
+    let fresh = copy_registry(None).expect("test TLS registry mapping");
     let _old = unsafe { KEY_REGISTRY_RCU.update(fresh) };
 
     // Clear the table.
@@ -1294,6 +1441,7 @@ pub(crate) fn reset_tls_state() {
 mod tests {
     use super::*;
     use core::sync::atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering};
+    use std::sync::Mutex;
 
     /// Acquire the shared RCU/TLS test lock and reset global state.
     fn lock_and_reset() -> std::sync::MutexGuard<'static, ()> {
@@ -1314,13 +1462,13 @@ mod tests {
 
     /// Per-thread values block for tests (heap-allocated, registered in table).
     struct TestTlsBlock {
-        values: [TlsEntry; PTHREAD_KEYS_MAX],
+        values: [TlsEntry; TLS_KEY_SLOTS],
     }
 
     impl TestTlsBlock {
         fn new() -> Box<Self> {
             Box::new(Self {
-                values: [TlsEntry::default(); PTHREAD_KEYS_MAX],
+                values: [TlsEntry::default(); TLS_KEY_SLOTS],
             })
         }
 
@@ -1354,6 +1502,32 @@ mod tests {
         let k1 = create_key(None);
         let k2 = create_key(None);
         assert_ne!(k1.id, k2.id, "two keys should have different IDs");
+    }
+
+    #[test]
+    fn fork_child_can_publish_keys_while_parent_writer_is_locked() {
+        let _g = lock_and_reset();
+        let inherited_key = create_key(None);
+        let writer = KeyRegistryWriteGuard::lock();
+        let child = syscall::sys_clone_fork(17).expect("fork"); // SIGCHLD
+        if child == 0 {
+            // A stale inherited writer must never make this child wait forever.
+            // Use only raw syscalls and the allocation-independent key path.
+            syscall::sys_alarm(3);
+            let mut created = PthreadKey::default();
+            let rc = pthread_key_create(&mut created, None);
+            syscall::sys_exit_group(if rc == 0 && created != inherited_key {
+                0
+            } else {
+                1
+            });
+        }
+        drop(writer);
+        let mut status = -1;
+        // SAFETY: status is writable; no resource-usage output is requested.
+        let waited = unsafe { syscall::sys_wait4(child, &mut status, 0, core::ptr::null_mut()) };
+        assert_eq!(waited, Ok(child));
+        assert_eq!(status, 0, "fork child could not publish a TLS key");
     }
 
     #[test]

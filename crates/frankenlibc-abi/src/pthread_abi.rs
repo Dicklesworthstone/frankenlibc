@@ -5503,7 +5503,9 @@ pub unsafe extern "C" fn pthread_setspecific(
 /// registers one thread-exit callback (the host runs __cxa_thread_atexit_impl
 /// callbacks from start_thread) that runs fl's destructors. The main thread is
 /// skipped: glibc does not run key destructors at process exit.
-fn ensure_host_thread_key_teardown() {
+/// The owned-cache lane uses a real host POSIX key instead, so internal scratch
+/// mappings remain available until all host C++ TLS callbacks have finished.
+pub(crate) fn ensure_host_thread_key_teardown() {
     // Native teardown owns its key callbacks. Do not read or set the creator's
     // inherited compiler-TLS DECIDED flag on behalf of a native clone.
     if core_current_thread_handle().is_some() {
@@ -5525,10 +5527,26 @@ fn ensure_host_thread_key_teardown() {
     if tid == frankenlibc_core::syscall::sys_getpid() {
         return;
     }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let (key, set) = host_key_teardown_bridge();
+        // SAFETY: the host key and function belong to the same loaded libc.
+        // Its opaque non-null value merely requests the thread-exit callback.
+        if unsafe { set(key, 1usize as *const c_void) } != 0 {
+            std::process::abort();
+        }
+    }
     // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.
+    #[cfg(not(feature = "owned-tls-cache"))]
     unsafe {
+        // C/C-unwind share the callback ABI. The actual callback must permit
+        // cancellation or pthread_exit from an application key destructor.
+        let callback = std::mem::transmute::<
+            unsafe extern "C-unwind" fn(*mut c_void),
+            unsafe extern "C" fn(*mut c_void),
+        >(run_host_thread_key_destructors);
         crate::startup_abi::__cxa_thread_atexit_impl(
-            run_host_thread_key_destructors,
+            callback,
             std::ptr::null_mut(),
             (&raw const crate::unistd_abi::__dso_handle)
                 .cast_mut()
@@ -5537,10 +5555,110 @@ fn ensure_host_thread_key_teardown() {
     }
 }
 
-unsafe extern "C" fn run_host_thread_key_destructors(_: *mut c_void) {
+#[cfg(feature = "owned-tls-cache")]
+type HostKeySetFn = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
+
+#[cfg(feature = "owned-tls-cache")]
+static HOST_TEARDOWN_KEY: AtomicU64 = AtomicU64::new(0); // host key + 1
+#[cfg(feature = "owned-tls-cache")]
+static HOST_TEARDOWN_KEY_OWNER: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "owned-tls-cache")]
+static HOST_TEARDOWN_SET: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+struct HostKeyInitializationGuard;
+
+#[cfg(feature = "owned-tls-cache")]
+impl Drop for HostKeyInitializationGuard {
+    fn drop(&mut self) {
+        HOST_TEARDOWN_KEY_OWNER.store(0, Ordering::Release);
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn host_key_teardown_bridge() -> (libc::pthread_key_t, HostKeySetFn) {
+    let mut encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
+    if encoded == 0 {
+        let pid = raw_syscall::sys_getpid() as u32 as u64;
+        let identity = (pid << 32) | raw_syscall::sys_gettid() as u32 as u64;
+        loop {
+            let owner = HOST_TEARDOWN_KEY_OWNER.load(Ordering::Acquire);
+            if (owner == 0 || owner >> 32 != pid)
+                && HOST_TEARDOWN_KEY_OWNER
+                    .compare_exchange(owner, identity, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            {
+                let _guard = HostKeyInitializationGuard;
+                encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
+                if encoded == 0 {
+                    type Create = unsafe extern "C" fn(
+                        *mut libc::pthread_key_t,
+                        Option<unsafe extern "C" fn(*mut c_void)>,
+                    ) -> c_int;
+                    // Direct ELF lookup avoids interposed dlsym and its own
+                    // TLS. DECIDED was set before this call, so loader/string
+                    // reentry cannot recursively initialize the bridge.
+                    let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")
+                        .unwrap_or_else(|| std::process::abort());
+                    let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")
+                        .unwrap_or_else(|| std::process::abort());
+                    // SAFETY: both symbols have their POSIX signatures. The
+                    // actual callback permits unwinding through this bridge.
+                    let (create, callback) = unsafe {
+                        (
+                            std::mem::transmute::<usize, Create>(create),
+                            std::mem::transmute::<
+                                unsafe extern "C-unwind" fn(*mut c_void),
+                                unsafe extern "C" fn(*mut c_void),
+                            >(run_host_thread_key_destructors),
+                        )
+                    };
+                    let mut key = 0;
+                    // SAFETY: key is writable and callback has a stable address.
+                    if unsafe { create(&mut key, Some(callback)) } != 0 {
+                        std::process::abort();
+                    }
+                    HOST_TEARDOWN_SET.store(set, Ordering::Relaxed);
+                    encoded = u64::from(key) + 1;
+                    HOST_TEARDOWN_KEY.store(encoded, Ordering::Release);
+                }
+                break;
+            }
+            encoded = HOST_TEARDOWN_KEY.load(Ordering::Acquire);
+            if encoded != 0 {
+                break;
+            }
+            raw_syscall::sys_sched_yield();
+        }
+    }
+    // SAFETY: acquiring the published key also acquires its matching function.
+    let set = unsafe {
+        std::mem::transmute::<usize, HostKeySetFn>(HOST_TEARDOWN_SET.load(Ordering::Relaxed))
+    };
+    ((encoded - 1) as libc::pthread_key_t, set)
+}
+
+unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
+    #[cfg(feature = "owned-tls-cache")]
+    let (key, set) = {
+        let (key, set) = host_key_teardown_bridge();
+        // The host cleared this key before calling us. Re-arm it until core
+        // teardown completes: cancellation or pthread_exit in a user callback
+        // can unwind this frame and restart the host's destructor protocol.
+        // SAFETY: this thread already owns the valid host key's storage.
+        if unsafe { set(key, 1usize as *const c_void) } != 0 {
+            std::process::abort();
+        }
+        (key, set)
+    };
     frankenlibc_core::pthread::run_exiting_thread_key_destructors(
         frankenlibc_core::syscall::sys_gettid(),
     );
+    #[cfg(feature = "owned-tls-cache")]
+    // SAFETY: successful teardown no longer needs another host destructor pass.
+    if unsafe { set(key, std::ptr::null()) } != 0 {
+        std::process::abort();
+    }
 }
 
 // ===========================================================================

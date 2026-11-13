@@ -10377,9 +10377,9 @@ impl DtvStorage {
     }
 }
 
-// SAFETY: DtvStorage is only accessed through OwnedTlsCache which serializes
-// all access behind a Mutex. The pointers are per-thread TLS block addresses
-// that are only accessed by the owning thread after lookup.
+// SAFETY: OwnedTlsCache isolates DtvStorage to its owning thread and rejects
+// overlapping mutable borrows. These TLS block addresses are only accessed
+// by that thread after lookup.
 #[cfg(feature = "owned-tls-cache")]
 unsafe impl Send for DtvStorage {}
 

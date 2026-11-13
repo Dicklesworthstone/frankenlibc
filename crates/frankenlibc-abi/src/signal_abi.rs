@@ -433,9 +433,9 @@ struct SignalTls {
 }
 
 #[cfg(feature = "owned-tls-cache")]
-// SAFETY: `OwnedTlsCache` serializes slot lookup behind a mutex and returns
-// only the slot for the current kernel TID, preserving the previous per-thread
-// access discipline for these signal controller fields.
+// SAFETY: `OwnedTlsCache` returns only this thread's lifecycle-owned slot and
+// rejects overlapping mutable borrows, preserving the per-thread access
+// discipline for these signal controller fields.
 unsafe impl Send for SignalTls {}
 
 #[cfg(feature = "owned-tls-cache")]

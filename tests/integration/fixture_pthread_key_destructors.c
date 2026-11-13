@@ -5,12 +5,15 @@
  * key destructor ever ran. Output must be byte-identical to glibc.
  */
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -66,20 +69,24 @@ struct lifecycle_case {
     int mutation; /* 1 replaces the next value; 2 deletes/recreates its key. */
     int minimum_stack;
     int borrowed_stack;
+    int caches;
 };
 static const struct lifecycle_case lifecycle_cases[] = {
-    {"empty-return",    0, 0, 0, 0, 0, 0},
-    {"empty-exit",      0, 1, 0, 0, 0, 0},
-    {"values-return",   1, 0, 0, 0, 0, 0},
-    {"values-exit",     1, 1, 0, 0, 0, 0},
-    {"rounds-return",   1, 0, 1, 0, 0, 0},
-    {"rounds-exit",     1, 1, 1, 0, 0, 0},
-    {"replace-later",   1, 0, 0, 1, 0, 0},
-    {"delete-later",    1, 0, 0, 2, 0, 0},
-    {"minimum-return",  1, 0, 0, 0, 1, 0},
-    {"minimum-exit",    1, 1, 0, 0, 1, 0},
-    {"borrowed-return", 1, 0, 0, 0, 1, 1},
-    {"borrowed-exit",   1, 1, 0, 0, 1, 1},
+    {"empty-return",    0, 0, 0, 0, 0, 0, 0},
+    {"empty-exit",      0, 1, 0, 0, 0, 0, 0},
+    {"values-return",   1, 0, 0, 0, 0, 0, 0},
+    {"values-exit",     1, 1, 0, 0, 0, 0, 0},
+    {"rounds-return",   1, 0, 1, 0, 0, 0, 0},
+    {"rounds-exit",     1, 1, 1, 0, 0, 0, 0},
+    {"replace-later",   1, 0, 0, 1, 0, 0, 0},
+    {"delete-later",    1, 0, 0, 2, 0, 0, 0},
+    {"minimum-return",  1, 0, 0, 0, 1, 0, 0},
+    {"minimum-exit",    1, 1, 0, 0, 1, 0, 0},
+    {"borrowed-return", 1, 0, 0, 0, 1, 1, 0},
+    {"borrowed-exit",   1, 1, 0, 0, 1, 1, 0},
+    {"cache-return",    1, 0, 0, 0, 0, 0, 1},
+    {"cache-exit",      1, 1, 0, 0, 0, 0, 1},
+    {"cache-rounds",    1, 0, 1, 0, 0, 0, 1},
 };
 struct lifecycle_value {
     int index;
@@ -93,6 +100,21 @@ static struct lifecycle_value child_values[LIFECYCLE_KEYS];
 static struct lifecycle_value replacement_value = {1, 0, 1};
 static _Atomic unsigned lifecycle_calls[LIFECYCLE_KEYS];
 static _Atomic unsigned parent_calls, replacement_calls, lifecycle_errors;
+static _Atomic unsigned cache_checks;
+static char cache_input[] = "alpha,beta,gamma,delta,epsilon";
+static char *cache_address;
+static uintptr_t cache_creator_tp;
+static int cache_expect_native;
+
+static void check_live_cache_state(unsigned call) {
+    static const char *const tokens[] = {"beta", "gamma", "delta", "epsilon"};
+    char *next = strtok(NULL, ",");
+    if (call == 0 || call > sizeof(tokens) / sizeof(tokens[0]) || next == NULL ||
+        strcmp(next, tokens[call - 1]) != 0 || cache_address == NULL ||
+        strcmp(cache_address, "203.0.113.7") != 0)
+        atomic_fetch_add(&lifecycle_errors, 1);
+    atomic_fetch_add(&cache_checks, 1);
+}
 
 static void lifecycle_destructor(void *pointer) {
     struct lifecycle_value *value = pointer;
@@ -101,6 +123,8 @@ static void lifecycle_destructor(void *pointer) {
         return;
     }
     unsigned call = atomic_fetch_add(&lifecycle_calls[value->index], 1) + 1;
+    if (active_case->caches && value->index == 0)
+        check_live_cache_state(call);
     if (pthread_getspecific(lifecycle_keys[value->index]) != NULL)
         atomic_fetch_add(&lifecycle_errors, 1);
     if (value->replacement)
@@ -136,6 +160,22 @@ static void lifecycle_destructor(void *pointer) {
 
 static void *lifecycle_worker(void *unused) {
     (void)unused;
+    if (active_case->caches) {
+        /* Native clones currently inherit the creator's hardware TLS; a
+         * provider check alone cannot prove that requested backend ran. */
+        int inherited = (uintptr_t)__builtin_thread_pointer() == cache_creator_tp;
+        if (inherited != cache_expect_native) {
+            static const char message[] = "FAIL: cache thread backend mismatch\n";
+            (void)write(STDERR_FILENO, message, sizeof(message) - 1);
+            _Exit(86);
+        }
+        char *first = strtok(cache_input, ",");
+        struct in_addr address = {.s_addr = htonl(UINT32_C(0xcb007107))};
+        cache_address = inet_ntoa(address);
+        if (first == NULL || strcmp(first, "alpha") != 0 || cache_address == NULL ||
+            strcmp(cache_address, "203.0.113.7") != 0)
+            atomic_fetch_add(&lifecycle_errors, 1);
+    }
     for (int i = 0; i < LIFECYCLE_KEYS; ++i) {
         if (pthread_getspecific(lifecycle_keys[i]) != NULL)
             atomic_fetch_add(&lifecycle_errors, 1);
@@ -160,6 +200,8 @@ static int verify_lifecycle_provider(const char *candidate) {
         {"pthread_key_delete", (void *)pthread_key_delete},
         {"pthread_getspecific", (void *)pthread_getspecific},
         {"pthread_setspecific", (void *)pthread_setspecific},
+        {"strtok", (void *)strtok},
+        {"inet_ntoa", (void *)inet_ntoa},
     };
     if (candidate == NULL)
         return 0;
@@ -174,9 +216,42 @@ static int verify_lifecycle_provider(const char *candidate) {
     return 0;
 }
 
+static int cache_capacity_fixture(void) {
+    pthread_key_t keys[PTHREAD_KEYS_MAX + 1];
+    size_t count;
+    int rc = 0;
+    for (count = 0; count < sizeof(keys) / sizeof(keys[0]); ++count) {
+        rc = pthread_key_create(&keys[count], NULL);
+        if (rc != 0) break;
+    }
+    int failed = rc != EAGAIN || count != PTHREAD_KEYS_MAX;
+    /* These caches are first used only after public key exhaustion. Private
+     * libc scratch state must not consume or depend on the public key budget. */
+    char input[] = "alpha,beta";
+    char *first = strtok(input, ",");
+    char *second = strtok(NULL, ",");
+    struct in_addr address = {.s_addr = htonl(UINT32_C(0xcb007107))};
+    char *formatted = inet_ntoa(address);
+    if (first == NULL || second == NULL || strcmp(first, "alpha") != 0 ||
+        strcmp(second, "beta") != 0 || formatted == NULL ||
+        strcmp(formatted, "203.0.113.7") != 0)
+        failed = 1;
+    for (size_t i = 0; i < count; ++i)
+        if (pthread_key_delete(keys[i]) != 0) failed = 1;
+    if (failed) {
+        fprintf(stderr, "FAIL: public key capacity or lazy cache initialization (%zu keys, rc=%d)\n",
+                count, rc);
+        return 1;
+    }
+    puts("key-lifecycle cache-capacity PASS");
+    return 0;
+}
+
 static int lifecycle_fixture(const char *name, const char *candidate) {
     if (verify_lifecycle_provider(candidate))
         return 1;
+    if (strcmp(name, "cache-capacity") == 0)
+        return cache_capacity_fixture();
     for (size_t i = 0; i < sizeof(lifecycle_cases) / sizeof(lifecycle_cases[0]); ++i) {
         if (strcmp(name, lifecycle_cases[i].name) == 0)
             active_case = &lifecycle_cases[i];
@@ -184,6 +259,18 @@ static int lifecycle_fixture(const char *name, const char *candidate) {
     if (active_case == NULL) {
         fprintf(stderr, "FAIL: unknown key lifecycle case %s\n", name);
         return 1;
+    }
+    if (active_case->caches) {
+        cache_creator_tp = (uintptr_t)__builtin_thread_pointer();
+        const char *backend = getenv("FRANKENLIBC_THREAD_NATIVE");
+        cache_expect_native = backend != NULL && strcmp(backend, "1") == 0;
+        /* Reserve internal cache identities before the application keys.
+         * An implementation that mixes both destructor phases will destroy
+         * these lower-index caches before our later application callbacks. */
+        char parent_input[] = "parent,remaining";
+        struct in_addr address = {.s_addr = htonl(INADDR_LOOPBACK)};
+        if (strtok(parent_input, ",") == NULL || inet_ntoa(address) == NULL)
+            return 1;
     }
     for (int i = 0; i < LIFECYCLE_KEYS; ++i) {
         parent_values[i] = (struct lifecycle_value){i, 1, 0};
@@ -238,6 +325,10 @@ static int lifecycle_fixture(const char *name, const char *candidate) {
     }
     if (parent_lost || atomic_load(&parent_calls) || atomic_load(&lifecycle_errors) ||
         atomic_load(&replacement_calls) != (unsigned)(active_case->mutation != 0))
+        failed = 1;
+    unsigned expected_cache_checks = !active_case->caches ? 0 :
+                                     active_case->rounds ? PTHREAD_DESTRUCTOR_ITERATIONS : 1;
+    if (atomic_load(&cache_checks) != expected_cache_checks)
         failed = 1;
 
     if (borrowed != NULL) {

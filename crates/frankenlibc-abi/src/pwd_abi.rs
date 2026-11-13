@@ -135,10 +135,9 @@ struct PwdStorage {
 }
 
 #[cfg(feature = "owned-tls-cache")]
-// SAFETY: PwdStorage is accessed through OwnedTlsCache, which serializes access
-// and keeps each per-thread value boxed. The raw pointers stored in `pw` only
-// point into the same boxed PwdStorage buffer and are refreshed before they are
-// returned to callers.
+// SAFETY: OwnedTlsCache keeps each thread's PwdStorage at a stable address and
+// rejects overlapping mutable borrows. The pointers in `pw` refer to that
+// thread's buffer and are refreshed before returning to callers.
 unsafe impl Send for PwdStorage {}
 
 impl PwdStorage {
@@ -1295,10 +1294,9 @@ struct ShadowTlsStorage {
 }
 
 #[cfg(feature = "owned-tls-cache")]
-// SAFETY: ShadowTlsStorage is accessed through OwnedTlsCache, which serializes
-// access to each per-thread boxed value. The raw pointers stored in `entry`
-// only point into the same boxed ShadowTlsStorage buffer and are refreshed
-// before returning static shadow entries to callers.
+// SAFETY: OwnedTlsCache keeps each thread's ShadowTlsStorage at a stable
+// address and rejects overlapping mutable borrows. The pointers in `entry`
+// refer to that thread's buffer and are refreshed before returning to callers.
 unsafe impl Send for ShadowTlsStorage {}
 
 impl ShadowTlsStorage {

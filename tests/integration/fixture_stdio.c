@@ -2297,7 +2297,6 @@ static int test_puts_records_are_atomic(void) {
     return failed != 0;
 }
 
-
 struct flush_snapshot_group;
 struct flush_snapshot_cookie {
     struct flush_snapshot_group *group;

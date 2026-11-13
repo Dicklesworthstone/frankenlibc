@@ -221,7 +221,7 @@ pub struct ThreadHandle {
 
     /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
     /// owned ThreadHandle mapping so clone-based threads never need malloc.
-    pub tls_values: [super::tls::TlsEntry; super::tls::PTHREAD_KEYS_MAX],
+    pub tls_values: [super::tls::TlsEntry; super::tls::TLS_KEY_SLOTS],
 }
 
 // SAFETY: ThreadHandle is designed for cross-thread sharing via atomic fields.
@@ -891,7 +891,7 @@ pub unsafe fn create_thread_with_startup(
         stack_addr: stack.address,
         stack_size: stack.size,
         guard_size: stack.guard_size,
-        tls_values: [super::tls::TlsEntry::default(); super::tls::PTHREAD_KEYS_MAX],
+        tls_values: [super::tls::TlsEntry::default(); super::tls::TLS_KEY_SLOTS],
     }) };
 
     // Prepare ThreadStartArgs on the child stack.

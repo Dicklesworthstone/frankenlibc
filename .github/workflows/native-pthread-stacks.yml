@@ -36,6 +36,7 @@ on:
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
       - 'tests/integration/fixture_pthread_key_destructors.c'
+      - 'tests/integration/fixture_exit_tls.cpp'
       - 'tests/integration/fixture_posix_timers.c'
       - 'scripts/check_pthread_extensions_native.sh'
       - 'scripts/check_posix_timers.py'
@@ -190,6 +191,13 @@ jobs:
           python3 scripts/check_pthread_native_poll.py --send-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/send"
+      - name: Preserve owned cache state through application thread destructors
+        if: always() && matrix.feature == 'owned-tls-cache'
+        shell: bash
+        run: |
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_PTHREAD_KEYS_OUT_DIR="$PWD/artifacts/signal-waits/cache" \
+            bash scripts/check_pthread_extensions_native.sh --cache-lifecycle
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -240,7 +248,7 @@ jobs:
           if [[ "$FEATURE" == owned-tls-cache ]]; then
             cargo test -p frankenlibc-abi --lib --features owned-tls-cache \
               owned_tls_cache::tests:: -- --test-threads=1 2>&1 | tee "$root/cache-owner.log"
-            grep -Eq 'test result: ok\. 2 passed; 0 failed;' "$root/cache-owner.log"
+            grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-owner.log"
             python3 scripts/check_pthread_native_poll.py \
               --library "$PWD/target/release/libfrankenlibc_abi.so" \
               --out-dir "$root/native-waits"
@@ -286,7 +294,7 @@ jobs:
                     '--test', 'pthread_cancel_wait_test', 'cancel_poll::tests::'], 'strict', 3)]
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                  *features, 'pthread::tls::tests::'], 'strict', 50))
+                  *features, 'pthread::tls::tests::'], 'strict', 51))
               for mode in ['strict', 'hardened']:
                   cases.append((f'policy-{label}-{mode}', ['cargo', 'test', '-p', 'frankenlibc-abi',
                       *features, '--test', 'pthread_thread_lifecycle_test',

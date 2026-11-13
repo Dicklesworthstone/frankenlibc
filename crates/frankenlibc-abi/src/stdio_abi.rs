@@ -2505,7 +2505,11 @@ fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGu
         if let Some(native) = io_internal_abi::try_lock_native_stream_registry()
             && let Ok(reg) = registry().try_lock()
         {
-            if !reg.streams.get(&id).is_some_and(|live| Arc::ptr_eq(live, cell)) {
+            if !reg
+                .streams
+                .get(&id)
+                .is_some_and(|live| Arc::ptr_eq(live, cell))
+            {
                 return None;
             }
             let handle = resolve_flags_word(cell.flags_word);
@@ -2536,7 +2540,6 @@ fn lock_snapshot_stream(id: usize, cell: &StreamCell) -> Option<SnapshotStreamGu
         raw_syscall::sys_sched_yield();
     }
 }
-
 
 /// The stdio registries held across `fork` (bd-rc0923-epic-eeuy4f.5), as glibc
 /// holds its stream-list lock: a stream operation in another thread at the
