@@ -337,7 +337,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-register-query-bounds gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds; do
+for scenario in gnu-register-query-bounds gnu-register-narrow-bounds gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-wide-bounds gnu-wide-locale gnu-precision-spans gnu-register gnu-register-wide gnu-register-wide-bounds; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -359,6 +359,8 @@ for scenario in gnu-register-query-bounds gnu-types gnu-size gnu-errors gnu-roun
       completion=wide-bounds
     elif [[ "${scenario}" == gnu-register-query-bounds ]]; then
       completion=query-bounds
+    elif [[ "${scenario}" == gnu-register-narrow-bounds ]]; then
+      completion=narrow-bounds
     fi
     if [[ "$(grep -xc "reg:complete:${completion}" "${oracle_stdout}")" -ne 1 ]]; then
       echo "FAIL: GNU registration oracle did not complete ${scenario}" >&2
@@ -374,6 +376,13 @@ for scenario in gnu-register-query-bounds gnu-types gnu-size gnu-errors gnu-roun
   if [[ "${scenario}" == gnu-register-wide-bounds ]] &&
      [[ "$(grep -c '^reg:wide-bounds:' "${oracle_stdout}")" -ne 80 ]]; then
     echo "FAIL: incomplete wide registration boundary oracle" >&2
+    exit 1
+  fi
+  if [[ "${scenario}" == gnu-register-narrow-bounds ]] &&
+     { [[ "$(grep -c '^reg:narrow-bounds:' "${oracle_stdout}")" -ne 112 ]] ||
+       [[ "$(grep -c '^reg:narrow-huge:' "${oracle_stdout}")" -ne 8 ]] ||
+       [[ "${rows}" -ne 121 ]]; }; then
+    echo "FAIL: incomplete narrow registration boundary oracle" >&2
     exit 1
   fi
   if [[ "${scenario}" == gnu-wide-bounds ]] &&
@@ -394,7 +403,7 @@ for scenario in gnu-register-query-bounds gnu-types gnu-size gnu-errors gnu-roun
     echo "FAIL: incomplete precision input-span oracle" >&2
     exit 1
   fi
-  if [[ "${scenario}" == gnu-register-query-bounds || "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
+  if [[ "${scenario}" == gnu-register-query-bounds || "${scenario}" == gnu-register-narrow-bounds || "${scenario}" == gnu-register-wide-bounds || "${scenario}" == gnu-wide-bounds || "${scenario}" == gnu-wide-locale || "${scenario}" == gnu-precision-spans ]]; then
     negative_status=0
     env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="${LIB}" \
       "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" \

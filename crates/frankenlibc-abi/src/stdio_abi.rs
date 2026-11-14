@@ -8326,16 +8326,12 @@ unsafe fn extension_plan<'a>(
                     }
                     // Slots beyond the declared argument count are not part
                     // of this conversion, even when the caller has more room.
-                    kinds.extend(
-                        types
-                            .into_iter()
-                            .zip(sizes)
-                            .take(arg_count)
-                            .map(|(kind, size)| PrintfArgType {
-                                kind,
-                                size: size.max(0) as usize,
-                            }),
-                    );
+                    kinds.extend(types.into_iter().zip(sizes).take(arg_count).map(
+                        |(kind, size)| PrintfArgType {
+                            kind,
+                            size: size.max(0) as usize,
+                        },
+                    ));
                 }
             }
         } else if let Some(kind) = extension_native_type(conversion_byte, length) {
@@ -8575,11 +8571,17 @@ struct ExtensionOutput {
     wide: bool,
     caller: usize,
     pending: Option<Vec<u8>>,
+    bounded: Option<*mut StrictDirectSnprintfWriter>,
 }
 
 impl ExtensionOutput {
     unsafe fn write(&mut self, bytes: &[u8]) -> Result<usize, c_int> {
-        if let Some(pending) = self.pending.as_mut() {
+        if let Some(writer) = self.bounded {
+            // SAFETY: the snprintf owner retains this writer until its FILE is
+            // closed. No Rust reference to it survives a user callback.
+            unsafe { (*writer).push(bytes) };
+            Ok(bytes.len())
+        } else if let Some(pending) = self.pending.as_mut() {
             let count = crate::wchar_abi::narrow_to_wide_count(bytes).ok_or(errno::EILSEQ)?;
             pending
                 .try_reserve(bytes.len())
@@ -8592,6 +8594,24 @@ impl ExtensionOutput {
         }
     }
 
+    /// Padding for a bounded string sink must cost only the bytes retained by
+    /// the caller, including when a recursive callback formats into this FILE.
+    unsafe fn repeat(&mut self, byte: u8, count: usize) -> Result<(), c_int> {
+        if let Some(writer) = self.bounded {
+            // SAFETY: see write; repeat never writes past the admitted capacity.
+            unsafe { (*writer).repeat(byte, count) };
+        } else {
+            let block = [byte; 256];
+            let mut remaining = count;
+            while remaining != 0 {
+                let n = remaining.min(block.len());
+                unsafe { self.write(&block[..n]) }?;
+                remaining -= n;
+            }
+        }
+        Ok(())
+    }
+
     unsafe fn flush(&mut self) -> Result<(), c_int> {
         if let Some(pending) = self.pending.as_mut() {
             // SAFETY: pending owns these bytes and the FILE stays live.
@@ -8600,6 +8620,258 @@ impl ExtensionOutput {
         }
         Ok(())
     }
+}
+
+/// Render a resolved native conversion without duplicating argument decoding.
+unsafe fn extension_render_native(
+    spec: FormatSpec,
+    raw: u64,
+    wide: bool,
+) -> Result<ScratchVec, c_int> {
+    let mut segments = FormatSegments::new();
+    segments.push(FormatSegment::Spec(spec));
+    // SAFETY: this conversion consumes at most the single decoded value. Its
+    // positional and asterisk operands were resolved by the outer plan.
+    let rendered = unsafe {
+        render_segments(
+            "printf",
+            &segments,
+            &raw,
+            usize::from(spec.consumes_value_arg()),
+            wide,
+        )
+    };
+    if let Some(error) = take_render_failure() {
+        Err(error)
+    } else {
+        Ok(rendered)
+    }
+}
+
+unsafe fn extension_bounded_string(
+    output: &mut ExtensionOutput,
+    spec: &FormatSpec,
+    bytes: &[u8],
+) -> Result<usize, c_int> {
+    let length = match spec.precision {
+        Precision::Fixed(limit) => bytes.len().min(limit),
+        _ => bytes.len(),
+    };
+    let width = match spec.width {
+        Width::Fixed(width) => width,
+        _ => 0,
+    };
+    let padding = width.saturating_sub(length);
+    if !spec.flags.left_justify {
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    unsafe { output.write(&bytes[..length]) }?;
+    if spec.flags.left_justify {
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    Ok(length + padding)
+}
+
+/// Count/validate a wide string before publishing it, then encode only the
+/// prefix the destination can retain. Precision bounds input reads as well as
+/// output, so an array ending exactly at that boundary needs no terminator.
+unsafe fn extension_bounded_wide_string(
+    output: &mut ExtensionOutput,
+    spec: &FormatSpec,
+    pointer: *const u32,
+) -> Result<usize, c_int> {
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let limit = match spec.precision {
+        Precision::Fixed(limit) => Some(limit),
+        _ => None,
+    };
+    let mut length = 0usize;
+    let mut characters = 0usize;
+    while limit.is_none_or(|limit| length < limit) {
+        // SAFETY: the caller supplies characters through NUL or precision.
+        let wc = unsafe { *pointer.add(characters) };
+        if wc == 0 {
+            break;
+        }
+        let mut encoded = [0; 6];
+        let n = codec.encode(wc, &mut encoded).ok_or(errno::EILSEQ)?;
+        if limit.is_some_and(|limit| n > limit - length) {
+            break;
+        }
+        length = length.checked_add(n).ok_or(errno::EOVERFLOW)?;
+        characters += 1;
+    }
+    let width = match spec.width {
+        Width::Fixed(width) => width,
+        _ => 0,
+    };
+    let padding = width.saturating_sub(length);
+    if !spec.flags.left_justify {
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    let mut emitted = 0;
+    for index in 0..characters {
+        if output.bounded.is_some_and(|writer| {
+            // SAFETY: this internal writer remains live for the FILE lifetime.
+            unsafe { (*writer).remaining() == 0 }
+        }) {
+            // These bytes are discarded; no encoding or output allocation is
+            // required after the first pass has validated their contents.
+            unsafe { output.repeat(0, length - emitted) }?;
+            break;
+        }
+        let mut encoded = [0; 6];
+        let n = codec
+            .encode(unsafe { *pointer.add(index) }, &mut encoded)
+            .ok_or(errno::EILSEQ)?;
+        unsafe { output.write(&encoded[..n]) }?;
+        emitted += n;
+    }
+    if spec.flags.left_justify {
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    Ok(length + padding)
+}
+
+/// A bounded snprintf needs the field's length and retained prefix, never an
+/// allocation proportional to width/precision. Keep native digit generation
+/// and locale rules, but represent padding and exact trailing zeros as runs.
+unsafe fn extension_format_bounded(
+    output: &mut ExtensionOutput,
+    spec: &FormatSpec,
+    raw: u64,
+) -> Result<usize, c_int> {
+    if spec.is_literal_percent() {
+        return unsafe { output.write(b"%") };
+    }
+    if spec.value_arg_is_string() {
+        let pointer = raw as usize as *const c_char;
+        if pointer.is_null() {
+            let bytes: &[u8] = match spec.precision {
+                Precision::Fixed(limit) if limit < 6 => b"",
+                _ => b"(null)",
+            };
+            return unsafe { extension_bounded_string(output, spec, bytes) };
+        }
+        if matches!(spec.length, LengthMod::L) {
+            return unsafe { extension_bounded_wide_string(output, spec, pointer.cast()) };
+        }
+        let bytes = if let Precision::Fixed(precision) = spec.precision {
+            let bound = if runtime_policy::strict_passthrough_active() {
+                precision
+            } else {
+                known_remaining(pointer as usize).map_or(precision, |n| precision.min(n))
+            };
+            let (length, _) =
+                unsafe { crate::string_abi::scan_c_string_nul_or_bound(pointer, bound) };
+            // SAFETY: the bounded scan established exactly this readable span.
+            unsafe { std::slice::from_raw_parts(pointer.cast(), length) }
+        } else {
+            unsafe { c_str_bytes(pointer) }
+        };
+        return unsafe { extension_bounded_string(output, spec, bytes) };
+    }
+
+    let floating = spec.value_arg_is_float();
+    let integer = matches!(
+        spec.conversion,
+        b'd' | b'i' | b'u' | b'o' | b'x' | b'X' | b'b' | b'B'
+    ) || (spec.conversion == b'p' && raw != 0);
+    // A u64 needs at most 64 digits. A finite double's exact decimal expansion
+    // needs at most 1074 places; x87/binary128 need fewer than 17000. Beyond
+    // those bounds, additional fractional/significant digits are all zeros.
+    let precision_bound = if integer {
+        64
+    } else if floating && spec.value_arg_is_x87() {
+        17_000
+    } else if floating {
+        1_100
+    } else {
+        usize::MAX
+    };
+    let mut bare = *spec;
+    bare.width = Width::None;
+    bare.flags.left_justify = false;
+    bare.flags.zero_pad = false;
+    let mut extra = 0;
+    if let Precision::Fixed(precision) = bare.precision
+        && precision > precision_bound
+    {
+        bare.precision = Precision::Fixed(precision_bound);
+        extra = precision - precision_bound;
+    }
+    let body = unsafe { extension_render_native(bare, raw, false) }?;
+    let sign_length = usize::from(matches!(body.first(), Some(b'-' | b'+' | b' ')));
+    let special_float = floating
+        && (body[sign_length..].eq_ignore_ascii_case(b"inf")
+            || body[sign_length..].eq_ignore_ascii_case(b"nan"));
+    if special_float || (matches!(spec.conversion, b'g' | b'G') && !spec.flags.alt_form) {
+        extra = 0;
+    }
+    let mut prefix = sign_length;
+    if body.get(prefix) == Some(&b'0')
+        && matches!(body.get(prefix + 1), Some(b'x' | b'X' | b'b' | b'B'))
+    {
+        prefix += 2;
+    }
+    let insert = if integer {
+        prefix
+    } else if floating && !matches!(spec.conversion, b'f' | b'F') {
+        let marker: &[u8] = if matches!(spec.conversion, b'a' | b'A') {
+            b"pP"
+        } else {
+            b"eE"
+        };
+        body.iter()
+            .rposition(|byte| marker.contains(byte))
+            .unwrap_or(body.len())
+    } else {
+        body.len()
+    };
+    let width = match spec.width {
+        Width::Fixed(width) => width,
+        _ => 0,
+    };
+    let mut content_width = body.len();
+    if floating
+        && width != 0
+        && (spec.flags.group || !frankenlibc_core::stdio::printf::numeric_radix_is_dot())
+    {
+        // Numeric locales can count a multibyte radix/group separator as one
+        // width unit. Ask the same renderer using a small width to retain its
+        // exact rule without allocating the requested (possibly INT_MAX) field.
+        let mut measured = bare;
+        measured.width = Width::Fixed(body.len() + 1);
+        let padded = unsafe { extension_render_native(measured, raw, false) }?;
+        content_width = (body.len() + 1).saturating_sub(padded.len() - body.len());
+    }
+    content_width = content_width.checked_add(extra).ok_or(errno::EOVERFLOW)?;
+    let padding = width.saturating_sub(content_width);
+    let length = body
+        .len()
+        .checked_add(extra)
+        .and_then(|n| n.checked_add(padding))
+        .ok_or(errno::EOVERFLOW)?;
+    let zero_pad = spec.flags.zero_pad
+        && !spec.flags.left_justify
+        && ((floating && !special_float) || (integer && matches!(spec.precision, Precision::None)));
+    if !spec.flags.left_justify && !zero_pad {
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    let start = if zero_pad {
+        unsafe { output.write(&body[..prefix]) }?;
+        unsafe { output.repeat(b'0', padding) }?;
+        prefix
+    } else {
+        0
+    };
+    unsafe { output.write(&body[start..insert]) }?;
+    unsafe { output.repeat(b'0', extra) }?;
+    unsafe { output.write(&body[insert..]) }?;
+    if spec.flags.left_justify {
+        unsafe { output.repeat(b' ', padding) }?;
+    }
+    Ok(length)
 }
 
 unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize) {
@@ -8765,8 +9037,7 @@ unsafe fn extension_format_stream(
 ) -> Result<c_int, c_int> {
     let extensions = printf_extensions_snapshot();
     // SAFETY: the parser calls registered arginfo functions with owned outputs.
-    let plan =
-        unsafe { extension_plan(bytes, wide, &extensions, ExtensionPlanPurpose::Format) }?;
+    let plan = unsafe { extension_plan(bytes, wide, &extensions, ExtensionPlanPurpose::Format) }?;
     if ap.is_null() && plan.count != 0 {
         return Err(errno::EINVAL);
     }
@@ -8814,6 +9085,7 @@ unsafe fn extension_format_stream(
         stream,
         wide,
         caller,
+        bounded: (!wide).then(|| extension_bounded_writer(stream)).flatten(),
         pending: (wide
             && crate::wchar_abi::reserve_wide_output(stream, 0)
                 .is_some_and(|(_, bounded)| !bounded))
@@ -8925,33 +9197,32 @@ unsafe fn extension_format_stream(
                             // even if a registered callback changes it mid-format.
                             let (message, _) =
                                 crate::string_abi::rendered_strerror_message(entry_errno);
-                            let mut rendered = Vec::new();
-                            format_str(message.as_bytes(), &spec.native, &mut rendered);
-                            // SAFETY: rendered and the locked FILE remain live.
-                            unsafe { output.write(&rendered) }?
+                            if output.bounded.is_some() {
+                                unsafe {
+                                    extension_bounded_string(
+                                        &mut output,
+                                        &spec.native,
+                                        message.as_bytes(),
+                                    )
+                                }?
+                            } else {
+                                let mut rendered = Vec::new();
+                                format_str(message.as_bytes(), &spec.native, &mut rendered);
+                                // SAFETY: rendered and the locked FILE remain live.
+                                unsafe { output.write(&rendered) }?
+                            }
                         } else {
-                            let mut segments = FormatSegments::new();
-                            segments.push(FormatSegment::Spec(spec.native));
                             let raw = args
                                 .get(spec.first_arg)
                                 .map_or(0, ExtensionArgument::native_bits);
-                            // SAFETY: one resolved native conversion consumes at
-                            // most one already-decoded argument. Position/asterisk
-                            // consumption was handled by the outer plan.
-                            let rendered = unsafe {
-                                render_segments(
-                                    "printf",
-                                    &segments,
-                                    &raw,
-                                    usize::from(spec.native.consumes_value_arg()),
-                                    wide,
-                                )
-                            };
-                            if let Some(error) = take_render_failure() {
-                                return Err(error);
+                            if output.bounded.is_some() {
+                                unsafe { extension_format_bounded(&mut output, &spec.native, raw) }?
+                            } else {
+                                let rendered =
+                                    unsafe { extension_render_native(spec.native, raw, wide) }?;
+                                // SAFETY: rendered and the locked FILE remain live.
+                                unsafe { output.write(&rendered) }?
                             }
-                            // SAFETY: rendered and the locked FILE remain live.
-                            unsafe { output.write(&rendered) }?
                         }
                     }
                 }
@@ -9098,6 +9369,55 @@ impl Drop for ExtensionBuffer {
     }
 }
 
+/// The cookie FILE lets registered renderers use ordinary recursive stdio while
+/// truncation remains a successful write. The caller's prefix is the only
+/// output storage; discarded bytes still contribute to return values and %n.
+unsafe extern "C-unwind" fn extension_snprintf_write(
+    cookie: *mut c_void,
+    bytes: *const c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: registered_snprintf owns the writer through fclose and the FILE
+    // writer supplies a live input span for this synchronous callback.
+    unsafe {
+        (*cookie.cast::<StrictDirectSnprintfWriter>())
+            .push(std::slice::from_raw_parts(bytes.cast(), count));
+    }
+    count as isize
+}
+
+fn extension_bounded_writer(stream: *mut c_void) -> Option<*mut StrictDirectSnprintfWriter> {
+    if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return None;
+    }
+    let id = canonical_stream_id(stream);
+    let registry = lock_cookie_registry();
+    let info = registry.as_ref()?.get(&id)?;
+    (info.funcs.write? as usize == extension_snprintf_write as *const () as usize)
+        .then_some(info.cookie.cast())
+}
+
+struct ExtensionSnprintfStream(*mut c_void);
+
+impl ExtensionSnprintfStream {
+    unsafe fn close(&mut self) -> c_int {
+        let stream = std::mem::replace(&mut self.0, std::ptr::null_mut());
+        if stream.is_null() {
+            0
+        } else {
+            unsafe { fclose(stream) }
+        }
+    }
+}
+
+impl Drop for ExtensionSnprintfStream {
+    fn drop(&mut self) {
+        // A callback may unwind. Retire its FILE before the stack-owned cookie
+        // disappears, including when normal formatting never reaches close.
+        unsafe { self.close() };
+    }
+}
+
 unsafe fn registered_snprintf(
     dst: *mut c_char,
     size: usize,
@@ -9124,15 +9444,9 @@ unsafe fn registered_snprintf(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let Some(buffer) =
-        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
-    else {
-        return -1;
-    };
     let mut capacity = size;
     if repair_enabled(mode.heals_enabled(), decision.action)
-        && let Some(remaining) =
-            known_remaining_for_write(dst as usize, size.min(buffer.state.len.saturating_add(1)))
+        && let Some(remaining) = known_remaining_for_write(dst as usize, size)
         && remaining < capacity
     {
         capacity = remaining;
@@ -9146,23 +9460,47 @@ unsafe fn registered_snprintf(
             RepairLogContext::new(0, Some(dst as usize)),
         );
     }
-    if capacity != 0 {
-        let len = buffer.state.len.min(capacity - 1);
-        // SAFETY: copy and terminator remain within the admitted capacity.
-        unsafe {
-            if len != 0 {
-                std::ptr::copy_nonoverlapping(buffer.state.data, dst, len);
-            }
-            *dst.add(len) = 0;
-        }
+    let mut writer = StrictDirectSnprintfWriter::new(dst, capacity);
+    // Match snprintf's empty-prefix behavior, including a later callback error.
+    unsafe { writer.terminate() };
+    let stream = unsafe {
+        fopencookie(
+            std::ptr::from_mut(&mut writer).cast(),
+            c"w".as_ptr(),
+            CookieIoFuncs {
+                write: Some(extension_snprintf_write),
+                ..CookieIoFuncs::default()
+            },
+        )
+    };
+    if stream.is_null() {
+        return -1;
     }
+    let mut stream = ExtensionSnprintfStream(stream);
+    if unsafe {
+        setvbuf(stream.0, std::ptr::null_mut(), 2 /* _IONBF */, 0)
+    } != 0
+    {
+        return -1;
+    }
+    // Creating the private stream must not change %m or callback-visible errno.
+    unsafe { set_abi_errno(entry_errno) };
+    let mut result = unsafe { registered_printf_stream(stream.0, c_str_bytes(format), ap, false) };
+    let saved_errno = unsafe { *super::errno_abi::__errno_location() };
+    let close_result = unsafe { stream.close() };
+    if result < 0 || close_result == 0 {
+        unsafe { set_abi_errno(saved_errno) };
+    } else {
+        result = -1;
+    }
+    unsafe { writer.terminate() };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
-        runtime_policy::scaled_cost(15, buffer.state.len),
-        buffer.result < 0 || capacity < size,
+        runtime_policy::scaled_cost(15, writer.total),
+        result < 0 || capacity < size,
     );
-    buffer.result
+    result
 }
 
 unsafe fn registered_asprintf(
@@ -10483,11 +10821,30 @@ impl StrictDirectSnprintfWriter {
         }
     }
 
-    unsafe fn finish(self) -> c_int {
+    fn remaining(&self) -> usize {
+        self.size.saturating_sub(1).saturating_sub(self.written)
+    }
+
+    /// Account for an arbitrarily large repeated run using bounded storage.
+    unsafe fn repeat(&mut self, byte: u8, count: usize) {
+        self.total = self.total.saturating_add(count);
+        let copied = count.min(self.remaining());
+        if copied != 0 && !self.dst.is_null() {
+            // SAFETY: only the writable prefix before the terminator is filled.
+            unsafe { std::ptr::write_bytes(self.dst.add(self.written), byte, copied) };
+            self.written += copied;
+        }
+    }
+
+    unsafe fn terminate(&self) {
         if self.size != 0 && !self.dst.is_null() {
-            // SAFETY: `push` maintains `written < size`.
+            // SAFETY: push/repeat maintain written < size.
             unsafe { *self.dst.add(self.written) = 0 };
         }
+    }
+
+    unsafe fn finish(self) -> c_int {
+        unsafe { self.terminate() };
         printf_result_to_c_int(self.total)
     }
 }
@@ -17943,6 +18300,7 @@ unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
 /// write progress rather than callback timing.
 unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8]) -> usize {
     let fixed_memory = fixed_mem_cookie(id);
+    let bounded_printf = extension_bounded_writer(id as *mut c_void).is_some();
     if stream.is_appending()
         && let Some(memory) = &fixed_memory
     {
@@ -17958,9 +18316,16 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     };
     let flush_needed = result.flush_needed;
     let flushed_from_buffer = result.flushed_from_buffer;
-    let flush_data = result.flush_data.into_owned();
+    let flush_data = if bounded_printf {
+        result.flush_data
+    } else {
+        // Arbitrary user callbacks retain the existing owned staging: they
+        // never observe bytes borrowed from a mutable FILE buffer.
+        std::borrow::Cow::Owned(result.flush_data.into_owned())
+    };
 
     if !flush_needed {
+        drop(flush_data);
         stream.set_offset(
             stream
                 .offset()
@@ -17969,8 +18334,13 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
         return bytes.len();
     }
 
+    // Only the private snprintf hook can receive a borrowed span. It copies
+    // into the bounded destination synchronously and invokes no user code, so
+    // even a huge callback fwrite needs no full-size intermediate allocation.
+    let flush_length = flush_data.len();
     let flushed = unsafe { cookie_write_all(id, &flush_data) };
-    if flushed == flush_data.len() {
+    drop(flush_data);
+    if flushed == flush_length {
         // StreamBuffer consumed the emitted prefix and retained any suffix
         // after the full block or final newline. That suffix still belongs
         // to every cookie stream until a later write, fflush, or fclose;

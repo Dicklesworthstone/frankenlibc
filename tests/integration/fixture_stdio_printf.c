@@ -1257,6 +1257,136 @@ static int gnu_registration_query_bounds(void) {
     return 0;
 }
 
+static unsigned reg_narrow_calls;
+static int reg_narrow_recursive_width;
+
+static int reg_narrow_print(FILE *stream, const struct printf_info *info,
+                            const void *const *args) {
+    (void)info; (void)args;
+    ++reg_narrow_calls;
+    if (reg_narrow_recursive_width) {
+        const char *fmt = "%0*d";
+        return fprintf(stream, fmt, reg_narrow_recursive_width, 7);
+    }
+    return fwrite("K", 1, 1, stream) == 1 ? 1 : -1;
+}
+
+/* A registered renderer receives a real FILE, but snprintf must still retain
+ * only its caller's prefix. Exercise native fields, recursive callback output,
+ * count stores after truncation, and a result too large for int separately. */
+static int gnu_registration_narrow_bounds(void) {
+    static const size_t capacities[] = { 0, 1, 2, 8, 64, 256, 65536 };
+    alarm(60);
+    REG_CHECK(check_gnu_provider("snprintf") == 0);
+    REG_CHECK(check_gnu_provider("vsnprintf") == 0);
+    REG_CHECK(check_gnu_provider("fprintf") == 0);
+    REG_CHECK(check_gnu_provider("fwrite") == 0);
+    REG_CHECK(check_gnu_provider("register_printf_specifier") == 0);
+    REG_CHECK(register_printf_specifier('K', reg_narrow_print, reg_noargs) == 0);
+    for (int test = 0; test < 7; ++test) {
+        for (int variant = 0; variant < 2; ++variant) {
+            for (size_t index = 0; index <= sizeof capacities / sizeof capacities[0]; ++index) {
+                int null_buffer = index == sizeof capacities / sizeof capacities[0];
+                size_t capacity = null_buffer ? 0 : capacities[index];
+                char buffer[65536];
+                memset(buffer, 0xa5, sizeof buffer);
+                int count = -777;
+                reg_narrow_calls = 0;
+                reg_narrow_recursive_width = test == 6 ? 10000 : 0;
+                errno = EDOM;
+                int rc;
+#define REG_BOUNDED_CALL(fmt, ...) (variant \
+    ? call_vsnprintf(null_buffer ? NULL : buffer, capacity, fmt, __VA_ARGS__) \
+    : snprintf(null_buffer ? NULL : buffer, capacity, fmt, __VA_ARGS__))
+                if (test == 0) {
+                    const char *fmt = "%K|%+020.8d|%#020.12x|%020p%n";
+                    rc = REG_BOUNDED_CALL(fmt, -17, 0x123u, (void *)(uintptr_t)0x456, &count);
+                } else if (test == 1) {
+                    const char *fmt = "%K|%050.20f|%-60.20e|%#.25g%n";
+                    rc = REG_BOUNDED_CALL(fmt, -1.25, 0.125, 1.5, &count);
+                } else if (test == 2) {
+                    const char *fmt = "%K|%.1400f|%.1400e|%#.1400g|%.1400a%n";
+                    rc = REG_BOUNDED_CALL(fmt, 1.25, 0.125, 1.5, 0.25, &count);
+                } else if (test == 3) {
+                    const char *fmt = "%K|%.20000Lf|%#.20000Lg|%.20000La%n";
+                    rc = REG_BOUNDED_CALL(fmt, 1.25L, 0.125L, 1.5L, &count);
+                } else if (test == 4) {
+                    const char *fmt = "%K|%-20.6s|%20.3ls|%8lc|%.0s%n";
+                    rc = REG_BOUNDED_CALL(fmt, "abcdefgh", L"wide", (wint_t)L'Q', "unused", &count);
+                } else if (test == 5) {
+                    const char *fmt = "%K|%020.1400f|%020.1400g|%020p|%20.3s|%20m%n";
+                    rc = REG_BOUNDED_CALL(fmt, INFINITY, NAN, (void *)NULL, (char *)NULL, &count);
+                } else {
+                    const char *fmt = "a%Kb%n";
+                    rc = REG_BOUNDED_CALL(fmt, &count);
+                }
+                int error = errno;
+                REG_CHECK(rc > 0 && count == rc && reg_narrow_calls == 1 && error == EDOM);
+                for (size_t i = capacity; i < sizeof buffer; ++i)
+                    REG_CHECK((unsigned char)buffer[i] == 0xa5);
+                if (capacity) REG_CHECK(buffer[(size_t)rc < capacity ? (size_t)rc : capacity - 1] == 0);
+                printf("reg:narrow-bounds:%i:%i:%zu:%i:%i:%i:%i:%u:",
+                       test, variant, capacity, null_buffer, rc, error, count, reg_narrow_calls);
+                for (size_t i = 0; i < 256; ++i) printf("%02x", (unsigned char)buffer[i]);
+                /* A full-size destination also checks the exponent and tail
+                 * beyond the retained prefix of the truncated variants. */
+                uint64_t hash = UINT64_C(14695981039346656037);
+                for (size_t i = 0; i < sizeof buffer; ++i)
+                    hash = (hash ^ (unsigned char)buffer[i]) * UINT64_C(1099511628211);
+                printf(":%016llx\n", (unsigned long long)hash);
+#undef REG_BOUNDED_CALL
+            }
+        }
+    }
+    /* The old extension path attempted to allocate the entire 2 GiB result
+     * even for NULL,0. Keep plenty of room for the DSO and normal state while
+     * making that failure deterministic instead of invoking the OOM killer. */
+    struct rlimit limit;
+    REG_CHECK(getrlimit(RLIMIT_AS, &limit) == 0);
+    rlim_t ceiling = (rlim_t)1024 * 1024 * 1024;
+    if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur > ceiling) {
+        limit.rlim_cur = ceiling;
+        REG_CHECK(setrlimit(RLIMIT_AS, &limit) == 0);
+    }
+    for (int test = 0; test < 4; ++test) {
+        for (int variant = 0; variant < 2; ++variant) {
+            char buffer[8];
+            memset(buffer, 0xa5, sizeof buffer);
+            int count = -777, unreachable = -777;
+            reg_narrow_calls = 0;
+            reg_narrow_recursive_width = test == 2 ? INT_MAX - 8 : 0;
+            errno = EDOM;
+            int rc;
+            const char *fmt = test == 0 ? "%*d%K%n" : test == 1 ? "%.*d%K%n" :
+                              test == 2 ? "%K%n" : "%*d%K%n!";
+            if (test == 2) {
+                rc = variant ? call_vsnprintf(NULL, 0, fmt, &count)
+                             : snprintf(buffer, sizeof buffer, fmt, &count);
+            } else {
+                int width = test == 3 ? INT_MAX - 1 : INT_MAX - 8;
+                rc = variant ? call_vsnprintf(NULL, 0, fmt, width, 7, &count, &unreachable)
+                             : snprintf(buffer, sizeof buffer, fmt, width, 7, &count, &unreachable);
+            }
+            int error = errno;
+            int expected = test == 2 ? INT_MAX - 8 : INT_MAX - 7;
+            if (test == 3) {
+                REG_CHECK(rc == -1 && error == EOVERFLOW && count == INT_MAX && unreachable == -777);
+            } else {
+                REG_CHECK(rc == expected && count == expected && error == EDOM);
+            }
+            REG_CHECK(reg_narrow_calls == 1);
+            for (size_t i = 0; i < sizeof buffer; ++i)
+                REG_CHECK((unsigned char)buffer[i] == (variant ? 0xa5 : i == 7 ? 0 :
+                          (test == 1 || test == 2) ? '0' : ' '));
+            printf("reg:narrow-huge:%i:%i:%i:%i:%i:%i:%u\n",
+                   test, variant, rc, error, count, unreachable, reg_narrow_calls);
+        }
+    }
+    puts("reg:complete:narrow-bounds");
+    alarm(0);
+    return 0;
+}
+
 static int gnu_registration_combined_fallback(void) {
     alarm(20);
     reg_setup();
@@ -1787,6 +1917,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-wide-bounds") == 0) return gnu_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-query-bounds") == 0) return gnu_registration_query_bounds();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-narrow-bounds") == 0) return gnu_registration_narrow_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-wide-bounds") == 0) return gnu_registration_wide_bounds();
     if (argc == 2 && strcmp(argv[1], "--gnu-register-combined-fallback") == 0) return gnu_registration_combined_fallback();
