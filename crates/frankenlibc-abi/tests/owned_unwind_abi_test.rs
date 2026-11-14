@@ -242,6 +242,136 @@ fn leb128_decoders_cover_signed_and_unsigned_boundaries() {
 }
 
 #[test]
+fn leb128_decoders_preserve_word_extrema_and_padded_encodings() {
+    for value in [0, 1, 127, 128, usize::MAX >> 1, usize::MAX] {
+        let mut encoded = vec![0x55];
+        encode_uleb(value, &mut encoded);
+        let end = encoded.len();
+        encoded.push(0xaa);
+        assert_eq!(
+            owned_decode_uleb128_for_tests(&encoded, 1),
+            Ok((value, end))
+        );
+    }
+    for value in [
+        isize::MIN,
+        isize::MIN + 1,
+        -129,
+        -128,
+        -65,
+        -64,
+        -1,
+        0,
+        63,
+        64,
+        isize::MAX,
+    ] {
+        let mut encoded = vec![0x55];
+        encode_sleb(value, &mut encoded);
+        let end = encoded.len();
+        encoded.push(0xaa);
+        assert_eq!(
+            owned_decode_sleb128_for_tests(&encoded, 1),
+            Ok((value, end))
+        );
+    }
+    // DWARF permits redundant zero/sign extension, provided the integer fits.
+    assert_eq!(owned_decode_uleb128_for_tests(&[0x81, 0x00], 0), Ok((1, 2)));
+    assert_eq!(owned_decode_sleb128_for_tests(&[0x81, 0x00], 0), Ok((1, 2)));
+    assert_eq!(
+        owned_decode_sleb128_for_tests(&[0xff, 0x7f], 0),
+        Ok((-1, 2))
+    );
+}
+
+#[test]
+fn leb128_decoders_reject_out_of_word_terminal_payloads() {
+    let last_shift = (usize::BITS - 1) / 7 * 7;
+    let groups = (last_shift / 7) as usize;
+    // Interpret all terminal payloads in a wider integer, independently of
+    // the word decoder. checked_shl alone only checks the shift COUNT: it
+    // silently discards high bits at the last group of a 64-bit integer.
+    for prefix in [0x80u8, 0xff] {
+        for terminal in 0..=0x7fu8 {
+            let mut encoded = vec![prefix; groups];
+            encoded.push(terminal);
+            let low = if prefix == 0xff {
+                (1u128 << last_shift) - 1
+            } else {
+                0
+            };
+            let unsigned = low | (u128::from(terminal) << last_shift);
+            let signed = if terminal & 0x40 != 0 {
+                unsigned as i128 - (1i128 << (last_shift + 7))
+            } else {
+                unsigned as i128
+            };
+            assert_eq!(
+                owned_decode_uleb128_for_tests(&encoded, 0),
+                usize::try_from(unsigned)
+                    .map(|value| (value, encoded.len()))
+                    .map_err(|_| OwnedUnwindDecodeError::Overflow),
+                "unsigned prefix={prefix:#x}, terminal={terminal:#x}"
+            );
+            assert_eq!(
+                owned_decode_sleb128_for_tests(&encoded, 0),
+                isize::try_from(signed)
+                    .map(|value| (value, encoded.len()))
+                    .map_err(|_| OwnedUnwindDecodeError::Overflow),
+                "signed prefix={prefix:#x}, terminal={terminal:#x}"
+            );
+        }
+    }
+    let unterminated = vec![0x80; groups + 1];
+    assert_eq!(
+        owned_decode_uleb128_for_tests(&unterminated, 0),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+    assert_eq!(
+        owned_decode_sleb128_for_tests(&unterminated, 0),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+}
+
+#[test]
+fn overflowing_leb128_cannot_become_a_valid_frame_offset_or_expression() {
+    let groups = ((usize::BITS - 1) / 7) as usize;
+    let mut overflowing = vec![0x80; groups];
+    // This is exactly 2^word_bits; the old shift check decoded it as zero.
+    overflowing.push(1u8 << (usize::BITS - groups as u32 * 7));
+    let mut cfi = vec![0x0e]; // DW_CFA_def_cfa_offset (ULEB128).
+    cfi.extend_from_slice(&overflowing);
+    assert_eq!(
+        owned_validate_cfi_program_for_tests(&cfi),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+    let frame = synthetic_eh_frame(0x423000, 0x424000, 0x20, &cfi);
+    assert_eq!(
+        owned_evaluate_cfi_row_for_tests(&frame, 0x423000, 0x424000),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+
+    for opcode in [0x10, 0x11] {
+        // DW_OP_constu / DW_OP_consts.
+        let mut program = vec![opcode];
+        program.extend_from_slice(&overflowing);
+        assert_eq!(
+            owned_evaluate_dwarf_expression_for_tests(&program, [0; 32], &[0usize], None),
+            Err(OwnedUnwindDecodeError::Overflow)
+        );
+    }
+    // +2^(word_bits-1) also fits unsigned but cannot be a signed CFA factor.
+    let mut signed_cfi = vec![0x13]; // DW_CFA_def_cfa_offset_sf (SLEB128).
+    let mut encoded = Vec::new();
+    encode_uleb(1usize << (usize::BITS - 1), &mut encoded);
+    signed_cfi.extend_from_slice(&encoded);
+    assert_eq!(
+        owned_validate_cfi_program_for_tests(&signed_cfi),
+        Err(OwnedUnwindDecodeError::Overflow)
+    );
+}
+
+#[test]
 fn synthetic_eh_frame_fde_lookup_fails_closed_on_bad_cfi() {
     let section_addr = 0x400000usize;
     let pc_begin = 0x401234usize;

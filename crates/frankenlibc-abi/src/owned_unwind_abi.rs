@@ -3219,13 +3219,13 @@ fn decode_uleb128(
         let (byte, next) = read_u8(input, offset)?;
         offset = next;
         let payload = (byte & 0x7f) as usize;
-        result = result
-            .checked_add(
-                payload
-                    .checked_shl(shift)
-                    .ok_or(OwnedUnwindDecodeError::Overflow)?,
-            )
-            .ok_or(OwnedUnwindDecodeError::Overflow)?;
+        // checked_shl checks only the shift count, not discarded high bits.
+        // At the final group, reject a value outside the target word before
+        // it can wrap into an apparently valid CFI register, length or offset.
+        if payload > (usize::MAX >> shift) {
+            return Err(OwnedUnwindDecodeError::Overflow);
+        }
+        result |= payload << shift;
         if byte & 0x80 == 0 {
             return Ok((result, offset));
         }
@@ -3247,9 +3247,18 @@ fn decode_sleb128(
         let (read, next) = read_u8(input, offset)?;
         byte = read;
         offset = next;
-        result |= ((byte & 0x7f) as isize)
-            .checked_shl(shift)
-            .ok_or(OwnedUnwindDecodeError::Overflow)?;
+        let remaining_bits = isize::BITS - shift;
+        if remaining_bits < 7 {
+            // Bits beyond the target word, including its sign bit, must
+            // agree. On 64-bit targets the tenth payload is therefore either
+            // 0x00 or 0x7f; 0x01 must not turn +2^63 into isize::MIN.
+            let sign_mask = 0x7fu8 & (!0u8 << (remaining_bits - 1));
+            let sign_bits = byte & sign_mask;
+            if sign_bits != 0 && sign_bits != sign_mask {
+                return Err(OwnedUnwindDecodeError::Overflow);
+            }
+        }
+        result |= ((byte & 0x7f) as isize) << shift;
         shift += 7;
         if byte & 0x80 == 0 {
             break;
