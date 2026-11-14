@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <dlfcn.h>
+#include <locale.h>
 #include <netdb.h>
 #include <net/if.h>
 #include <stdio.h>
@@ -323,7 +324,192 @@ static void check_provider(void *symbol, const char *name) {
     }
 }
 
+
+/* The same fixture can compare IDN output against an independently resolved
+ * GNU provider without running a DNS server. CI supplies private files-only
+ * NSS fixtures, so no host network or host configuration is involved. */
+struct idn_provider {
+    getaddrinfo_fn forward;
+    freeaddrinfo_fn release;
+    getnameinfo_fn reverse;
+    locale_t (*make_locale)(int, const char *, locale_t);
+    locale_t (*select_locale)(locale_t);
+    void (*free_locale)(locale_t);
+};
+
+static struct idn_provider idn_provider(const char *path) {
+    void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) { fprintf(stderr, "IDN dlopen: %s\n", dlerror()); exit(1); }
+    struct idn_provider provider = {
+        (getaddrinfo_fn)dlsym(handle, "getaddrinfo"),
+        (freeaddrinfo_fn)dlsym(handle, "freeaddrinfo"),
+        (getnameinfo_fn)dlsym(handle, "getnameinfo"),
+        (locale_t (*)(int, const char *, locale_t))dlsym(handle, "newlocale"),
+        (locale_t (*)(locale_t))dlsym(handle, "uselocale"),
+        (void (*)(locale_t))dlsym(handle, "freelocale"),
+    };
+    void *symbols[] = {(void *)provider.forward, (void *)provider.release,
+        (void *)provider.reverse, (void *)provider.make_locale,
+        (void *)provider.select_locale, (void *)provider.free_locale};
+    Dl_info first = {0};
+    if (!symbols[0] || !dladdr(symbols[0], &first)) abort();
+    for (size_t i = 0; i < sizeof(symbols)/sizeof(symbols[0]); ++i) {
+        Dl_info owner = {0};
+        if (!symbols[i] || !dladdr(symbols[i], &owner) || owner.dli_fbase != first.dli_fbase) {
+            fprintf(stderr, "IDN provider has a missing or foreign symbol: %s\n", path);
+            exit(1);
+        }
+    }
+    return provider;
+}
+
+struct idn_forward_observation {
+    int has_name;
+    char name[1025];
+};
+
+static struct idn_forward_observation idn_forward(
+    struct idn_provider provider, const char *query, int flags, unsigned last) {
+    struct idn_forward_observation observed = {0};
+    struct addrinfo hints = {0}, *result = NULL;
+    hints.ai_family = AF_INET;
+    hints.ai_flags = flags;
+    int code = provider.forward(query, "443", &hints, &result);
+    if (code || !result) {
+        fprintf(stderr, "IDN forward %s flags=%x: %d\n", query, flags, code);
+        exit(1);
+    }
+    unsigned count = 0, profiles = 0;
+    const unsigned char expected[4] = {192, 0, 2, (unsigned char)last};
+    for (struct addrinfo *node = result; node; node = node->ai_next) {
+        if (++count > 3 || node->ai_family != AF_INET || !node->ai_addr
+            || node->ai_addrlen != sizeof(struct sockaddr_in)) abort();
+        const struct sockaddr_in *address = (const struct sockaddr_in *)node->ai_addr;
+        if (address->sin_family != AF_INET || ntohs(address->sin_port) != 443
+            || memcmp(&address->sin_addr, expected, 4)) abort();
+        unsigned profile;
+        if (node->ai_socktype == SOCK_STREAM && node->ai_protocol == IPPROTO_TCP) profile = 1;
+        else if (node->ai_socktype == SOCK_DGRAM && node->ai_protocol == IPPROTO_UDP) profile = 2;
+        else if (node->ai_socktype == SOCK_RAW && node->ai_protocol == 0) profile = 4;
+        else abort();
+        if (profiles & profile) abort();
+        profiles |= profile;
+        if (count == 1 && (flags & AI_CANONNAME)) {
+            if (!node->ai_canonname
+                || strnlen(node->ai_canonname, sizeof(observed.name)) >= sizeof(observed.name)) abort();
+            observed.has_name = 1;
+            strcpy(observed.name, node->ai_canonname);
+        } else if (node->ai_canonname) abort();
+    }
+    provider.release(result);
+    if (count != 3 || profiles != 7) abort();
+    return observed;
+}
+
+static void idn_forward_pair(struct idn_provider host, struct idn_provider candidate,
+                             const char *query, int flags, unsigned last,
+                             const char *expected) {
+    struct idn_forward_observation oracle = idn_forward(host, query, flags, last);
+    struct idn_forward_observation actual = idn_forward(candidate, query, flags, last);
+    if (oracle.has_name != actual.has_name || strcmp(oracle.name, actual.name)
+        || (expected && strcmp(oracle.name, expected))) {
+        fprintf(stderr, "IDN canonical %s flags=%x: host=[%s] candidate=[%s]\n",
+                query, flags, oracle.name, actual.name);
+        exit(1);
+    }
+    ++passed;
+}
+
+static int idn_reverse(struct idn_provider provider, unsigned last, int flags,
+                       unsigned capacity, char output[1025]) {
+    struct sockaddr_in address = {0};
+    const unsigned char bytes[4] = {192, 0, 2, (unsigned char)last};
+    address.sin_family = AF_INET;
+    memcpy(&address.sin_addr, bytes, sizeof(bytes));
+    memset(output, 0x5a, 1025);
+    int code = provider.reverse((const struct sockaddr *)&address, sizeof(address),
+                                output, capacity, NULL, 0, flags | NI_NUMERICSERV);
+    if (capacity > 1024) abort();
+    for (size_t i = capacity; i < 1025; ++i) if (output[i] != 0x5a) abort();
+    if (!code && !memchr(output, 0, capacity)) abort();
+    return code;
+}
+
+static void idn_reverse_pair(struct idn_provider host, struct idn_provider candidate,
+                             unsigned last, int flags, const char *expected) {
+    char oracle[1025], actual[1025];
+    int host_code = idn_reverse(host, last, flags, 1024, oracle);
+    int actual_code = idn_reverse(candidate, last, flags, 1024, actual);
+    if (host_code || actual_code || strcmp(oracle, actual)
+        || (expected && strcmp(oracle, expected))) {
+        fprintf(stderr, "IDN reverse .%u flags=%x: host=%d [%.80s] candidate=%d [%.80s]\n",
+                last, flags, host_code, oracle, actual_code, actual);
+        exit(1);
+    }
+    ++passed;
+    size_t length = strlen(oracle);
+    if (!length) abort();
+    host_code = idn_reverse(host, last, flags, (unsigned)length + 1, oracle);
+    actual_code = idn_reverse(candidate, last, flags, (unsigned)length + 1, actual);
+    if (host_code || actual_code || strcmp(oracle, actual)) abort();
+    ++passed;
+    host_code = idn_reverse(host, last, flags, (unsigned)length, oracle);
+    actual_code = idn_reverse(candidate, last, flags, (unsigned)length, actual);
+    if (host_code != EAI_OVERFLOW || actual_code != EAI_OVERFLOW) abort();
+    ++passed;
+}
+
+static int check_idn_resolution(const char *path) {
+    struct idn_provider host = idn_provider("libc.so.6");
+    struct idn_provider candidate = idn_provider(path);
+    if (host.forward == candidate.forward || host.reverse == candidate.reverse
+        || host.make_locale == candidate.make_locale) {
+        fprintf(stderr, "IDN oracle collapsed into the candidate provider\n");
+        return 1;
+    }
+    const struct {
+        const char *query, *encoded, *decoded;
+        unsigned last;
+    } cases[] = {
+        {"idn-latin", "xn--bcher-kva.test", "b\xc3\xbc""cher.test", 241},
+        {"idn-japanese", "xn--r8jz45g.xn--zckzah",
+            "\xe4\xbe\x8b\xe3\x81\x88.\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88", 242},
+        {"idn-case", "XN--bcher-kva.CaSe", NULL, 243},
+        {"idn-malformed", "xn--bad_.test", NULL, 244},
+        {"idn-partial", "xn--bcher-kva.xn--bad_", NULL, 245},
+        {"idn-ascii", "ordinary.CaSe", "ordinary.CaSe", 246},
+    };
+    const char *locales[] = {"C", "C.UTF-8"};
+    for (size_t locale = 0; locale < sizeof(locales)/sizeof(locales[0]); ++locale) {
+        locale_t host_locale = host.make_locale(LC_CTYPE_MASK, locales[locale], (locale_t)0);
+        locale_t candidate_locale = candidate.make_locale(LC_CTYPE_MASK, locales[locale], (locale_t)0);
+        if (!host_locale || !candidate_locale) abort();
+        locale_t host_previous = host.select_locale(host_locale);
+        locale_t candidate_previous = candidate.select_locale(candidate_locale);
+        if (!host_previous || !candidate_previous) abort();
+        for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {
+            const char *expected = locale ? cases[i].decoded : cases[i].encoded;
+            idn_forward_pair(host, candidate, cases[i].query, AI_CANONNAME,
+                             cases[i].last, cases[i].encoded);
+            idn_forward_pair(host, candidate, cases[i].query, AI_CANONNAME | AI_CANONIDN,
+                             cases[i].last, expected);
+            idn_forward_pair(host, candidate, cases[i].query, AI_CANONIDN,
+                             cases[i].last, "");
+            idn_reverse_pair(host, candidate, cases[i].last, NI_NAMEREQD, cases[i].encoded);
+            idn_reverse_pair(host, candidate, cases[i].last, NI_NAMEREQD | NI_IDN, expected);
+        }
+        idn_reverse_pair(host, candidate, 241, NI_NUMERICHOST | NI_IDN, "192.0.2.241");
+        candidate.select_locale(candidate_previous);
+        host.select_locale(host_previous);
+        candidate.free_locale(candidate_locale);
+        host.free_locale(host_locale);
+    }
+    printf("native IDN ABI: %u passed\n", passed);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 3 && !strcmp(argv[2], "--idn-only")) return check_idn_resolution(argv[1]);
     if (argc != 2 && argc != 3) return 2;
     if (argc == 3) {
         if (strcmp(argv[2], "--preloaded")) return 2;

@@ -3118,6 +3118,68 @@ fn module_addrinfo_lookup(
     .map(convert)
 }
 
+// GNU output-conversion bits are independent of forward AI_IDN processing.
+const AI_CANONIDN: c_int = 0x80;
+const NI_IDN: c_int = 0x20;
+
+/// Decode DNS A-labels and render the complete name in the current LC_CTYPE.
+/// Punycode decoding does not require the normalization/mapping machinery
+/// needed for forward AI_IDN lookup. Keep that separate from this output path.
+///
+/// A failed conversion leaves the original name available to the caller:
+/// malformed Punycode, invalid Unicode and an unrepresentable locale must not
+/// turn a successful address lookup into a failure or a partially decoded name.
+fn idn_name_in_current_locale(name: &[u8]) -> Option<Vec<u8>> {
+    if !name.is_ascii() {
+        return None;
+    }
+    let mut codepoints = Vec::with_capacity(name.len());
+    let mut decoded = false;
+    for (index, label) in name.split(|&byte| byte == b'.').enumerate() {
+        if index != 0 {
+            codepoints.push(u32::from(b'.'));
+        }
+        if label.len() >= 4 && label[..4].eq_ignore_ascii_case(b"xn--") {
+            let label = frankenlibc_core::idna::punycode::decode(&label[4..])?;
+            codepoints.extend(label);
+            decoded = true;
+        } else {
+            codepoints.extend(label.iter().copied().map(u32::from));
+        }
+    }
+    if !decoded {
+        return None;
+    }
+
+    // Snapshot the effective thread locale once, including named legacy
+    // encodings. UTF-8 output alone would violate AI_CANONIDN/NI_IDN in C or
+    // in a single-byte locale, and consulting LC_ALL would ignore uselocale.
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let mut output = Vec::with_capacity(name.len());
+    for codepoint in codepoints {
+        char::from_u32(codepoint)?;
+        if codepoint == 0 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        let length = codec.encode(codepoint, &mut bytes)?;
+        output.extend_from_slice(&bytes[..length]);
+    }
+    Some(output)
+}
+
+fn addrinfo_canonical_name(name: Option<&CStr>, flags: c_int) -> Option<Cow<'_, CStr>> {
+    name.map(|name| {
+        if flags & AI_CANONIDN != 0
+            && let Some(bytes) = idn_name_in_current_locale(name.to_bytes())
+            && let Ok(decoded) = std::ffi::CString::new(bytes)
+        {
+            return Cow::Owned(decoded);
+        }
+        Cow::Borrowed(name)
+    })
+}
+
 /// POSIX `getaddrinfo`: numeric/scoped hosts and configured NSS sources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo(
@@ -3546,6 +3608,7 @@ pub unsafe extern "C" fn getaddrinfo(
                                 .map(|address| (address, 0))
                                 .collect()
                         };
+                        let name = addrinfo_canonical_name(name.as_deref().or(canonname), flags);
                         for (address, scope_id) in addresses {
                             push_addrinfo_address_nodes(
                                 &mut nodes,
@@ -3553,11 +3616,12 @@ pub unsafe extern "C" fn getaddrinfo(
                                 scope_id,
                                 &profiles,
                                 hints_ref,
-                                name.as_deref().or(canonname),
+                                name.as_deref(),
                             );
                         }
                     }
                     Ok(HostAnswer::Files { addresses, name }) => {
+                        let name = addrinfo_canonical_name(name.as_deref().or(canonname), flags);
                         for address in addresses {
                             push_addrinfo_address_nodes(
                                 &mut nodes,
@@ -3565,12 +3629,13 @@ pub unsafe extern "C" fn getaddrinfo(
                                 0,
                                 &profiles,
                                 hints_ref,
-                                name.as_deref().or(canonname),
+                                name.as_deref(),
                             );
                         }
                     }
                     Ok(HostAnswer::Dns { resolution, name }) => {
-                        let resolved_name = name.as_deref().or(canonname);
+                        let name = addrinfo_canonical_name(name.as_deref().or(canonname), flags);
+                        let resolved_name = name.as_deref();
                         for v4 in &resolution.ipv4 {
                             if family == libc::AF_UNSPEC || family == libc::AF_INET {
                                 push_addrinfo_v4_nodes(
@@ -4147,7 +4212,12 @@ unsafe fn getnameinfo_named(
                     if flags & libc::NI_NOFQDN != 0 {
                         shorten_local_hostname(&mut name);
                     }
-                    host_name = Some(name);
+                    host_name = Some(if flags & NI_IDN != 0 {
+                        idn_name_in_current_locale(name.as_bytes())
+                            .unwrap_or_else(|| name.into_bytes())
+                    } else {
+                        name.into_bytes()
+                    });
                 }
                 Err(libc::EAI_AGAIN) => return Err(libc::EAI_AGAIN),
                 Err(_) if flags & libc::NI_NAMEREQD != 0 => return Err(libc::EAI_NONAME),
@@ -4174,11 +4244,11 @@ unsafe fn getnameinfo_named(
         // permission to return a silently truncated name in hardened mode.
         // SAFETY: write_c_buffer checks advertised and tracked output bounds.
         unsafe {
-            write_c_buffer(
+            write_c_buffer_bytes(
                 "getnameinfo",
                 host,
                 hostlen,
-                host_name.as_deref().unwrap_or(host_number),
+                host_name.as_deref().unwrap_or(host_number.as_bytes()),
                 false,
             )?;
             write_c_buffer(

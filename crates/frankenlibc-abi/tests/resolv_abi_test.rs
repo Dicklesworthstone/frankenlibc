@@ -8409,3 +8409,187 @@ fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
     stop.store(true, Ordering::Relaxed);
     let _ = server_thread.join();
 }
+
+
+// GNU IDN output flags do not enable forward Unicode-name normalization.
+const TEST_AI_CANONIDN: c_int = 0x80;
+const TEST_NI_IDN: c_int = 0x20;
+
+struct ResolverIdnLocale {
+    handle: frankenlibc_abi::locale_abi::LocaleT,
+    previous: frankenlibc_abi::locale_abi::LocaleT,
+}
+
+impl ResolverIdnLocale {
+    fn new(name: &CStr) -> Self {
+        // SAFETY: the C string is terminated; the resulting locale is kept
+        // alive until after this thread's previous selection is restored.
+        unsafe {
+            let handle = frankenlibc_abi::locale_abi::newlocale(
+                libc::LC_CTYPE_MASK,
+                name.as_ptr(),
+                ptr::null_mut(),
+            );
+            assert!(!handle.is_null(), "create resolver test locale {name:?}");
+            let previous = frankenlibc_abi::locale_abi::uselocale(handle);
+            assert!(!previous.is_null());
+            Self { handle, previous }
+        }
+    }
+}
+
+impl Drop for ResolverIdnLocale {
+    fn drop(&mut self) {
+        // SAFETY: both handles remain valid; no other thread uses this object.
+        unsafe {
+            frankenlibc_abi::locale_abi::uselocale(self.previous);
+            frankenlibc_abi::locale_abi::freelocale(self.handle);
+        }
+    }
+}
+
+const IDN_HOSTS: &[u8] = b"\
+192.0.2.241 xn--bcher-kva.test idn-latin\n\
+192.0.2.242 xn--r8jz45g.xn--zckzah idn-japanese\n\
+192.0.2.243 XN--bcher-kva.CaSe idn-case\n\
+192.0.2.244 xn--bad_.test idn-malformed\n\
+192.0.2.245 xn--bcher-kva.xn--bad_ idn-partial\n\
+192.0.2.246 ordinary.CaSe idn-ascii\n";
+
+fn resolver_idn_canonical(query: &CStr, flags: c_int) -> Vec<Option<Vec<u8>>> {
+    // SAFETY: hints/output are owned and initialized, and the result is freed
+    // through the same ABI that allocated the addrinfo chain.
+    unsafe {
+        let mut hints: libc::addrinfo = mem::zeroed();
+        hints.ai_family = libc::AF_INET;
+        hints.ai_flags = flags;
+        let mut result = ptr::null_mut();
+        let code = resolv_abi::getaddrinfo(query.as_ptr(), c"443".as_ptr(), &hints, &mut result);
+        assert_eq!(code, 0, "IDN canonical lookup {query:?}");
+        assert!(!result.is_null());
+        let names = collect_addrinfo_canonname(result);
+        let profiles = collect_addrinfo_profiles(result);
+        resolv_abi::freeaddrinfo(result);
+        assert_eq!(profiles.len(), 3, "exercise all addrinfo allocation profiles");
+        names
+    }
+}
+
+#[test]
+fn resolver_idn_canonical_names_follow_flags_and_thread_locale() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        let encoded = b"xn--bcher-kva.test".to_vec();
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME),
+            vec![Some(encoded.clone()), None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("bücher.test".as_bytes().to_vec()), None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", TEST_AI_CANONIDN),
+            vec![None, None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-japanese", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("例え.テスト".as_bytes().to_vec()), None, None],
+        );
+        assert_eq!(
+            resolver_idn_canonical(c"idn-case", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("bücher.CaSe".as_bytes().to_vec()), None, None],
+        );
+        {
+            let _ascii = ResolverIdnLocale::new(c"C");
+            assert_eq!(
+                resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(encoded), None, None],
+            );
+        }
+        // Restoring uselocale must restore output conversion too.
+        assert_eq!(
+            resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+            vec![Some("bücher.test".as_bytes().to_vec()), None, None],
+        );
+    });
+}
+
+fn resolver_idn_reverse(last_octet: u8, flags: c_int, capacity: usize) -> (c_int, [u8; 128]) {
+    // SAFETY: sockaddr_in and output storage are fully initialized, with a
+    // capacity no larger than the actual output allocation.
+    unsafe {
+        assert!(capacity <= 128);
+        let mut address: libc::sockaddr_in = mem::zeroed();
+        address.sin_family = libc::AF_INET as _;
+        address.sin_addr.s_addr = u32::from_ne_bytes([192, 0, 2, last_octet]);
+        let mut output = [0x5a; 128];
+        let code = resolv_abi::getnameinfo(
+            (&address as *const libc::sockaddr_in).cast(),
+            mem::size_of_val(&address) as _,
+            output.as_mut_ptr().cast(),
+            capacity as _,
+            ptr::null_mut(),
+            0,
+            flags | libc::NI_NUMERICSERV,
+        );
+        assert!(output[capacity..].iter().all(|&byte| byte == 0x5a));
+        (code, output)
+    }
+}
+
+#[test]
+fn resolver_idn_reverse_names_convert_before_capacity_checks() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        for (last, encoded, decoded) in [
+            (241, "xn--bcher-kva.test", "bücher.test"),
+            (242, "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+            (243, "XN--bcher-kva.CaSe", "bücher.CaSe"),
+            (246, "ordinary.CaSe", "ordinary.CaSe"),
+        ] {
+            for (flags, expected) in [
+                (libc::NI_NAMEREQD, encoded),
+                (libc::NI_NAMEREQD | TEST_NI_IDN, decoded),
+            ] {
+                let bytes = expected.as_bytes();
+                let (code, output) = resolver_idn_reverse(last, flags, bytes.len() + 1);
+                assert_eq!(code, 0, "{encoded}, flags {flags:#x}");
+                assert_eq!(&output[..bytes.len()], bytes);
+                assert_eq!(output[bytes.len()], 0);
+                let (code, _) = resolver_idn_reverse(last, flags, bytes.len());
+                assert_eq!(code, libc::EAI_OVERFLOW);
+            }
+        }
+        let (code, output) =
+            resolver_idn_reverse(241, libc::NI_NUMERICHOST | TEST_NI_IDN, 32);
+        assert_eq!(code, 0);
+        assert_eq!(&output[..12], b"192.0.2.241\0");
+        let _ascii = ResolverIdnLocale::new(c"C");
+        let (code, output) =
+            resolver_idn_reverse(241, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
+        assert_eq!(code, 0);
+        assert_eq!(&output[..19], b"xn--bcher-kva.test\0");
+    });
+}
+
+#[test]
+fn resolver_idn_malformed_ace_preserves_the_complete_original_name() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        for (query, last, original) in [
+            (c"idn-malformed", 244, "xn--bad_.test"),
+            (c"idn-partial", 245, "xn--bcher-kva.xn--bad_"),
+        ] {
+            assert_eq!(
+                resolver_idn_canonical(query, libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(original.as_bytes().to_vec()), None, None],
+            );
+            let (code, output) =
+                resolver_idn_reverse(last, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
+            assert_eq!(code, 0);
+            assert_eq!(&output[..original.len()], original.as_bytes());
+            assert_eq!(output[original.len()], 0);
+        }
+    });
+}

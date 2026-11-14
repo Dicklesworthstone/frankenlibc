@@ -214,6 +214,41 @@ jobs:
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+      - name: Verify IDN canonical and reverse output against GNU
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver/idn
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test --locked -p frankenlibc-abi \
+              --test resolv_abi_test resolver_idn_ -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/idn/unit-$mode.log"
+            grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
+              "artifacts/resolver/idn/unit-$mode.log"
+          done
+          cc -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+            tests/integration/fixture_native_dns_transport.c -ldl -o target/idn-abi
+          candidate="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$candidate"
+          private_etc=$(mktemp -d "$RUNNER_TEMP/frankenlibc-idn.XXXXXX")
+          printf 'hosts: files\n' > "$private_etc/nsswitch.conf"
+          cat > "$private_etc/hosts" <<'HOSTS'
+          192.0.2.241 xn--bcher-kva.test idn-latin
+          192.0.2.242 xn--r8jz45g.xn--zckzah idn-japanese
+          192.0.2.243 XN--bcher-kva.CaSe idn-case
+          192.0.2.244 xn--bad_.test idn-malformed
+          192.0.2.245 xn--bcher-kva.xn--bad_ idn-partial
+          192.0.2.246 ordinary.CaSe idn-ascii
+          HOSTS
+          for mode in strict hardened; do
+            sudo -n timeout 45s bwrap --die-with-parent --unshare-net --unshare-pid \
+              --ro-bind / / --bind "$private_etc" /etc --proc /proc -- \
+              env -u LD_PRELOAD -u FRANKENLIBC_HOSTS_PATH -u FRANKENLIBC_NSSWITCH_PATH \
+                FRANKENLIBC_MODE="$mode" "$PWD/target/idn-abi" "$candidate" --idn-only \
+              2>&1 | tee "artifacts/resolver/idn/abi-$mode.log"
+            grep -Fxq 'native IDN ABI: 114 passed' "artifacts/resolver/idn/abi-$mode.log"
+          done
       - name: Preserve complete passwd and group records and buffer retries
         if: always()
         shell: bash
