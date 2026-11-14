@@ -2202,39 +2202,31 @@ unsafe fn native_pthread_create(
             handled = true;
         }
         if !handled {
-            let Some(getstacksize) = (unsafe { resolved_pthread_attr_getstacksize_fn() }) else {
-                return libc::ENOSYS;
+            // Foreign attributes are opaque: use the host's public getters,
+            // including execution constraints, before starting any user code.
+            // Share the standard-field import with notification attributes.
+            let mut imported: PthreadAttrData = unsafe { std::mem::zeroed() };
+            if let Err(error) =
+                unsafe { NotificationThreadAttributes::copy_host_fields(attr, &mut imported) }
+            {
+                return error;
+            }
+            stack_size = imported.stack_size;
+            stack_addr = imported.stack_addr;
+            caller_stack = imported.has_stack_address();
+            guard_size = imported.guard_size;
+            if imported.inherit_sched == libc::PTHREAD_EXPLICIT_SCHED {
+                scheduling = Some((imported.sched_policy, imported.sched_priority));
+            }
+            affinity = match unsafe { host_attr_affinity(attr) } {
+                Ok(affinity) => affinity.map(|(_, bytes)| bytes),
+                Err(error) => return error,
             };
-            let rc = unsafe { getstacksize(attr, &mut stack_size) };
-            if rc != 0 {
-                return rc;
-            }
-            let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
-                return libc::ENOSYS;
+            signal_mask = match unsafe { host_attr_signal_mask(attr) } {
+                Ok(mask) => mask,
+                Err(error) => return error,
             };
-            let mut address = std::ptr::null_mut();
-            let mut size = 0;
-            let rc = unsafe { getstack(attr, &mut address, &mut size) };
-            if rc != 0 {
-                return rc;
-            }
-            // GNU attributes with only a stack size set expose an unset stack
-            // top as base == 0 - size. It is not caller-provided memory. Keep
-            // getstacksize's effective default when that representation appears.
-            if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
-                stack_addr = address as usize;
-                stack_size = size;
-                caller_stack = true;
-            }
-            let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() }) else {
-                return libc::ENOSYS;
-            };
-            let rc = unsafe { getguardsize(attr, &mut guard_size) };
-            if rc != 0 {
-                return rc;
-            }
-            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
-            else {
+            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() }) else {
                 return libc::ENOSYS;
             };
             let rc = unsafe { getdetachstate(attr, &mut detach_state) };
@@ -5957,6 +5949,66 @@ fn managed_attr_data_ptr_const(
     is_managed.then_some(data)
 }
 
+/// Import a foreign attribute's public CPU-set representation. An unset GNU
+/// affinity fills even the bytes beyond the kernel mask with ones; an explicit
+/// all-CPU mask instead has a zero tail and must still override inheritance.
+unsafe fn host_attr_affinity(
+    source: *const libc::pthread_attr_t,
+) -> Result<Option<(usize, Vec<u8>)>, c_int> {
+    let symbol = unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"]) };
+    if symbol.is_null() {
+        return Err(libc::ENOSYS);
+    }
+    type GetAffinity =
+        unsafe extern "C" fn(*const libc::pthread_attr_t, usize, *mut libc::cpu_set_t) -> c_int;
+    let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
+    let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
+    loop {
+        let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
+        if rc == 0 {
+            return Ok(if bytes.iter().all(|byte| *byte == u8::MAX) {
+                None
+            } else {
+                Some((bytes.len(), bytes))
+            });
+        }
+        if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
+            return Err(rc);
+        }
+        let next = bytes.len() * 2;
+        bytes
+            .try_reserve_exact(next - bytes.len())
+            .map_err(|_| libc::ENOMEM)?;
+        bytes.resize(next, 0);
+    }
+}
+
+unsafe fn host_attr_signal_mask(source: *const libc::pthread_attr_t) -> Result<Option<u64>, c_int> {
+    let symbol = unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getsigmask_np\0"]) };
+    // Hosts predating this GNU extension cannot have set it in their attrs.
+    if symbol.is_null() {
+        return Ok(None);
+    }
+    type GetMask = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sigset_t) -> c_int;
+    let getter = unsafe { std::mem::transmute::<*mut c_void, GetMask>(symbol) };
+    let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    match unsafe { getter(source, &mut mask) } {
+        -1 => Ok(None), // PTHREAD_ATTR_NO_SIGMASK_NP
+        0 => {
+            let mut kernel_mask = [0u8; 8];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    std::ptr::from_ref(&mask).cast::<u8>(),
+                    kernel_mask.as_mut_ptr(),
+                    8,
+                );
+            }
+            Ok(Some(u64::from_ne_bytes(kernel_mask) & !((1 << 31) | (1 << 32))))
+        }
+        error => Err(error),
+    }
+}
+
 /// An immutable, address-stable copy of SIGEV_THREAD attributes. Timers copy
 /// standard stack/guard/scheduling fields; message queues also copy affinity.
 /// No caller-owned attribute or extension pointer survives registration.
@@ -6023,37 +6075,7 @@ impl NotificationThreadAttributes {
                 )
             }
         } else {
-            // Query the public host interface rather than copying private
-            // pointers from a foreign pthread_attr_t. Grow for large CPU sets.
-            let symbol =
-                unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"]) };
-            if symbol.is_null() {
-                return Err(libc::ENOSYS);
-            }
-            type GetAffinity = unsafe extern "C" fn(
-                *const libc::pthread_attr_t,
-                usize,
-                *mut libc::cpu_set_t,
-            ) -> c_int;
-            // SAFETY: the resolved public getter has this exact signature.
-            let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
-            let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
-            loop {
-                let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
-                if rc == 0 {
-                    // GNU reports an unset affinity as all ones, including
-                    // bytes beyond the kernel CPU set. Preserve inheritance.
-                    break if bytes.iter().all(|byte| *byte == u8::MAX) {
-                        None
-                    } else {
-                        Some((bytes.len(), bytes))
-                    };
-                }
-                if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
-                    return Err(rc);
-                }
-                bytes.resize(bytes.len() * 2, 0);
-            }
+            unsafe { host_attr_affinity(source) }?
         };
         if let Some((size, bytes)) = affinity {
             if size == 0 || size != bytes.len() {
@@ -7791,8 +7813,8 @@ unsafe fn cancellation_epoll2_window(
     }
 }
 
-/// Stream socket reads share receive's native cancellation wait. All other
-/// descriptors and unsupported socket contracts retain the original read
+/// Socket reads share receive's native cancellation wait. Other descriptors
+/// and unsupported socket contracts retain the original read
 /// syscall. Capture the public caller through read's aliases and fortify entry.
 #[inline(always)]
 pub(crate) unsafe fn cancellation_point_read(
@@ -7806,7 +7828,7 @@ pub(crate) unsafe fn cancellation_point_read(
     }
 }
 
-/// Scatter reads retain readv's original syscall outside admitted native stream
+/// Scatter reads retain readv's original syscall outside admitted native socket
 /// waits. Keep caller capture in the exported readv or reserved alias frame.
 #[inline(always)]
 pub(crate) unsafe fn cancellation_point_readv(
@@ -7900,7 +7922,7 @@ unsafe fn cancellation_receive_window(
     unsafe { cancellation_window(caller, || operation.blocking()) }
 }
 
-/// Ordinary stream writes share the native send engine's accepted-prefix
+/// Socket writes share the native send engine's record and accepted-prefix
 /// handling, with the original write syscall for all unsupported contracts.
 #[inline(always)]
 pub(crate) unsafe fn cancellation_point_write(
@@ -8234,12 +8256,17 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = (*handle_ptr).stack_size;
             (*data).guard_size = (*handle_ptr).guard_size;
             (*data).stack_addr = (*handle_ptr).stack_addr;
+            (*data).inherit_sched = i32::from((*handle_ptr).explicit_scheduling);
         }
-        return 0;
+        let tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
+        drop(registry);
+        return unsafe { finish_thread_attr_snapshot(attr, tid) };
     }
     drop(registry);
 
-    if is_managed_thread_handle(thread) && resolve_thread_tid(thread).is_some() {
+    if is_managed_thread_handle(thread)
+        && let Some(tid) = resolve_thread_tid(thread)
+    {
         let handle_ptr = thread as *mut ThreadHandle;
         // SAFETY: a managed detached thread keeps its handle alive until it
         // exits and self-cleans. `resolve_thread_tid(thread).is_some()` above
@@ -8256,8 +8283,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = (*handle_ptr).stack_size;
             (*data).guard_size = (*handle_ptr).guard_size;
             (*data).stack_addr = (*handle_ptr).stack_addr;
+            (*data).inherit_sched = i32::from((*handle_ptr).explicit_scheduling);
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, tid) };
     }
 
     if let Some(self_handle) = core_handle_for_tid(core_self_tid())
@@ -8277,8 +8305,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = (*handle_ptr).stack_size;
             (*data).guard_size = (*handle_ptr).guard_size;
             (*data).stack_addr = (*handle_ptr).stack_addr;
+            (*data).inherit_sched = i32::from((*handle_ptr).explicit_scheduling);
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, core_self_tid()) };
     }
 
     // A thread the host glibc created: ask the host, which knows its stack
@@ -8286,7 +8315,7 @@ pub unsafe extern "C" fn pthread_getattr_np(
     // MADV_GUARD_INSTALL, invisible in /proc/self/maps).
     if !force_native_threading_enabled()
         && host_thread_is_registered(thread_key)
-        && let Some((stack_addr, stack_size, guard_size, detach_state)) =
+        && let Some((stack_addr, stack_size, guard_size, detach_state, inherit_sched)) =
             crate::host_resolve::host_thread_stack(thread)
     {
         unsafe {
@@ -8294,8 +8323,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = stack_size;
             (*data).guard_size = guard_size;
             (*data).stack_addr = stack_addr;
+            (*data).inherit_sched = inherit_sched;
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, resolve_thread_tid(thread).unwrap_or(0)) };
     }
 
     // Fallback: /proc/self/maps, for the main thread (not created by
@@ -8322,10 +8352,65 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).guard_size = guard_size;
             (*data).stack_addr = stack_start;
         }
-        return 0;
+        return unsafe { finish_thread_attr_snapshot(attr, probe_tid) };
     }
 
     libc::ESRCH
+}
+
+/// Complete a stack/lifecycle snapshot with the running thread's kernel
+/// attributes. Never hold a handle registry lock while querying or allocating
+/// the CPU mask. Exited joinable threads still expose their retained stack.
+unsafe fn finish_thread_attr_snapshot(attr: *mut libc::pthread_attr_t, tid: c_int) -> c_int {
+    if tid <= 0 {
+        return 0;
+    }
+    let policy = match raw_syscall::sys_sched_getscheduler(tid) {
+        Ok(policy) => policy,
+        Err(error) => return error,
+    };
+    let mut parameter = libc::sched_param { sched_priority: 0 };
+    if let Err(error) =
+        unsafe { raw_syscall::sys_sched_getparam(tid, std::ptr::from_mut(&mut parameter).cast()) }
+    {
+        return error;
+    }
+    let mut bytes = Vec::new();
+    let mut size = std::mem::size_of::<libc::cpu_set_t>();
+    loop {
+        if bytes.try_reserve_exact(size - bytes.len()).is_err() {
+            return libc::ENOMEM;
+        }
+        bytes.resize(size, 0);
+        match unsafe { raw_syscall::sys_sched_getaffinity(tid, size, bytes.as_mut_ptr()) } {
+            Ok(filled) => {
+                bytes.truncate(filled as usize);
+                break;
+            }
+            Err(libc::EINVAL) if size < 1024 * 1024 => size *= 2,
+            Err(error) => return error,
+        }
+    }
+    let Some(data) = managed_attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    let mut registry = EXTENDED_ATTR_REGISTRY
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    registry.insert(
+        attr as usize,
+        ExtendedAttrData {
+            affinity: Some((bytes.len(), bytes)),
+            // GNU getattr does not manufacture a creation sigmask from live state.
+            sigmask: None,
+        },
+    );
+    unsafe {
+        (*data).sched_policy = policy;
+        (*data).sched_priority = parameter.sched_priority;
+        (*data).flags |= 1;
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -9361,6 +9446,11 @@ pub unsafe extern "C" fn pthread_attr_getaffinity_np(
     if let Some(ext) = reg.get(&key)
         && let Some((stored_size, ref mask_bytes)) = ext.affinity
     {
+        // GNU permits a shorter output only when no selected CPU is lost.
+        // Check before touching caller storage so an error is non-destructive.
+        if mask_bytes.iter().skip(cpusetsize).any(|byte| *byte != 0) {
+            return libc::EINVAL;
+        }
         let copy_len = cpusetsize.min(stored_size).min(mask_bytes.len());
         // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
         unsafe {

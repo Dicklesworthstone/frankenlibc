@@ -205,6 +205,13 @@ jobs:
           python3 scripts/check_pthread_native_poll.py --fd-io-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/fd-io"
+      - name: Compare datagram and SEQPACKET descriptor I/O and cancellation with live GNU libc
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_poll.py --message-io-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/message-io"
       - name: Compare blocked socket sends, partial progress and cancellation with live GNU libc
         if: always()
         shell: bash
@@ -212,6 +219,13 @@ jobs:
           python3 scripts/check_pthread_native_poll.py --send-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/send"
+      - name: Preserve native creation attributes and report live scheduling and affinity
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --attributes-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/attributes"
       - name: Preserve once initialization across fork, cancellation and exceptions
         if: always()
         shell: bash

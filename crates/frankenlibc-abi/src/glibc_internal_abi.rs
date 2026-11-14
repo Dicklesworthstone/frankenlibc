@@ -384,9 +384,19 @@ pub unsafe extern "C" fn pthread_rwlockattr_setkind_np(attr: *mut c_void, kind: 
 // pthread_setschedprio: native — set thread scheduling priority
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_setschedprio(thread: c_ulong, prio: c_int) -> c_int {
+    let Some(tid) = crate::pthread_abi::resolve_thread_tid(thread) else {
+        return libc::ESRCH;
+    };
     let mut param: libc::sched_param = unsafe { std::mem::zeroed() };
     param.sched_priority = prio;
-    unsafe { crate::unistd_abi::pthread_setschedparam(thread, libc::SCHED_OTHER, &param) }
+    // sched_setparam updates priority without changing the current policy.
+    // A get-policy/set-scheduler pair would race another scheduler update.
+    match unsafe {
+        frankenlibc_core::syscall::sys_sched_setparam(tid, std::ptr::from_ref(&param).cast())
+    } {
+        Ok(()) => 0,
+        Err(error) => error,
+    }
 }
 
 // ==========================================================================

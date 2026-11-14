@@ -643,8 +643,8 @@ impl Receive {
 
     fn supports_slices(self) -> bool {
         // A zero-length read keeps the original syscall, including descriptor
-        // validation and datagram behavior. Only ordinary stream sockets admit
-        // replacing read with a per-call nonblocking receive below.
+        // validation and datagram behavior: unlike recv, it must not consume a
+        // queued record. Nonempty socket reads use per-call receive probes.
         if matches!(self, Self::Read { length: 0, .. }) {
             return false;
         }
@@ -677,20 +677,13 @@ impl Receive {
             return false;
         }
         let socket_type = socket_integer_option(fd, libc::SO_TYPE);
-        let supported_socket = if matches!(self, Self::Read { .. } | Self::ReadVector { .. }) {
-            socket_type == Some(libc::SOCK_STREAM)
-        } else {
-            matches!(
-                socket_type,
-                Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
-            )
-        };
-        if !supported_socket
-            || !matches!(
-                socket_integer_option(fd, libc::SO_DOMAIN),
-                Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
-            )
-            || socket_integer_option(fd, libc::SO_RCVLOWAT) != Some(1)
+        if !matches!(
+            socket_type,
+            Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
+        ) || !matches!(
+            socket_integer_option(fd, libc::SO_DOMAIN),
+            Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
+        ) || socket_integer_option(fd, libc::SO_RCVLOWAT) != Some(1)
         {
             return false;
         }
@@ -736,7 +729,7 @@ impl Receive {
         match self {
             Self::Read { fd, buffer, length } if additional_flags == 0 => {
                 // Keep read itself for disabled, hosted, internal and unsupported
-                // callers; recvfrom is only the admitted native stream probe.
+                // callers; recvfrom is only the admitted native socket probe.
                 unsafe { syscall::sys_read(fd, buffer, length) }.map(|read| read as isize)
             }
             Self::Read { fd, buffer, length } => unsafe {
@@ -924,9 +917,9 @@ trait SendOperation {
         true
     }
 
-    // write/writev may use send probes only for ordinary nonempty streams.
-    // Their original syscalls remain available before any byte is accepted.
-    fn stream_only(&self) -> bool {
+    // Descriptor writes retain their original syscall if a sandbox allows
+    // write/writev but denies the per-call nonblocking send probe.
+    fn descriptor_io(&self) -> bool {
         false
     }
 
@@ -934,10 +927,7 @@ trait SendOperation {
         // Preserve record/cork/urgent/fast-open semantics and Linux's clipping
         // of enormous iov lengths in the original single syscall. The limit
         // below is no larger than MAX_RW_COUNT on either 4 KiB or 64 KiB pages.
-        if self.flags() & !libc::MSG_NOSIGNAL != 0
-            || self.length() > 0x7fff_0000
-            || (self.stream_only() && self.length() == 0)
-        {
+        if self.flags() & !libc::MSG_NOSIGNAL != 0 || self.length() > 0x7fff_0000 {
             return false;
         }
         let fd = self.fd();
@@ -949,7 +939,11 @@ trait SendOperation {
             return false;
         }
         let socket_type = socket_integer_option(fd, libc::SO_TYPE);
-        if self.stream_only() && socket_type != Some(libc::SOCK_STREAM) {
+        // Scalar write of zero bytes emits an empty datagram/SEQPACKET record
+        // and can block on a full queue. Empty stream writes keep their raw
+        // no-op/error ordering. Empty writev is rejected during its import:
+        // Linux never sends a record when the vector's total length is zero.
+        if self.descriptor_io() && self.length() == 0 && socket_type == Some(libc::SOCK_STREAM) {
             return false;
         }
         let domain = socket_integer_option(fd, libc::SO_DOMAIN);
@@ -1036,9 +1030,9 @@ impl SendOperation for SendTo {
     }
 }
 
-struct StreamWrite(SendTo);
+struct DescriptorWrite(SendTo);
 
-impl SendOperation for StreamWrite {
+impl SendOperation for DescriptorWrite {
     fn fd(&self) -> c_int {
         self.0.fd
     }
@@ -1055,13 +1049,13 @@ impl SendOperation for StreamWrite {
         self.0.length
     }
 
-    fn stream_only(&self) -> bool {
+    fn descriptor_io(&self) -> bool {
         true
     }
 
     unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
-        // SAFETY: the stream adapter retains the original write payload through
-        // every retry; SendTo preserves accepted-prefix and SIGPIPE behavior.
+        // SAFETY: the adapter retains the original write payload through every
+        // retry; SendTo preserves record atomicity, prefixes and SIGPIPE behavior.
         unsafe { self.0.probe(sent) }
     }
 }
@@ -1079,7 +1073,7 @@ struct SendMessage {
     first: usize,
     advanced: usize,
     length: usize,
-    stream_only: bool,
+    descriptor_io: bool,
 }
 
 impl SendMessage {
@@ -1109,14 +1103,16 @@ impl SendMessage {
         let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
         header.msg_iov = vectors.cast_mut();
         header.msg_iovlen = count as usize;
-        Self::from_header(fd, header, 0, true)
+        // vfs_writev returns immediately for an empty imported vector, even on
+        // message sockets where sendmsg would enqueue an empty record instead.
+        Self::from_header(fd, header, 0, true).filter(|operation| operation.length != 0)
     }
 
     fn from_header(
         fd: c_int,
         header: libc::msghdr,
         flags: c_int,
-        stream_only: bool,
+        descriptor_io: bool,
     ) -> Option<Self> {
         if header.msg_iovlen > crate::io_abi::iov_snapshot::MAX_IOVECS {
             return None;
@@ -1142,7 +1138,7 @@ impl SendMessage {
             first: 0,
             advanced: 0,
             length: 0,
-            stream_only,
+            descriptor_io,
         };
         for entry in operation.vectors.entries() {
             operation.length = operation.length.checked_add(entry.iov_len)?;
@@ -1174,8 +1170,8 @@ impl SendOperation for SendMessage {
         self.header.msg_controllen == 0
     }
 
-    fn stream_only(&self) -> bool {
-        self.stream_only
+    fn descriptor_io(&self) -> bool {
+        self.descriptor_io
     }
 
     unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
@@ -1241,7 +1237,7 @@ pub(super) unsafe fn wait_send(
     match operation {
         Send::Write { fd, buffer, length } => unsafe {
             wait_send_operation(
-                StreamWrite(SendTo {
+                DescriptorWrite(SendTo {
                     fd,
                     buffer,
                     length,
@@ -1386,7 +1382,7 @@ unsafe fn send_slices(
             Err(_) if sent != 0 => return Ok(SendResult::Ready(sent as isize)),
             // A sandbox can allow write/writev but deny sendto/sendmsg. Preserve
             // the original syscall only while no prefix can be duplicated.
-            Err(libc::ENOSYS | libc::EPERM | libc::EACCES) if operation.stream_only() => {
+            Err(libc::ENOSYS | libc::EPERM | libc::EACCES) if operation.descriptor_io() => {
                 return Ok(SendResult::Unsupported);
             }
             Err(error) => return Err(error),

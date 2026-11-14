@@ -1556,12 +1556,67 @@ static int suspend_contract_main(char **argv) {
 /* Receives use per-call nonblocking probes only. Unlike readiness tests, these
  * cases also check that bytes/datagrams are neither consumed by cancellation
  * nor lost when another receiver wins the readiness race. */
+enum descriptor_transport {
+    DESCRIPTOR_STREAM, DESCRIPTOR_DATAGRAM, DESCRIPTOR_SEQPACKET,
+    DESCRIPTOR_UDP, DESCRIPTOR_UDP6
+};
+
+static enum descriptor_transport parse_descriptor_transport(const char **suffix) {
+    const char *names[] = {"datagram-", "seqpacket-", "udp-", "udp6-"};
+    /* Keep the original fallback regression addressable: it now exercises the
+     * newly admitted descriptor path as well as its unchanged byte contract. */
+    if (strcmp(*suffix, "datagram-fallback") == 0) return DESCRIPTOR_STREAM;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        size_t length = strlen(names[i]);
+        if (strncmp(*suffix, names[i], length) == 0) {
+            *suffix += length;
+            return (enum descriptor_transport)(i + 1);
+        }
+    }
+    return DESCRIPTOR_STREAM;
+}
+
+static void descriptor_socket_pair(enum descriptor_transport transport, int pair[2]) {
+    if (transport <= DESCRIPTOR_SEQPACKET) {
+        int type = transport == DESCRIPTOR_DATAGRAM ? SOCK_DGRAM :
+                   transport == DESCRIPTOR_SEQPACKET ? SOCK_SEQPACKET : SOCK_STREAM;
+        REQUIRE(socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, pair) == 0,
+                "create independent local descriptor socket endpoints");
+        return;
+    }
+    int domain = transport == DESCRIPTOR_UDP6 ? AF_INET6 : AF_INET;
+    struct sockaddr_storage addresses[2];
+    memset(addresses, 0, sizeof(addresses));
+    socklen_t length = domain == AF_INET6 ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+    for (int i = 0; i < 2; ++i) {
+        pair[i] = socket(domain, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+        REQUIRE(pair[i] >= 0, "create loopback descriptor datagram endpoint");
+        if (domain == AF_INET6) {
+            struct sockaddr_in6 *address = (struct sockaddr_in6 *)&addresses[i];
+            address->sin6_family = AF_INET6;
+            address->sin6_addr = in6addr_loopback;
+        } else {
+            struct sockaddr_in *address = (struct sockaddr_in *)&addresses[i];
+            address->sin_family = AF_INET;
+            address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        }
+        REQUIRE(bind(pair[i], (struct sockaddr *)&addresses[i], length) == 0,
+                "bind descriptor datagram endpoint to an ephemeral loopback port");
+        socklen_t actual = length;
+        REQUIRE(getsockname(pair[i], (struct sockaddr *)&addresses[i], &actual) == 0 && actual == length,
+                "resolve the actual descriptor datagram address");
+    }
+    REQUIRE(connect(pair[0], (struct sockaddr *)&addresses[1], length) == 0 &&
+                connect(pair[1], (struct sockaddr *)&addresses[0], length) == 0,
+            "connect independent descriptor datagram endpoints in both directions");
+}
+
 enum receive_kind {
     RECEIVE_BLOCKED, RECEIVE_PENDING, RECEIVE_DISABLED, RECEIVE_READY,
     RECEIVE_READY_LATE, RECEIVE_PEEK, RECEIVE_NONBLOCK, RECEIVE_DONTWAIT,
     RECEIVE_TIMEOUT, RECEIVE_SIGNAL, RECEIVE_SIGNAL_RESTART, RECEIVE_COMPETING,
     RECEIVE_WAITALL, RECEIVE_LOWAT, RECEIVE_EOF, RECEIVE_ZERO, RECEIVE_ERRORS,
-    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE,
+    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE, RECEIVE_EMPTY_RECORD,
     RECEIVE_READ_PIPE, RECEIVE_READ_DATAGRAM, RECEIVE_READ_NOSYS,
     RECEIVE_READ_PERM, RECEIVE_READ_ACCESS, RECEIVE_RIGHTS, RECEIVE_RIGHTS_CLOEXEC,
     RECEIVE_CONTROL_TRUNCATE, RECEIVE_RIGHTS_PRESSURE
@@ -1839,7 +1894,7 @@ static void observe_receive_parked(struct receive_probe *probe, int memory) {
                  probe->kind != RECEIVE_TIMEOUT && probe->kind != RECEIVE_WAITALL &&
                  probe->kind != RECEIVE_LOWAT && probe->kind != RECEIVE_SIGNAL &&
                  probe->kind != RECEIVE_SIGNAL_RESTART &&
-                 probe->kind != RECEIVE_READ_PIPE && probe->kind != RECEIVE_READ_DATAGRAM &&
+                 probe->kind != RECEIVE_READ_PIPE &&
                  !read_probe_denial(probe->kind);
     int64_t deadline = monotonic_ns() + 2000000000;
     while (monotonic_ns() < deadline) {
@@ -1933,7 +1988,7 @@ static void receive_initialize(struct receive_probe *probe, enum receive_kind ki
                    kind == RECEIVE_WAITALL ? MSG_WAITALL :
                    kind == RECEIVE_TRUNCATE ? MSG_TRUNC :
                    kind == RECEIVE_RIGHTS_CLOEXEC ? MSG_CMSG_CLOEXEC : 0;
-    probe->length = kind == RECEIVE_LENGTH_ZERO ? 0 :
+    probe->length = kind == RECEIVE_LENGTH_ZERO || kind == RECEIVE_EMPTY_RECORD ? 0 :
                     kind == RECEIVE_TRUNCATE ? 1 :
                     kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || message || vector_read ? 4 : 1;
     probe->address_length = sizeof(probe->address);
@@ -1968,7 +2023,7 @@ static void receive_initialize(struct receive_probe *probe, enum receive_kind ki
 
 static void check_received_payload(const struct receive_probe *probe,
                                    const struct sockaddr_in *peer) {
-    int expected = probe->kind == RECEIVE_TRUNCATE ? 4 : (int)probe->length;
+    int expected = probe->kind == RECEIVE_TRUNCATE && !probe->reading ? 4 : (int)probe->length;
     REQUIRE(probe->observed.result == expected && probe->observed.error == EDOM,
             "receive returns exact payload length without changing errno");
     REQUIRE(memcmp(probe->data, "DATA", probe->length) == 0,
@@ -2014,6 +2069,7 @@ static int receive_contract_main(char **argv) {
     int fortified = strncmp(suffix, "fortified-", 10) == 0;
     if (alias) suffix += 6;
     if (fortified) suffix += 10;
+    enum descriptor_transport transport = reading ? parse_descriptor_transport(&suffix) : DESCRIPTOR_STREAM;
     if (message && strncmp(suffix, "datagram-", 9) == 0) {
         from = 1;
         suffix += 9;
@@ -2021,7 +2077,7 @@ static int receive_contract_main(char **argv) {
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late", "peek",
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "competing", "waitall", "lowat", "eof", "zero", "errors",
-                          "length-zero", "truncate", "pipe-fallback", "datagram-fallback",
+                          "length-zero", "truncate", "empty-record", "pipe-fallback", "datagram-fallback",
                           "probe-enosys", "probe-eperm", "probe-eacces", "rights", "rights-cloexec",
                           "control-truncate", "rights-pressure"};
     int value = -1;
@@ -2031,7 +2087,9 @@ static int receive_contract_main(char **argv) {
         (mapped && !message && !vector_read) ||
         (reading && (value == RECEIVE_PEEK || value == RECEIVE_DONTWAIT || value == RECEIVE_WAITALL)) ||
         (!reading && value >= RECEIVE_READ_PIPE && value <= RECEIVE_READ_ACCESS) ||
-        (!from && (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE)) ||
+        (!from && transport == DESCRIPTOR_STREAM &&
+         (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE || value == RECEIVE_EMPTY_RECORD)) ||
+        (!reading && value == RECEIVE_EMPTY_RECORD) ||
         (from && (value == RECEIVE_WAITALL || value == RECEIVE_LOWAT || value == RECEIVE_EOF)) ||
         (value >= RECEIVE_RIGHTS && (!message || from)))
         return 2;
@@ -2057,6 +2115,8 @@ static int receive_contract_main(char **argv) {
     } else if (kind == RECEIVE_READ_DATAGRAM) {
         REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0, pair) == 0,
                 "create original datagram read endpoints");
+    } else if (transport != DESCRIPTOR_STREAM) {
+        descriptor_socket_pair(transport, pair);
     } else if (from) {
         struct sockaddr_in local = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
         pair[0] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -2108,6 +2168,11 @@ static int receive_contract_main(char **argv) {
         send_receive_bytes(pair[1], "DATA", sent_length);
     if (kind == RECEIVE_TRUNCATE) send_receive_bytes(pair[1], "DATA", 4);
     if (kind == RECEIVE_ZERO) send_receive_bytes(pair[1], "", 0);
+    if (kind == RECEIVE_TRUNCATE && reading) send_receive_bytes(pair[1], "NEXT", 4);
+    if (kind == RECEIVE_EMPTY_RECORD) {
+        send_receive_bytes(pair[1], "", 0);
+        send_receive_bytes(pair[1], "D", 1);
+    }
     if (kind == RECEIVE_RIGHTS_PRESSURE) send_receive_rights(pair[1], rights[0]);
     if (kind == RECEIVE_EOF)
         REQUIRE(shutdown(pair[1], SHUT_WR) == 0, "close receive peer write side");
@@ -2252,7 +2317,22 @@ static int receive_contract_main(char **argv) {
         REQUIRE(syscall(SYS_recvfrom, pair[0], remaining, sizeof(remaining), MSG_DONTWAIT,
                         NULL, NULL) == (ssize_t)sent_length &&
                     memcmp(remaining, "DATA", sent_length) == 0,
-                "pending cancellation, PEEK and empty stream reads preserve payload");
+                "pending cancellation, PEEK and empty descriptor reads preserve payload");
+    }
+    if (kind == RECEIVE_EMPTY_RECORD) {
+        unsigned char remaining[8] = {0xa5};
+        REQUIRE(syscall(SYS_recvfrom, pair[0], remaining, sizeof(remaining), MSG_DONTWAIT,
+                        NULL, NULL) == 0 && remaining[0] == 0xa5,
+                "zero-capacity read/readv leaves an empty message queued");
+        REQUIRE(syscall(SYS_recvfrom, pair[0], remaining, sizeof(remaining), MSG_DONTWAIT,
+                        NULL, NULL) == 1 && remaining[0] == 'D',
+                "zero-capacity descriptor reads preserve the following record too");
+    }
+    if (kind == RECEIVE_TRUNCATE && reading) {
+        unsigned char remaining[8] = {0};
+        REQUIRE(syscall(SYS_recvfrom, pair[0], remaining, sizeof(remaining), MSG_DONTWAIT,
+                        NULL, NULL) == 4 && memcmp(remaining, "NEXT", 4) == 0,
+                "short descriptor reads discard only the current record's tail");
     }
     if (kind == RECEIVE_READ_PIPE) {
         struct pollfd interest = {pair[0], POLLIN, 0};
@@ -2280,12 +2360,13 @@ enum send_kind {
     SEND_ERRORS, SEND_LENGTH_ZERO, SEND_PEER_CLOSED, SEND_PARTIAL,
     SEND_PARTIAL_CANCEL, SEND_PARTIAL_ERROR, SEND_ADDRESS, SEND_OVERSIZE, SEND_SEQPACKET,
     SEND_RIGHTS, SEND_RIGHTS_PARTIAL, SEND_RIGHTS_INVALID, SEND_IOV_MAX, SEND_DESCRIPTOR_ERRORS, SEND_MAPPED_PARTIAL,
-    SEND_PIPE_FALLBACK, SEND_DATAGRAM_FALLBACK, SEND_PROBE_NOSYS, SEND_PROBE_PERM, SEND_PROBE_ACCESS
+    SEND_PIPE_FALLBACK, SEND_DATAGRAM_FALLBACK, SEND_PROBE_NOSYS, SEND_PROBE_PERM, SEND_PROBE_ACCESS,
+    SEND_ZERO_BLOCKED, SEND_ZERO_READY_LATE, SEND_EMPTY_QUEUED
 };
 struct send_probe {
     struct state observed;
     enum send_kind kind;
-    int fd, to, message_api, writing, flags;
+    int fd, to, message_api, writing, flags, socket_type;
     size_t length;
     unsigned char data[65536];
     struct sockaddr_in address;
@@ -2499,8 +2580,9 @@ static void *send_worker(void *argument) {
     state->error = errno;
     if (probe->writing && probe->kind == SEND_PEER_CLOSED) {
         sigset_t pending;
-        REQUIRE(sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1,
-                "an unsuccessful write generates SIGPIPE exactly as the raw syscall does");
+        REQUIRE(sigpending(&pending) == 0 &&
+                    sigismember(&pending, SIGPIPE) == (probe->socket_type == SOCK_STREAM),
+                "closed-peer writes preserve each protocol's SIGPIPE behavior");
     }
     state->elapsed_ns = monotonic_ns() - started;
     atomic_store_explicit(&state->returned, 1, memory_order_release);
@@ -2521,11 +2603,13 @@ static void send_initialize(struct send_probe *probe, enum send_kind kind, int f
     probe->to = entry == 1;
     probe->message_api = entry == 2;
     probe->writing = entry >= 3 ? entry - 2 : 0;
+    probe->socket_type = SOCK_STREAM;
     probe->rights_fd = -1;
     probe->flags = kind == SEND_DONTWAIT ? MSG_DONTWAIT | MSG_NOSIGNAL :
                    kind == SEND_PARTIAL_ERROR ? 0 : MSG_NOSIGNAL;
     if (probe->writing) probe->flags = 0;
-    probe->length = kind == SEND_LENGTH_ZERO ? 0 :
+    probe->length = kind == SEND_LENGTH_ZERO || kind == SEND_ZERO_BLOCKED ||
+                    kind == SEND_ZERO_READY_LATE || kind == SEND_EMPTY_QUEUED ? 0 :
                     kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL ||
                     kind == SEND_PARTIAL_ERROR || kind == SEND_RIGHTS_PARTIAL ||
                     kind == SEND_OVERSIZE || kind == SEND_MAPPED_PARTIAL ? sizeof(probe->data) :
@@ -2621,6 +2705,7 @@ static void drain_send_socket(int fd, size_t initial, size_t *filler, size_t *pa
             return;
         }
         REQUIRE(!(message.msg_flags & MSG_CTRUNC), "sender ancillary data is not truncated");
+        REQUIRE(!(message.msg_flags & MSG_TRUNC), "send records fit their independent receive buffer");
         for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&message); cmsg;
              cmsg = CMSG_NXTHDR(&message, cmsg)) {
             REQUIRE(probe->rights_fd >= 0 && cmsg->cmsg_level == SOL_SOCKET &&
@@ -2637,7 +2722,16 @@ static void drain_send_socket(int fd, size_t initial, size_t *filler, size_t *pa
         }
         if (received == 0) {
             ++*empty_records;
-            return;
+            if (probe->socket_type == SOCK_STREAM) return;
+            continue;
+        }
+        if (probe->socket_type != SOCK_STREAM) {
+            if (*filler < initial)
+                REQUIRE((size_t)received <= initial - *filler,
+                        "a message cannot combine filler and tested payload");
+            else
+                REQUIRE((size_t)received == probe->length,
+                        "vectored message writes publish the entire payload in one record");
         }
         for (ssize_t i = 0; i < received; ++i) {
             if (*filler < initial) {
@@ -2657,8 +2751,7 @@ static void observe_send_parked(struct send_probe *probe, int memory) {
     int sliced = expect_native && probe->kind != SEND_DISABLED &&
                  probe->kind != SEND_TIMEOUT && probe->kind != SEND_SIGNAL &&
                  probe->kind != SEND_SIGNAL_RESTART &&
-                 probe->kind != SEND_PIPE_FALLBACK && probe->kind != SEND_DATAGRAM_FALLBACK &&
-                 !(probe->writing && probe->kind == SEND_SEQPACKET) && !write_probe_denial(probe->kind);
+                 probe->kind != SEND_PIPE_FALLBACK && !write_probe_denial(probe->kind);
     int64_t deadline = monotonic_ns() + 2000000000;
     while (monotonic_ns() < deadline) {
         REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
@@ -2673,7 +2766,8 @@ static void observe_send_parked(struct send_probe *probe, int memory) {
         /* Prove cancellation of the already blocked operation. The old native
          * raw write must reach the no-rescue join deadline after cancellation,
          * rather than failing only because it did not enter ppoll. */
-        int raw_blocked_write = sliced && probe->writing && probe->kind == SEND_BLOCKED &&
+        int raw_blocked_write = sliced && probe->writing &&
+                                (probe->kind == SEND_BLOCKED || probe->kind == SEND_ZERO_BLOCKED) &&
                                 number == (probe->writing == 2 ? SYS_writev : SYS_write);
         if (sliced && !raw_blocked_write) {
             struct pollfd interest;
@@ -2725,6 +2819,7 @@ static int send_contract_main(char **argv) {
     if (mapped) suffix += 7;
     int alias = strncmp(suffix, "alias-", 6) == 0;
     if (alias) suffix += 6;
+    enum descriptor_transport transport = writing ? parse_descriptor_transport(&suffix) : DESCRIPTOR_STREAM;
     int datagram = message_api && strncmp(suffix, "datagram-", 9) == 0;
     if (datagram) suffix += 9;
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late",
@@ -2732,17 +2827,22 @@ static int send_contract_main(char **argv) {
                           "errors", "length-zero", "peer-closed", "partial",
                           "partial-cancel", "partial-error", "address", "oversize", "seqpacket",
                           "rights", "rights-partial", "rights-invalid", "iov-max", "descriptor-errors", "mapped-partial",
-                          "pipe-fallback", "datagram-fallback", "probe-enosys", "probe-eperm", "probe-eacces"};
+                          "pipe-fallback", "datagram-fallback", "probe-enosys", "probe-eperm", "probe-eacces",
+                          "zero-blocked", "zero-ready-late", "empty-queued"};
     int value = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) value = (int)i;
     if (value < 0 ||
         (to && (value == SEND_PARTIAL || value == SEND_PARTIAL_CANCEL || value == SEND_PARTIAL_ERROR)) ||
-        (!to && !message_api && (value == SEND_ADDRESS || value == SEND_OVERSIZE)) ||
+        (!to && !message_api &&
+         (value == SEND_ADDRESS || (value == SEND_OVERSIZE && transport == DESCRIPTOR_STREAM))) ||
         (writing && value == SEND_DONTWAIT) ||
         (!message_api && (value == SEND_RIGHTS || value == SEND_RIGHTS_PARTIAL || value == SEND_RIGHTS_INVALID)) ||
         (!message_api && !vector_write && value >= SEND_IOV_MAX && value <= SEND_MAPPED_PARTIAL) ||
-        (!writing && value >= SEND_PIPE_FALLBACK)) return 2;
+        (!writing && value >= SEND_PIPE_FALLBACK) ||
+        (value >= SEND_ZERO_BLOCKED && transport == DESCRIPTOR_STREAM) ||
+        ((value == SEND_ZERO_BLOCKED || value == SEND_ZERO_READY_LATE) && vector_write) ||
+        (value == SEND_EMPTY_QUEUED && !vector_write)) return 2;
     enum send_kind kind = (enum send_kind)value;
     int entry = vector_write ? 4 : writing ? 3 : message_api ? 2 : to;
     int pin = pin_send_provider(argv[2], entry, alias);
@@ -2763,8 +2863,9 @@ static int send_contract_main(char **argv) {
     REQUIRE(sigaction(SIGPIPE, &action, NULL) == 0, "default SIGPIPE catches duplicated send errors");
     alarm(15);
     int pair[2];
-    int type = kind == SEND_SEQPACKET ? SOCK_SEQPACKET :
-               to || datagram || kind == SEND_ADDRESS || kind == SEND_DATAGRAM_FALLBACK ? SOCK_DGRAM : SOCK_STREAM;
+    int type = kind == SEND_SEQPACKET || transport == DESCRIPTOR_SEQPACKET ? SOCK_SEQPACKET :
+               to || datagram || transport != DESCRIPTOR_STREAM ||
+               kind == SEND_ADDRESS || kind == SEND_DATAGRAM_FALLBACK ? SOCK_DGRAM : SOCK_STREAM;
     struct sockaddr_in address = {0};
     if (kind == SEND_PIPE_FALLBACK) {
         int pipefd[2];
@@ -2773,6 +2874,8 @@ static int send_contract_main(char **argv) {
         pair[1] = pipefd[0];
         REQUIRE(fcntl(pair[1], F_SETFL, fcntl(pair[1], F_GETFL) | O_NONBLOCK) == 0,
                 "independent pipe reader drains only available bytes");
+    } else if (transport != DESCRIPTOR_STREAM) {
+        descriptor_socket_pair(transport, pair);
     } else if (kind == SEND_ADDRESS) {
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -2809,12 +2912,14 @@ static int send_contract_main(char **argv) {
     if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
         kind == SEND_NONBLOCK || kind == SEND_DONTWAIT || kind == SEND_TIMEOUT ||
         kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET ||
-        kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind))
+        kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind) ||
+        kind == SEND_ZERO_BLOCKED || kind == SEND_ZERO_READY_LATE || kind == SEND_EMPTY_QUEUED)
         initial = kind == SEND_PIPE_FALLBACK ? fill_write_pipe(pair[0]) : fill_send_socket(pair[0]);
     if (kind == SEND_PEER_CLOSED)
         REQUIRE(close(pair[1]) == 0, "close send peer");
     struct send_probe probe;
     send_initialize(&probe, kind, pair[0], entry, mapped);
+    probe.socket_type = type;
     if (kind == SEND_ADDRESS) {
         probe.address = address;
         probe.address_length = sizeof(address);
@@ -2845,9 +2950,11 @@ static int send_contract_main(char **argv) {
                   kind == SEND_PARTIAL_ERROR || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL;
     if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
         kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET || partial ||
-        kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind)) {
+        kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind) ||
+        kind == SEND_ZERO_BLOCKED || kind == SEND_ZERO_READY_LATE) {
         observe_send_parked(&probe, memory);
-        if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL)
+        if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL ||
+            kind == SEND_ZERO_BLOCKED)
             REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request blocked send cancellation");
         if (kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART) {
             REQUIRE(pthread_kill(probe.observed.thread, SIGUSR1) == 0, "interrupt socket send");
@@ -2863,7 +2970,7 @@ static int send_contract_main(char **argv) {
         if (kind == SEND_DISABLED || kind == SEND_READY_LATE || kind == SEND_SIGNAL_RESTART ||
             kind == SEND_PARTIAL || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL ||
             kind == SEND_SEQPACKET || kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK ||
-            write_probe_denial(kind)) {
+            write_probe_denial(kind) || kind == SEND_ZERO_READY_LATE) {
             int64_t deadline = monotonic_ns() + 2000000000;
             while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire)) {
                 REQUIRE(monotonic_ns() < deadline, "send completion after draining backpressure");
@@ -2874,10 +2981,10 @@ static int send_contract_main(char **argv) {
     }
     void *result = join_bounded(&probe.observed);
     int canceled = kind == SEND_PENDING || kind == SEND_BLOCKED ||
-                   kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL;
+                   kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL || kind == SEND_ZERO_BLOCKED;
     REQUIRE(result == (canceled ? PTHREAD_CANCELED : &probe.observed), "send join result");
     REQUIRE(probe.observed.cleaned == 1, "send cleanup count");
-    if (kind == SEND_PENDING || kind == SEND_BLOCKED) {
+    if (kind == SEND_PENDING || kind == SEND_BLOCKED || kind == SEND_ZERO_BLOCKED) {
         REQUIRE(!probe.observed.returned, "cancellation precedes any send result");
     } else if (kind == SEND_NONBLOCK || kind == SEND_DONTWAIT || kind == SEND_TIMEOUT) {
         REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
@@ -2910,7 +3017,8 @@ static int send_contract_main(char **argv) {
         drain_send_socket(pair[1], initial, &filler, &payload, &empty_records, &probe);
         size_t accepted = probe.observed.result > 0 ? (size_t)probe.observed.result : 0;
         REQUIRE(payload == accepted, "each accepted send byte is delivered exactly once");
-        REQUIRE(empty_records == (kind == SEND_LENGTH_ZERO && type != SOCK_STREAM),
+        REQUIRE(empty_records == ((kind == SEND_LENGTH_ZERO || kind == SEND_ZERO_READY_LATE) &&
+                                  type != SOCK_STREAM && !vector_write),
                 "zero-byte sends preserve datagram records and stream behavior");
     }
     REQUIRE(filler == initial, "send cancellation does not consume queued peer data");
@@ -2964,6 +3072,7 @@ static int io_reuse_contract_main(char **argv) {
     const long raw[] = {SYS_read, SYS_recvfrom, SYS_recvfrom, SYS_recvmsg, SYS_readv,
                         SYS_write, SYS_sendto, SYS_sendto, SYS_sendmsg, SYS_writev};
     const char *name = case_name + strlen("fd-reuse-");
+    enum descriptor_transport transport = parse_descriptor_transport(&name);
     int api = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(name, names[i]) == 0) api = (int)i;
@@ -2984,9 +3093,8 @@ static int io_reuse_contract_main(char **argv) {
     REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "reuse test signal disposition");
     alarm(15);
     int original[2], replacement[2];
-    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, original) == 0 &&
-                socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, replacement) == 0,
-            "independent original and replacement socket pairs");
+    descriptor_socket_pair(transport, original);
+    descriptor_socket_pair(transport, replacement);
     int keeper = (int)syscall(SYS_fcntl, original[0], F_DUPFD_CLOEXEC, 64);
     REQUIRE(keeper >= 64, "retain the original socket without retaining its public number");
     int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
@@ -3006,6 +3114,8 @@ static int io_reuse_contract_main(char **argv) {
     struct state *state;
     if (writing) {
         send_initialize(&sender, SEND_READY_LATE, original[0], entry, 0);
+        sender.socket_type = transport == DESCRIPTOR_SEQPACKET ? SOCK_SEQPACKET :
+                             transport == DESCRIPTOR_DATAGRAM ? SOCK_DGRAM : SOCK_STREAM;
         state = &sender.observed;
     } else {
         receive_initialize(&receiver, RECEIVE_READY_LATE, original[0], api == 2, 0,

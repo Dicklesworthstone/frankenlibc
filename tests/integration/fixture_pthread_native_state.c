@@ -2,6 +2,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -9,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define CHECK(expression) do { \
@@ -639,6 +641,301 @@ static void cleanup_initial(void) {
     pthread_cleanup_pop(0);
 }
 
+/* Foreign attributes must stay opaque. Construct them through separately
+ * verified GNU entry points, then pass them to the selected public creator.
+ * Kernel queries check the constraints before the first user callback. */
+struct attribute_worker {
+    _Atomic int entered;
+    _Atomic int command;
+    _Atomic int stage;
+    uintptr_t tp;
+    pid_t tid;
+    cpu_set_t affinity;
+    uint64_t signal_mask;
+    int policy;
+    int priority;
+    int inheritance;
+    int snapshot;
+    int parked;
+};
+static struct attribute_worker attribute_workers[2];
+
+static void verify_attribute_provider(const char *expected) {
+    const char *names[] = {
+        "pthread_self", "pthread_getattr_np", "pthread_attr_init", "pthread_attr_destroy",
+        "pthread_attr_getaffinity_np", "pthread_attr_setaffinity_np",
+        "pthread_attr_getschedpolicy", "pthread_attr_getschedparam",
+        "pthread_attr_getinheritsched", "pthread_attr_setinheritsched",
+        "pthread_attr_getsigmask_np", "pthread_attr_getstack", "pthread_setschedparam",
+        "pthread_setaffinity_np", "pthread_setschedprio",
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        Dl_info info;
+        void *symbol = dlsym(RTLD_DEFAULT, names[i]);
+        CHECK(symbol && dladdr(symbol, &info) && same_file(info.dli_fname, expected));
+    }
+}
+
+static void current_affinity(cpu_set_t *mask) {
+    CPU_ZERO(mask);
+    CHECK(syscall(SYS_sched_getaffinity, 0, sizeof(*mask), mask) > 0);
+}
+
+static cpu_set_t first_allowed_cpu(const cpu_set_t *allowed) {
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    int cpu = 0;
+    while (cpu < CPU_SETSIZE && !CPU_ISSET(cpu, allowed)) ++cpu;
+    CHECK(cpu < CPU_SETSIZE);
+    CPU_SET(cpu, &one);
+    return one;
+}
+
+static void verify_attribute_snapshot(pthread_t thread, pid_t tid, int inheritance) {
+    pthread_attr_t snapshot;
+    CHECK(pthread_getattr_np(thread, &snapshot) == 0);
+    cpu_set_t actual, reported;
+    CPU_ZERO(&actual);
+    CPU_ZERO(&reported);
+    CHECK(syscall(SYS_sched_getaffinity, tid, sizeof(actual), &actual) > 0);
+    CHECK(pthread_attr_getaffinity_np(&snapshot, sizeof(reported), &reported) == 0);
+    CHECK(CPU_EQUAL(&actual, &reported));
+    int policy = -1, inherit = -1;
+    struct sched_param parameter, kernel_parameter;
+    CHECK(pthread_attr_getschedpolicy(&snapshot, &policy) == 0);
+    CHECK(policy == syscall(SYS_sched_getscheduler, tid));
+    CHECK(pthread_attr_getschedparam(&snapshot, &parameter) == 0);
+    CHECK(syscall(SYS_sched_getparam, tid, &kernel_parameter) == 0);
+    CHECK(parameter.sched_priority == kernel_parameter.sched_priority);
+    CHECK(pthread_attr_getinheritsched(&snapshot, &inherit) == 0);
+    CHECK(inherit == inheritance);
+    sigset_t unset;
+    CHECK(pthread_attr_getsigmask_np(&snapshot, &unset) == -1);
+    void *address = NULL;
+    size_t size = 0;
+    CHECK(pthread_attr_getstack(&snapshot, &address, &size) == 0);
+    CHECK(address && size >= (size_t)PTHREAD_STACK_MIN);
+    CHECK(pthread_attr_destroy(&snapshot) == 0);
+}
+
+static void *attribute_worker_entry(void *argument) {
+    struct attribute_worker *w = argument;
+    w->tp = (uintptr_t)__builtin_thread_pointer();
+    w->tid = (pid_t)syscall(SYS_gettid);
+    current_affinity(&w->affinity);
+    w->policy = (int)syscall(SYS_sched_getscheduler, 0);
+    struct sched_param parameter = {0};
+    CHECK(syscall(SYS_sched_getparam, 0, &parameter) == 0);
+    w->priority = parameter.sched_priority;
+    CHECK(syscall(SYS_rt_sigprocmask, SIG_SETMASK, NULL, &w->signal_mask,
+                  sizeof(w->signal_mask)) == 0);
+    if (w->snapshot) verify_attribute_snapshot(pthread_self(), w->tid, w->inheritance);
+    publish(&w->entered, 1);
+    publish(&w->stage, 1);
+    if (w->parked) {
+        wait_at_least(&w->command, 1);
+        verify_attribute_snapshot(pthread_self(), w->tid, w->inheritance);
+        publish(&w->stage, 2);
+        wait_at_least(&w->command, 2);
+    }
+    return w;
+}
+
+static void verify_attribute_backend(const struct attribute_worker *w, uintptr_t parent_tp) {
+    const char *native = getenv("FRANKENLIBC_THREAD_NATIVE");
+    int expected_same_tp = native && !strcmp(native, "1");
+    CHECK((w->tp == parent_tp) == expected_same_tp);
+}
+
+static void foreign_attributes(const char *name) {
+    void *gnu = dlopen("libc.so.6", RTLD_NOW | RTLD_LOCAL);
+    CHECK(gnu);
+    Dl_info provider;
+    CHECK(dladdr(dlsym(gnu, "gnu_get_libc_version"), &provider));
+    const char *names[] = {
+        "pthread_attr_init", "pthread_attr_destroy", "pthread_attr_setaffinity_np",
+        "pthread_attr_setsigmask_np", "pthread_attr_setschedpolicy",
+        "pthread_attr_setschedparam", "pthread_attr_setinheritsched",
+        "pthread_create", "pthread_join",
+    };
+    void *symbols[sizeof(names) / sizeof(names[0])];
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        Dl_info info;
+        symbols[i] = dlsym(gnu, names[i]);
+        CHECK(symbols[i] && dladdr(symbols[i], &info) &&
+              same_file(info.dli_fname, provider.dli_fname));
+    }
+    int (*init)(pthread_attr_t *) = symbols[0];
+    int (*destroy)(pthread_attr_t *) = symbols[1];
+    int (*affinity)(pthread_attr_t *, size_t, const cpu_set_t *) = symbols[2];
+    int (*mask)(pthread_attr_t *, const sigset_t *) = symbols[3];
+    int (*policy)(pthread_attr_t *, int) = symbols[4];
+    int (*parameter)(pthread_attr_t *, const struct sched_param *) = symbols[5];
+    int (*inherit)(pthread_attr_t *, int) = symbols[6];
+    int (*host_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *) = symbols[7];
+    int (*host_join)(pthread_t, void **) = symbols[8];
+    pthread_attr_t attr;
+    CHECK(init(&attr) == 0);
+    cpu_set_t allowed, expected_affinity;
+    current_affinity(&allowed);
+    cpu_set_t one = first_allowed_cpu(&allowed);
+    expected_affinity = allowed;
+    uint64_t parent_mask = UINT64_C(1) << (SIGUSR2 - 1);
+    CHECK(syscall(SYS_rt_sigprocmask, SIG_SETMASK, &parent_mask, NULL, sizeof(parent_mask)) == 0);
+    uint64_t expected_mask = parent_mask;
+    int expected_policy = SCHED_OTHER, expected_priority = 0, expected_create = 0;
+    struct attribute_worker *w = &attribute_workers[0];
+    w->inheritance = PTHREAD_INHERIT_SCHED;
+    struct sched_param normal = {0};
+    if (!strcmp(name, "attributes-foreign-affinity")) {
+        CHECK(affinity(&attr, sizeof(one), &one) == 0);
+        expected_affinity = one;
+    } else if (!strcmp(name, "attributes-foreign-affinity-expand")) {
+        CHECK(pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0);
+        CHECK(affinity(&attr, sizeof(allowed), &allowed) == 0);
+    } else if (!strcmp(name, "attributes-foreign-affinity-inherit")) {
+        CHECK(pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0);
+        expected_affinity = one;
+    } else if (!strcmp(name, "attributes-foreign-affinity-empty")) {
+        cpu_set_t empty;
+        CPU_ZERO(&empty);
+        CHECK(affinity(&attr, sizeof(empty), &empty) == 0);
+        expected_create = EINVAL;
+    } else if (!strcmp(name, "attributes-foreign-sigmask") ||
+               !strcmp(name, "attributes-foreign-sigmask-empty")) {
+        sigset_t signals;
+        CHECK(sigemptyset(&signals) == 0);
+        expected_mask = 0;
+        if (!strcmp(name, "attributes-foreign-sigmask")) {
+            CHECK(sigaddset(&signals, SIGUSR1) == 0);
+            expected_mask = UINT64_C(1) << (SIGUSR1 - 1);
+        }
+        CHECK(mask(&attr, &signals) == 0);
+    } else if (!strcmp(name, "attributes-foreign-sigmask-inherit")) {
+        /* An absent extension inherits the actual creator mask. */
+    } else if (!strcmp(name, "attributes-foreign-explicit")) {
+        CHECK(pthread_setschedparam(pthread_self(), SCHED_BATCH, &normal) == 0);
+        CHECK(policy(&attr, SCHED_OTHER) == 0 && parameter(&attr, &normal) == 0);
+        CHECK(inherit(&attr, PTHREAD_EXPLICIT_SCHED) == 0);
+        w->inheritance = PTHREAD_EXPLICIT_SCHED;
+    } else if (!strcmp(name, "attributes-foreign-sched-inherit")) {
+        struct sched_param realtime = {.sched_priority = 1};
+        CHECK(pthread_setschedparam(pthread_self(), SCHED_BATCH, &normal) == 0);
+        CHECK(policy(&attr, SCHED_FIFO) == 0 && parameter(&attr, &realtime) == 0);
+        expected_policy = SCHED_BATCH;
+    } else if (!strcmp(name, "attributes-foreign-sched-permission")) {
+        struct sched_param realtime = {.sched_priority = 1};
+        CHECK(policy(&attr, SCHED_FIFO) == 0 && parameter(&attr, &realtime) == 0);
+        CHECK(inherit(&attr, PTHREAD_EXPLICIT_SCHED) == 0);
+        w->inheritance = PTHREAD_EXPLICIT_SCHED;
+        expected_policy = SCHED_FIFO;
+        expected_priority = 1;
+        /* This also works on privileged CI: independently measure whether GNU
+         * can apply FIFO, and require the same result before any user entry. */
+        pthread_t oracle;
+        expected_create = host_create(&oracle, &attr, attribute_worker_entry, &attribute_workers[1]);
+        CHECK(expected_create == 0 || expected_create == EPERM);
+        if (!expected_create) CHECK(host_join(oracle, NULL) == 0);
+        CHECK(atomic_load(&attribute_workers[1].entered) == (expected_create == 0));
+    } else CHECK(0);
+    uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+    pthread_t thread;
+    int result = pthread_create(&thread, &attr, attribute_worker_entry, w);
+    if (!result) CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(destroy(&attr) == 0);
+    CHECK(result == expected_create);
+    CHECK(atomic_load(&w->entered) == (result == 0));
+    if (!result) {
+        verify_attribute_backend(w, parent_tp);
+        CHECK(CPU_EQUAL(&w->affinity, &expected_affinity));
+        CHECK(w->signal_mask == expected_mask);
+        CHECK(w->policy == expected_policy && w->priority == expected_priority);
+    }
+    CHECK(dlclose(gnu) == 0);
+}
+
+static void live_attribute_snapshot(int worker) {
+    cpu_set_t allowed;
+    current_affinity(&allowed);
+    cpu_set_t one = first_allowed_cpu(&allowed);
+    struct sched_param parameter = {0};
+    if (!worker) {
+        CHECK(pthread_setschedparam(pthread_self(), SCHED_BATCH, &parameter) == 0);
+        CHECK(pthread_setaffinity_np(pthread_self(), sizeof(one), &one) == 0);
+        verify_attribute_snapshot(pthread_self(), (pid_t)syscall(SYS_gettid), PTHREAD_INHERIT_SCHED);
+        return;
+    }
+    struct attribute_worker *w = &attribute_workers[0];
+    w->snapshot = 1;
+    w->parked = 1;
+    w->inheritance = PTHREAD_EXPLICIT_SCHED;
+    pthread_attr_t attr;
+    CHECK(pthread_attr_init(&attr) == 0);
+    CHECK(pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED) == 0);
+    uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+    pthread_t thread;
+    CHECK(pthread_create(&thread, &attr, attribute_worker_entry, w) == 0);
+    CHECK(pthread_attr_destroy(&attr) == 0);
+    wait_at_least(&w->stage, 1);
+    verify_attribute_backend(w, parent_tp);
+    verify_attribute_snapshot(thread, w->tid, PTHREAD_EXPLICIT_SCHED);
+    CHECK(pthread_setschedparam(thread, SCHED_BATCH, &parameter) == 0);
+    CHECK(pthread_setaffinity_np(thread, sizeof(one), &one) == 0);
+    verify_attribute_snapshot(thread, w->tid, PTHREAD_EXPLICIT_SCHED);
+    publish(&w->command, 1);
+    wait_at_least(&w->stage, 2);
+    publish(&w->command, 2);
+    CHECK(pthread_join(thread, NULL) == 0);
+}
+
+static void attribute_affinity_short(void) {
+    pthread_attr_t attr;
+    CHECK(pthread_attr_init(&attr) == 0);
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(CPU_SETSIZE - 1, &mask);
+    CHECK(pthread_attr_setaffinity_np(&attr, sizeof(mask), &mask) == 0);
+    _Alignas(cpu_set_t) unsigned char output[sizeof(cpu_set_t)];
+    memset(output, 0xa5, sizeof(output));
+    CHECK(pthread_attr_getaffinity_np(&attr, 1, (cpu_set_t *)output) == EINVAL);
+    for (size_t i = 0; i < sizeof(output); ++i) CHECK(output[i] == 0xa5);
+    CHECK(pthread_attr_getaffinity_np(&attr, sizeof(output), (cpu_set_t *)output) == 0);
+    CHECK(memcmp(output, &mask, sizeof(mask)) == 0);
+    CPU_ZERO(&mask);
+    CPU_SET(0, &mask);
+    CHECK(pthread_attr_setaffinity_np(&attr, sizeof(mask), &mask) == 0);
+    CHECK(pthread_attr_getaffinity_np(&attr, 1, (cpu_set_t *)output) == 0 && output[0] == 1);
+    CHECK(pthread_attr_destroy(&attr) == 0);
+}
+
+static void scheduling_priority(int worker) {
+    pthread_t thread = pthread_self();
+    struct attribute_worker *w = &attribute_workers[0];
+    uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+    pid_t tid = (pid_t)syscall(SYS_gettid);
+    if (worker) {
+        w->parked = 1;
+        CHECK(pthread_create(&thread, NULL, attribute_worker_entry, w) == 0);
+        wait_at_least(&w->stage, 1);
+        verify_attribute_backend(w, parent_tp);
+        tid = w->tid;
+    }
+    struct sched_param parameter = {0};
+    CHECK(pthread_setschedparam(thread, SCHED_BATCH, &parameter) == 0);
+    errno = EDOM;
+    CHECK(pthread_setschedprio(thread, 0) == 0 && errno == EDOM);
+    CHECK(syscall(SYS_sched_getscheduler, tid) == SCHED_BATCH);
+    CHECK(pthread_setschedprio(thread, 1) == EINVAL);
+    CHECK(syscall(SYS_sched_getscheduler, tid) == SCHED_BATCH);
+    CHECK(syscall(SYS_sched_getparam, tid, &parameter) == 0 && parameter.sched_priority == 0);
+    if (worker) {
+        publish(&w->command, 1);
+        wait_at_least(&w->stage, 2);
+        publish(&w->command, 2);
+        CHECK(pthread_join(thread, NULL) == 0);
+    }
+}
+
 /* Linked into the C++ native-unwind probe as an independently compiled C
  * frame without exception landing pads. Its registered cleanup must run
  * between the inner and outer C++ destructors, in the same unwind. */
@@ -665,6 +962,7 @@ int main(int argc, char **argv) {
     }
     alarm(12);
     const char *name = argv[1];
+    if (!strncmp(name, "attributes-", 11)) verify_attribute_provider(argv[2]);
     if (!strcmp(name, "errno-siblings")) errno_siblings();
     else if (!strcmp(name, "errno-signals")) errno_signals();
     else if (!strcmp(name, "errno-return")) errno_lifecycle(0);
@@ -690,6 +988,12 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "legacy-cancel-reentry")) legacy_cleanup_exit(1, 2, 0);
     else if (!strcmp(name, "legacy-siblings")) legacy_cleanup_exit(1, 1, 1);
     else if (!strcmp(name, "legacy-defer")) legacy_cleanup_defer();
+    else if (!strncmp(name, "attributes-foreign-", 19)) foreign_attributes(name);
+    else if (!strcmp(name, "attributes-live-self")) live_attribute_snapshot(0);
+    else if (!strcmp(name, "attributes-live-worker")) live_attribute_snapshot(1);
+    else if (!strcmp(name, "attributes-affinity-short")) attribute_affinity_short();
+    else if (!strcmp(name, "attributes-priority-self")) scheduling_priority(0);
+    else if (!strcmp(name, "attributes-priority-worker")) scheduling_priority(1);
     else return 2;
     printf("pthread-native-state:%s:PASS\n", name);
     return 0;

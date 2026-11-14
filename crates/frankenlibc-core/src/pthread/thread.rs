@@ -219,6 +219,11 @@ pub struct ThreadHandle {
     /// Caller-provided stacks always have zero libc-managed guard bytes.
     pub guard_size: usize,
 
+    /// Whether creation explicitly selected the scheduling policy/priority.
+    /// Immutable before clone; getattr can report this even inside user entry
+    /// before the creator has published its ABI registry record.
+    pub explicit_scheduling: bool,
+
     /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
     /// owned ThreadHandle mapping so clone-based threads never need malloc.
     pub tls_values: [super::tls::TlsEntry; super::tls::TLS_KEY_SLOTS],
@@ -891,6 +896,7 @@ pub unsafe fn create_thread_with_startup(
         stack_addr: stack.address,
         stack_size: stack.size,
         guard_size: stack.guard_size,
+        explicit_scheduling: startup.scheduling.is_some(),
         tls_values: [super::tls::TlsEntry::default(); super::tls::TLS_KEY_SLOTS],
     }) };
 
