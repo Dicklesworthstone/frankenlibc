@@ -8410,7 +8410,6 @@ fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
     let _ = server_thread.join();
 }
 
-
 // GNU IDN output flags do not enable forward Unicode-name normalization.
 const TEST_AI_CANONIDN: c_int = 0x80;
 const TEST_NI_IDN: c_int = 0x20;
@@ -8561,13 +8560,11 @@ fn resolver_idn_reverse_names_convert_before_capacity_checks() {
                 assert_eq!(code, libc::EAI_OVERFLOW);
             }
         }
-        let (code, output) =
-            resolver_idn_reverse(241, libc::NI_NUMERICHOST | TEST_NI_IDN, 32);
+        let (code, output) = resolver_idn_reverse(241, libc::NI_NUMERICHOST | TEST_NI_IDN, 32);
         assert_eq!(code, 0);
         assert_eq!(&output[..12], b"192.0.2.241\0");
         let _ascii = ResolverIdnLocale::new(c"C");
-        let (code, output) =
-            resolver_idn_reverse(241, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
+        let (code, output) = resolver_idn_reverse(241, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
         assert_eq!(code, 0);
         assert_eq!(&output[..19], b"xn--bcher-kva.test\0");
     });
@@ -8585,8 +8582,7 @@ fn resolver_idn_malformed_ace_preserves_the_complete_original_name() {
                 resolver_idn_canonical(query, libc::AI_CANONNAME | TEST_AI_CANONIDN),
                 vec![Some(original.as_bytes().to_vec()), None, None],
             );
-            let (code, output) =
-                resolver_idn_reverse(last, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
+            let (code, output) = resolver_idn_reverse(last, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
             assert_eq!(code, 0);
             assert_eq!(&output[..original.len()], original.as_bytes());
             assert_eq!(output[original.len()], 0);

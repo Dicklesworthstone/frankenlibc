@@ -25556,73 +25556,37 @@ pub unsafe extern "C" fn endfsent() {
 
 pub(crate) const NETGROUP_PATH: &str = "/etc/netgroup";
 
-use frankenlibc_core::netgroup::NetgroupTriple;
+use crate::nss_module::{NetgroupSession, NetgroupTriple};
 
-#[derive(Clone, Copy)]
-pub(crate) enum NetgroupLookup {
-    Membership,
-    Enumeration,
+struct NetgroupIteration {
+    session: Option<NetgroupSession>,
+    // Keep an already-read record until the caller supplies enough storage.
+    pending: Option<NetgroupTriple>,
 }
 
-/// Apply the configured netgroup sources before opening the native files backend.
-///
-/// A preceding unavailable service can terminate lookup; the mere presence of
-/// `files` later in the line is not permission to read it. Netgroup module ABIs
-/// are not implemented here, so those sources explicitly report UNAVAIL and
-/// follow their actions. `compat` is not a files alias for this database.
-pub(crate) fn netgroup_entries(
-    group: &[u8],
-    operation: NetgroupLookup,
-) -> Option<Vec<NetgroupTriple>> {
-    use frankenlibc_core::nss::{self, Answer, Database, Service};
-
-    let services = crate::nss_module::services(Database::Netgroup);
-    let mut content: Option<Result<Vec<u8>, i32>> = None;
-    let query = |service: &Service| {
-        if service.name() != b"files" {
-            return Answer::Unavailable(libc::ENOSYS);
+impl NetgroupIteration {
+    const fn new() -> Self {
+        Self {
+            session: None,
+            pending: None,
         }
-        let content = content.get_or_insert_with(|| {
-            std::fs::read(NETGROUP_PATH).map_err(|error| error.raw_os_error().unwrap_or(libc::EIO))
-        });
-        let bytes = match content {
-            Ok(bytes) => bytes,
-            Err(error) if matches!(*error, libc::ENOMEM | libc::EAGAIN) => {
-                return Answer::TryAgain(*error);
-            }
-            Err(error) => return Answer::Unavailable(*error),
-        };
-        if frankenlibc_core::netgroup::contains_netgroup(bytes, group) {
-            Answer::Found(frankenlibc_core::netgroup::expand_netgroup(bytes, group))
-        } else {
-            Answer::NotFound
-        }
-    };
-    let answer = match operation {
-        NetgroupLookup::Membership => nss::lookup_netgroup_membership(&services, query),
-        NetgroupLookup::Enumeration => nss::lookup(&services, query, None),
-    };
-    match answer {
-        Answer::Found(triples) => Some(triples),
-        _ => None,
     }
 }
 
 struct NetgroupIterState {
-    /// Pre-parsed triples for the current group.
-    triples: Vec<NetgroupTriple>,
-    /// Current position in the triples vector.
-    pos: usize,
-    /// Thread-local string buffer for non-reentrant getnetgrent.
+    busy: bool,
+    iteration: NetgroupIteration,
+    // Keep returned strings at a stable TLS address when the cursor is leased
+    // onto the stack. GNU's non-reentrant output budget is fixed at 1024 bytes.
     str_buf: [u8; 1024],
 }
 
 impl NetgroupIterState {
     const fn new() -> Self {
         Self {
-            triples: Vec::new(),
-            pos: 0,
-            str_buf: [0u8; 1024],
+            busy: false,
+            iteration: NetgroupIteration::new(),
+            str_buf: [0; 1024],
         }
     }
 }
@@ -25633,8 +25597,6 @@ static NETGROUP_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetgroupIt
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
-    // static TLS made host pthread_create reject small stacks with EINVAL).
     static NETGROUP_ITER: Box<std::cell::UnsafeCell<NetgroupIterState>> =
         Box::new(std::cell::UnsafeCell::new(NetgroupIterState::new()));
 }
@@ -25649,52 +25611,142 @@ fn with_netgroup_iter_state<R>(callback: impl FnOnce(&mut NetgroupIterState) -> 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         NETGROUP_ITER.with(|cell| {
-            // SAFETY: NETGROUP_ITER is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
+            // SAFETY: this short access never invokes a module callback or
+            // drops a live module session. No reference escapes the closure.
             callback(unsafe { &mut *cell.get() })
         })
     }
 }
 
-/// `endnetgrent` — end netgroup iteration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endnetgrent() {
-    with_netgroup_iter_state(|state| {
-        state.triples.clear();
-        state.pos = 0;
-    });
+/// Take the iterator out of TLS before invoking foreign NSS code. In
+/// particular, a module's constructor/get/end callback must never run with a
+/// live mutable reference into the TLS UnsafeCell. Recursive use of public
+/// enumeration fails explicitly; independent innetgr sessions remain usable.
+struct NetgroupIterationLease {
+    iteration: NetgroupIteration,
 }
 
-/// `setnetgrent` — start netgroup iteration for the named group.
-///
-/// Native implementation: reads /etc/netgroup and pre-parses all triples
-/// for the specified group.
+impl NetgroupIterationLease {
+    fn acquire() -> Option<Self> {
+        with_netgroup_iter_state(|state| {
+            if state.busy {
+                return None;
+            }
+            state.busy = true;
+            Some(Self {
+                iteration: std::mem::replace(
+                    &mut state.iteration,
+                    NetgroupIteration::new(),
+                ),
+            })
+        })
+    }
+}
+
+impl Drop for NetgroupIterationLease {
+    fn drop(&mut self) {
+        let iteration = std::mem::replace(&mut self.iteration, NetgroupIteration::new());
+        with_netgroup_iter_state(|state| {
+            // The placeholder has no session and cannot run foreign cleanup.
+            state.iteration = iteration;
+            state.busy = false;
+        });
+    }
+}
+
+/// End enumeration and release the selected module's private cursor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endnetgrent() {
+    if let Some(mut lease) = NetgroupIterationLease::acquire() {
+        lease.iteration.session = None;
+        lease.iteration.pending = None;
+    }
+}
+
+/// Select a netgroup through the configured NSS sources. Successful selection
+/// does not eagerly consume the provider: read errors belong to getnetgrent.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
     if netgroup.is_null() {
         return 0;
     }
-    let Some(group) = (unsafe { read_c_string_bytes(netgroup) }) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        with_netgroup_iter_state(|state| {
-            state.triples.clear();
-            state.pos = 0;
-        });
+    let Some(mut lease) = NetgroupIterationLease::acquire() else {
+        // SAFETY: the errno accessor names this thread's writable cell.
+        unsafe { set_abi_errno(libc::EDEADLK) };
         return 0;
     };
-    let triples = netgroup_entries(&group, NetgroupLookup::Enumeration);
-    let found = triples.is_some();
-    with_netgroup_iter_state(|state| {
-        state.triples = triples.unwrap_or_default();
-        state.pos = 0;
-    });
-    c_int::from(found)
+    lease.iteration.session = None;
+    lease.iteration.pending = None;
+    let Some(group) = (unsafe { read_c_string_bytes(netgroup) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    };
+    match NetgroupSession::open(&group, false) {
+        Ok(session) => {
+            let found = session.is_some();
+            lease.iteration.session = session;
+            c_int::from(found)
+        }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
+        }
+    }
 }
 
-/// `getnetgrent` — get next netgroup entry (host, user, domain triple).
-///
-/// Native implementation using thread-local pre-parsed triples.
-/// Returns 1 on success, 0 when exhausted.
+/// Retain a record until it fits, then transfer its owned fields to the caller.
+/// Foreign callbacks run only while the public iterator is leased out of TLS.
+fn netgroup_next_record(
+    iteration: &mut NetgroupIteration,
+    capacity: usize,
+) -> Result<Option<NetgroupTriple>, c_int> {
+    if iteration.pending.is_none() {
+        let Some(session) = iteration.session.as_mut() else {
+            return Ok(None);
+        };
+        iteration.pending = session.next_for_buffer(capacity)?;
+    }
+    let Some(triple) = iteration.pending.as_ref() else {
+        return Ok(None);
+    };
+    if triple
+        .required_buffer_size()
+        .is_none_or(|needed| needed > capacity)
+    {
+        return Err(libc::ERANGE);
+    }
+    Ok(iteration.pending.take())
+}
+
+/// Copy a validated record. This invokes no provider and takes no iterator
+/// borrow, so non-reentrant storage can be borrowed after restoring its lease.
+unsafe fn netgroup_copy_record(
+    triple: &NetgroupTriple,
+    hostp: *mut *mut c_char,
+    userp: *mut *mut c_char,
+    domainp: *mut *mut c_char,
+    buffer: *mut u8,
+) {
+    let fields = [&triple.host, &triple.user, &triple.domain];
+    let mut offset = 0;
+    for (field, output) in fields.into_iter().zip([hostp, userp, domainp]) {
+        // SAFETY: the caller validated every output slot and the complete
+        // footprint. Owned source fields are disjoint from writable storage.
+        unsafe {
+            if let Some(bytes) = field {
+                let destination = buffer.add(offset);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination, bytes.len());
+                *destination.add(bytes.len()) = 0;
+                *output = destination.cast();
+                offset += bytes.len() + 1;
+            } else {
+                *output = std::ptr::null_mut();
+            }
+        }
+    }
+}
+
+/// Read the next entry using GNU's fixed non-reentrant output buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetgrent(
     hostp: *mut *mut c_char,
@@ -25704,53 +25756,38 @@ pub unsafe extern "C" fn getnetgrent(
     if hostp.is_null() || userp.is_null() || domainp.is_null() {
         return 0;
     }
-    with_netgroup_iter_state(|state| {
-        if state.pos >= state.triples.len() {
-            return 0;
+    let Some(mut lease) = NetgroupIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return 0;
+    };
+    let record = netgroup_next_record(&mut lease.iteration, 1024);
+    // Restore the cursor before borrowing the stable output array. No later
+    // iterator move or TLS borrow may invalidate the returned field pointers.
+    drop(lease);
+    match record {
+        Ok(Some(triple)) => with_netgroup_iter_state(|state| {
+            // SAFETY: the output slots and 1024-byte footprint were checked.
+            // Copying owned fields invokes no foreign NSS callback.
+            unsafe {
+                netgroup_copy_record(
+                    &triple,
+                    hostp,
+                    userp,
+                    domainp,
+                    state.str_buf.as_mut_ptr(),
+                );
+            }
+            1
+        }),
+        Ok(None) => 0,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
         }
-        let triple = &state.triples[state.pos];
-        // Do not turn a concrete field that does not fit into a NULL wildcard,
-        // or consume the record: the caller can retry with getnetgrent_r.
-        let needed = triple.host.len() + triple.user.len() + triple.domain.len() + 3;
-        if needed > state.str_buf.len() {
-            // SAFETY: errno is this thread's ABI errno slot.
-            unsafe { set_abi_errno(libc::ERANGE) };
-            return 0;
-        }
-        state.pos += 1;
-
-        // Pack strings into thread-local buffer
-        let buf = state.str_buf.as_mut_ptr();
-        let mut off = 0usize;
-
-        macro_rules! pack_or_null {
-            ($field:expr, $ptr:expr) => {
-                if $field.is_empty() {
-                    unsafe { *$ptr = std::ptr::null_mut() };
-                } else {
-                    let p = unsafe { buf.add(off) } as *mut c_char;
-                    unsafe {
-                        std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
-                        *buf.add(off + $field.len()) = 0;
-                        *$ptr = p;
-                    }
-                    off += $field.len() + 1;
-                }
-            };
-        }
-
-        pack_or_null!(triple.host, hostp);
-        pack_or_null!(triple.user, userp);
-        pack_or_null!(triple.domain, domainp);
-        let _ = off;
-        1
-    })
+    }
 }
 
-/// `getnetgrent_r` — reentrant netgroup entry.
-///
-/// Native implementation using thread-local pre-parsed triples,
-/// packing strings into caller-supplied buffer.
+/// Read into caller storage, retaining a short-buffer record for retry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetgrent_r(
     hostp: *mut *mut c_char,
@@ -25762,47 +25799,23 @@ pub unsafe extern "C" fn getnetgrent_r(
     if hostp.is_null() || userp.is_null() || domainp.is_null() || buffer.is_null() {
         return 0;
     }
-    with_netgroup_iter_state(|state| {
-        if state.pos >= state.triples.len() {
-            return 0;
+    let Some(mut lease) = NetgroupIterationLease::acquire() else {
+        unsafe { set_abi_errno(libc::EDEADLK) };
+        return 0;
+    };
+    match netgroup_next_record(&mut lease.iteration, buflen) {
+        Ok(Some(triple)) => {
+            // SAFETY: the C contract provides the checked writable slots and
+            // buflen bytes, and next_record verified the complete footprint.
+            unsafe { netgroup_copy_record(&triple, hostp, userp, domainp, buffer.cast()) };
+            1
         }
-        let triple = &state.triples[state.pos];
-
-        // Check buffer space
-        let needed = triple.host.len() + 1 + triple.user.len() + 1 + triple.domain.len() + 1;
-        if needed > buflen {
-            // SAFETY: errno is this thread's ABI errno slot. The cursor stays
-            // on the same record so a larger-buffer retry can read it.
-            unsafe { set_abi_errno(libc::ERANGE) };
-            return 0;
+        Ok(None) => 0,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
         }
-        state.pos += 1;
-
-        let buf = buffer as *mut u8;
-        let mut off = 0usize;
-
-        macro_rules! pack_r {
-            ($field:expr, $ptr:expr) => {
-                if $field.is_empty() {
-                    unsafe { *$ptr = std::ptr::null_mut() };
-                } else {
-                    let p = unsafe { buf.add(off) } as *mut c_char;
-                    unsafe {
-                        std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
-                        *buf.add(off + $field.len()) = 0;
-                        *$ptr = p;
-                    }
-                    off += $field.len() + 1;
-                }
-            };
-        }
-
-        pack_r!(triple.host, hostp);
-        pack_r!(triple.user, userp);
-        pack_r!(triple.domain, domainp);
-        let _ = off;
-        1
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -6220,51 +6220,28 @@ pub unsafe extern "C" fn init_module(
         }
     }
 }
-// innetgr: check if (host,user,domain) is in netgroup — returns 0 (not found)
-// Netgroups are an NIS/NIS+ feature rarely used on modern systems.
-// A real implementation would parse /etc/netgroup or use NSS, but returning 0
-// is safe and matches behavior when NIS is not configured.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-/// One `(host,user,domain)` position of a netgroup triple.
-///
-/// Two independent wildcards meet here and it is easy to collapse them into
-/// one: a NULL ARGUMENT means the caller does not care about this position,
-/// and an EMPTY FIELD in the file means the entry matches anything there.
-/// Either one alone is sufficient.
-fn netgroup_field_matches(entry: &[u8], query: Option<&[u8]>, case_insensitive: bool) -> bool {
-    match query {
-        // Caller passed NULL for this position.
-        None => true,
-        // An empty field in /etc/netgroup is the file's own wildcard.
-        Some(wanted) => {
-            entry.is_empty()
-                || if case_insensitive {
-                    entry.eq_ignore_ascii_case(wanted)
-                } else {
-                    entry == wanted
-                }
-        }
+// Netgroup membership shares the configured source and nested-group traversal
+// with enumeration, but owns an independent cursor and stops at the first
+// matching triple.
+
+/// Match a concrete field or a NULL wildcard without conflating empty strings.
+fn netgroup_field_matches(
+    entry: Option<&[u8]>,
+    query: Option<&[u8]>,
+    case_insensitive: bool,
+) -> bool {
+    match (entry, query) {
+        // A NULL caller argument or provider field is a wildcard. A provider's
+        // non-NULL empty string remains a concrete empty value.
+        (None, _) | (_, None) => true,
+        (Some(entry), Some(wanted)) if case_insensitive => entry.eq_ignore_ascii_case(wanted),
+        (Some(entry), Some(wanted)) => entry == wanted,
     }
 }
 
-/// `innetgr` — is `(host,user,domain)` a member of `netgroup`?
-///
-/// WAS `0`. Unconditionally, with all four arguments discarded, while this same
-/// tree already carried a working /etc/netgroup parser and a functioning
-/// setnetgrent/getnetgrent iterator. So the membership test — the function that
-/// actually decides netgroup-based access — always answered "no" no matter what
-/// the file said, and the support matrix recorded it as Implemented.
-///
-/// Semantics are pinned by the fixture-isolated live-glibc differential gate in
-/// `conformance_diff_innetgr`; it binds a synthetic `/etc/netgroup` over the
-/// host path and checks NULL arguments, empty-field wildcards, nested groups,
-/// and case sensitivity.
-///
-/// The risk has a direction worth stating: the old stub failed CLOSED (always
-/// "not a member"), and a wrong wildcard rule here could fail OPEN. Matching is
-/// therefore host/domain ASCII case-insensitive compare with no prefix logic —
-/// the rule observed from the live glibc gate — so an error is far likelier to
-/// deny a legitimate member than to admit a stranger.
+/// Test membership through the configured NSS source. GNU stops at the first
+/// source that knows the group, even with SUCCESS=continue. Host and domain
+/// matching is ASCII case-insensitive; the user field is case-sensitive.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn innetgr(
     netgroup: *const c_char,
@@ -6299,18 +6276,15 @@ pub unsafe extern "C" fn innetgr(
         return 0;
     };
 
-    // A configured UNAVAIL=return must prevent a later files backend from
-    // granting membership. The first source that knows the group answers the
-    // membership query, even when its triples do not match.
-    let Some(triples) =
-        crate::unistd_abi::netgroup_entries(&group, crate::unistd_abi::NetgroupLookup::Membership)
-    else {
+    let Ok(Some(mut session)) = crate::nss_module::NetgroupSession::open(&group, true) else {
         return 0;
     };
-    for triple in triples {
-        if netgroup_field_matches(&triple.host, wanted_host.as_deref(), true)
-            && netgroup_field_matches(&triple.user, wanted_user.as_deref(), false)
-            && netgroup_field_matches(&triple.domain, wanted_domain.as_deref(), true)
+    // A matching prefix is decisive even if a later provider read would fail.
+    // A read failure never selects a different source or grants membership.
+    while let Ok(Some(triple)) = session.next() {
+        if netgroup_field_matches(triple.host.as_deref(), wanted_host.as_deref(), true)
+            && netgroup_field_matches(triple.user.as_deref(), wanted_user.as_deref(), false)
+            && netgroup_field_matches(triple.domain.as_deref(), wanted_domain.as_deref(), true)
         {
             return 1;
         }

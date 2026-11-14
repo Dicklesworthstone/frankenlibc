@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 //! NSS service modules (`libnss_<service>.so.2`) behind the passwd, group,
-//! shadow, initgroups and hosts databases.
+//! shadow, initgroups, hosts and netgroup databases.
 //!
 //! fl used to answer these databases from /etc/passwd and /etc/group alone,
 //! so any user or group provided by sss, systemd, ldap, winbind, ... did not
@@ -1702,5 +1702,488 @@ fn hosts_modules_tuple_defensive_results() {
                 assert!(!trace.contains(function), "{label}: {trace}");
             }
         }
+    }
+}
+
+
+// Netgroup modules have a stateful GNU cursor ABI, including nested group
+// records. Compare the public APIs with a separately configured host process;
+// no mount namespace, privileges or changes to /etc are required.
+#[allow(clippy::type_complexity)]
+struct NetgroupApi {
+    host: bool,
+    set: unsafe extern "C" fn(*const c_char) -> c_int,
+    get: unsafe extern "C" fn(*mut *mut c_char, *mut *mut c_char, *mut *mut c_char) -> c_int,
+    get_r: unsafe extern "C" fn(
+        *mut *mut c_char,
+        *mut *mut c_char,
+        *mut *mut c_char,
+        *mut c_char,
+        usize,
+    ) -> c_int,
+    end: unsafe extern "C" fn(),
+    member: unsafe extern "C" fn(
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+    ) -> c_int,
+}
+
+fn netgroup_api(host: bool) -> NetgroupApi {
+    unsafe extern "C" {
+        #[link_name = "setnetgrent"]
+        fn host_set(name: *const c_char) -> c_int;
+        #[link_name = "getnetgrent"]
+        fn host_get(h: *mut *mut c_char, u: *mut *mut c_char, d: *mut *mut c_char) -> c_int;
+        #[link_name = "getnetgrent_r"]
+        fn host_get_r(
+            h: *mut *mut c_char,
+            u: *mut *mut c_char,
+            d: *mut *mut c_char,
+            buf: *mut c_char,
+            len: usize,
+        ) -> c_int;
+        #[link_name = "endnetgrent"]
+        fn host_end();
+        #[link_name = "innetgr"]
+        fn host_member(
+            group: *const c_char,
+            host: *const c_char,
+            user: *const c_char,
+            domain: *const c_char,
+        ) -> c_int;
+    }
+    use frankenlibc_abi::{glibc_internal_abi as g, unistd_abi as u};
+    assert_ne!(host_set as *const (), u::setnetgrent as *const ());
+    assert_ne!(host_member as *const (), g::innetgr as *const ());
+    if host {
+        NetgroupApi {
+            host,
+            set: host_set,
+            get: host_get,
+            get_r: host_get_r,
+            end: host_end,
+            member: host_member,
+        }
+    } else {
+        NetgroupApi {
+            host,
+            set: u::setnetgrent,
+            get: u::getnetgrent,
+            get_r: u::getnetgrent_r,
+            end: u::endnetgrent,
+            member: g::innetgr,
+        }
+    }
+}
+
+unsafe fn netgroup_errno(api: &NetgroupApi) -> *mut c_int {
+    if api.host {
+        unsafe { libc::__errno_location() }
+    } else {
+        unsafe { frankenlibc_abi::errno_abi::__errno_location() }
+    }
+}
+
+type NetgroupFields = [Option<Vec<u8>>; 3];
+
+#[inline(never)]
+fn netgroup_clobber_stack() {
+    // A returned non-reentrant string must survive the callee's stack frame.
+    // In particular, leasing a cursor out of TLS must not lease its buffer.
+    let mut scratch = [0xa5u8; 16 * 1024];
+    std::hint::black_box(&mut scratch);
+}
+
+fn netgroup_read(
+    api: &NetgroupApi,
+    capacity: Option<usize>,
+) -> (c_int, c_int, Option<NetgroupFields>) {
+    let mut h = std::ptr::null_mut();
+    let mut u = std::ptr::null_mut();
+    let mut d = std::ptr::null_mut();
+    let mut buffer = vec![0u8; capacity.unwrap_or(0)];
+    unsafe {
+        *netgroup_errno(api) = 0;
+        let rc = if let Some(capacity) = capacity {
+            (api.get_r)(&mut h, &mut u, &mut d, buffer.as_mut_ptr().cast(), capacity)
+        } else {
+            (api.get)(&mut h, &mut u, &mut d)
+        };
+        let error = *netgroup_errno(api);
+        if rc == 1 && capacity.is_none() {
+            netgroup_clobber_stack();
+        }
+        let fields = if rc == 1 {
+            Some([h, u, d].map(|p| {
+                if p.is_null() {
+                    None
+                } else {
+                    let value = if capacity.is_some() {
+                        let start = buffer.as_ptr() as usize;
+                        let end = start + buffer.len();
+                        assert!(
+                            (p as usize) >= start && (p as usize) < end,
+                            "getnetgrent_r returned a field outside caller storage"
+                        );
+                        let remaining = &buffer[p as usize - start..];
+                        let length = remaining
+                            .iter()
+                            .position(|&byte| byte == 0)
+                            .expect("netgroup field is terminated inside caller storage");
+                        remaining[..length].to_vec()
+                    } else {
+                        CStr::from_ptr(p).to_bytes().to_vec()
+                    };
+                    Some(value)
+                }
+            }))
+        } else {
+            None
+        };
+        (rc, error, fields)
+    }
+}
+
+fn netgroup_print_read(
+    out: &mut String,
+    label: &str,
+    answer: &(c_int, c_int, Option<NetgroupFields>),
+) {
+    let fields = answer.2.as_ref().map(|fields| {
+        fields.each_ref().map(|field| {
+            field.as_ref().map(|bytes| {
+                if bytes.len() > 128 {
+                    assert!(bytes.iter().all(|&byte| byte == b'n'));
+                    format!("<{} bytes of n>", bytes.len())
+                } else {
+                    String::from_utf8(bytes.clone()).unwrap()
+                }
+            })
+        })
+    });
+    // Successful results may leave errno unchanged. Compare errors only when
+    // the public API reports failure, preserving the provider's actual result.
+    writeln!(
+        out,
+        "{label}: rc={} errno={} {fields:?}",
+        answer.0,
+        if answer.0 == 1 { 0 } else { answer.1 }
+    )
+    .unwrap();
+}
+
+fn netgroup_enumerate(api: &NetgroupApi, out: &mut String) -> usize {
+    let mut count = 0;
+    loop {
+        assert!(count < 32, "nested netgroup cycle did not terminate");
+        let answer = netgroup_read(api, Some(8192));
+        netgroup_print_read(out, "get_r", &answer);
+        if answer.0 != 1 {
+            return count;
+        }
+        count += 1;
+    }
+}
+
+fn netgroup_membership(api: &NetgroupApi, out: &mut String, name: &CStr) {
+    let fields = [
+        (Some("fltest-one"), Some("one"), Some("example.test")),
+        (Some("fltestnoig-one"), Some("one"), Some("example.test")),
+        (Some("anything"), None, None),
+        (None, Some(""), None),
+        (None, Some("not-empty"), None),
+        (None, None, Some("-")),
+        (None, None, Some("unmatched-domain")),
+        (None, None, None),
+    ];
+    for (host, user, domain) in fields {
+        let values = [host, user, domain].map(|s| s.map(|s| CString::new(s).unwrap()));
+        let pointers = values
+            .each_ref()
+            .map(|s| s.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()));
+        let rc = unsafe { (api.member)(name.as_ptr(), pointers[0], pointers[1], pointers[2]) };
+        writeln!(out, "member {host:?} {user:?} {domain:?}: {rc}").unwrap();
+    }
+}
+
+fn netgroup_transcript(api: &NetgroupApi, scenario: &str) -> String {
+    let name = CString::new(format!("flnet-{scenario}")).unwrap();
+    let mut out = String::new();
+    unsafe { (api.end)() };
+    let selected = unsafe { (api.set)(name.as_ptr()) };
+    writeln!(out, "set {scenario}: {selected}").unwrap();
+    if scenario == "large" {
+        assert_eq!(selected, 1);
+        for capacity in [None, Some(1), Some(8192), Some(8192)] {
+            let answer = netgroup_read(api, capacity);
+            netgroup_print_read(&mut out, &format!("get {capacity:?}"), &answer);
+            if capacity.is_none() || capacity == Some(1) {
+                assert_eq!((answer.0, answer.1), (0, libc::ERANGE));
+            }
+            if let Some(fields) = answer.2 {
+                assert_eq!(fields[0].as_ref().unwrap().len(), 3072);
+                assert_eq!(fields[1].as_deref(), Some(b"large-user".as_slice()));
+            }
+        }
+    } else if scenario == "scratch" {
+        assert_eq!(selected, 1);
+        for capacity in [None, Some(2048), Some(4096), Some(8192)] {
+            let answer = netgroup_read(api, capacity);
+            netgroup_print_read(&mut out, &format!("scratch {capacity:?}"), &answer);
+            if capacity.is_none() || capacity == Some(2048) {
+                assert_eq!((answer.0, answer.1), (0, libc::ERANGE));
+            } else if capacity == Some(4096) {
+                assert_eq!(answer.0, 1, "retry must retain the same provider record");
+                assert_eq!(
+                    answer.2.as_ref().unwrap()[0].as_deref(),
+                    Some(b"scratch".as_slice())
+                );
+            } else {
+                assert_eq!(answer.0, 0);
+            }
+        }
+        // Membership owns its scratch budget and must grow past the same
+        // provider requirement, independently of public enumeration.
+        netgroup_membership(api, &mut out, &name);
+    } else if scenario == "null" {
+        assert_eq!(selected, 1);
+        let answer = netgroup_read(api, Some(3));
+        netgroup_print_read(&mut out, "exact buffer", &answer);
+        assert_eq!(
+            answer.2,
+            Some([None, Some(Vec::new()), Some(b"-".to_vec())])
+        );
+        netgroup_membership(api, &mut out, &name);
+    } else if scenario == "retry" {
+        assert_eq!(selected, 1);
+        for index in 0..4 {
+            let answer = netgroup_read(api, Some(8192));
+            netgroup_print_read(&mut out, &format!("attempt {index}"), &answer);
+        }
+    } else {
+        if matches!(scenario, "basic" | "nested" | "empty" | "cross")
+            || scenario.starts_with("get-")
+        {
+            assert_eq!(selected, 1);
+        }
+        if scenario == "basic" {
+            let short = netgroup_read(api, Some(1));
+            assert_eq!((short.0, short.1), (0, libc::ERANGE));
+            netgroup_print_read(&mut out, "short", &short);
+            for label in ["first nonreentrant", "second nonreentrant"] {
+                let answer = netgroup_read(api, None);
+                assert_eq!(answer.0, 1);
+                netgroup_print_read(&mut out, label, &answer);
+            }
+        }
+        let count = netgroup_enumerate(api, &mut out);
+        if scenario == "basic" {
+            assert_eq!(count, 0, "the two non-reentrant reads consumed both records");
+        } else if scenario == "empty" {
+            assert_eq!(count, 0);
+        }
+        // Membership has a separate source-selection rule from enumeration.
+        // In particular, SUCCESS=continue must not hide an earlier match.
+        netgroup_membership(api, &mut out, &name);
+    }
+    unsafe { (api.end)() };
+    // A closed iterator cannot retain a stale provider record.
+    netgroup_print_read(&mut out, "after end", &netgroup_read(api, Some(8192)));
+    out
+}
+
+fn netgroup_extract(output: &std::process::Output) -> &str {
+    let stdout = std::str::from_utf8(&output.stdout).unwrap();
+    stdout
+        .split_once("NETGROUP_BEGIN\n")
+        .and_then(|(_, rest)| rest.split_once("NETGROUP_END"))
+        .map(|(transcript, _)| transcript)
+        .expect("child produced a netgroup transcript")
+}
+
+#[test]
+fn netgroup_modules_match_glibc() {
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let host = std::env::var("FLTEST_NETGROUP_PROVIDER").unwrap() == "host";
+        if host {
+            unsafe extern "C" {
+                fn __nss_configure_lookup(database: *const c_char, sources: *const c_char)
+                -> c_int;
+            }
+            let sources = CString::new(std::env::var("FLTEST_NETGROUP_SOURCES").unwrap()).unwrap();
+            assert_eq!(
+                unsafe { __nss_configure_lookup(c"netgroup".as_ptr(), sources.as_ptr()) },
+                0
+            );
+        }
+        unsafe { libc::alarm(15) };
+        let scenario = std::env::var("FLTEST_NETGROUP_SCENARIO").unwrap();
+        let transcript = netgroup_transcript(&netgroup_api(host), &scenario);
+        unsafe { libc::alarm(0) };
+        println!("NETGROUP_BEGIN\n{transcript}NETGROUP_END");
+        return;
+    }
+
+    let dir = scratch_dir("netgroups");
+    build_modules(&dir);
+    let cases = [
+        ("basic", "fltest", "basic"),
+        ("nested", "fltest", "nested"),
+        ("null", "fltest", "null"),
+        ("large", "fltest", "large"),
+        ("scratch", "fltest", "scratch"),
+        ("empty", "fltest", "empty"),
+        ("retry", "fltest", "retry"),
+        ("get-return", "fltest fltestnoig", "get-return"),
+        ("get-notfound", "fltest fltestnoig", "get-notfound"),
+        ("get-unavail", "fltest fltestnoig", "get-unavail"),
+        ("cross", "fltest fltestnoig", "cross"),
+        ("cross-stop", "fltest [NOTFOUND=return] fltestnoig", "cross"),
+        ("success-continue", "fltest [SUCCESS=continue] fltestnoig", "basic"),
+        ("missing-continue", "fltest fltestnoig", "set-notfound"),
+        ("missing-stop", "fltest [NOTFOUND=return] fltestnoig", "set-notfound"),
+        ("unavail-continue", "fltest fltestnoig", "set-unavail"),
+        ("unavail-stop", "fltest [UNAVAIL=return] fltestnoig", "set-unavail"),
+        ("again-continue", "fltest fltestnoig", "set-again"),
+        ("again-stop", "fltest [TRYAGAIN=return] fltestnoig", "set-again"),
+        ("forced-return", "fltest fltestnoig", "set-return"),
+        (
+            "forced-return-continue",
+            "fltest [!SUCCESS=continue] fltestnoig",
+            "set-return",
+        ),
+    ];
+    for (tag, sources, scenario) in cases {
+        let mut oracle = None;
+        for (provider, mode) in [("host", "strict"), ("fl", "strict"), ("fl", "hardened")] {
+            let label = format!("netgroup-{tag}-{provider}-{mode}");
+            let mut child = host_module_child(
+                "netgroup_modules_match_glibc",
+                &dir,
+                &format!("netgroup: {sources}\n"),
+                &label,
+            );
+            child
+                .env("FLTEST_NETGROUP_PROVIDER", provider)
+                .env("FLTEST_NETGROUP_SOURCES", sources)
+                .env("FLTEST_NETGROUP_SCENARIO", scenario)
+                .env("FLTEST_TRACE", "1")
+                .env("FRANKENLIBC_MODE", mode);
+            let output = run_child(child, &label);
+            let transcript = netgroup_extract(&output).to_owned();
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("fltest:setnetgrent("),
+                "the configured module was not called: {label}"
+            );
+            if let Some(oracle) = &oracle {
+                assert_eq!(&transcript, oracle, "netgroup oracle mismatch: {label}");
+            } else {
+                oracle = Some(transcript);
+            }
+        }
+    }
+}
+
+static NETGROUP_REENTRY_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+unsafe extern "C" fn netgroup_reentry_callback() -> c_int {
+    use frankenlibc_abi::{errno_abi as e, glibc_internal_abi as g, unistd_abi as u};
+    NETGROUP_REENTRY_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut h = std::ptr::null_mut();
+    let mut user = std::ptr::null_mut();
+    let mut d = std::ptr::null_mut();
+    let mut buffer = [0i8; 128];
+    unsafe {
+        *e::__errno_location() = 0;
+        if u::setnetgrent(c"flnet-basic".as_ptr()) != 0
+            || *e::__errno_location() != libc::EDEADLK
+        {
+            return 1;
+        }
+        *e::__errno_location() = 0;
+        if u::getnetgrent(&mut h, &mut user, &mut d) != 0
+            || *e::__errno_location() != libc::EDEADLK
+        {
+            return 2;
+        }
+        *e::__errno_location() = 0;
+        if u::getnetgrent_r(
+            &mut h,
+            &mut user,
+            &mut d,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+        ) != 0
+            || *e::__errno_location() != libc::EDEADLK
+        {
+            return 3;
+        }
+        u::endnetgrent();
+        if g::innetgr(
+            c"flnet-basic".as_ptr(),
+            c"fltest-one".as_ptr(),
+            c"one".as_ptr(),
+            c"example.test".as_ptr(),
+        ) != 1
+        {
+            return 4;
+        }
+    }
+    0
+}
+
+#[test]
+fn netgroup_modules_callback_reentry() {
+    if std::env::var_os(CHILD_ENV).is_some() {
+        unsafe { libc::alarm(10) };
+        unsafe {
+            let handle = libc::dlopen(c"libnss_fltest.so.2".as_ptr(), libc::RTLD_NOW);
+            assert!(!handle.is_null(), "load the same test module as NSS");
+            let symbol = libc::dlsym(handle, c"_nss_fltest_set_netgroup_reentry".as_ptr());
+            assert!(!symbol.is_null());
+            let set_callback: unsafe extern "C" fn(Option<unsafe extern "C" fn() -> c_int>) =
+                std::mem::transmute(symbol);
+            set_callback(Some(netgroup_reentry_callback));
+            let api = netgroup_api(false);
+            assert_eq!((api.set)(c"flnet-reentry".as_ptr()), 1);
+            let first = netgroup_read(&api, Some(1024));
+            assert_eq!(first.0, 1, "callback rejected the reentry contract");
+            assert_eq!(
+                first.2.unwrap()[0].as_deref(),
+                Some(b"fltest-one".as_slice())
+            );
+            let second = netgroup_read(&api, Some(1024));
+            assert_eq!(second.0, 1);
+            assert_eq!(
+                second.2.unwrap()[0].as_deref(),
+                Some(b"fltest-two".as_slice())
+            );
+            assert_eq!(netgroup_read(&api, Some(1024)).0, 0);
+            assert_eq!(
+                NETGROUP_REENTRY_CALLS.load(std::sync::atomic::Ordering::Relaxed),
+                1
+            );
+            (api.end)();
+            set_callback(None);
+            libc::dlclose(handle);
+            libc::alarm(0);
+        }
+        return;
+    }
+
+    let dir = scratch_dir("netgroup-reentry");
+    build_modules(&dir);
+    for mode in ["strict", "hardened"] {
+        let mut child = host_module_child(
+            "netgroup_modules_callback_reentry",
+            &dir,
+            "netgroup: fltest\n",
+            mode,
+        );
+        child.env("FRANKENLIBC_MODE", mode);
+        run_child(child, &format!("netgroup reentry {mode}"));
     }
 }

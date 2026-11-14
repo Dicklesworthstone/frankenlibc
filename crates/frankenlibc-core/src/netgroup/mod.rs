@@ -56,6 +56,26 @@ pub fn contains_netgroup(content: &[u8], group: &[u8]) -> bool {
     group_body(content, group).is_some()
 }
 
+/// One files record before nested names are resolved through NSS.
+/// A present empty record is distinct from a missing group.
+pub struct NetgroupRecord {
+    pub triples: Vec<NetgroupTriple>,
+    pub groups: Vec<Vec<u8>>,
+}
+
+/// Read one logical record without assigning a backend to its nested groups.
+/// The ABI dispatcher resolves those names using its captured NSS policy.
+pub fn netgroup_record(content: &[u8], group: &[u8]) -> Option<NetgroupRecord> {
+    let body = group_body(content, group)?;
+    let mut record = NetgroupRecord {
+        triples: Vec::new(),
+        groups: Vec::new(),
+    };
+    extract_triples_into(&body, &mut record.triples);
+    collect_group_refs_into(&body, &mut record.groups);
+    Some(record)
+}
+
 /// Select the first complete logical record for a name. Every record's
 /// continuation chain is consumed before considering the next name, even when
 /// the record is unrelated or looks like a comment. Otherwise a continued line
@@ -483,6 +503,21 @@ mod tests {
                 t(b"h\x80", b"user", b"domain"),
             ]
         );
+    }
+
+    #[test]
+    fn one_record_preserves_nested_names_for_nss_dispatch() {
+        let content = b"root first (host,user,domain) second first\nempty\n";
+        let record = netgroup_record(content, b"root").expect("present group");
+        assert_eq!(record.triples, vec![t(b"host", b"user", b"domain")]);
+        assert_eq!(
+            record.groups,
+            vec![b"first".to_vec(), b"second".to_vec(), b"first".to_vec()]
+        );
+        let empty = netgroup_record(content, b"empty").expect("present empty group");
+        assert!(empty.triples.is_empty());
+        assert!(empty.groups.is_empty());
+        assert!(netgroup_record(content, b"missing").is_none());
     }
 
     #[test]
