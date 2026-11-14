@@ -2617,9 +2617,10 @@ fn getnameinfo_null_sockaddr_returns_error() {
 
 #[test]
 fn getnameinfo_unsupported_family_returns_eai_family() {
-    // Use AF_UNIX which is not supported by numeric getnameinfo
+    // GNU supports AF_UNIX as an extension; AF_UNSPEC is not a renderable
+    // sockaddr family and returns EAI_FAMILY in the live host oracle.
     let mut sa: libc::sockaddr = unsafe { mem::zeroed() };
-    sa.sa_family = libc::AF_UNIX as u16;
+    sa.sa_family = libc::AF_UNSPEC as u16;
 
     let mut host = [0u8; 64];
     let rc = unsafe {
@@ -2637,7 +2638,6 @@ fn getnameinfo_unsupported_family_returns_eai_family() {
 }
 
 #[test]
-#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn getnameinfo_rejects_tracked_short_host_buffer() {
     let sin = libc::sockaddr_in {
         sin_family: libc::AF_INET as u16,
@@ -2666,7 +2666,6 @@ fn getnameinfo_rejects_tracked_short_host_buffer() {
 }
 
 #[test]
-#[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
 fn getnameinfo_rejects_tracked_short_service_buffer() {
     let sin = libc::sockaddr_in {
         sin_family: libc::AF_INET as u16,
@@ -8453,7 +8452,12 @@ const IDN_HOSTS: &[u8] = b"\
 192.0.2.243 XN--bcher-kva.CaSe idn-case\n\
 192.0.2.244 xn--bad_.test idn-malformed\n\
 192.0.2.245 xn--bcher-kva.xn--bad_ idn-partial\n\
-192.0.2.246 ordinary.CaSe idn-ascii\n";
+192.0.2.246 ordinary.CaSe idn-ascii\n\
+192.0.2.247 xn--0.test idn-incomplete\n\
+192.0.2.248 xn-- idn-empty\n\
+192.0.2.249 xn--bcher-kva.xn--0 idn-partial-incomplete\n\
+192.0.2.250 xn--hello-.test idn-basic\n\
+192.0.2.251 xn--bad_-a.test idn-literal-underscore\n";
 
 fn resolver_idn_canonical(query: &CStr, flags: c_int) -> Vec<Option<Vec<u8>>> {
     // SAFETY: hints/output are owned and initialized, and the result is freed
@@ -8469,7 +8473,11 @@ fn resolver_idn_canonical(query: &CStr, flags: c_int) -> Vec<Option<Vec<u8>>> {
         let names = collect_addrinfo_canonname(result);
         let profiles = collect_addrinfo_profiles(result);
         resolv_abi::freeaddrinfo(result);
-        assert_eq!(profiles.len(), 3, "exercise all addrinfo allocation profiles");
+        assert_eq!(
+            profiles.len(),
+            3,
+            "exercise all addrinfo allocation profiles"
+        );
         names
     }
 }
@@ -8499,11 +8507,28 @@ fn resolver_idn_canonical_names_follow_flags_and_thread_locale() {
             resolver_idn_canonical(c"idn-case", libc::AI_CANONNAME | TEST_AI_CANONIDN),
             vec![Some("bücher.CaSe".as_bytes().to_vec()), None, None],
         );
+        // GNU treats an underscore as digit zero only in the encoded
+        // portion; these bytes are observed ToUnicode output, not a Unicode
+        // normalization or hostname-validity rule.
+        for (query, expected) in [
+            (c"idn-malformed", "\u{83}\u{83}\u{81}.test"),
+            (c"idn-partial", "bücher.\u{83}\u{83}\u{81}"),
+            (c"idn-literal-underscore", "\u{80}bad_.test"),
+        ] {
+            assert_eq!(
+                resolver_idn_canonical(query, libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(expected.as_bytes().to_vec()), None, None],
+            );
+        }
         {
             let _ascii = ResolverIdnLocale::new(c"C");
             assert_eq!(
                 resolver_idn_canonical(c"idn-latin", libc::AI_CANONNAME | TEST_AI_CANONIDN),
                 vec![Some(encoded), None, None],
+            );
+            assert_eq!(
+                resolver_idn_canonical(c"idn-malformed", libc::AI_CANONNAME | TEST_AI_CANONIDN),
+                vec![Some(b"xn--bad_.test".to_vec()), None, None],
             );
         }
         // Restoring uselocale must restore output conversion too.
@@ -8545,7 +8570,10 @@ fn resolver_idn_reverse_names_convert_before_capacity_checks() {
             (241, "xn--bcher-kva.test", "bücher.test"),
             (242, "xn--r8jz45g.xn--zckzah", "例え.テスト"),
             (243, "XN--bcher-kva.CaSe", "bücher.CaSe"),
+            (244, "xn--bad_.test", "\u{83}\u{83}\u{81}.test"),
+            (245, "xn--bcher-kva.xn--bad_", "bücher.\u{83}\u{83}\u{81}"),
             (246, "ordinary.CaSe", "ordinary.CaSe"),
+            (251, "xn--bad_-a.test", "\u{80}bad_.test"),
         ] {
             for (flags, expected) in [
                 (libc::NI_NAMEREQD, encoded),
@@ -8563,6 +8591,42 @@ fn resolver_idn_reverse_names_convert_before_capacity_checks() {
         let (code, output) = resolver_idn_reverse(241, libc::NI_NUMERICHOST | TEST_NI_IDN, 32);
         assert_eq!(code, 0);
         assert_eq!(&output[..12], b"192.0.2.241\0");
+        // Both purely numeric output fields retain the same overflow
+        // contract in hardened mode, independently of the IDN flag.
+        for idn in [0, TEST_NI_IDN] {
+            for (host_capacity, service_capacity, expected) in [
+                (12, 4, 0),
+                (11, 4, libc::EAI_OVERFLOW),
+                (12, 3, libc::EAI_OVERFLOW),
+            ] {
+                let mut host = [0x5au8; 16];
+                let mut service = [0x5au8; 8];
+                // SAFETY: both outputs and the address are initialized and
+                // each advertised capacity fits its corresponding array.
+                let code = unsafe {
+                    let mut address: libc::sockaddr_in = mem::zeroed();
+                    address.sin_family = libc::AF_INET as _;
+                    address.sin_port = 443u16.to_be();
+                    address.sin_addr.s_addr = u32::from_ne_bytes([192, 0, 2, 241]);
+                    resolv_abi::getnameinfo(
+                        (&address as *const libc::sockaddr_in).cast(),
+                        mem::size_of_val(&address) as _,
+                        host.as_mut_ptr().cast(),
+                        host_capacity as _,
+                        service.as_mut_ptr().cast(),
+                        service_capacity as _,
+                        libc::NI_NUMERICHOST | libc::NI_NUMERICSERV | idn,
+                    )
+                };
+                assert_eq!(code, expected);
+                assert!(host[host_capacity..].iter().all(|&byte| byte == 0x5a));
+                assert!(service[service_capacity..].iter().all(|&byte| byte == 0x5a));
+                if expected == 0 {
+                    assert_eq!(&host[..host_capacity], b"192.0.2.241\0");
+                    assert_eq!(&service[..service_capacity], b"443\0");
+                }
+            }
+        }
         let _ascii = ResolverIdnLocale::new(c"C");
         let (code, output) = resolver_idn_reverse(241, libc::NI_NAMEREQD | TEST_NI_IDN, 64);
         assert_eq!(code, 0);
@@ -8575,8 +8639,10 @@ fn resolver_idn_malformed_ace_preserves_the_complete_original_name() {
     with_resolver_backends(Some(IDN_HOSTS), None, |_| {
         let _locale = ResolverIdnLocale::new(c"C.UTF-8");
         for (query, last, original) in [
-            (c"idn-malformed", 244, "xn--bad_.test"),
-            (c"idn-partial", 245, "xn--bcher-kva.xn--bad_"),
+            (c"idn-incomplete", 247, "xn--0.test"),
+            (c"idn-empty", 248, "xn--"),
+            (c"idn-partial-incomplete", 249, "xn--bcher-kva.xn--0"),
+            (c"idn-basic", 250, "xn--hello-.test"),
         ] {
             assert_eq!(
                 resolver_idn_canonical(query, libc::AI_CANONNAME | TEST_AI_CANONIDN),

@@ -455,7 +455,11 @@ static void idn_reverse_pair(struct idn_provider host, struct idn_provider candi
     ++passed;
     host_code = idn_reverse(host, last, flags, (unsigned)length, oracle);
     actual_code = idn_reverse(candidate, last, flags, (unsigned)length, actual);
-    if (host_code != EAI_OVERFLOW || actual_code != EAI_OVERFLOW) abort();
+    if (host_code != EAI_OVERFLOW || actual_code != EAI_OVERFLOW) {
+        fprintf(stderr, "IDN reverse capacity .%u flags=%x capacity=%zu: host=%d candidate=%d\n",
+                last, flags, length, host_code, actual_code);
+        abort();
+    }
     ++passed;
 }
 
@@ -474,10 +478,16 @@ static int check_idn_resolution(const char *path) {
         {"idn-latin", "xn--bcher-kva.test", "b\xc3\xbc""cher.test", 241},
         {"idn-japanese", "xn--r8jz45g.xn--zckzah",
             "\xe4\xbe\x8b\xe3\x81\x88.\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88", 242},
-        {"idn-case", "XN--bcher-kva.CaSe", NULL, 243},
-        {"idn-malformed", "xn--bad_.test", NULL, 244},
-        {"idn-partial", "xn--bcher-kva.xn--bad_", NULL, 245},
+        {"idn-case", "XN--bcher-kva.CaSe", "b\xc3\xbc""cher.CaSe", 243},
+        {"idn-malformed", "xn--bad_.test", "\xc2\x83\xc2\x83\xc2\x81.test", 244},
+        {"idn-partial", "xn--bcher-kva.xn--bad_",
+            "b\xc3\xbc""cher.\xc2\x83\xc2\x83\xc2\x81", 245},
         {"idn-ascii", "ordinary.CaSe", "ordinary.CaSe", 246},
+        {"idn-incomplete", "xn--0.test", "xn--0.test", 247},
+        {"idn-empty", "xn--", "xn--", 248},
+        {"idn-partial-incomplete", "xn--bcher-kva.xn--0", "xn--bcher-kva.xn--0", 249},
+        {"idn-basic", "xn--hello-.test", "xn--hello-.test", 250},
+        {"idn-literal-underscore", "xn--bad_-a.test", "\xc2\x80""bad_.test", 251},
     };
     const char *locales[] = {"C", "C.UTF-8"};
     for (size_t locale = 0; locale < sizeof(locales)/sizeof(locales[0]); ++locale) {

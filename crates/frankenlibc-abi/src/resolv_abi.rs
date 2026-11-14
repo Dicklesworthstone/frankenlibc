@@ -1213,11 +1213,6 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
 }
 
 #[inline]
-fn repair_enabled(mode_heals: bool, action: MembraneAction) -> bool {
-    mode_heals || matches!(action, MembraneAction::Repair(_))
-}
-
-#[inline]
 fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
     ordering.iter().position(|s| *s == stage).unwrap_or(0)
 }
@@ -3140,7 +3135,32 @@ fn idn_name_in_current_locale(name: &[u8]) -> Option<Vec<u8>> {
             codepoints.push(u32::from(b'.'));
         }
         if label.len() >= 4 && label[..4].eq_ignore_ascii_case(b"xn--") {
-            let label = frankenlibc_core::idna::punycode::decode(&label[4..])?;
+            let payload = &label[4..];
+            let encoded_start = payload
+                .iter()
+                .rposition(|&byte| byte == b'-')
+                .map_or(0, |position| position + 1);
+            // GNU's ToUnicode accepts '_' as digit zero in the encoded
+            // portion. Preserve literal underscores before the delimiter.
+            // Keep this observed GNU ABI compatibility rule out of the
+            // strict RFC 3492 primitive used by other callers.
+            let payload = if payload[encoded_start..].contains(&b'_') {
+                let mut compatible = payload.to_vec();
+                for byte in &mut compatible[encoded_start..] {
+                    if *byte == b'_' {
+                        *byte = b'a';
+                    }
+                }
+                Cow::Owned(compatible)
+            } else {
+                Cow::Borrowed(payload)
+            };
+            let label = frankenlibc_core::idna::punycode::decode(&payload)?;
+            // An A-label must represent a non-ASCII label. GNU rejects an
+            // empty payload and an all-basic payload such as "hello-".
+            if !label.iter().any(|&codepoint| codepoint >= 0x80) {
+                return None;
+            }
             codepoints.extend(label);
             decoded = true;
         } else {
@@ -3993,8 +4013,7 @@ fn scope_id_text(scope_id: u32, flags: c_int, addr: &[u8; 16]) -> String {
 /// Strict-passthrough `getnameinfo`: the load-bearing work only (salen bounds, byte-exact numeric
 /// format, and `write_c_buffer`'s `known_remaining` output-bounds check), with the membrane's
 /// adaptive check-ordering bookkeeping skipped. Behaviourally identical to the full path in strict
-/// mode (where `decide()` always-Allows, so `repair == mode heals`), validated byte-for-byte against
-/// host glibc by `getnameinfo_differential_fuzz`.
+/// mode, validated byte-for-byte against host glibc by `getnameinfo_differential_fuzz`.
 #[inline]
 unsafe fn getnameinfo_strict_fast(
     sa: *const libc::sockaddr,
@@ -4008,10 +4027,6 @@ unsafe fn getnameinfo_strict_fast(
     if sa.is_null() {
         return libc::EAI_FAIL;
     }
-    // Strict `decide()` never yields a `Repair` action, so `repair_enabled` reduces to the mode's
-    // heal flag — the same value the full path computes.
-    let repair = runtime_policy::mode().heals_enabled();
-
     let mut ipv4_buf = [0u8; 15];
     let mut port_buf = [0u8; 5];
 
@@ -4061,13 +4076,15 @@ unsafe fn getnameinfo_strict_fast(
         _ => return libc::EAI_FAMILY,
     };
 
+    // Insufficient capacity is EAI_OVERFLOW in every mode, including when
+    // named lookup uses this helper to render its private numeric fallback.
     // SAFETY: caller-provided output buffers per the getnameinfo contract; `write_c_buffer` bounds
     // each write against `known_remaining` before copying.
-    match unsafe { write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) } {
+    match unsafe { write_c_buffer("getnameinfo", host, hostlen, &host_text, false) } {
         Ok(_) => {}
         Err(err) => return err,
     }
-    match unsafe { write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) } {
+    match unsafe { write_c_buffer("getnameinfo", serv, servlen, &serv_text, false) } {
         Ok(_) => {}
         Err(err) => return err,
     }
@@ -4483,7 +4500,7 @@ unsafe fn getnameinfo_full(
         );
         return libc::EAI_FAIL;
     }
-    let (mode, decision) = runtime_policy::decide(
+    let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         sa as usize,
         (hostlen as usize).saturating_add(servlen as usize),
@@ -4501,8 +4518,6 @@ unsafe fn getnameinfo_full(
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
         return libc::EAI_FAIL;
     }
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-
     // Stack scratch for the numeric renders, declared in function scope so the borrowed `Cow`
     // slices below outlive the `write_c_buffer` calls. The AF_INET path and every port render
     // borrow these buffers instead of allocating a `String` per call.
@@ -4589,9 +4604,12 @@ unsafe fn getnameinfo_full(
         }
     };
 
+    // Numeric outputs have the same defined EAI_OVERFLOW contract as named
+    // outputs. Truncated success prevents callers from retrying with room for
+    // the complete address/service and its terminating NUL.
     // SAFETY: output buffers are caller-provided according to getnameinfo contract.
     let host_truncated = unsafe {
-        match write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) {
+        match write_c_buffer("getnameinfo", host, hostlen, &host_text, false) {
             Ok(truncated) => truncated,
             Err(err) => {
                 record_resolver_stage_outcome(
@@ -4607,7 +4625,7 @@ unsafe fn getnameinfo_full(
     };
     // SAFETY: output buffers are caller-provided according to getnameinfo contract.
     let serv_truncated = unsafe {
-        match write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) {
+        match write_c_buffer("getnameinfo", serv, servlen, &serv_text, false) {
             Ok(truncated) => truncated,
             Err(err) => {
                 record_resolver_stage_outcome(

@@ -226,6 +226,11 @@ jobs:
               2>&1 | tee "artifacts/resolver/idn/unit-$mode.log"
             grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
               "artifacts/resolver/idn/unit-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test --locked -p frankenlibc-abi \
+              --test resolv_abi_test getnameinfo_ -- --test-threads=1 --nocapture \
+              2>&1 | tee "artifacts/resolver/idn/getnameinfo-$mode.log"
+            grep -Eq '^test result: ok\. 7 passed; 0 failed; 0 ignored;' \
+              "artifacts/resolver/idn/getnameinfo-$mode.log"
           done
           cc -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
             tests/integration/fixture_native_dns_transport.c -ldl -o target/idn-abi
@@ -240,6 +245,11 @@ jobs:
           192.0.2.244 xn--bad_.test idn-malformed
           192.0.2.245 xn--bcher-kva.xn--bad_ idn-partial
           192.0.2.246 ordinary.CaSe idn-ascii
+          192.0.2.247 xn--0.test idn-incomplete
+          192.0.2.248 xn-- idn-empty
+          192.0.2.249 xn--bcher-kva.xn--0 idn-partial-incomplete
+          192.0.2.250 xn--hello-.test idn-basic
+          192.0.2.251 xn--bad_-a.test idn-literal-underscore
           HOSTS
           for mode in strict hardened; do
             sudo -n timeout 45s bwrap --die-with-parent --unshare-net --unshare-pid \
@@ -247,7 +257,7 @@ jobs:
               env -u LD_PRELOAD -u FRANKENLIBC_HOSTS_PATH -u FRANKENLIBC_NSSWITCH_PATH \
                 FRANKENLIBC_MODE="$mode" "$PWD/target/idn-abi" "$candidate" --idn-only \
               2>&1 | tee "artifacts/resolver/idn/abi-$mode.log"
-            grep -Fxq 'native IDN ABI: 114 passed' "artifacts/resolver/idn/abi-$mode.log"
+            grep -Fxq 'native IDN ABI: 204 passed' "artifacts/resolver/idn/abi-$mode.log"
           done
       - name: Preserve complete passwd and group records and buffer retries
         if: always()
