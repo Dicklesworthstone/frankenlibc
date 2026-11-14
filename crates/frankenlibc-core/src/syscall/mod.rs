@@ -2893,6 +2893,28 @@ pub unsafe fn sys_futex(
     syscall_result(ret).map(|v| v as isize)
 }
 
+/// Wake private futex waiters using an integer address as a lookup key.
+///
+/// This restricted operation neither reads nor writes the userspace word.
+/// Linux's private-key path uses the address and the current address space,
+/// without requiring the mapping to remain present. It is therefore suitable
+/// after releasing ownership to a waiter that may immediately unmap its word.
+/// The kernel validates address range/alignment and reports errors normally.
+/// Reuse of the address may cause a spurious wake; waiters must recheck their
+/// predicate, as with any futex wake.
+///
+/// Kernel contract: `get_futex_key`'s private branch in
+/// <https://github.com/torvalds/linux/blob/v6.12/kernel/futex/core.c> and
+/// `futex_wake` in <https://github.com/torvalds/linux/blob/v6.12/kernel/futex/waitwake.c>.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_futex_wake_private(address: usize, count: u32) -> Result<isize, i32> {
+    // SAFETY: FUTEX_WAKE_PRIVATE uses only an address key, never a userspace
+    // load/store. Do not generalize this wrapper to any other futex operation.
+    let ret = unsafe { raw::syscall6(SYS_FUTEX, address, 0x81, count as usize, 0, 0, 0) };
+    syscall_result(ret).map(|value| value as isize)
+}
+
 /// `futex(FUTEX_WAIT_BITSET)` — wait while `*uaddr == expected` and the wait bitset matches.
 ///
 /// # Safety

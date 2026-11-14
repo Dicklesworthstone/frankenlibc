@@ -1207,6 +1207,15 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
     true
 }
 
+/// Withdraw a prepared native thread that never entered application code.
+/// Its application signals are still blocked and no key/runtime destructor
+/// may run on failed publication. The creator retains the backing mapping.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn discard_thread_tls_before_entry(tid: i32) {
+    table_remove(tid);
+    let _ = rcu::rcu_unregister_thread(tid as u32);
+}
+
 /// Run the POSIX key destructors of the exiting thread `tid`: the hook for
 /// threads whose lifecycle belongs to the host libc, which never sees fl's key
 /// table (the native clone trampoline calls [`teardown_thread_tls`] itself).

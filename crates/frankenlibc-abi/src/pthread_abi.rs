@@ -22,9 +22,9 @@ use frankenlibc_core::elf::Elf64Header;
 use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
 use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
 use frankenlibc_core::pthread::thread::{
-    ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
-    current_cancellation_wait as core_current_cancellation_wait,
+    ThreadStartup, current_cancellation_wait as core_current_cancellation_wait,
     current_thread_handle as core_current_thread_handle,
+    prepare_thread_with_startup as core_prepare_thread_with_startup,
     request_cancellation as core_request_cancellation,
     take_current_cancellation as core_take_current_cancellation,
 };
@@ -2258,8 +2258,8 @@ unsafe fn native_pthread_create(
             size: stack_size,
         }
     };
-    let handle_ptr = match unsafe {
-        core_create_thread_with_startup(
+    let prepared = match unsafe {
+        core_prepare_thread_with_startup(
             start_routine as usize,
             arg as usize,
             stack,
@@ -2270,17 +2270,18 @@ unsafe fn native_pthread_create(
             },
         )
     } {
-        Ok(ptr) => ptr,
+        Ok(prepared) => prepared,
         Err(errno) => return errno,
     };
-
+    let handle_ptr = prepared.handle();
     let thread_key = handle_ptr as usize;
 
     let mut registry = THREAD_HANDLE_REGISTRY
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     if registry.contains_key(&thread_key) {
-        let _ = unsafe { core_detach_thread(handle_ptr) };
+        // The prepared guard aborts and reaps the unpublished child without
+        // allowing a callback or leaving a running unregistered thread.
         return libc::EAGAIN;
     }
     MANAGED_THREAD_TOMBSTONES
@@ -2303,9 +2304,8 @@ unsafe fn native_pthread_create(
     // SAFETY: thread_out validated non-null above.
     unsafe { *thread_out = thread_key as libc::pthread_t };
 
-    // If created with PTHREAD_CREATE_DETACHED, detach immediately.
-    // Must remove from registry first (same as native_pthread_detach) to
-    // prevent a dangling pointer after the thread self-cleans on exit.
+    // Prepare detached ownership before application entry, while the creator
+    // still exclusively owns the parked child's handle and stack mappings.
     if detach_state == libc::PTHREAD_CREATE_DETACHED {
         {
             let mut registry = THREAD_HANDLE_REGISTRY
@@ -2327,8 +2327,12 @@ unsafe fn native_pthread_create(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(thread_key);
-        let _ = unsafe { core_detach_thread(handle_ptr) };
     }
+
+    // This is the final handle access by the creator. The guard is disarmed
+    // before its release-store, so even an immediate detached exit is safe.
+    // Registry records, tombstones and the caller's pthread_t are complete.
+    unsafe { prepared.start(detach_state == libc::PTHREAD_CREATE_DETACHED) };
 
     0
 }

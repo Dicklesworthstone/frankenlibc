@@ -667,7 +667,9 @@ static void verify_attribute_provider(const char *expected) {
         "pthread_attr_getschedpolicy", "pthread_attr_getschedparam",
         "pthread_attr_getinheritsched", "pthread_attr_setinheritsched",
         "pthread_attr_getsigmask_np", "pthread_attr_getstack", "pthread_setschedparam",
-        "pthread_setaffinity_np", "pthread_setschedprio",
+        "pthread_setaffinity_np", "pthread_setschedprio", "pthread_detach",
+        "pthread_attr_getdetachstate", "pthread_attr_setdetachstate",
+        "pthread_key_create", "pthread_key_delete", "pthread_setspecific",
     };
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         Dl_info info;
@@ -936,6 +938,135 @@ static void scheduling_priority(int worker) {
     }
 }
 
+/* User entry can run before pthread_create returns, but must see a complete
+ * lifecycle identity and detached ownership. Each reused argument remains
+ * live until join or actual kernel-thread exit, including its destructors. */
+struct publication_probe {
+    _Atomic int entered;
+    _Atomic int creator_returned;
+    _Atomic int destructors;
+    _Atomic int signal_seen;
+    pid_t tid;
+    uintptr_t tp;
+    int self_detach;
+    int created_detached;
+    int explicit_exit;
+    int await_creator;
+    int signal_wait;
+    int detach_result;
+    int attr_result;
+    int detached;
+};
+static struct publication_probe publication;
+static pthread_key_t publication_key;
+
+static void publication_destructor(void *argument) {
+    struct publication_probe *probe = argument;
+    atomic_fetch_add_explicit(&probe->destructors, 1, memory_order_release);
+}
+
+static void publication_signal(int signal) {
+    if (signal != SIGUSR1) return;
+    while (!atomic_load_explicit(&publication.creator_returned, memory_order_acquire)) {}
+    atomic_fetch_add_explicit(&publication.signal_seen, 1, memory_order_release);
+}
+
+static void *publication_entry(void *argument) {
+    struct publication_probe *probe = argument;
+    probe->tid = (pid_t)syscall(SYS_gettid);
+    probe->tp = (uintptr_t)__builtin_thread_pointer();
+    if (probe->self_detach || probe->created_detached)
+        probe->detach_result = pthread_detach(pthread_self());
+    pthread_attr_t attr;
+    probe->attr_result = pthread_getattr_np(pthread_self(), &attr);
+    if (!probe->attr_result) {
+        CHECK(pthread_attr_getdetachstate(&attr, &probe->detached) == 0);
+        CHECK(pthread_attr_destroy(&attr) == 0);
+    }
+    CHECK(pthread_setspecific(publication_key, probe) == 0);
+    publish(&probe->entered, 1);
+    if (probe->signal_wait) {
+        CHECK(syscall(SYS_tgkill, (pid_t)syscall(SYS_getpid), probe->tid, SIGUSR1) == 0);
+        CHECK(atomic_load_explicit(&probe->signal_seen, memory_order_acquire) == 1);
+    }
+    if (probe->await_creator) wait_at_least(&probe->creator_returned, 1);
+    if (probe->explicit_exit) pthread_exit(probe);
+    return probe;
+}
+
+static void publication_lifecycle(const char *name) {
+    CHECK(pthread_key_create(&publication_key, publication_destructor) == 0);
+    int startup_error = !strcmp(name, "publication-startup-error");
+    int signal_wait = !strcmp(name, "publication-signal-await-creator");
+    if (signal_wait) {
+        struct sigaction action = {.sa_handler = publication_signal};
+        CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGUSR1, &action, NULL) == 0);
+        uint64_t mask = 0;
+        CHECK(syscall(SYS_rt_sigprocmask, SIG_SETMASK, &mask, NULL, sizeof(mask)) == 0);
+    }
+    for (int iteration = 0; iteration < 64; ++iteration) {
+        memset(&publication, 0, sizeof(publication));
+        publication.detached = -1;
+        publication.self_detach = !strncmp(name, "publication-self-detach", 23);
+        publication.created_detached = !strncmp(name, "publication-created-detached", 28);
+        publication.explicit_exit = !strcmp(name, "publication-exit") ||
+            !strcmp(name, "publication-self-detach-exit") ||
+            !strcmp(name, "publication-created-detached-exit");
+        publication.await_creator = !strcmp(name, "publication-await-creator");
+        publication.signal_wait = signal_wait;
+        pthread_attr_t attr;
+        CHECK(pthread_attr_init(&attr) == 0);
+        if (publication.created_detached)
+            CHECK(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0);
+        if (startup_error) {
+            cpu_set_t empty;
+            CPU_ZERO(&empty);
+            CHECK(pthread_attr_setaffinity_np(&attr, sizeof(empty), &empty) == 0);
+            /* Failed child setup must not drain the creator's key value,
+             * even while native threads inherit its hardware thread pointer. */
+            CHECK(pthread_setspecific(publication_key, &publication) == 0);
+        }
+        uintptr_t parent_tp = (uintptr_t)__builtin_thread_pointer();
+        pthread_t thread;
+        int result = pthread_create(&thread, &attr, publication_entry, &publication);
+        publish(&publication.creator_returned, 1);
+        CHECK(pthread_attr_destroy(&attr) == 0);
+        if (startup_error) {
+            CHECK(result == EINVAL && atomic_load(&publication.entered) == 0);
+            CHECK(atomic_load(&publication.destructors) == 0);
+            CHECK(pthread_setspecific(publication_key, NULL) == 0);
+            continue;
+        }
+        CHECK(result == 0);
+        wait_at_least(&publication.entered, 1);
+        const char *native = getenv("FRANKENLIBC_THREAD_NATIVE");
+        CHECK((publication.tp == parent_tp) == (native && !strcmp(native, "1")));
+        if (publication.created_detached ||
+            (publication.self_detach && publication.detach_result == 0)) {
+            pid_t tid = publication.tid;
+            while (syscall(SYS_tgkill, (pid_t)syscall(SYS_getpid), tid, 0) == 0)
+                syscall(SYS_sched_yield);
+            CHECK(errno == ESRCH);
+        } else {
+            void *value = NULL;
+            CHECK(pthread_join(thread, &value) == 0 && value == &publication);
+        }
+        if (publication.self_detach) CHECK(publication.detach_result == 0);
+        if (publication.created_detached) {
+            /* A second detach has no portable error-number contract. GNU
+             * reports EINVAL; the existing native consumed-handle contract
+             * reports ESRCH. It must never succeed as if still joinable. */
+            CHECK(publication.detach_result == EINVAL || publication.detach_result == ESRCH);
+        }
+        CHECK(publication.attr_result == 0);
+        CHECK(publication.detached == (publication.self_detach || publication.created_detached
+                                      ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE));
+        CHECK(atomic_load_explicit(&publication.destructors, memory_order_acquire) == 1);
+        if (signal_wait) CHECK(atomic_load(&publication.signal_seen) == 1);
+    }
+    CHECK(pthread_key_delete(publication_key) == 0);
+}
+
 /* Linked into the C++ native-unwind probe as an independently compiled C
  * frame without exception landing pads. Its registered cleanup must run
  * between the inner and outer C++ destructors, in the same unwind. */
@@ -962,7 +1093,8 @@ int main(int argc, char **argv) {
     }
     alarm(12);
     const char *name = argv[1];
-    if (!strncmp(name, "attributes-", 11)) verify_attribute_provider(argv[2]);
+    if (!strncmp(name, "attributes-", 11) || !strncmp(name, "publication-", 12))
+        verify_attribute_provider(argv[2]);
     if (!strcmp(name, "errno-siblings")) errno_siblings();
     else if (!strcmp(name, "errno-signals")) errno_signals();
     else if (!strcmp(name, "errno-return")) errno_lifecycle(0);
@@ -994,6 +1126,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "attributes-affinity-short")) attribute_affinity_short();
     else if (!strcmp(name, "attributes-priority-self")) scheduling_priority(0);
     else if (!strcmp(name, "attributes-priority-worker")) scheduling_priority(1);
+    else if (!strncmp(name, "publication-", 12)) publication_lifecycle(name);
     else return 2;
     printf("pthread-native-state:%s:PASS\n", name);
     return 0;

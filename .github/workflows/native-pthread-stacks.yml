@@ -226,6 +226,13 @@ jobs:
           python3 scripts/check_pthread_native_state.py --attributes-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/attributes"
+      - name: Publish native lifecycle ownership before application entry
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_state.py --publication-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/publication"
       - name: Preserve once initialization across fork, cancellation and exceptions
         if: always()
         shell: bash
@@ -336,7 +343,7 @@ jobs:
           root = pathlib.Path('artifacts/pthread-stacks')
           root.mkdir(parents=True, exist_ok=True)
           cases = [('core', ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
-                    'pthread::thread::tests::'], 'strict', 24),
+                    'pthread::thread::tests::'], 'strict', 27),
                    ('cancel-wait', ['cargo', 'test', '-p', 'frankenlibc-abi',
                     '--test', 'pthread_cancel_wait_test', 'cancel_wait::tests::'], 'strict', 4),
                    ('cancel-poll', ['cargo', 'test', '-p', 'frankenlibc-abi',
