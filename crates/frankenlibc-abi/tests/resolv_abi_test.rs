@@ -8627,6 +8627,27 @@ fn resolver_idn_lookup_error(query: &CStr, hints: &libc::addrinfo, service: &CSt
 #[test]
 fn resolver_idn_forward_errors_respect_locale_flags_and_validation_order() {
     with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        // A query without AI_IDN must miss the encoded hosts entry. Keep that
+        // negative lookup files-only so the runner's DNS cannot turn the
+        // defined EAI_NONAME result into a network-dependent EAI_AGAIN.
+        struct RestoreNsswitch(Option<std::ffi::OsString>);
+        impl Drop for RestoreNsswitch {
+            fn drop(&mut self) {
+                // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+                unsafe {
+                    if let Some(value) = &self.0 {
+                        std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", value);
+                    } else {
+                        std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF");
+                    }
+                }
+            }
+        }
+        let nsswitch = temp_resolver_path("idn-errors-files-only");
+        std::fs::write(&nsswitch, b"hosts: files\n").unwrap();
+        let _restore = RestoreNsswitch(std::env::var_os("FRANKENLIBC_NSSWITCH_CONF"));
+        // SAFETY: the resolver fixture holds RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
         let _locale = ResolverIdnLocale::new(c"C.UTF-8");
         // SAFETY: a zeroed addrinfo is valid input hints.
         let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
