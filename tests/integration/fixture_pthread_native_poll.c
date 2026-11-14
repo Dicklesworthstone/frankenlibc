@@ -7,17 +7,21 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -1545,13 +1549,15 @@ enum receive_kind {
     RECEIVE_READY_LATE, RECEIVE_PEEK, RECEIVE_NONBLOCK, RECEIVE_DONTWAIT,
     RECEIVE_TIMEOUT, RECEIVE_SIGNAL, RECEIVE_SIGNAL_RESTART, RECEIVE_COMPETING,
     RECEIVE_WAITALL, RECEIVE_LOWAT, RECEIVE_EOF, RECEIVE_ZERO, RECEIVE_ERRORS,
-    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE, RECEIVE_RIGHTS, RECEIVE_RIGHTS_CLOEXEC,
+    RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE,
+    RECEIVE_READ_PIPE, RECEIVE_READ_DATAGRAM, RECEIVE_READ_NOSYS,
+    RECEIVE_READ_PERM, RECEIVE_READ_ACCESS, RECEIVE_RIGHTS, RECEIVE_RIGHTS_CLOEXEC,
     RECEIVE_CONTROL_TRUNCATE
 };
 struct receive_probe {
     struct state observed;
     enum receive_kind kind;
-    int fd, from, fortified, flags, message, mapped;
+    int fd, from, fortified, flags, message, mapped, reading;
     size_t length;
     unsigned char data[8];
     struct sockaddr_storage address;
@@ -1569,12 +1575,15 @@ static ssize_t (*selected_recv_chk)(int, void *, size_t, size_t, int);
 static ssize_t (*selected_recvfrom_chk)(int, void *, size_t, size_t, int,
                                       struct sockaddr *, socklen_t *);
 static ssize_t (*selected_recvmsg)(int, struct msghdr *, int);
+static ssize_t (*selected_read)(int, void *, size_t);
+static ssize_t (*selected_read_chk)(int, void *, size_t, size_t);
 
 static int pin_receive_provider(const char *expected, int from, int alias, int fortified,
-                                int message) {
+                                int message, int reading) {
     int base = pin_providers(expected, 0, EVENT_NONE);
     if (base != 0) return base;
-    const char *name = message ? (alias ? "__recvmsg" : "recvmsg") :
+    const char *name = reading ? (fortified ? "__read_chk" : alias ? "__read" : "read") :
+                      message ? (alias ? "__recvmsg" : "recvmsg") :
                       from ? (fortified ? "__recvfrom_chk" : "recvfrom") :
                              fortified ? "__recv_chk" : alias ? "__recv" : "recv";
     Dl_info info = {0};
@@ -1586,7 +1595,9 @@ static int pin_receive_provider(const char *expected, int from, int alias, int f
         fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
         return 86;
     }
-    if (message) selected_recvmsg = (__typeof__(selected_recvmsg))symbol;
+    if (reading && fortified) selected_read_chk = (__typeof__(selected_read_chk))symbol;
+    else if (reading) selected_read = (__typeof__(selected_read))symbol;
+    else if (message) selected_recvmsg = (__typeof__(selected_recvmsg))symbol;
     else if (from && fortified) selected_recvfrom_chk = (__typeof__(selected_recvfrom_chk))symbol;
     else if (from) selected_recvfrom = (__typeof__(selected_recvfrom))symbol;
     else if (fortified) selected_recv_chk = (__typeof__(selected_recv_chk))symbol;
@@ -1594,7 +1605,13 @@ static int pin_receive_provider(const char *expected, int from, int alias, int f
     return 0;
 }
 
+static ssize_t read_call(const struct receive_probe *probe, int fd, void *buffer, size_t length) {
+    return probe->fortified ? selected_read_chk(fd, buffer, length, sizeof(probe->data)) :
+                              selected_read(fd, buffer, length);
+}
+
 static ssize_t receive_call(struct receive_probe *probe) {
+    if (probe->reading) return read_call(probe, probe->fd, probe->data, probe->length);
     if (probe->message) return selected_recvmsg(probe->fd, &probe->header, probe->flags);
     if (probe->from && probe->fortified)
         return selected_recvfrom_chk(probe->fd, probe->data, probe->length, sizeof(probe->data),
@@ -1607,6 +1624,63 @@ static ssize_t receive_call(struct receive_probe *probe) {
         return selected_recv_chk(probe->fd, probe->data, probe->length, sizeof(probe->data),
                                  probe->flags);
     return selected_recv(probe->fd, probe->data, probe->length, probe->flags);
+}
+
+static int read_probe_denial(enum receive_kind kind) {
+    return kind == RECEIVE_READ_NOSYS ? ENOSYS : kind == RECEIVE_READ_PERM ? EPERM :
+           kind == RECEIVE_READ_ACCESS ? EACCES : 0;
+}
+
+/* A sandbox may allow read but reject recvfrom. Restrict only this worker so
+ * the parent can independently observe the original read sleeping in-kernel. */
+static void deny_read_probe(int error) {
+    struct sock_filter filter[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_recvfrom, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (unsigned)error),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog program = {sizeof(filter) / sizeof(filter[0]), filter};
+    REQUIRE(syscall(SYS_prctl, PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0,
+            "enable the worker's independent syscall filter");
+    REQUIRE(syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program) == 0,
+            "deny the receive probe while retaining read");
+}
+
+static void check_read_errors(struct receive_probe *probe) {
+    int pipefd[2];
+    unsigned char buffer[8] = {0};
+    REQUIRE(pipe(pipefd) == 0 && syscall(SYS_write, pipefd[1], "P", 1) == 1,
+            "queue a byte for non-socket read fallback");
+    REQUIRE(read_call(probe, -1, NULL, 0) == -1 && errno == EBADF,
+            "empty read still validates the descriptor");
+    REQUIRE(read_call(probe, pipefd[1], buffer, 0) == -1 && errno == EBADF,
+            "empty read still rejects a write-only descriptor");
+    errno = EDOM;
+    REQUIRE(read_call(probe, pipefd[0], NULL, 0) == 0 && errno == EDOM,
+            "empty pipe read accepts a null buffer and preserves errno");
+    REQUIRE(read_call(probe, pipefd[0], NULL, 1) == -1 && errno == EFAULT,
+            "nonempty read preserves EFAULT without consuming pipe data");
+    errno = EDOM;
+    REQUIRE(read_call(probe, pipefd[0], buffer, 1) == 1 && buffer[0] == 'P' && errno == EDOM,
+            "non-socket fallback reads the original pipe byte");
+    REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "release read error pipe");
+
+    int pair[2];
+    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0 &&
+                syscall(SYS_write, pair[1], "S", 1) == 1,
+            "queue a byte before an invalid stream read buffer");
+    long page = sysconf(_SC_PAGESIZE);
+    REQUIRE(page > 0, "read error guard page size");
+    void *guard = mmap(NULL, (size_t)page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(guard != MAP_FAILED, "allocate inaccessible stream read buffer");
+    REQUIRE(read_call(probe, pair[0], guard, 1) == -1 && errno == EFAULT,
+            "stream probe preserves the kernel's inaccessible-buffer EFAULT");
+    errno = EDOM;
+    REQUIRE(read_call(probe, pair[0], buffer, 1) == 1 && buffer[0] == 'S' && errno == EDOM,
+            "failed stream read leaves the queued byte available");
+    REQUIRE(munmap(guard, (size_t)page) == 0 && close(pair[0]) == 0 && close(pair[1]) == 0,
+            "release stream read error resources");
 }
 
 static void receive_cleanup(void *argument) {
@@ -1632,6 +1706,7 @@ static void *receive_worker(void *argument) {
     sigemptyset(&mask);
     sigaddset(&mask, SIGUSR2);
     REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "receive entry signal mask");
+    if (read_probe_denial(probe->kind)) deny_read_probe(read_probe_denial(probe->kind));
     pthread_cleanup_push(receive_cleanup, probe);
     atomic_store_explicit(&state->ready, 1, memory_order_release);
     while (!atomic_load_explicit(&state->release, memory_order_acquire))
@@ -1642,12 +1717,16 @@ static void *receive_worker(void *argument) {
         int original = probe->fd;
         probe->fd = -1;
         REQUIRE(receive_call(probe) == -1 && errno == EBADF, "invalid receive fd retains EBADF");
-        int pipefd[2];
-        REQUIRE(pipe(pipefd) == 0, "receive error pipe");
-        probe->fd = pipefd[0];
-        REQUIRE(receive_call(probe) == -1 && errno == ENOTSOCK,
-                "receive metadata probes do not replace ENOTSOCK");
-        REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close receive error pipe");
+        if (probe->reading) {
+            check_read_errors(probe);
+        } else {
+            int pipefd[2];
+            REQUIRE(pipe(pipefd) == 0, "receive error pipe");
+            probe->fd = pipefd[0];
+            REQUIRE(receive_call(probe) == -1 && errno == ENOTSOCK,
+                    "receive metadata probes do not replace ENOTSOCK");
+            REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close receive error pipe");
+        }
         probe->fd = original;
         state->result = 0;
     } else {
@@ -1671,7 +1750,9 @@ static void observe_receive_parked(struct receive_probe *probe, int memory) {
     int sliced = expect_native && probe->kind != RECEIVE_DISABLED &&
                  probe->kind != RECEIVE_TIMEOUT && probe->kind != RECEIVE_WAITALL &&
                  probe->kind != RECEIVE_LOWAT && probe->kind != RECEIVE_SIGNAL &&
-                 probe->kind != RECEIVE_SIGNAL_RESTART;
+                 probe->kind != RECEIVE_SIGNAL_RESTART &&
+                 probe->kind != RECEIVE_READ_PIPE && probe->kind != RECEIVE_READ_DATAGRAM &&
+                 !read_probe_denial(probe->kind);
     int64_t deadline = monotonic_ns() + 2000000000;
     while (monotonic_ns() < deadline) {
         REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
@@ -1697,6 +1778,9 @@ static void observe_receive_parked(struct receive_probe *probe, int memory) {
             REQUIRE(args[4] == sizeof(mask) && ((mask >> (SIGUSR2 - 1)) & 1) == 1 &&
                         ((mask >> (SIGUSR1 - 1)) & 1) == 0,
                     "native receive atomically reinstates the complete original mask");
+        } else if (probe->reading) {
+            if (number != SYS_read || args[0] != (unsigned)probe->fd ||
+                args[1] != (uintptr_t)probe->data || args[2] != probe->length) goto retry_receive;
         } else if (probe->message) {
             if (number != SYS_recvmsg || args[0] != (unsigned)probe->fd) goto retry_receive;
         } else if (number != SYS_recvfrom || args[0] != (unsigned)probe->fd ||
@@ -1737,7 +1821,7 @@ static void send_receive_rights(int fd, int transferred) {
 }
 
 static void receive_initialize(struct receive_probe *probe, enum receive_kind kind,
-                               int fd, int from, int fortified, int message, int mapped) {
+                               int fd, int from, int fortified, int message, int mapped, int reading) {
     memset(probe, 0, sizeof(*probe));
     probe->kind = kind;
     probe->fd = fd;
@@ -1745,6 +1829,7 @@ static void receive_initialize(struct receive_probe *probe, enum receive_kind ki
     probe->fortified = fortified;
     probe->message = message;
     probe->mapped = mapped;
+    probe->reading = reading;
     probe->flags = kind == RECEIVE_PEEK ? MSG_PEEK :
                    kind == RECEIVE_DONTWAIT ? MSG_DONTWAIT :
                    kind == RECEIVE_WAITALL ? MSG_WAITALL :
@@ -1819,6 +1904,7 @@ static void check_received_payload(const struct receive_probe *probe,
 }
 
 static int receive_contract_main(char **argv) {
+    int reading = strncmp(case_name, "read-", 5) == 0;
     int message = strncmp(case_name, "recvmsg-", 8) == 0;
     int from = strncmp(case_name, "recvfrom-", 9) == 0;
     const char *suffix = case_name + (message ? 8 : from ? 9 : 5);
@@ -1835,19 +1921,22 @@ static int receive_contract_main(char **argv) {
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late", "peek",
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "competing", "waitall", "lowat", "eof", "zero", "errors",
-                          "length-zero", "truncate", "rights", "rights-cloexec",
+                          "length-zero", "truncate", "pipe-fallback", "datagram-fallback",
+                          "probe-enosys", "probe-eperm", "probe-eacces", "rights", "rights-cloexec",
                           "control-truncate"};
     int value = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) value = (int)i;
     if (value < 0 || (from && alias && !message) || (message && fortified) ||
         (mapped && !message) ||
+        (reading && (value == RECEIVE_PEEK || value == RECEIVE_DONTWAIT || value == RECEIVE_WAITALL)) ||
+        (!reading && value >= RECEIVE_READ_PIPE && value <= RECEIVE_READ_ACCESS) ||
         (!from && (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE)) ||
         (from && (value == RECEIVE_WAITALL || value == RECEIVE_LOWAT || value == RECEIVE_EOF)) ||
         (value >= RECEIVE_RIGHTS && (!message || from)))
         return 2;
     enum receive_kind kind = (enum receive_kind)value;
-    int pin = pin_receive_provider(argv[2], from, alias, fortified, message);
+    int pin = pin_receive_provider(argv[2], from, alias, fortified, message, reading);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
                     strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
@@ -1863,7 +1952,12 @@ static int receive_contract_main(char **argv) {
     alarm(15);
     int pair[2];
     struct sockaddr_in peer = {0};
-    if (from) {
+    if (kind == RECEIVE_READ_PIPE) {
+        REQUIRE(pipe2(pair, O_CLOEXEC) == 0, "create original pipe read endpoints");
+    } else if (kind == RECEIVE_READ_DATAGRAM) {
+        REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0, pair) == 0,
+                "create original datagram read endpoints");
+    } else if (from) {
         struct sockaddr_in local = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
         pair[0] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
         pair[1] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -1900,7 +1994,7 @@ static int receive_contract_main(char **argv) {
     int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
     if (memory < 0) skip("socket-wait-snapshot-unavailable");
     struct receive_probe probe;
-    receive_initialize(&probe, kind, pair[0], from, fortified, message, mapped);
+    receive_initialize(&probe, kind, pair[0], from, fortified, message, mapped, reading);
     size_t sent_length = kind == RECEIVE_LENGTH_ZERO ? 1 : probe.length;
     int rights[2] = {-1, -1};
     if (kind >= RECEIVE_RIGHTS) {
@@ -1924,7 +2018,7 @@ static int receive_contract_main(char **argv) {
     atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
     if (kind == RECEIVE_COMPETING) {
         struct receive_probe competitor;
-        receive_initialize(&competitor, kind, pair[0], from, fortified, message, mapped);
+        receive_initialize(&competitor, kind, pair[0], from, fortified, message, mapped, reading);
         REQUIRE(pthread_create(&competitor.observed.thread, NULL, receive_worker, &competitor) == 0,
                 "create competing socket receiver");
         wait_ready(&competitor.observed);
@@ -1953,6 +2047,7 @@ static int receive_contract_main(char **argv) {
     } else {
         if (kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
             kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART ||
+            kind == RECEIVE_READ_PIPE || kind == RECEIVE_READ_DATAGRAM || read_probe_denial(kind) ||
             kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || kind >= RECEIVE_RIGHTS) {
             observe_receive_parked(&probe, memory);
             if (kind >= RECEIVE_RIGHTS) {
@@ -1991,8 +2086,12 @@ static int receive_contract_main(char **argv) {
                         "WAITALL and low-water contracts do not return a premature short read");
                 send_receive_bytes(pair[1], "ATA", 3);
             } else if (kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
-                       kind == RECEIVE_SIGNAL_RESTART) {
+                       kind == RECEIVE_SIGNAL_RESTART || kind == RECEIVE_READ_DATAGRAM ||
+                       read_probe_denial(kind)) {
                 send_receive_bytes(pair[1], "DATA", sent_length);
+            } else if (kind == RECEIVE_READ_PIPE) {
+                REQUIRE(syscall(SYS_write, pair[1], "DATA", sent_length) == (ssize_t)sent_length,
+                        "release the original blocking pipe read");
             }
         }
         void *result = join_bounded(&probe.observed);
@@ -2053,7 +2152,10 @@ static int receive_contract_main(char **argv) {
                     memcmp(remaining, "DATA", sent_length) == 0,
                 "pending cancellation, PEEK and empty stream reads preserve payload");
     }
-    if (kind != RECEIVE_EOF) {
+    if (kind == RECEIVE_READ_PIPE) {
+        struct pollfd interest = {pair[0], POLLIN, 0};
+        REQUIRE(syscall(SYS_poll, &interest, 1, 0) == 0, "pipe fallback consumes its byte exactly once");
+    } else if (kind != RECEIVE_EOF) {
         unsigned char remaining;
         REQUIRE(syscall(SYS_recvfrom, pair[0], &remaining, 1, MSG_DONTWAIT, NULL, NULL) == -1 &&
                     errno == EAGAIN, "receive consumes each queued payload at most once");
@@ -2561,7 +2663,8 @@ int main(int argc, char **argv) {
     if (strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0 ||
         strncmp(case_name, "sendmsg-", 8) == 0)
         return send_contract_main(argv);
-    if (strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0 ||
+    if (strncmp(case_name, "read-", 5) == 0 ||
+        strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0 ||
         strncmp(case_name, "recvmsg-", 8) == 0)
         return receive_contract_main(argv);
     if (strncmp(case_name, "sleep-", 6) == 0) return sleep_contract_main(argv);

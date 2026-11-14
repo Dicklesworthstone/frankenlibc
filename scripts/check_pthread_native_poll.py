@@ -85,6 +85,19 @@ SUSPEND_CASES = tuple(
     "sigsuspend-mask-unblock", "sigsuspend-mask-cancel", "sigsuspend-mask-cancel-block",
     "sigsuspend-errors", "sigsuspend-guarded-mask",
 )
+READ_CASES = tuple(
+    f"read-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock",
+        "timeout", "signal", "signal-restart", "competing", "lowat", "eof",
+        "errors", "length-zero", "pipe-fallback", "datagram-fallback",
+        "probe-enosys", "probe-eperm", "probe-eacces",
+    )
+) + tuple(
+    f"read-{entry}-{case}"
+    for entry in ("alias", "fortified")
+    for case in ("blocked", "pending", "competing", "errors", "length-zero")
+)
 RECEIVE_CASES = tuple(
     f"{entry}-{case}"
     for entry in ("recv", "recvfrom")
@@ -139,7 +152,7 @@ SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
 
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
-CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + RECEIVE_CASES +
+CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + READ_CASES + RECEIVE_CASES +
          SEND_CASES + SENDMSG_CASES)
 
 
@@ -162,6 +175,10 @@ def main() -> int:
         help="Run only pause/sigsuspend cases and the provider/backend negative controls.",
     )
     parser.add_argument(
+        "--read-only", action="store_true",
+        help="Run stream read cancellation and original-syscall fallback cases.",
+    )
+    parser.add_argument(
         "--receive-only", action="store_true",
         help="Run only socket receive cases and the provider/backend negative controls.",
     )
@@ -174,12 +191,13 @@ def main() -> int:
         help="Run vectored and ancillary sendmsg cases, including native partial cancellation.",
     )
     args = parser.parse_args()
-    if sum((args.suspend_only, args.receive_only, args.send_only, args.sendmsg_only)) > 1:
-        parser.error("--suspend-only, --receive-only, --send-only and --sendmsg-only are mutually exclusive")
+    if sum((args.suspend_only, args.read_only, args.receive_only, args.send_only, args.sendmsg_only)) > 1:
+        parser.error("--suspend-only, --read-only, --receive-only, --send-only and --sendmsg-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
-    cases = (SUSPEND_CASES if args.suspend_only else RECEIVE_CASES if args.receive_only else
+    cases = (SUSPEND_CASES if args.suspend_only else READ_CASES if args.read_only else
+             RECEIVE_CASES if args.receive_only else
              SEND_CASES + SENDMSG_CASES + SEND_NATIVE_CASES if args.send_only else
              SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else CASES)
     native_only_cases = SEND_NATIVE_CASES if args.send_only or args.sendmsg_only else ()
@@ -258,7 +276,7 @@ def main() -> int:
             "epoll-wait-alias-", "epoll-wait-"
         ).replace("epoll-pwait-alias-", "epoll-pwait-").replace(
             "pselect-alias-", "pselect-"
-        ).replace("select-alias-", "select-").replace(
+        ).replace("select-alias-", "select-").replace("read-alias-", "read-").replace(
             "recv-alias-", "recv-"
         ).replace("recvmsg-alias-", "recvmsg-").replace(
             "send-alias-", "send-"
@@ -302,6 +320,7 @@ def main() -> int:
         "schema_version": 2,
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
         "case_scope": "pause/sigsuspend only" if args.suspend_only else
+                      "stream reads and fallback contracts only" if args.read_only else
                       "socket receives only" if args.receive_only else
                       "socket sends only" if args.send_only else
                       "vectored socket sends only" if args.sendmsg_only else "poll/epoll/sleep/select/socket",
@@ -315,6 +334,7 @@ def main() -> int:
         "sleep_cases": sum(case in SLEEP_CASES for case in cases),
         "select_cases": sum(case in SELECT_CASES for case in cases),
         "suspend_cases": sum(case in SUSPEND_CASES for case in cases),
+        "read_cases": sum(case in READ_CASES for case in cases),
         "receive_cases": sum(case in RECEIVE_CASES for case in cases),
         "send_cases": sum(case.startswith(("send-", "sendto-", "sendmsg-")) for case in cases),
         "native_only_cases": list(native_only_cases),

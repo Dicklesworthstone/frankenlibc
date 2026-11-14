@@ -532,11 +532,14 @@ pub(crate) unsafe fn read_cp(fd: c_int, buf: *mut c_void, count: usize) -> libc:
     let (effective_count, clamped) =
         maybe_clamp_io_len("read", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for read(2); read is a cancellation point.
-    let rc = unsafe {
-        crate::pthread_abi::cancellation_point_syscall(
-            libc::SYS_read,
-            [fd as usize, buf as usize, effective_count, 0, 0, 0],
-        )
+    let rc = match unsafe {
+        crate::pthread_abi::cancellation_point_read(fd, buf.cast(), effective_count)
+    } {
+        Ok(read) => read,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -25634,10 +25637,7 @@ impl NetgroupIterationLease {
             }
             state.busy = true;
             Some(Self {
-                iteration: std::mem::replace(
-                    &mut state.iteration,
-                    NetgroupIteration::new(),
-                ),
+                iteration: std::mem::replace(&mut state.iteration, NetgroupIteration::new()),
             })
         })
     }
@@ -25769,13 +25769,7 @@ pub unsafe extern "C" fn getnetgrent(
             // SAFETY: the output slots and 1024-byte footprint were checked.
             // Copying owned fields invokes no foreign NSS callback.
             unsafe {
-                netgroup_copy_record(
-                    &triple,
-                    hostp,
-                    userp,
-                    domainp,
-                    state.str_buf.as_mut_ptr(),
-                );
+                netgroup_copy_record(&triple, hostp, userp, domainp, state.str_buf.as_mut_ptr());
             }
             1
         }),

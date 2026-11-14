@@ -7800,6 +7800,21 @@ unsafe fn cancellation_epoll2_window(
     }
 }
 
+/// Stream socket reads share receive's native cancellation wait. All other
+/// descriptors and unsupported socket contracts retain the original read
+/// syscall. Capture the public caller through read's aliases and fortify entry.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_read(
+    fd: c_int,
+    buffer: *mut u8,
+    length: usize,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(caller, cancel_poll::Receive::Read { fd, buffer, length })
+    }
+}
+
 /// Socket receive cancellation, including requests arriving after a native
 /// thread has parked. Capture the public caller through recv/from aliases and
 /// fortified entrypoints before entering the shared, out-of-line window.

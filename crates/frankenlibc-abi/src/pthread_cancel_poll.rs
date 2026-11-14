@@ -564,6 +564,11 @@ pub(super) enum ChildWaitResult {
 /// the data first. MSG_DONTWAIT makes that race an ordinary retry instead.
 #[derive(Clone, Copy)]
 pub(super) enum Receive {
+    Read {
+        fd: c_int,
+        buffer: *mut u8,
+        length: usize,
+    },
     From {
         fd: c_int,
         buffer: *mut u8,
@@ -582,17 +587,24 @@ pub(super) enum Receive {
 impl Receive {
     fn fd(self) -> c_int {
         match self {
-            Self::From { fd, .. } | Self::Message { fd, .. } => fd,
+            Self::Read { fd, .. } | Self::From { fd, .. } | Self::Message { fd, .. } => fd,
         }
     }
 
     fn flags(self) -> c_int {
         match self {
+            Self::Read { .. } => 0,
             Self::From { flags, .. } | Self::Message { flags, .. } => flags,
         }
     }
 
     fn supports_slices(self) -> bool {
+        // A zero-length read keeps the original syscall, including descriptor
+        // validation and datagram behavior. Only ordinary stream sockets admit
+        // replacing read with a per-call nonblocking receive below.
+        if matches!(self, Self::Read { length: 0, .. }) {
+            return false;
+        }
         // WAITALL, urgent/error-queue data, caller-requested nonblocking I/O,
         // and unfamiliar protocol flags keep the original kernel operation.
         // recvmsg's CLOEXEC changes only acquired descriptor flags, not waiting
@@ -616,13 +628,21 @@ impl Receive {
         if status & libc::O_NONBLOCK != 0 {
             return false;
         }
-        if !matches!(
-            socket_integer_option(fd, libc::SO_TYPE),
-            Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
-        ) || !matches!(
-            socket_integer_option(fd, libc::SO_DOMAIN),
-            Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
-        ) || socket_integer_option(fd, libc::SO_RCVLOWAT) != Some(1)
+        let socket_type = socket_integer_option(fd, libc::SO_TYPE);
+        let supported_socket = if matches!(self, Self::Read { .. }) {
+            socket_type == Some(libc::SOCK_STREAM)
+        } else {
+            matches!(
+                socket_type,
+                Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
+            )
+        };
+        if !supported_socket
+            || !matches!(
+                socket_integer_option(fd, libc::SO_DOMAIN),
+                Some(libc::AF_UNIX | libc::AF_INET | libc::AF_INET6)
+            )
+            || socket_integer_option(fd, libc::SO_RCVLOWAT) != Some(1)
         {
             return false;
         }
@@ -666,6 +686,21 @@ impl Receive {
         // A successful recvmsg may transfer SCM_RIGHTS ownership, so the caller
         // must publish its result without retrying or acting on a racing cancel.
         match self {
+            Self::Read { fd, buffer, length } if additional_flags == 0 => {
+                // Keep read itself for disabled, hosted, internal and unsupported
+                // callers; recvfrom is only the admitted native stream probe.
+                unsafe { syscall::sys_read(fd, buffer, length) }.map(|read| read as isize)
+            }
+            Self::Read { fd, buffer, length } => unsafe {
+                syscall::sys_recvfrom(
+                    fd,
+                    buffer,
+                    length,
+                    additional_flags,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            },
             Self::From {
                 fd,
                 buffer,
@@ -1174,6 +1209,13 @@ unsafe fn receive_slices(
         match unsafe { operation.probe() } {
             Ok(received) => return Ok(ReceiveResult::Ready(received)),
             Err(libc::EAGAIN) => {}
+            // A sandbox may permit read but deny the adapter's recvfrom. No
+            // bytes were acquired; preserve the caller's original operation.
+            Err(libc::ENOSYS | libc::EPERM | libc::EACCES)
+                if matches!(operation, Receive::Read { .. }) =>
+            {
+                return Ok(ReceiveResult::Unsupported);
+            }
             Err(error) => return Err(error),
         }
         let mut interest = libc::pollfd {
