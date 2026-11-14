@@ -200,7 +200,7 @@ impl PreparedIovecs {
         }
     }
 
-    fn entries(&self) -> &[libc::iovec] {
+    pub(crate) fn entries(&self) -> &[libc::iovec] {
         match &self.storage {
             Storage::Original(_) => &[],
             Storage::Inline(entries) => &entries[..self.count],
@@ -208,6 +208,21 @@ impl PreparedIovecs {
                 // SAFETY: count descriptors were initialized by mmap and a
                 // complete import; the owned mapping outlives this shared view.
                 unsafe { std::slice::from_raw_parts(mapping.base, self.count) }
+            }
+        }
+    }
+
+    /// Mutate only imported storage, for native sendmsg's consumed-prefix
+    /// cursor. A retained original pointer never becomes a Rust mutable view.
+    #[allow(dead_code)] // also compiled by importer-only integration targets
+    pub(crate) fn entries_mut(&mut self) -> &mut [libc::iovec] {
+        match &mut self.storage {
+            Storage::Original(_) => &mut [],
+            Storage::Inline(entries) => &mut entries[..self.count],
+            Storage::Mapped(mapping) => {
+                // SAFETY: the mapping owns count initialized descriptors, and
+                // this exclusive borrow prevents another view while adjusted.
+                unsafe { std::slice::from_raw_parts_mut(mapping.base, self.count) }
             }
         }
     }

@@ -725,24 +725,63 @@ pub(super) struct SendTo {
     pub address_length: usize,
 }
 
-impl SendTo {
-    fn supports_slices(self) -> bool {
+#[derive(Clone, Copy)]
+pub(super) enum Send {
+    To(SendTo),
+    Message {
+        fd: c_int,
+        message: *const u8,
+        flags: c_int,
+    },
+}
+
+impl Send {
+    pub(super) unsafe fn blocking(self) -> Result<isize, c_int> {
+        // SAFETY: the public ABI keeps its caller/prepared pointer graph live;
+        // the kernel imports every descriptor and validates all payload bytes.
+        match self {
+            Self::To(operation) => unsafe {
+                syscall::sys_sendto(
+                    operation.fd,
+                    operation.buffer,
+                    operation.length,
+                    operation.flags,
+                    operation.address,
+                    operation.address_length,
+                )
+            },
+            Self::Message { fd, message, flags } => unsafe {
+                syscall::sys_sendmsg(fd, message, flags)
+            },
+        }
+    }
+}
+
+/// Both forms own their descriptor geometry while the native wait is sliced.
+/// Payload pointers still belong to the caller and are checked only by Linux.
+trait SendOperation {
+    fn fd(&self) -> c_int;
+    fn flags(&self) -> c_int;
+    fn length(&self) -> usize;
+
+    fn supports_slices(&self) -> bool {
         // Preserve record/cork/urgent/fast-open semantics and Linux's clipping
         // of enormous iov lengths in the original single syscall. The limit
         // below is no larger than MAX_RW_COUNT on either 4 KiB or 64 KiB pages.
-        if self.flags & !libc::MSG_NOSIGNAL != 0 || self.length > 0x7fff_0000 {
+        if self.flags() & !libc::MSG_NOSIGNAL != 0 || self.length() > 0x7fff_0000 {
             return false;
         }
+        let fd = self.fd();
         // SAFETY: F_GETFL has no pointer argument and does not mutate the fd.
-        let Ok(status) = (unsafe { syscall::sys_fcntl(self.fd, libc::F_GETFL, 0) }) else {
+        let Ok(status) = (unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) }) else {
             return false;
         };
         if status & libc::O_NONBLOCK != 0 {
             return false;
         }
-        let socket_type = socket_integer_option(self.fd, libc::SO_TYPE);
-        let domain = socket_integer_option(self.fd, libc::SO_DOMAIN);
-        let protocol = socket_integer_option(self.fd, libc::SO_PROTOCOL);
+        let socket_type = socket_integer_option(fd, libc::SO_TYPE);
+        let domain = socket_integer_option(fd, libc::SO_DOMAIN);
+        let protocol = socket_integer_option(fd, libc::SO_PROTOCOL);
         if !matches!(
             (domain, socket_type, protocol),
             (
@@ -770,7 +809,7 @@ impl SendTo {
         // Finite send deadlines retain their original kernel implementation.
         unsafe {
             syscall::sys_getsockopt(
-                self.fd,
+                fd,
                 libc::SOL_SOCKET,
                 libc::SO_SNDTIMEO,
                 core::ptr::from_mut(&mut timeout).cast(),
@@ -783,7 +822,23 @@ impl SendTo {
             && timeout.tv_usec == 0
     }
 
-    unsafe fn probe(self, sent: usize) -> Result<isize, c_int> {
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int>;
+}
+
+impl SendOperation for SendTo {
+    fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    fn flags(&self) -> c_int {
+        self.flags
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
         // A blocking stream send returns its accepted prefix on a later error,
         // without raising SIGPIPE for that error. Subsequent probes must not
         // manufacture SIGPIPE merely because that prefix used a separate call.
@@ -805,6 +860,117 @@ impl SendTo {
     }
 }
 
+/// A complete descriptor import with eight inline entries and raw mmap storage
+/// for larger vectors, avoiding large native-thread stack frames, shared TLS
+/// scratch and allocator reentry. Neither the caller's header nor its iovec
+/// array is modified while consuming an accepted stream prefix.
+struct SendMessage {
+    fd: c_int,
+    flags: c_int,
+    header: libc::msghdr,
+    vectors: crate::io_abi::iov_snapshot::PreparedIovecs,
+    count: usize,
+    first: usize,
+    advanced: usize,
+    length: usize,
+}
+
+impl SendMessage {
+    fn import(fd: c_int, message: *const u8, flags: c_int) -> Option<Self> {
+        // SAFETY: all-zero is valid for the scalar and raw-pointer fields of
+        // msghdr. It is initialized before the kernel copies caller bytes.
+        let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+        // SAFETY: the destination is exclusively owned initialized storage.
+        // The caller source is fault-checked, including unaligned headers.
+        unsafe {
+            copy_user_bytes(
+                message,
+                core::ptr::from_mut(&mut header).cast(),
+                core::mem::size_of::<libc::msghdr>(),
+            )
+        }
+        .ok()?;
+        if header.msg_iovlen > crate::io_abi::iov_snapshot::MAX_IOVECS {
+            return None;
+        }
+        // The established importer uses inline or privately mapped storage,
+        // never malloc. Rejecting an unsupported/invalid graph here retains the
+        // original syscall's error ordering; no payload has been transmitted.
+        let vectors = crate::io_abi::iov_snapshot::PreparedIovecs::prepare_unsigned(
+            header.msg_iov,
+            header.msg_iovlen,
+            true,
+        )
+        .ok()?;
+        if vectors.entries().len() != header.msg_iovlen {
+            return None;
+        }
+        let mut operation = Self {
+            fd,
+            flags,
+            header,
+            vectors,
+            count: header.msg_iovlen,
+            first: 0,
+            advanced: 0,
+            length: 0,
+        };
+        for entry in operation.vectors.entries() {
+            operation.length = operation.length.checked_add(entry.iov_len)?;
+        }
+        Some(operation)
+    }
+}
+
+impl SendOperation for SendMessage {
+    fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    fn flags(&self) -> c_int {
+        self.flags
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
+        let mut advance = sent - self.advanced;
+        let vectors = self.vectors.entries_mut();
+        if advance != 0 {
+            // Submit the complete imported graph before the first byte is
+            // accepted, including zero-length entries: their kernel address
+            // validation must not be elided by a premature cursor advance.
+            while self.first < self.count && advance >= vectors[self.first].iov_len {
+                advance -= vectors[self.first].iov_len;
+                self.first += 1;
+            }
+            if advance != 0 {
+                let first = &mut vectors[self.first];
+                first.iov_base = first.iov_base.cast::<u8>().wrapping_add(advance).cast();
+                first.iov_len -= advance;
+            }
+        }
+        self.advanced = sent;
+        self.header.msg_iov = self.vectors.as_ptr().cast_mut().wrapping_add(self.first);
+        self.header.msg_iovlen = self.count - self.first;
+        if sent != 0 {
+            // Ancillary data belongs to the first accepted message fragment.
+            // Replaying SCM_RIGHTS on a stream continuation would install a
+            // second set of descriptors at the receiver, even with exact bytes.
+            self.header.msg_control = core::ptr::null_mut();
+            self.header.msg_controllen = 0;
+        }
+        let flags =
+            self.flags | libc::MSG_DONTWAIT | if sent == 0 { 0 } else { libc::MSG_NOSIGNAL };
+        // SAFETY: this header and imported vector remain stationary across the
+        // syscall. All payload/name/control pointers are still kernel-validated;
+        // only the privately owned iovec geometry is adjusted in Rust.
+        unsafe { syscall::sys_sendmsg(self.fd, core::ptr::from_ref(&self.header).cast(), flags) }
+    }
+}
+
 pub(super) enum SendResult {
     Ready(isize),
     Cancel,
@@ -823,7 +989,38 @@ pub(super) enum SendResult {
 /// The ABI supplies its original send arguments and the enabled descriptor for
 /// this native thread. The signal check inspects actual kernel dispositions.
 pub(super) unsafe fn wait_send(
-    operation: SendTo,
+    operation: Send,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SendResult, c_int> {
+    // SAFETY: both arms retain the original pointers for the complete native
+    // operation. Any owned message mapping is dropped before this returns.
+    match operation {
+        Send::To(operation) => unsafe { wait_send_operation(operation, cancel, supports_handlers) },
+        Send::Message { fd, message, flags } => unsafe {
+            wait_send_message(fd, message, flags, cancel, supports_handlers)
+        },
+    }
+}
+
+#[inline(never)]
+unsafe fn wait_send_message(
+    fd: c_int,
+    message: *const u8,
+    flags: c_int,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SendResult, c_int> {
+    let Some(operation) = SendMessage::import(fd, message, flags) else {
+        return Ok(SendResult::Unsupported);
+    };
+    // SAFETY: the imported descriptor graph remains owned by this native path;
+    // on an unsupported contract no bytes or ancillary data were transmitted.
+    unsafe { wait_send_operation(operation, cancel, supports_handlers) }
+}
+
+unsafe fn wait_send_operation(
+    mut operation: impl SendOperation,
     cancel: CancellationWait,
     supports_handlers: fn(u64) -> bool,
 ) -> Result<SendResult, c_int> {
@@ -835,7 +1032,7 @@ pub(super) unsafe fn wait_send(
     };
     // SAFETY: the original arguments and mask remain live across every probe;
     // cancellation unwinds only after this helper restores the entry mask.
-    let result = unsafe { send_slices(operation, cancel, supports_handlers, &mut mask) };
+    let result = unsafe { send_slices(&mut operation, cancel, supports_handlers, &mut mask) };
     let restored = mask.restore();
     match result {
         // Even an adapter-only restoration error cannot erase a committed
@@ -848,7 +1045,7 @@ pub(super) unsafe fn wait_send(
 
 #[inline(never)]
 unsafe fn send_slices(
-    operation: SendTo,
+    operation: &mut impl SendOperation,
     cancel: CancellationWait,
     supports_handlers: fn(u64) -> bool,
     mask: &mut SignalMaskGuard,
@@ -874,7 +1071,7 @@ unsafe fn send_slices(
         match unsafe { operation.probe(sent) } {
             Ok(written) => {
                 sent += written as usize;
-                if written == 0 || sent == operation.length {
+                if written == 0 || sent == operation.length() {
                     return Ok(SendResult::Ready(sent as isize));
                 }
                 continue;
@@ -884,7 +1081,7 @@ unsafe fn send_slices(
             Err(error) => return Err(error),
         }
         let mut interest = libc::pollfd {
-            fd: operation.fd,
+            fd: operation.fd(),
             events: libc::POLLOUT,
             revents: 0,
         };

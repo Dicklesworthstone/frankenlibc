@@ -2072,25 +2072,32 @@ enum send_kind {
     SEND_BLOCKED, SEND_PENDING, SEND_DISABLED, SEND_READY, SEND_READY_LATE,
     SEND_NONBLOCK, SEND_DONTWAIT, SEND_TIMEOUT, SEND_SIGNAL, SEND_SIGNAL_RESTART,
     SEND_ERRORS, SEND_LENGTH_ZERO, SEND_PEER_CLOSED, SEND_PARTIAL,
-    SEND_PARTIAL_CANCEL, SEND_PARTIAL_ERROR, SEND_ADDRESS, SEND_OVERSIZE, SEND_SEQPACKET
+    SEND_PARTIAL_CANCEL, SEND_PARTIAL_ERROR, SEND_ADDRESS, SEND_OVERSIZE, SEND_SEQPACKET,
+    SEND_RIGHTS, SEND_RIGHTS_PARTIAL, SEND_IOV_MAX, SEND_DESCRIPTOR_ERRORS, SEND_MAPPED_PARTIAL
 };
 struct send_probe {
     struct state observed;
     enum send_kind kind;
-    int fd, to, flags;
+    int fd, to, message_api, flags;
     size_t length;
     unsigned char data[65536];
     struct sockaddr_in address;
     socklen_t address_length;
+    struct msghdr message;
+    struct iovec vectors[1024];
+    union { struct cmsghdr alignment; unsigned char bytes[CMSG_SPACE(sizeof(int))]; } control;
+    int rights_fd, rights_received;
 };
 static ssize_t (*selected_send)(int, const void *, size_t, int);
 static ssize_t (*selected_sendto)(int, const void *, size_t, int,
                                  const struct sockaddr *, socklen_t);
+static ssize_t (*selected_sendmsg)(int, const struct msghdr *, int);
 
-static int pin_send_provider(const char *expected, int to, int alias) {
+static int pin_send_provider(const char *expected, int entry, int alias) {
     int base = pin_providers(expected, 0, EVENT_NONE);
     if (base != 0) return base;
-    const char *name = to ? (alias ? "__sendto" : "sendto") : alias ? "__send" : "send";
+    const char *name = entry == 2 ? (alias ? "__sendmsg" : "sendmsg") :
+                       entry == 1 ? (alias ? "__sendto" : "sendto") : alias ? "__send" : "send";
     Dl_info info = {0};
     struct stat actual, wanted;
     void *symbol = dlsym(RTLD_DEFAULT, name);
@@ -2100,12 +2107,25 @@ static int pin_send_provider(const char *expected, int to, int alias) {
         fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
         return 86;
     }
-    if (to) selected_sendto = (__typeof__(selected_sendto))symbol;
+    if (entry == 2) selected_sendmsg = (__typeof__(selected_sendmsg))symbol;
+    else if (entry == 1) selected_sendto = (__typeof__(selected_sendto))symbol;
     else selected_send = (__typeof__(selected_send))symbol;
     return 0;
 }
 
 static ssize_t send_call(struct send_probe *probe) {
+    if (probe->message_api) {
+        struct msghdr original = probe->message;
+        struct iovec vectors[1024];
+        REQUIRE(probe->message.msg_iovlen <= 1024, "bounded fixture vector snapshot");
+        memcpy(vectors, probe->vectors, probe->message.msg_iovlen * sizeof(*vectors));
+        ssize_t result = selected_sendmsg(probe->fd, &probe->message, probe->flags);
+        REQUIRE(memcmp(&original, &probe->message, sizeof(original)) == 0 &&
+                    memcmp(vectors, probe->vectors,
+                           probe->message.msg_iovlen * sizeof(*vectors)) == 0,
+                "sendmsg never modifies the caller header or vector geometry");
+        return result;
+    }
     if (probe->to)
         return selected_sendto(probe->fd, probe->data, probe->length, probe->flags,
                                probe->address_length ? (struct sockaddr *)&probe->address : NULL,
@@ -2154,6 +2174,28 @@ static void *send_worker(void *argument) {
         REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close send error pipe");
         probe->fd = original;
         state->result = 0;
+    } else if (probe->kind == SEND_DESCRIPTOR_ERRORS) {
+        struct msghdr header = probe->message;
+        size_t page = (size_t)sysconf(_SC_PAGESIZE);
+        void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        REQUIRE(guard != MAP_FAILED, "guarded sendmsg descriptor source");
+        REQUIRE(selected_sendmsg(probe->fd, guard, probe->flags) == -1 && errno == EFAULT,
+                "sendmsg inaccessible header remains a kernel EFAULT");
+        header.msg_iov = guard;
+        REQUIRE(selected_sendmsg(probe->fd, &header, probe->flags) == -1 && errno == EFAULT,
+                "sendmsg inaccessible vectors remain a kernel EFAULT");
+        header.msg_iovlen = 1025;
+        REQUIRE(selected_sendmsg(probe->fd, &header, probe->flags) == -1 && errno == EMSGSIZE,
+                "sendmsg validates vector count before copying an inaccessible vector");
+        REQUIRE(selected_sendmsg(-1, guard, probe->flags) == -1 && errno == EBADF,
+                "sendmsg snapshot fallback preserves invalid-fd error precedence");
+        int pipefd[2];
+        REQUIRE(pipe2(pipefd, O_CLOEXEC) == 0, "sendmsg nonsocket error pipe");
+        REQUIRE(selected_sendmsg(pipefd[1], guard, probe->flags) == -1 && errno == ENOTSOCK,
+                "sendmsg snapshot rejection preserves nonsocket error precedence");
+        REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close descriptor error pipe");
+        REQUIRE(munmap(guard, page) == 0, "release descriptor guard");
+        state->result = 0;
     } else {
         state->result = (int)send_call(probe);
     }
@@ -2170,17 +2212,39 @@ static void *send_worker(void *argument) {
     return state;
 }
 
-static void send_initialize(struct send_probe *probe, enum send_kind kind, int fd, int to) {
+static void send_initialize(struct send_probe *probe, enum send_kind kind, int fd, int entry) {
     memset(probe, 0, sizeof(*probe));
     probe->kind = kind;
     probe->fd = fd;
-    probe->to = to;
+    probe->to = entry == 1;
+    probe->message_api = entry == 2;
+    probe->rights_fd = -1;
     probe->flags = kind == SEND_DONTWAIT ? MSG_DONTWAIT | MSG_NOSIGNAL :
                    kind == SEND_PARTIAL_ERROR ? 0 : MSG_NOSIGNAL;
     probe->length = kind == SEND_LENGTH_ZERO ? 0 :
                     kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL ||
-                    kind == SEND_PARTIAL_ERROR || kind == SEND_OVERSIZE ? sizeof(probe->data) : 1;
-    memset(probe->data, 'D', sizeof(probe->data));
+                    kind == SEND_PARTIAL_ERROR || kind == SEND_RIGHTS_PARTIAL ||
+                    kind == SEND_OVERSIZE || kind == SEND_MAPPED_PARTIAL ? sizeof(probe->data) :
+                    kind == SEND_IOV_MAX ? 1024 : 1;
+    for (size_t i = 0; i < sizeof(probe->data); ++i)
+        probe->data[i] = (unsigned char)(i % 251);
+    if (probe->message_api) {
+        probe->message.msg_iov = probe->vectors;
+        probe->message.msg_iovlen = kind == SEND_IOV_MAX || kind == SEND_MAPPED_PARTIAL ? 1024 : 4;
+        if (probe->message.msg_iovlen == 1024) {
+            size_t piece = probe->length / 1024;
+            for (size_t i = 0; i < 1024; ++i)
+                probe->vectors[i] = (struct iovec){probe->data + i * piece, piece};
+        } else {
+            // Empty entries and a non-page boundary expose incorrect prefix
+            // accounting even when a short kernel send ends inside an iovec.
+            size_t first = probe->length / 3;
+            probe->vectors[0] = (struct iovec){probe->data, 0};
+            probe->vectors[1] = (struct iovec){probe->data, first};
+            probe->vectors[2] = (struct iovec){probe->data + first, 0};
+            probe->vectors[3] = (struct iovec){probe->data + first, probe->length - first};
+        }
+    }
     probe->observed.result = -222;
     atomic_init(&probe->observed.ready, 0);
     atomic_init(&probe->observed.release, 0);
@@ -2208,22 +2272,50 @@ static size_t fill_send_socket(int fd) {
     return total;
 }
 
-static void drain_send_socket(int fd, size_t *filler, size_t *payload, int *empty_records) {
+static void drain_send_socket(int fd, size_t initial, size_t *filler, size_t *payload,
+                              int *empty_records, struct send_probe *probe) {
     unsigned char bytes[8192];
     for (;;) {
-        ssize_t received = syscall(SYS_recvfrom, fd, bytes, sizeof(bytes), MSG_DONTWAIT, NULL, NULL);
+        union { struct cmsghdr alignment; unsigned char bytes[CMSG_SPACE(8 * sizeof(int))]; } control;
+        struct iovec vector = {bytes, sizeof(bytes)};
+        struct msghdr message = {0};
+        message.msg_iov = &vector;
+        message.msg_iovlen = 1;
+        message.msg_control = control.bytes;
+        message.msg_controllen = sizeof(control.bytes);
+        ssize_t received = syscall(SYS_recvmsg, fd, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
         if (received < 0) {
             REQUIRE(errno == EAGAIN, "drain only available send payload");
             return;
+        }
+        REQUIRE(!(message.msg_flags & MSG_CTRUNC), "sender ancillary data is not truncated");
+        for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&message); cmsg;
+             cmsg = CMSG_NXTHDR(&message, cmsg)) {
+            REQUIRE(probe->rights_fd >= 0 && cmsg->cmsg_level == SOL_SOCKET &&
+                        cmsg->cmsg_type == SCM_RIGHTS && cmsg->cmsg_len == CMSG_LEN(sizeof(int)),
+                    "sendmsg carries exactly the expected descriptor control message");
+            int transferred;
+            memcpy(&transferred, CMSG_DATA(cmsg), sizeof(transferred));
+            struct stat original, acquired;
+            REQUIRE(fstat(probe->rights_fd, &original) == 0 && fstat(transferred, &acquired) == 0 &&
+                        original.st_dev == acquired.st_dev && original.st_ino == acquired.st_ino,
+                    "sendmsg transfers the intended open file description");
+            REQUIRE(close(transferred) == 0, "close received sendmsg descriptor");
+            ++probe->rights_received;
         }
         if (received == 0) {
             ++*empty_records;
             return;
         }
         for (ssize_t i = 0; i < received; ++i) {
-            REQUIRE(bytes[i] == 'F' || bytes[i] == 'D', "send preserves payload bytes");
-            if (bytes[i] == 'F') ++*filler;
-            else ++*payload;
+            if (*filler < initial) {
+                REQUIRE(bytes[i] == 'F', "queued filler precedes the new send payload");
+                ++*filler;
+            } else {
+                REQUIRE(*payload < probe->length && bytes[i] == probe->data[*payload],
+                        "send preserves byte order across vector and partial-write boundaries");
+                ++*payload;
+            }
         }
     }
 }
@@ -2258,9 +2350,16 @@ static void observe_send_parked(struct send_probe *probe, int memory) {
             REQUIRE(args[4] == sizeof(mask) && ((mask >> (SIGUSR2 - 1)) & 1) == 1 &&
                         ((mask >> (SIGUSR1 - 1)) & 1) == 0,
                     "native send atomically reinstates the complete original mask");
-        } else if (number != SYS_sendto || args[0] != (unsigned)probe->fd ||
-                   args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
-            goto retry_send;
+        } else {
+            if (probe->message_api) {
+                struct msghdr message;
+                if (number != SYS_sendmsg || args[0] != (unsigned)probe->fd ||
+                    !snapshot(memory, args[1], &message, sizeof(message)) ||
+                    message.msg_iovlen != probe->message.msg_iovlen) goto retry_send;
+            } else if (number != SYS_sendto || args[0] != (unsigned)probe->fd ||
+                       args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
+                goto retry_send;
+            }
         }
         if (!read_proc(state, "stat", status, sizeof(status))) goto retry_send;
         char *end = strrchr(status, ')');
@@ -2273,21 +2372,26 @@ retry_send:
 
 static int send_contract_main(char **argv) {
     int to = strncmp(case_name, "sendto-", 7) == 0;
-    const char *suffix = case_name + (to ? 7 : 5);
+    int message_api = strncmp(case_name, "sendmsg-", 8) == 0;
+    const char *suffix = case_name + (message_api ? 8 : to ? 7 : 5);
     int alias = strncmp(suffix, "alias-", 6) == 0;
     if (alias) suffix += 6;
+    int datagram = message_api && strncmp(suffix, "datagram-", 9) == 0;
+    if (datagram) suffix += 9;
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late",
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "errors", "length-zero", "peer-closed", "partial",
-                          "partial-cancel", "partial-error", "address", "oversize", "seqpacket"};
+                          "partial-cancel", "partial-error", "address", "oversize", "seqpacket",
+                          "rights", "rights-partial", "iov-max", "descriptor-errors", "mapped-partial"};
     int value = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) value = (int)i;
     if (value < 0 ||
         (to && (value == SEND_PARTIAL || value == SEND_PARTIAL_CANCEL || value == SEND_PARTIAL_ERROR)) ||
-        (!to && (value == SEND_ADDRESS || value == SEND_OVERSIZE))) return 2;
+        (!to && !message_api && (value == SEND_ADDRESS || value == SEND_OVERSIZE)) ||
+        (!message_api && value >= SEND_RIGHTS)) return 2;
     enum send_kind kind = (enum send_kind)value;
-    int pin = pin_send_provider(argv[2], to, alias);
+    int pin = pin_send_provider(argv[2], message_api ? 2 : to, alias);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
                     strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
@@ -2305,7 +2409,8 @@ static int send_contract_main(char **argv) {
     REQUIRE(sigaction(SIGPIPE, &action, NULL) == 0, "default SIGPIPE catches duplicated send errors");
     alarm(15);
     int pair[2];
-    int type = kind == SEND_SEQPACKET ? SOCK_SEQPACKET : to ? SOCK_DGRAM : SOCK_STREAM;
+    int type = kind == SEND_SEQPACKET ? SOCK_SEQPACKET :
+               to || datagram || kind == SEND_ADDRESS ? SOCK_DGRAM : SOCK_STREAM;
     struct sockaddr_in address = {0};
     if (kind == SEND_ADDRESS) {
         address.sin_family = AF_INET;
@@ -2346,10 +2451,24 @@ static int send_contract_main(char **argv) {
     if (kind == SEND_PEER_CLOSED)
         REQUIRE(close(pair[1]) == 0, "close send peer");
     struct send_probe probe;
-    send_initialize(&probe, kind, pair[0], to);
+    send_initialize(&probe, kind, pair[0], message_api ? 2 : to);
     if (kind == SEND_ADDRESS) {
         probe.address = address;
         probe.address_length = sizeof(address);
+        probe.message.msg_name = &probe.address;
+        probe.message.msg_namelen = probe.address_length;
+    }
+    int rights[2] = {-1, -1};
+    if (kind == SEND_RIGHTS || kind == SEND_RIGHTS_PARTIAL) {
+        REQUIRE(pipe2(rights, O_CLOEXEC) == 0, "prepare sendmsg descriptor transfer");
+        probe.rights_fd = rights[0];
+        probe.message.msg_control = probe.control.bytes;
+        probe.message.msg_controllen = sizeof(probe.control.bytes);
+        struct cmsghdr *control = CMSG_FIRSTHDR(&probe.message);
+        control->cmsg_level = SOL_SOCKET;
+        control->cmsg_type = SCM_RIGHTS;
+        control->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(control), &rights[0], sizeof(rights[0]));
     }
     REQUIRE(pthread_create(&probe.observed.thread, NULL, send_worker, &probe) == 0,
             "create send worker");
@@ -2357,7 +2476,8 @@ static int send_contract_main(char **argv) {
     if (kind == SEND_PENDING)
         REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request pending send cancellation");
     atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
-    int partial = kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL || kind == SEND_PARTIAL_ERROR;
+    int partial = kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL ||
+                  kind == SEND_PARTIAL_ERROR || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL;
     if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
         kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET || partial) {
         observe_send_parked(&probe, memory);
@@ -2375,11 +2495,12 @@ static int send_contract_main(char **argv) {
         if (kind == SEND_PARTIAL_ERROR)
             REQUIRE(shutdown(pair[1], SHUT_RD) == 0, "fail send after its accepted prefix");
         if (kind == SEND_DISABLED || kind == SEND_READY_LATE || kind == SEND_SIGNAL_RESTART ||
-            kind == SEND_PARTIAL || kind == SEND_SEQPACKET) {
+            kind == SEND_PARTIAL || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL ||
+            kind == SEND_SEQPACKET) {
             int64_t deadline = monotonic_ns() + 2000000000;
             while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire)) {
                 REQUIRE(monotonic_ns() < deadline, "send completion after draining backpressure");
-                drain_send_socket(pair[1], &filler, &payload, &empty_records);
+                drain_send_socket(pair[1], initial, &filler, &payload, &empty_records, &probe);
                 pause_briefly();
             }
         }
@@ -2402,7 +2523,7 @@ static int send_contract_main(char **argv) {
                 "non-restarting send preserves EINTR");
     } else if (kind == SEND_PEER_CLOSED) {
         REQUIRE(probe.observed.result == -1 &&
-                    probe.observed.error == (to ? ECONNREFUSED : EPIPE),
+                    probe.observed.error == (type == SOCK_DGRAM ? ECONNREFUSED : EPIPE),
                 "closed peer preserves its socket error without SIGPIPE");
     } else if (kind == SEND_PARTIAL_CANCEL || kind == SEND_PARTIAL_ERROR) {
         REQUIRE(probe.observed.returned && probe.observed.result > 0 &&
@@ -2411,18 +2532,22 @@ static int send_contract_main(char **argv) {
     } else if (kind == SEND_OVERSIZE) {
         REQUIRE(probe.observed.result == -1 && probe.observed.error == EMSGSIZE,
                 "oversized atomic datagram preserves EMSGSIZE");
-    } else if (kind != SEND_ERRORS) {
+    } else if (kind != SEND_ERRORS && kind != SEND_DESCRIPTOR_ERRORS) {
         REQUIRE(probe.observed.result == (int)probe.length && probe.observed.error == EDOM,
                 "send completes the entire payload without changing errno");
     }
     if (kind != SEND_PEER_CLOSED && kind != SEND_PARTIAL_ERROR) {
-        drain_send_socket(pair[1], &filler, &payload, &empty_records);
+        drain_send_socket(pair[1], initial, &filler, &payload, &empty_records, &probe);
         size_t accepted = probe.observed.result > 0 ? (size_t)probe.observed.result : 0;
         REQUIRE(payload == accepted, "each accepted send byte is delivered exactly once");
         REQUIRE(empty_records == (kind == SEND_LENGTH_ZERO && type != SOCK_STREAM),
                 "zero-byte sends preserve datagram records and stream behavior");
     }
     REQUIRE(filler == initial, "send cancellation does not consume queued peer data");
+    REQUIRE(probe.rights_received == (kind == SEND_RIGHTS || kind == SEND_RIGHTS_PARTIAL),
+            "sendmsg delivers ancillary rights exactly once across all stream fragments");
+    if (rights[0] >= 0)
+        REQUIRE(close(rights[0]) == 0 && close(rights[1]) == 0, "release sender rights sources");
     REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "send never changes shared O_NONBLOCK flags");
     REQUIRE(close(memory) == 0 && close(pair[0]) == 0, "release sender fixture descriptors");
     if (kind != SEND_PEER_CLOSED) REQUIRE(close(pair[1]) == 0, "release sender peer");
@@ -2433,7 +2558,8 @@ static int send_contract_main(char **argv) {
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
-    if (strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0)
+    if (strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0 ||
+        strncmp(case_name, "sendmsg-", 8) == 0)
         return send_contract_main(argv);
     if (strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0 ||
         strncmp(case_name, "recvmsg-", 8) == 0)

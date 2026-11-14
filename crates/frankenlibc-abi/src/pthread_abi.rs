@@ -7892,16 +7892,28 @@ pub(crate) unsafe fn cancellation_point_sendto(
     unsafe {
         cancellation_send_window(
             caller,
-            cancel_poll::SendTo {
+            cancel_poll::Send::To(cancel_poll::SendTo {
                 fd,
                 buffer,
                 length,
                 flags,
                 address,
                 address_length,
-            },
+            }),
         )
     }
+}
+
+/// Vectored sends preserve their imported descriptor graph and transmit
+/// ancillary data only once, even when a stream needs several native slices.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sendmsg(
+    fd: c_int,
+    message: *const u8,
+    flags: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_send_window(caller, cancel_poll::Send::Message { fd, message, flags }) }
 }
 
 /// This frame owns no drop state across hosted asynchronous cancellation.
@@ -7910,7 +7922,7 @@ pub(crate) unsafe fn cancellation_point_sendto(
 #[inline(never)]
 unsafe fn cancellation_send_window(
     caller: usize,
-    operation: cancel_poll::SendTo,
+    operation: cancel_poll::Send,
 ) -> Result<isize, c_int> {
     if caller != 0
         && let Some(cancel) = core_current_cancellation_wait()
@@ -7935,18 +7947,7 @@ unsafe fn cancellation_send_window(
     // No bytes were accepted by an unsupported adapter, so the unchanged raw
     // operation cannot replay a prefix. Disabled/internal/hosted calls also use
     // this path without changing socket flags or timeout/handler semantics.
-    unsafe {
-        cancellation_window(caller, || {
-            raw_syscall::sys_sendto(
-                operation.fd,
-                operation.buffer,
-                operation.length,
-                operation.flags,
-                operation.address,
-                operation.address_length,
-            )
-        })
-    }
+    unsafe { cancellation_window(caller, || operation.blocking()) }
 }
 
 /// A cancellation point that can wake an already-parked native thread. Keep

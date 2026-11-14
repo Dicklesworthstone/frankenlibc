@@ -121,14 +121,26 @@ SEND_CASES = tuple(
     "send-alias-blocked", "send-alias-pending",
     "sendto-alias-blocked", "sendto-alias-pending",
 )
+SENDMSG_CASES = tuple(
+    f"sendmsg-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
+        "timeout", "signal", "signal-restart", "errors", "length-zero", "peer-closed",
+        "seqpacket", "partial", "partial-error", "address", "rights", "rights-partial",
+        "iov-max", "descriptor-errors", "mapped-partial", "alias-blocked", "alias-pending",
+        "datagram-blocked", "datagram-pending", "datagram-ready-late", "datagram-length-zero",
+        "datagram-oversize", "datagram-rights",
+    )
+)
 # GNU 2.41 preserves a send prefix when cancellation arrives after progress.
 # The hosted bridge still uses its documented asynchronous window; validate
 # this stronger contract for the native adapter in the GNU 2.41 socket job.
-SEND_NATIVE_CASES = ("send-partial-cancel",)
+SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
 
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
-CASES = POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + RECEIVE_CASES + SEND_CASES
+CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + RECEIVE_CASES +
+         SEND_CASES + SENDMSG_CASES)
 
 
 def digest(path: Path) -> str:
@@ -157,15 +169,21 @@ def main() -> int:
         "--send-only", action="store_true",
         help="Run socket send cases against GNU 2.41, including native partial cancellation.",
     )
+    parser.add_argument(
+        "--sendmsg-only", action="store_true",
+        help="Run vectored and ancillary sendmsg cases, including native partial cancellation.",
+    )
     args = parser.parse_args()
-    if sum((args.suspend_only, args.receive_only, args.send_only)) > 1:
-        parser.error("--suspend-only, --receive-only and --send-only are mutually exclusive")
+    if sum((args.suspend_only, args.receive_only, args.send_only, args.sendmsg_only)) > 1:
+        parser.error("--suspend-only, --receive-only, --send-only and --sendmsg-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
     cases = (SUSPEND_CASES if args.suspend_only else RECEIVE_CASES if args.receive_only else
-             SEND_CASES + SEND_NATIVE_CASES if args.send_only else CASES)
-    native_only_cases = SEND_NATIVE_CASES if args.send_only else ()
+             SEND_CASES + SENDMSG_CASES + SEND_NATIVE_CASES if args.send_only else
+             SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else CASES)
+    native_only_cases = SEND_NATIVE_CASES if args.send_only or args.sendmsg_only else ()
+    native_only_cases = tuple(case for case in native_only_cases if case in cases)
     candidate_cases = 0 if args.host_only else 4 * len(cases) - 2 * len(native_only_cases)
     source = root / "tests/integration/fixture_pthread_native_poll.c"
     library = args.library.resolve(strict=True) if args.library is not None else None
@@ -244,7 +262,7 @@ def main() -> int:
             "recv-alias-", "recv-"
         ).replace("recvmsg-alias-", "recvmsg-").replace(
             "send-alias-", "send-"
-        ).replace("sendto-alias-", "sendto-").replace(
+        ).replace("sendto-alias-", "sendto-").replace("sendmsg-alias-", "sendmsg-").replace(
             "pause-alias-", "pause-"
         ).replace("sigsuspend-alias-", "sigsuspend-")
         if "-alias-" in case and not case.endswith("-alias-remainder"):
@@ -285,20 +303,20 @@ def main() -> int:
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
         "case_scope": "pause/sigsuspend only" if args.suspend_only else
                       "socket receives only" if args.receive_only else
-                      "socket sends only" if args.send_only else "poll/epoll/sleep/select/socket",
+                      "socket sends only" if args.send_only else
+                      "vectored socket sends only" if args.sendmsg_only else "poll/epoll/sleep/select/socket",
         "revision": revision.stdout.strip() if revision.returncode == 0 else None,
         "fixture_sha256": digest(source), "runner_sha256": digest(Path(__file__)),
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
         "gnu_provider": str(host), "gnu_provider_sha256": digest(host),
         "compiler_command": command, "case_count": len(cases),
-        "poll_cases": 0 if args.suspend_only or args.receive_only or args.send_only else len(POLL_CASES),
-        "epoll_cases": 0 if args.suspend_only or args.receive_only or args.send_only else len(EPOLL_CASES),
-        "sleep_cases": 0 if args.suspend_only or args.receive_only or args.send_only else len(SLEEP_CASES),
-        "select_cases": 0 if args.suspend_only or args.receive_only or args.send_only else len(SELECT_CASES),
-        "suspend_cases": len(SUSPEND_CASES) if args.suspend_only else 0,
-        "receive_cases": 0 if args.suspend_only or args.send_only else len(RECEIVE_CASES),
-        "send_cases": 0 if args.suspend_only or args.receive_only else
-                      len(SEND_CASES) + len(native_only_cases),
+        "poll_cases": sum(case in POLL_CASES for case in cases),
+        "epoll_cases": sum(case in EPOLL_CASES for case in cases),
+        "sleep_cases": sum(case in SLEEP_CASES for case in cases),
+        "select_cases": sum(case in SELECT_CASES for case in cases),
+        "suspend_cases": sum(case in SUSPEND_CASES for case in cases),
+        "receive_cases": sum(case in RECEIVE_CASES for case in cases),
+        "send_cases": sum(case.startswith(("send-", "sendto-", "sendmsg-")) for case in cases),
         "native_only_cases": list(native_only_cases),
         "oracle_cases": len(cases), "candidate_cases": candidate_cases,
         "provider_negatives": 1, "backend_negatives": 1,
