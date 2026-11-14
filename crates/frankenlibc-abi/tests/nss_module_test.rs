@@ -1705,7 +1705,6 @@ fn hosts_modules_tuple_defensive_results() {
     }
 }
 
-
 // Netgroup modules have a stateful GNU cursor ABI, including nested group
 // records. Compare the public APIs with a separately configured host process;
 // no mount namespace, privileges or changes to /etc are required.
@@ -1722,12 +1721,8 @@ struct NetgroupApi {
         usize,
     ) -> c_int,
     end: unsafe extern "C" fn(),
-    member: unsafe extern "C" fn(
-        *const c_char,
-        *const c_char,
-        *const c_char,
-        *const c_char,
-    ) -> c_int,
+    member:
+        unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char) -> c_int,
 }
 
 fn netgroup_api(host: bool) -> NetgroupApi {
@@ -1903,8 +1898,17 @@ fn netgroup_membership(api: &NetgroupApi, out: &mut String, name: &CStr) {
         let pointers = values
             .each_ref()
             .map(|s| s.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()));
-        let rc = unsafe { (api.member)(name.as_ptr(), pointers[0], pointers[1], pointers[2]) };
-        writeln!(out, "member {host:?} {user:?} {domain:?}: {rc}").unwrap();
+        let (rc, error) = unsafe {
+            *netgroup_errno(api) = 0;
+            let rc = (api.member)(name.as_ptr(), pointers[0], pointers[1], pointers[2]);
+            (rc, *netgroup_errno(api))
+        };
+        writeln!(
+            out,
+            "member {host:?} {user:?} {domain:?}: {rc} errno={}",
+            if rc == 0 { error } else { 0 }
+        )
+        .unwrap();
     }
 }
 
@@ -1914,6 +1918,18 @@ fn netgroup_transcript(api: &NetgroupApi, scenario: &str) -> String {
     unsafe { (api.end)() };
     let selected = unsafe { (api.set)(name.as_ptr()) };
     writeln!(out, "set {scenario}: {selected}").unwrap();
+    if !scenario.starts_with("set-") {
+        assert_eq!(selected, 1);
+    }
+    if selected != 1 {
+        // Only enumerate a successfully selected group. A failed SET leaves
+        // no valid enumeration contract; still compare its selection outcome,
+        // independent membership lookup and explicit END reset.
+        netgroup_membership(api, &mut out, &name);
+        unsafe { (api.end)() };
+        netgroup_print_read(&mut out, "after end", &netgroup_read(api, Some(8192)));
+        return out;
+    }
     if scenario == "large" {
         assert_eq!(selected, 1);
         for capacity in [None, Some(1), Some(8192), Some(8192)] {
@@ -1927,6 +1943,7 @@ fn netgroup_transcript(api: &NetgroupApi, scenario: &str) -> String {
                 assert_eq!(fields[1].as_deref(), Some(b"large-user".as_slice()));
             }
         }
+        netgroup_membership(api, &mut out, &name);
     } else if scenario == "scratch" {
         assert_eq!(selected, 1);
         for capacity in [None, Some(2048), Some(4096), Some(8192)] {
@@ -1944,8 +1961,8 @@ fn netgroup_transcript(api: &NetgroupApi, scenario: &str) -> String {
                 assert_eq!(answer.0, 0);
             }
         }
-        // Membership owns its scratch budget and must grow past the same
-        // provider requirement, independently of public enumeration.
+        // GNU membership has its own fixed 1024-byte module buffer, so the
+        // provider's scratch requirement must also deny an all-NULL query.
         netgroup_membership(api, &mut out, &name);
     } else if scenario == "null" {
         assert_eq!(selected, 1);
@@ -1962,6 +1979,7 @@ fn netgroup_transcript(api: &NetgroupApi, scenario: &str) -> String {
             let answer = netgroup_read(api, Some(8192));
             netgroup_print_read(&mut out, &format!("attempt {index}"), &answer);
         }
+        netgroup_membership(api, &mut out, &name);
     } else {
         if matches!(scenario, "basic" | "nested" | "empty" | "cross")
             || scenario.starts_with("get-")
@@ -1980,7 +1998,10 @@ fn netgroup_transcript(api: &NetgroupApi, scenario: &str) -> String {
         }
         let count = netgroup_enumerate(api, &mut out);
         if scenario == "basic" {
-            assert_eq!(count, 0, "the two non-reentrant reads consumed both records");
+            assert_eq!(
+                count, 0,
+                "the two non-reentrant reads consumed both records"
+            );
         } else if scenario == "empty" {
             assert_eq!(count, 0);
         }
@@ -2039,15 +2060,33 @@ fn netgroup_modules_match_glibc() {
         ("get-return", "fltest fltestnoig", "get-return"),
         ("get-notfound", "fltest fltestnoig", "get-notfound"),
         ("get-unavail", "fltest fltestnoig", "get-unavail"),
+        ("get-quiet", "fltest fltestnoig", "get-quiet"),
+        ("get-again-quiet", "fltest fltestnoig", "get-again-quiet"),
         ("cross", "fltest fltestnoig", "cross"),
         ("cross-stop", "fltest [NOTFOUND=return] fltestnoig", "cross"),
-        ("success-continue", "fltest [SUCCESS=continue] fltestnoig", "basic"),
+        (
+            "success-continue",
+            "fltest [SUCCESS=continue] fltestnoig",
+            "basic",
+        ),
         ("missing-continue", "fltest fltestnoig", "set-notfound"),
-        ("missing-stop", "fltest [NOTFOUND=return] fltestnoig", "set-notfound"),
+        (
+            "missing-stop",
+            "fltest [NOTFOUND=return] fltestnoig",
+            "set-notfound",
+        ),
         ("unavail-continue", "fltest fltestnoig", "set-unavail"),
-        ("unavail-stop", "fltest [UNAVAIL=return] fltestnoig", "set-unavail"),
+        (
+            "unavail-stop",
+            "fltest [UNAVAIL=return] fltestnoig",
+            "set-unavail",
+        ),
         ("again-continue", "fltest fltestnoig", "set-again"),
-        ("again-stop", "fltest [TRYAGAIN=return] fltestnoig", "set-again"),
+        (
+            "again-stop",
+            "fltest [TRYAGAIN=return] fltestnoig",
+            "set-again",
+        ),
         ("forced-return", "fltest fltestnoig", "set-return"),
         (
             "forced-return-continue",
@@ -2095,28 +2134,19 @@ unsafe extern "C" fn netgroup_reentry_callback() -> c_int {
     let mut h = std::ptr::null_mut();
     let mut user = std::ptr::null_mut();
     let mut d = std::ptr::null_mut();
-    let mut buffer = [0i8; 128];
+    let mut buffer = [0 as c_char; 128];
     unsafe {
         *e::__errno_location() = 0;
-        if u::setnetgrent(c"flnet-basic".as_ptr()) != 0
-            || *e::__errno_location() != libc::EDEADLK
-        {
+        if u::setnetgrent(c"flnet-basic".as_ptr()) != 0 || *e::__errno_location() != libc::EDEADLK {
             return 1;
         }
         *e::__errno_location() = 0;
-        if u::getnetgrent(&mut h, &mut user, &mut d) != 0
-            || *e::__errno_location() != libc::EDEADLK
+        if u::getnetgrent(&mut h, &mut user, &mut d) != 0 || *e::__errno_location() != libc::EDEADLK
         {
             return 2;
         }
         *e::__errno_location() = 0;
-        if u::getnetgrent_r(
-            &mut h,
-            &mut user,
-            &mut d,
-            buffer.as_mut_ptr(),
-            buffer.len(),
-        ) != 0
+        if u::getnetgrent_r(&mut h, &mut user, &mut d, buffer.as_mut_ptr(), buffer.len()) != 0
             || *e::__errno_location() != libc::EDEADLK
         {
             return 3;

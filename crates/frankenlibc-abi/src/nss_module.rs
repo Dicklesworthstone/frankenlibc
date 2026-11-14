@@ -21,7 +21,7 @@
 //! Netgroups retain each selected module's set/get/end cursor, resolve nested
 //! names through the captured source policy, and preserve NULL wildcards.
 //! Public enumeration uses the caller's exact buffer budget; independent
-//! membership queries may grow their own scratch storage.
+//! membership queries use GNU's fixed 1024-byte module buffer.
 //!
 //! Interpose builds retain the host loader's module and allocator namespace.
 //! Standalone builds use the owned loader and its matching allocation exports;
@@ -542,14 +542,9 @@ const _: () = {
     assert!(std::mem::offset_of!(NetgroupModuleState, service) == 80);
 };
 
-type SetNetgroupFn =
-    unsafe extern "C" fn(*const c_char, *mut NetgroupModuleState) -> c_int;
-type GetNetgroupFn = unsafe extern "C" fn(
-    *mut NetgroupModuleState,
-    *mut c_char,
-    usize,
-    *mut c_int,
-) -> c_int;
+type SetNetgroupFn = unsafe extern "C" fn(*const c_char, *mut NetgroupModuleState) -> c_int;
+type GetNetgroupFn =
+    unsafe extern "C" fn(*mut NetgroupModuleState, *mut c_char, usize, *mut c_int) -> c_int;
 type EndNetgroupFn = unsafe extern "C" fn(*mut NetgroupModuleState) -> c_int;
 
 struct NetgroupModuleCursor {
@@ -639,71 +634,58 @@ impl NetgroupModuleCursor {
         Ok(())
     }
 
-    fn next(&mut self, capacity: Option<usize>) -> Result<Option<NetgroupMember>, c_int> {
-        if let Some(capacity) = capacity {
-            // Public enumeration passes the caller's exact budget to the
-            // module, including for group references and private scratch.
-            // Growing here would hide a provider's observable ERANGE.
-            self.resize_scratch(capacity)?;
-        }
-        loop {
-            let mut error = 0;
-            // SAFETY: state and scratch are unique writable module storage.
-            let status = unsafe {
-                (self.get)(
-                    &mut *self.state,
-                    self.scratch.as_mut_ptr().cast(),
-                    self.scratch.len(),
-                    &mut error,
-                )
-            };
-            match status {
-                1 => {
-                    return match self.state.kind {
-                        0 => {
-                            // SAFETY: a successful NSS result supplies live
-                            // NUL-terminated strings or NULL wildcards. Copy
-                            // before another callback can invalidate them.
-                            let field = |pointer: *const c_char| {
-                                (!pointer.is_null()).then(|| unsafe { owned(pointer) })
-                            };
-                            Ok(Some(NetgroupMember::Triple(NetgroupTriple {
-                                host: field(self.state.value[0]),
-                                user: field(self.state.value[1]),
-                                domain: field(self.state.value[2]),
-                                buffer_nuls: self
-                                    .state
-                                    .value
-                                    .iter()
-                                    .filter(|pointer| !pointer.is_null())
-                                    .count(),
-                            })))
-                        }
-                        1 if !self.state.value[0].is_null() => {
-                            // SAFETY: kind=group supplies a live group name.
-                            Ok(Some(NetgroupMember::Group(unsafe {
-                                owned(self.state.value[0])
-                            })))
-                        }
-                        _ => Err(libc::EINVAL),
+    fn next(&mut self, capacity: usize) -> Result<Option<NetgroupMember>, c_int> {
+        // Both enumeration and membership expose this budget to the module,
+        // including for group references and private scratch. Growing here
+        // would hide an observable ERANGE or incorrectly grant membership.
+        self.resize_scratch(capacity)?;
+        // GNU passes its errno slot directly. Preserve untouched errnop and
+        // errors from NOTFOUND even when a pending child later yields a tuple.
+        let error = unsafe { crate::errno_abi::__errno_location() };
+        // SAFETY: state and scratch are unique writable module storage; error
+        // names this thread's canonical errno cell. No Rust reference spans
+        // the callback, which may itself call other libc functions.
+        let status = unsafe {
+            (self.get)(
+                &mut *self.state,
+                self.scratch.as_mut_ptr().cast(),
+                self.scratch.len(),
+                error,
+            )
+        };
+        match status {
+            1 => match self.state.kind {
+                0 => {
+                    // SAFETY: a successful NSS result supplies live
+                    // NUL-terminated strings or NULL wildcards. Copy
+                    // before another callback can invalidate them.
+                    let field = |pointer: *const c_char| {
+                        (!pointer.is_null()).then(|| unsafe { owned(pointer) })
                     };
+                    Ok(Some(NetgroupMember::Triple(NetgroupTriple {
+                        host: field(self.state.value[0]),
+                        user: field(self.state.value[1]),
+                        domain: field(self.state.value[2]),
+                        buffer_nuls: self
+                            .state
+                            .value
+                            .iter()
+                            .filter(|pointer| !pointer.is_null())
+                            .count(),
+                    })))
                 }
-                // RETURN is a terminal netgroup-parser status, not UNAVAIL.
-                0 | 2 => return Ok(None),
-                -2 if error == libc::ERANGE
-                    && capacity.is_none()
-                    && self.scratch.len() < MAX_SCRATCH =>
-                {
-                    let size = self
-                        .scratch
-                        .len()
-                        .saturating_mul(2)
-                        .clamp(INITIAL_SCRATCH, MAX_SCRATCH);
-                    self.resize_scratch(size)?;
+                1 if !self.state.value[0].is_null() => {
+                    // SAFETY: kind=group supplies a live group name.
+                    Ok(Some(NetgroupMember::Group(unsafe {
+                        owned(self.state.value[0])
+                    })))
                 }
-                -2 => return Err(if error == 0 { libc::EAGAIN } else { error }),
-                _ => return Err(if error == 0 { libc::EIO } else { error }),
-            }
+                _ => Err(libc::EINVAL),
+            },
+            // Both statuses finish this group and permit queued children.
+            0 | 2 => Ok(None),
+            -2 | -1 => Err(unsafe { *error }),
+            _ => Err(libc::EINVAL),
         }
     }
 }
@@ -717,10 +699,18 @@ enum NetgroupSource {
 }
 
 impl NetgroupSource {
-    fn next(&mut self, capacity: Option<usize>) -> Result<Option<NetgroupMember>, c_int> {
+    fn next(&mut self, capacity: usize) -> Result<Option<NetgroupMember>, c_int> {
         match self {
             Self::Module(cursor) => cursor.next(capacity),
             Self::Files { triples, groups } => {
+                if let Some(triple) = triples.as_slice().first() {
+                    let needed = [&triple.host, &triple.user, &triple.domain]
+                        .into_iter()
+                        .try_fold(3usize, |size, field| size.checked_add(field.len()));
+                    if needed.is_none_or(|needed| needed > capacity) {
+                        return Err(libc::ERANGE);
+                    }
+                }
                 if let Some(triple) = triples.next() {
                     let field = |value: Vec<u8>| (!value.is_empty()).then_some(value);
                     Ok(Some(NetgroupMember::Triple(NetgroupTriple {
@@ -798,10 +788,13 @@ impl NetgroupSession {
                 let (status, cursor, error) = NetgroupModuleCursor::open(service.name(), group);
                 (status, cursor.map(NetgroupSource::Module), error)
             };
-            // NSS_STATUS_RETURN is an unconditional stop, including when the
-            // configuration would otherwise continue after an unavailable source.
+            // RETURN stops by default. Negated status clauses can change its
+            // action independently of the four ordinary status actions.
             if raw_status == 2 {
-                return Ok(None);
+                if service.return_action() != Action::Continue {
+                    return Ok(None);
+                }
+                continue;
             }
             let status = Status::from_raw(raw_status);
             let stop = index + 1 == self.services.len()
@@ -820,9 +813,10 @@ impl NetgroupSession {
         Ok(None)
     }
 
-    /// Membership owns its storage and may grow it on the module's ERANGE.
+    /// GNU membership uses a fixed 1024-byte module buffer. A provider's
+    /// ERANGE must deny this lookup, even when its final fields would fit.
     pub(crate) fn next(&mut self) -> Result<Option<NetgroupTriple>, c_int> {
-        self.next_with_capacity(None)
+        self.next_with_capacity(INITIAL_SCRATCH)
     }
 
     /// Public enumeration must preserve the caller's exact module buffer
@@ -831,19 +825,19 @@ impl NetgroupSession {
         &mut self,
         capacity: usize,
     ) -> Result<Option<NetgroupTriple>, c_int> {
-        self.next_with_capacity(Some(capacity))
+        self.next_with_capacity(capacity)
     }
 
-    fn next_with_capacity(
-        &mut self,
-        capacity: Option<usize>,
-    ) -> Result<Option<NetgroupTriple>, c_int> {
+    fn next_with_capacity(&mut self, capacity: usize) -> Result<Option<NetgroupTriple>, c_int> {
         loop {
             if let Some(source) = self.source.as_mut() {
                 match source.next(capacity)? {
                     Some(NetgroupMember::Triple(triple)) => return Ok(Some(triple)),
                     Some(NetgroupMember::Group(group)) => {
-                        if !self.visited.contains(&group) {
+                        // GNU suppresses references already awaiting lookup,
+                        // not just groups already visited. Deduplicating only
+                        // when popping would reorder A B A into A B.
+                        if !self.visited.contains(&group) && !self.pending.contains(&group) {
                             self.pending.push(group);
                         }
                         continue;

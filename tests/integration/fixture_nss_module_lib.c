@@ -825,6 +825,10 @@ enum nss_status FN(getnetgrent_r)(struct __netgrent *out, char *buf, size_t len,
     } else if (!strcmp(state->name, "flnet-get-unavail")) {
       *errnop = ENOSYS;
       return NSS_STATUS_UNAVAIL;
+    } else if (!strcmp(state->name, "flnet-get-quiet")) {
+      return NSS_STATUS_UNAVAIL;
+    } else if (!strcmp(state->name, "flnet-get-again-quiet")) {
+      return NSS_STATUS_TRYAGAIN;
     } else return NSS_STATUS_RETURN;
   } else if (!strcmp(state->name, "flnet-leaf")) {
     if (index) return NSS_STATUS_RETURN;

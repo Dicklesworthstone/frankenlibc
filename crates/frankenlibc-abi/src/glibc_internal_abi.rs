@@ -6276,12 +6276,25 @@ pub unsafe extern "C" fn innetgr(
         return 0;
     };
 
-    let Ok(Some(mut session)) = crate::nss_module::NetgroupSession::open(&group, true) else {
-        return 0;
+    let mut session = match crate::nss_module::NetgroupSession::open(&group, true) {
+        Ok(Some(session)) => session,
+        Ok(None) => return 0,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return 0;
+        }
     };
     // A matching prefix is decisive even if a later provider read would fail.
     // A read failure never selects a different source or grants membership.
-    while let Ok(Some(triple)) = session.next() {
+    loop {
+        let triple = match session.next() {
+            Ok(Some(triple)) => triple,
+            Ok(None) => return 0,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return 0;
+            }
+        };
         if netgroup_field_matches(triple.host.as_deref(), wanted_host.as_deref(), true)
             && netgroup_field_matches(triple.user.as_deref(), wanted_user.as_deref(), false)
             && netgroup_field_matches(triple.domain.as_deref(), wanted_domain.as_deref(), true)
@@ -6289,7 +6302,6 @@ pub unsafe extern "C" fn innetgr(
             return 1;
         }
     }
-    0
 }
 // ioperm: x86_64 only
 #[cfg(target_arch = "x86_64")]

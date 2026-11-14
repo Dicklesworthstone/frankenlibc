@@ -10,6 +10,7 @@ on:
       - 'crates/frankenlibc-core/src/addrinfo.rs'
       - 'crates/frankenlibc-core/src/addrinfo/**'
       - 'crates/frankenlibc-core/src/netgroup/**'
+      - 'crates/frankenlibc-core/src/nss/**'
       - 'tests/conformance/legacy_dns_fixture.c'
       - 'tests/integration/fixture_nss_module_lib.c'
       - '.github/workflows/legacy-host-dns.yml'
@@ -67,9 +68,11 @@ jobs:
           CARGO_PROFILE_TEST_DEBUG: '0'
         run: |
           set -euo pipefail
-          cargo test --locked -p frankenlibc-core --lib netgroup::tests:: -- --test-threads=1 --nocapture \
-            2>&1 | tee "$RUNNER_TEMP/netgroup-parser.log"
-          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/netgroup-parser.log"
+          for module in nss netgroup; do
+            cargo test --locked -p frankenlibc-core --lib "$module::tests::" -- --test-threads=1 --nocapture \
+              2>&1 | tee "$RUNNER_TEMP/netgroup-$module.log"
+            grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/netgroup-$module.log"
+          done
           cargo test --locked -p frankenlibc-abi --test nss_module_test netgroup_modules_ -- --test-threads=1 --nocapture \
             2>&1 | tee "$RUNNER_TEMP/netgroup-modules.log"
           grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/netgroup-modules.log"
