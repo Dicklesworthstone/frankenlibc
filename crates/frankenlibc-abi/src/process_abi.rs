@@ -251,7 +251,7 @@ pub(crate) fn host_fork_fn() -> Option<HostForkFn> {
 /// cached tid. Its own atfork list is not ours (fl implements
 /// pthread_atfork), so no handler runs twice.
 pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_t, c_int> {
-    match host_fork {
+    let result = match host_fork {
         Some(host_fork) => {
             let parent_tid = raw_syscall::sys_gettid();
             // SAFETY: plain call of host fork; fl's locks are held by the caller.
@@ -268,7 +268,14 @@ pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_
             }
         }
         None => raw_syscall::sys_clone_fork(libc::SIGCHLD as usize),
+    };
+    if result == Ok(0) {
+        // Orphaned once initializers belong to vanished parent threads.
+        // Publish the child's generation before fork-guard cleanup or user
+        // handlers can need one; _Fork intentionally bypasses this lifecycle.
+        crate::pthread_abi::note_once_fork_child();
     }
+    result
 }
 
 /// Blocks every blockable signal while a fork-like operation crosses from

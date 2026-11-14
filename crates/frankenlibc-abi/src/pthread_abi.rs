@@ -3950,24 +3950,51 @@ fn futex_rwlock_timed_wrlock(
 //
 // once_control layout (inside libc::pthread_once_t, which is at least 4 bytes):
 //   0 = INIT (never started)
-//   1 = IN_PROGRESS (init_routine is running)
+//   low bits 1 = IN_PROGRESS; upper bits identify the owning fork generation
 //   2 = DONE (init_routine completed)
 const ONCE_INIT: i32 = 0;
 const ONCE_IN_PROGRESS: i32 = 1;
 const ONCE_DONE: i32 = 2;
+const ONCE_STATE_MASK: i32 = 3;
+const ONCE_GENERATION_STEP: i32 = 4;
+static ONCE_FORK_GENERATION: AtomicI32 = AtomicI32::new(0);
+
+/// Called only in a regular fork child's single surviving thread, before
+/// runtime cleanup and child handlers can invoke application initializers.
+/// The parent keeps its generation, so its active initializer and waiters
+/// remain connected. `_Fork` deliberately retains its no-handler contract.
+pub(crate) fn note_once_fork_child() {
+    ONCE_FORK_GENERATION.fetch_add(ONCE_GENERATION_STEP, Ordering::Relaxed);
+}
 
 /// Returns the once word to INIT and wakes waiters if `init_routine` unwinds
 /// (a C++ exception, or a forced unwind from thread cancellation). As in
 /// glibc, the unwind keeps propagating to the caller and the next
 /// `pthread_once` on the same control runs the routine again.
-struct OnceResetOnUnwind<'a>(&'a AtomicI32);
+struct OnceResetOnUnwind<'a> {
+    state: &'a AtomicI32,
+    in_progress: i32,
+}
 
 impl Drop for OnceResetOnUnwind<'_> {
     fn drop(&mut self) {
-        self.0.store(ONCE_INIT, Ordering::Release);
-        #[cfg(target_os = "linux")]
+        // A child can acquire an inherited once under its new generation.
+        // Unwinding the older initializer must not reset that newer owner or
+        // discard initialization it has already completed in the child.
+        if self
+            .state
+            .compare_exchange(
+                self.in_progress,
+                ONCE_INIT,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+            .is_ok()
         {
-            let _ = futex_wake_private(self.0, i32::MAX);
+            #[cfg(target_os = "linux")]
+            {
+                let _ = futex_wake_private(self.state, i32::MAX);
+            }
         }
     }
 }
@@ -5694,17 +5721,14 @@ pub unsafe extern "C-unwind" fn pthread_once(
             return 0;
         }
 
-        if s == ONCE_INIT {
-            match state.compare_exchange(
-                ONCE_INIT,
-                ONCE_IN_PROGRESS,
-                Ordering::Acquire,
-                Ordering::Acquire,
-            ) {
+        let in_progress = ONCE_FORK_GENERATION.load(Ordering::Relaxed) | ONCE_IN_PROGRESS;
+        let orphaned = s & ONCE_STATE_MASK == ONCE_IN_PROGRESS && s != in_progress;
+        if s == ONCE_INIT || orphaned {
+            match state.compare_exchange(s, in_progress, Ordering::Acquire, Ordering::Acquire) {
                 Ok(_) => {
                     // We won; run the init routine. If it unwinds, the guard
                     // resets the word so another caller can retry.
-                    let reset = OnceResetOnUnwind(state);
+                    let reset = OnceResetOnUnwind { state, in_progress };
                     unsafe { routine() };
                     core::mem::forget(reset);
                     state.store(ONCE_DONE, Ordering::Release);
@@ -5720,7 +5744,9 @@ pub unsafe extern "C-unwind" fn pthread_once(
                 }
             }
         } else {
-            // Another thread is running init_routine; wait until done or failed.
+            // Another thread in this process owns this generation. Wait for
+            // its exact word so completion, unwind or a fork takeover cannot
+            // leave a waiter asleep after the state has already changed.
             #[cfg(target_os = "linux")]
             {
                 let _ = futex_wait_private(state, s);
@@ -7017,21 +7043,6 @@ pub unsafe extern "C-unwind" fn __pthread_setcanceltype(typ: c_int, oldtype: *mu
 // the same reason. The window opens only when the exported entry point's
 // return address lies outside fl's loaded image.
 
-/// Issue one blocking syscall as a POSIX cancellation point. Returns the
-/// syscall result, or -1 with errno set.
-///
-/// Always inlined: [`at_cancellation_point`] reads the return address of the
-/// function it ends up in, which must be the exported entry point.
-#[inline(always)]
-pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 6]) -> isize {
-    let ret = unsafe { cancellation_point_syscall_raw(nr, args) };
-    if (-4095..0).contains(&ret) {
-        unsafe { set_abi_errno(-ret as c_int) };
-        return -1;
-    }
-    ret
-}
-
 /// A cancellation point whose public entry captured its caller before entering
 /// shared, out-of-line I/O machinery. `caller == 0` explicitly requests internal
 /// non-cancelling I/O; a nonzero address still goes through the normal host-thread
@@ -7073,26 +7084,6 @@ pub(crate) unsafe fn cancellation_point_syscall_for_caller(
         return -1;
     }
     ret
-}
-
-/// [`cancellation_point_syscall`] returning the raw kernel result (a negated
-/// errno on failure). Always inlined, for the reason given there.
-#[inline(always)]
-pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usize; 6]) -> isize {
-    // SAFETY: the caller supplies a valid syscall number and arguments.
-    unsafe {
-        at_cancellation_point(|| {
-            raw_syscall::syscall6(
-                nr as usize,
-                args[0],
-                args[1],
-                args[2],
-                args[3],
-                args[4],
-                args[5],
-            ) as isize
-        })
-    }
 }
 
 /// Run `blocking_syscall` (one blocking system call) as a POSIX cancellation
@@ -7815,6 +7806,23 @@ pub(crate) unsafe fn cancellation_point_read(
     }
 }
 
+/// Scatter reads retain readv's original syscall outside admitted native stream
+/// waits. Keep caller capture in the exported readv or reserved alias frame.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_readv(
+    fd: c_int,
+    vectors: *const libc::iovec,
+    count: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(
+            caller,
+            cancel_poll::Receive::ReadVector { fd, vectors, count },
+        )
+    }
+}
+
 /// Socket receive cancellation, including requests arriving after a native
 /// thread has parked. Capture the public caller through recv/from aliases and
 /// fortified entrypoints before entering the shared, out-of-line window.
@@ -7890,6 +7898,35 @@ unsafe fn cancellation_receive_window(
     // original syscall. A returning testcancel also follows this path if a
     // signal handler disabled cancellation while the entry mask was restored.
     unsafe { cancellation_window(caller, || operation.blocking()) }
+}
+
+/// Ordinary stream writes share the native send engine's accepted-prefix
+/// handling, with the original write syscall for all unsupported contracts.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_write(
+    fd: c_int,
+    buffer: *const u8,
+    length: usize,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_send_window(caller, cancel_poll::Send::Write { fd, buffer, length }) }
+}
+
+/// Gather writes own their native descriptor snapshot while preserving the
+/// original writev syscall for hosted, internal, disabled and unsupported calls.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_writev(
+    fd: c_int,
+    vectors: *const libc::iovec,
+    count: c_int,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_send_window(
+            caller,
+            cancel_poll::Send::WriteVector { fd, vectors, count },
+        )
+    }
 }
 
 /// Socket send cancellation, including requests arriving while the send buffer

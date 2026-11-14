@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/process_abi.rs'
       - 'crates/frankenlibc-abi/src/owned_unwind_abi.rs'
       - 'crates/frankenlibc-abi/version_scripts/libc.map'
       - 'tests/conformance/fixtures/unwind/minimal_throw_catch.cpp'
@@ -28,6 +29,7 @@ on:
       - 'crates/frankenlibc-abi/src/mqueue_notify.rs'
       - 'crates/frankenlibc-abi/src/posix_timer.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/io_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_cancel_wait_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs'
@@ -35,6 +37,8 @@ on:
       - 'crates/frankenlibc-core/src/pthread/**'
       - 'crates/frankenlibc-core/src/syscall/**'
       - 'tests/integration/fixture_pthread.c'
+      - 'tests/integration/fixture_pthread_once_unwind.cpp'
+      - 'scripts/check_pthread_once_unwind.sh'
       - 'tests/integration/fixture_pthread_key_destructors.c'
       - 'tests/integration/fixture_host_allocator_startup.c'
       - 'tests/integration/fixture_app_malloc_spawns_thread.c'
@@ -194,6 +198,13 @@ jobs:
           python3 scripts/check_pthread_native_poll.py --read-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/read"
+      - name: Compare stream writes and vectored I/O cancellation with live GNU libc
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_poll.py --fd-io-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/fd-io"
       - name: Compare blocked socket sends, partial progress and cancellation with live GNU libc
         if: always()
         shell: bash
@@ -201,6 +212,13 @@ jobs:
           python3 scripts/check_pthread_native_poll.py --send-only \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --out-dir "$PWD/artifacts/signal-waits/send"
+      - name: Preserve once initialization across fork, cancellation and exceptions
+        if: always()
+        shell: bash
+        run: |
+          bash scripts/check_pthread_once_unwind.sh \
+            "$PWD/target/release/libfrankenlibc_abi.so" \
+            "$PWD/artifacts/signal-waits/once-fork-unwind"
       - name: Initialize the real host heap before constructor-created threads
         if: always()
         shell: bash

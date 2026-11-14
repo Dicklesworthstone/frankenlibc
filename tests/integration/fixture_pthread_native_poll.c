@@ -22,10 +22,12 @@
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -452,6 +454,16 @@ static int snapshot(int memory, unsigned long long address, void *out, size_t le
     if (copied < 0 && (errno == EPERM || errno == EACCES || errno == ENOSYS))
         skip("kernel-poll-array-snapshot-unavailable");
     return copied == (ssize_t)length;
+}
+
+/* Native I/O keeps a private descriptor for the same socket while sleeping.
+ * Compare the kernel object identity, not a public fd number that can be reused. */
+static int same_io_object(unsigned long long actual, int expected) {
+    struct stat left, right;
+    if (actual > INT32_MAX || syscall(SYS_fstat, (int)actual, &left) != 0 ||
+        syscall(SYS_fstat, expected, &right) != 0) return 0;
+    return left.st_dev == right.st_dev && left.st_ino == right.st_ino &&
+           (left.st_mode & S_IFMT) == (right.st_mode & S_IFMT);
 }
 
 static void observe_parked(struct state *state, int memory) {
@@ -1552,12 +1564,12 @@ enum receive_kind {
     RECEIVE_LENGTH_ZERO, RECEIVE_TRUNCATE,
     RECEIVE_READ_PIPE, RECEIVE_READ_DATAGRAM, RECEIVE_READ_NOSYS,
     RECEIVE_READ_PERM, RECEIVE_READ_ACCESS, RECEIVE_RIGHTS, RECEIVE_RIGHTS_CLOEXEC,
-    RECEIVE_CONTROL_TRUNCATE
+    RECEIVE_CONTROL_TRUNCATE, RECEIVE_RIGHTS_PRESSURE
 };
 struct receive_probe {
     struct state observed;
     enum receive_kind kind;
-    int fd, from, fortified, flags, message, mapped, reading;
+    int fd, from, fortified, flags, message, mapped, reading, vector_read;
     size_t length;
     unsigned char data[8];
     struct sockaddr_storage address;
@@ -1577,12 +1589,14 @@ static ssize_t (*selected_recvfrom_chk)(int, void *, size_t, size_t, int,
 static ssize_t (*selected_recvmsg)(int, struct msghdr *, int);
 static ssize_t (*selected_read)(int, void *, size_t);
 static ssize_t (*selected_read_chk)(int, void *, size_t, size_t);
+static ssize_t (*selected_readv)(int, const struct iovec *, int);
 
 static int pin_receive_provider(const char *expected, int from, int alias, int fortified,
-                                int message, int reading) {
+                                int message, int reading, int vector_read) {
     int base = pin_providers(expected, 0, EVENT_NONE);
     if (base != 0) return base;
-    const char *name = reading ? (fortified ? "__read_chk" : alias ? "__read" : "read") :
+    const char *name = vector_read ? (alias ? "__readv" : "readv") :
+                      reading ? (fortified ? "__read_chk" : alias ? "__read" : "read") :
                       message ? (alias ? "__recvmsg" : "recvmsg") :
                       from ? (fortified ? "__recvfrom_chk" : "recvfrom") :
                              fortified ? "__recv_chk" : alias ? "__recv" : "recv";
@@ -1595,7 +1609,8 @@ static int pin_receive_provider(const char *expected, int from, int alias, int f
         fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
         return 86;
     }
-    if (reading && fortified) selected_read_chk = (__typeof__(selected_read_chk))symbol;
+    if (vector_read) selected_readv = (__typeof__(selected_readv))symbol;
+    else if (reading && fortified) selected_read_chk = (__typeof__(selected_read_chk))symbol;
     else if (reading) selected_read = (__typeof__(selected_read))symbol;
     else if (message) selected_recvmsg = (__typeof__(selected_recvmsg))symbol;
     else if (from && fortified) selected_recvfrom_chk = (__typeof__(selected_recvfrom_chk))symbol;
@@ -1606,11 +1621,24 @@ static int pin_receive_provider(const char *expected, int from, int alias, int f
 }
 
 static ssize_t read_call(const struct receive_probe *probe, int fd, void *buffer, size_t length) {
+    if (probe->vector_read) {
+        struct iovec vector = {buffer, length};
+        return selected_readv(fd, &vector, 1);
+    }
     return probe->fortified ? selected_read_chk(fd, buffer, length, sizeof(probe->data)) :
                               selected_read(fd, buffer, length);
 }
 
 static ssize_t receive_call(struct receive_probe *probe) {
+    if (probe->vector_read) {
+        struct iovec original[9];
+        int count = probe->mapped ? 9 : 3;
+        memcpy(original, probe->vectors, sizeof(original));
+        ssize_t result = selected_readv(probe->fd, probe->vectors, count);
+        REQUIRE(memcmp(original, probe->vectors, sizeof(original)) == 0,
+                "readv leaves the caller's vector geometry unchanged");
+        return result;
+    }
     if (probe->reading) return read_call(probe, probe->fd, probe->data, probe->length);
     if (probe->message) return selected_recvmsg(probe->fd, &probe->header, probe->flags);
     if (probe->from && probe->fortified)
@@ -1633,10 +1661,10 @@ static int read_probe_denial(enum receive_kind kind) {
 
 /* A sandbox may allow read but reject recvfrom. Restrict only this worker so
  * the parent can independently observe the original read sleeping in-kernel. */
-static void deny_read_probe(int error) {
+static void deny_io_probe(int number, int error) {
     struct sock_filter filter[] = {
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_recvfrom, 0, 1),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned)number, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (unsigned)error),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
     };
@@ -1683,6 +1711,62 @@ static void check_read_errors(struct receive_probe *probe) {
             "release stream read error resources");
 }
 
+static void check_readv_descriptors(struct receive_probe *probe) {
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(guard != MAP_FAILED, "guarded readv descriptor array");
+    REQUIRE(selected_readv(probe->fd, guard, 1) == -1 && errno == EFAULT,
+            "readv rejects inaccessible descriptor bytes without a Rust fault");
+    REQUIRE(selected_readv(probe->fd, guard, 1025) == -1 && errno == EINVAL,
+            "readv retains invalid-count precedence before descriptor copying");
+    REQUIRE(selected_readv(probe->fd, guard, -1) == -1 && errno == EINVAL,
+            "readv retains negative-count EINVAL");
+    REQUIRE(selected_readv(-1, guard, 0) == -1 && errno == EBADF,
+            "empty readv still checks the descriptor");
+    errno = EDOM;
+    REQUIRE(selected_readv(probe->fd, guard, 0) == 0 && errno == EDOM,
+            "empty readv does not access the descriptor array");
+    struct iovec empty[3] = {{guard, 0}, {NULL, 0}, {probe->data, 0}};
+    REQUIRE(selected_readv(probe->fd, empty, 3) == 0 && errno == EDOM,
+            "all-zero readv entries return immediately without receiving");
+    struct iovec overflow[2] = {{probe->data, SIZE_MAX}, {NULL, 1}};
+    REQUIRE(selected_readv(probe->fd, overflow, 2) == -1 && errno == EINVAL,
+            "readv aggregate overflow retains kernel EINVAL");
+    REQUIRE(munmap(guard, page) == 0, "release readv descriptor guard");
+}
+
+static ssize_t receive_with_one_fd_slot(struct receive_probe *probe) {
+    struct rlimit original, limited;
+    REQUIRE(syscall(SYS_prlimit64, 0, RLIMIT_NOFILE, NULL, &original) == 0,
+            "capture descriptor capacity before ancillary pressure test");
+    limited = original;
+    if (limited.rlim_cur > 64) limited.rlim_cur = 64;
+    REQUIRE(limited.rlim_cur >= 16 && syscall(SYS_prlimit64, 0, RLIMIT_NOFILE, &limited, NULL) == 0,
+            "bound this isolated fixture's descriptor table");
+    int occupied[64];
+    size_t count = 0;
+    for (;;) {
+        int fd = (int)syscall(SYS_fcntl, probe->fd, F_DUPFD_CLOEXEC, 0);
+        if (fd < 0) {
+            REQUIRE(errno == EMFILE, "fill the descriptor table exactly to its limit");
+            break;
+        }
+        REQUIRE(count < sizeof(occupied) / sizeof(occupied[0]), "bounded descriptor-pressure storage");
+        occupied[count++] = fd;
+    }
+    REQUIRE(count != 0 && syscall(SYS_close, occupied[--count]) == 0,
+            "leave exactly one descriptor available for SCM_RIGHTS");
+    errno = EDOM;
+    ssize_t result = receive_call(probe);
+    int error = errno;
+    REQUIRE(syscall(SYS_prlimit64, 0, RLIMIT_NOFILE, &original, NULL) == 0,
+            "restore descriptor capacity before parent inspection");
+    while (count != 0)
+        REQUIRE(syscall(SYS_close, occupied[--count]) == 0, "release pressure-only descriptors");
+    errno = error;
+    return result;
+}
+
 static void receive_cleanup(void *argument) {
     struct receive_probe *probe = argument;
     sigset_t mask;
@@ -1706,7 +1790,8 @@ static void *receive_worker(void *argument) {
     sigemptyset(&mask);
     sigaddset(&mask, SIGUSR2);
     REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "receive entry signal mask");
-    if (read_probe_denial(probe->kind)) deny_read_probe(read_probe_denial(probe->kind));
+    if (read_probe_denial(probe->kind))
+        deny_io_probe(probe->vector_read ? SYS_recvmsg : SYS_recvfrom, read_probe_denial(probe->kind));
     pthread_cleanup_push(receive_cleanup, probe);
     atomic_store_explicit(&state->ready, 1, memory_order_release);
     while (!atomic_load_explicit(&state->release, memory_order_acquire))
@@ -1728,7 +1813,10 @@ static void *receive_worker(void *argument) {
             REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close receive error pipe");
         }
         probe->fd = original;
+        if (probe->vector_read) check_readv_descriptors(probe);
         state->result = 0;
+    } else if (probe->kind == RECEIVE_RIGHTS_PRESSURE) {
+        state->result = (int)receive_with_one_fd_slot(probe);
     } else {
         state->result = (int)receive_call(probe);
     }
@@ -1764,13 +1852,18 @@ static void observe_receive_parked(struct receive_probe *probe, int memory) {
             sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
                    &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 5)
             goto retry_receive;
-        if (sliced) {
+        /* A missing native adapter must fail the actual cancel/join contract,
+         * not merely the choice of waiting syscall. Observe its sleeping raw
+         * read too, then let the parent request cancellation without data. */
+        int raw_blocked_read = sliced && probe->reading && probe->kind == RECEIVE_BLOCKED &&
+                               number == (probe->vector_read ? SYS_readv : SYS_read);
+        if (sliced && !raw_blocked_read) {
             struct pollfd interest;
             struct timespec duration;
             uint64_t mask;
             if (number != SYS_ppoll || args[1] != 1 ||
                 !snapshot(memory, args[0], &interest, sizeof(interest)) ||
-                interest.fd != probe->fd || interest.events != POLLIN ||
+                !same_io_object((unsigned)interest.fd, probe->fd) || interest.events != POLLIN ||
                 args[2] == 0 || !snapshot(memory, args[2], &duration, sizeof(duration)) ||
                 args[3] == 0 || !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_receive;
             REQUIRE(duration.tv_sec == 0 && duration.tv_nsec > 0 && duration.tv_nsec <= 50000000,
@@ -1778,12 +1871,15 @@ static void observe_receive_parked(struct receive_probe *probe, int memory) {
             REQUIRE(args[4] == sizeof(mask) && ((mask >> (SIGUSR2 - 1)) & 1) == 1 &&
                         ((mask >> (SIGUSR1 - 1)) & 1) == 0,
                     "native receive atomically reinstates the complete original mask");
+        } else if (probe->vector_read) {
+            if (number != SYS_readv || !same_io_object(args[0], probe->fd) ||
+                args[2] != (unsigned)(probe->mapped ? 9 : 3)) goto retry_receive;
         } else if (probe->reading) {
-            if (number != SYS_read || args[0] != (unsigned)probe->fd ||
+            if (number != SYS_read || !same_io_object(args[0], probe->fd) ||
                 args[1] != (uintptr_t)probe->data || args[2] != probe->length) goto retry_receive;
         } else if (probe->message) {
-            if (number != SYS_recvmsg || args[0] != (unsigned)probe->fd) goto retry_receive;
-        } else if (number != SYS_recvfrom || args[0] != (unsigned)probe->fd ||
+            if (number != SYS_recvmsg || !same_io_object(args[0], probe->fd)) goto retry_receive;
+        } else if (number != SYS_recvfrom || !same_io_object(args[0], probe->fd) ||
                    args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
             goto retry_receive;
         }
@@ -1821,7 +1917,8 @@ static void send_receive_rights(int fd, int transferred) {
 }
 
 static void receive_initialize(struct receive_probe *probe, enum receive_kind kind,
-                               int fd, int from, int fortified, int message, int mapped, int reading) {
+                               int fd, int from, int fortified, int message, int mapped,
+                               int reading, int vector_read) {
     memset(probe, 0, sizeof(*probe));
     probe->kind = kind;
     probe->fd = fd;
@@ -1830,6 +1927,7 @@ static void receive_initialize(struct receive_probe *probe, enum receive_kind ki
     probe->message = message;
     probe->mapped = mapped;
     probe->reading = reading;
+    probe->vector_read = vector_read;
     probe->flags = kind == RECEIVE_PEEK ? MSG_PEEK :
                    kind == RECEIVE_DONTWAIT ? MSG_DONTWAIT :
                    kind == RECEIVE_WAITALL ? MSG_WAITALL :
@@ -1837,11 +1935,11 @@ static void receive_initialize(struct receive_probe *probe, enum receive_kind ki
                    kind == RECEIVE_RIGHTS_CLOEXEC ? MSG_CMSG_CLOEXEC : 0;
     probe->length = kind == RECEIVE_LENGTH_ZERO ? 0 :
                     kind == RECEIVE_TRUNCATE ? 1 :
-                    kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || message ? 4 : 1;
+                    kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || message || vector_read ? 4 : 1;
     probe->address_length = sizeof(probe->address);
     memset(probe->data, 0xa5, sizeof(probe->data));
     memset(&probe->address, 0xa5, sizeof(probe->address));
-    if (message) {
+    if (message || vector_read) {
         /* A zero-length middle vector and a split payload exercise the actual
          * recvmsg scatter path, including a header retained across EAGAIN probes.
          * Nine vectors exceed the hardened importer's inline capacity, so its
@@ -1897,17 +1995,19 @@ static void check_received_payload(const struct receive_probe *probe,
         expected_flags |= probe->flags & MSG_CMSG_CLOEXEC;
         REQUIRE(probe->header.msg_flags == expected_flags,
                 "recvmsg preserves truncation and close-on-exec result flags");
-        if (probe->kind != RECEIVE_RIGHTS && probe->kind != RECEIVE_RIGHTS_CLOEXEC)
+        if (probe->kind != RECEIVE_RIGHTS && probe->kind != RECEIVE_RIGHTS_CLOEXEC &&
+            probe->kind != RECEIVE_RIGHTS_PRESSURE)
             REQUIRE(probe->header.msg_controllen == 0,
                     "recvmsg reports zero ancillary bytes when none fit or none were sent");
     }
 }
 
 static int receive_contract_main(char **argv) {
-    int reading = strncmp(case_name, "read-", 5) == 0;
+    int vector_read = strncmp(case_name, "readv-", 6) == 0;
+    int reading = vector_read || strncmp(case_name, "read-", 5) == 0;
     int message = strncmp(case_name, "recvmsg-", 8) == 0;
     int from = strncmp(case_name, "recvfrom-", 9) == 0;
-    const char *suffix = case_name + (message ? 8 : from ? 9 : 5);
+    const char *suffix = case_name + (vector_read ? 6 : message ? 8 : from ? 9 : 5);
     int mapped = strncmp(suffix, "mapped-", 7) == 0;
     if (mapped) suffix += 7;
     int alias = strncmp(suffix, "alias-", 6) == 0;
@@ -1923,12 +2023,12 @@ static int receive_contract_main(char **argv) {
                           "competing", "waitall", "lowat", "eof", "zero", "errors",
                           "length-zero", "truncate", "pipe-fallback", "datagram-fallback",
                           "probe-enosys", "probe-eperm", "probe-eacces", "rights", "rights-cloexec",
-                          "control-truncate"};
+                          "control-truncate", "rights-pressure"};
     int value = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) value = (int)i;
-    if (value < 0 || (from && alias && !message) || (message && fortified) ||
-        (mapped && !message) ||
+    if (value < 0 || (from && alias && !message) || ((message || vector_read) && fortified) ||
+        (mapped && !message && !vector_read) ||
         (reading && (value == RECEIVE_PEEK || value == RECEIVE_DONTWAIT || value == RECEIVE_WAITALL)) ||
         (!reading && value >= RECEIVE_READ_PIPE && value <= RECEIVE_READ_ACCESS) ||
         (!from && (value == RECEIVE_ZERO || value == RECEIVE_TRUNCATE)) ||
@@ -1936,7 +2036,7 @@ static int receive_contract_main(char **argv) {
         (value >= RECEIVE_RIGHTS && (!message || from)))
         return 2;
     enum receive_kind kind = (enum receive_kind)value;
-    int pin = pin_receive_provider(argv[2], from, alias, fortified, message, reading);
+    int pin = pin_receive_provider(argv[2], from, alias, fortified, message, reading, vector_read);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
                     strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
@@ -1994,7 +2094,7 @@ static int receive_contract_main(char **argv) {
     int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
     if (memory < 0) skip("socket-wait-snapshot-unavailable");
     struct receive_probe probe;
-    receive_initialize(&probe, kind, pair[0], from, fortified, message, mapped, reading);
+    receive_initialize(&probe, kind, pair[0], from, fortified, message, mapped, reading, vector_read);
     size_t sent_length = kind == RECEIVE_LENGTH_ZERO ? 1 : probe.length;
     int rights[2] = {-1, -1};
     if (kind >= RECEIVE_RIGHTS) {
@@ -2008,6 +2108,7 @@ static int receive_contract_main(char **argv) {
         send_receive_bytes(pair[1], "DATA", sent_length);
     if (kind == RECEIVE_TRUNCATE) send_receive_bytes(pair[1], "DATA", 4);
     if (kind == RECEIVE_ZERO) send_receive_bytes(pair[1], "", 0);
+    if (kind == RECEIVE_RIGHTS_PRESSURE) send_receive_rights(pair[1], rights[0]);
     if (kind == RECEIVE_EOF)
         REQUIRE(shutdown(pair[1], SHUT_WR) == 0, "close receive peer write side");
     REQUIRE(pthread_create(&probe.observed.thread, NULL, receive_worker, &probe) == 0,
@@ -2018,7 +2119,7 @@ static int receive_contract_main(char **argv) {
     atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
     if (kind == RECEIVE_COMPETING) {
         struct receive_probe competitor;
-        receive_initialize(&competitor, kind, pair[0], from, fortified, message, mapped, reading);
+        receive_initialize(&competitor, kind, pair[0], from, fortified, message, mapped, reading, vector_read);
         REQUIRE(pthread_create(&competitor.observed.thread, NULL, receive_worker, &competitor) == 0,
                 "create competing socket receiver");
         wait_ready(&competitor.observed);
@@ -2048,7 +2149,8 @@ static int receive_contract_main(char **argv) {
         if (kind == RECEIVE_BLOCKED || kind == RECEIVE_DISABLED || kind == RECEIVE_READY_LATE ||
             kind == RECEIVE_SIGNAL || kind == RECEIVE_SIGNAL_RESTART ||
             kind == RECEIVE_READ_PIPE || kind == RECEIVE_READ_DATAGRAM || read_probe_denial(kind) ||
-            kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT || kind >= RECEIVE_RIGHTS) {
+            kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT ||
+            (kind >= RECEIVE_RIGHTS && kind != RECEIVE_RIGHTS_PRESSURE)) {
             observe_receive_parked(&probe, memory);
             if (kind >= RECEIVE_RIGHTS) {
                 /* Cross several empty native retries before acquiring control
@@ -2122,7 +2224,7 @@ static int receive_contract_main(char **argv) {
         } else if (kind != RECEIVE_ERRORS) {
             check_received_payload(&probe, &peer);
         }
-        if (kind == RECEIVE_RIGHTS || kind == RECEIVE_RIGHTS_CLOEXEC) {
+        if (kind == RECEIVE_RIGHTS || kind == RECEIVE_RIGHTS_CLOEXEC || kind == RECEIVE_RIGHTS_PRESSURE) {
             struct cmsghdr *control = CMSG_FIRSTHDR(&probe.header);
             REQUIRE(control != NULL && control->cmsg_level == SOL_SOCKET &&
                         control->cmsg_type == SCM_RIGHTS && control->cmsg_len == CMSG_LEN(sizeof(int)) &&
@@ -2161,6 +2263,8 @@ static int receive_contract_main(char **argv) {
                     errno == EAGAIN, "receive consumes each queued payload at most once");
     }
     REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "receive never changes shared O_NONBLOCK flags");
+    REQUIRE(descriptor_count() == original_descriptors,
+            "completed or canceled receive releases every private descriptor");
     if (kind >= RECEIVE_RIGHTS)
         REQUIRE(close(rights[0]) == 0 && close(rights[1]) == 0,
                 "release transferred descriptor source");
@@ -2175,12 +2279,13 @@ enum send_kind {
     SEND_NONBLOCK, SEND_DONTWAIT, SEND_TIMEOUT, SEND_SIGNAL, SEND_SIGNAL_RESTART,
     SEND_ERRORS, SEND_LENGTH_ZERO, SEND_PEER_CLOSED, SEND_PARTIAL,
     SEND_PARTIAL_CANCEL, SEND_PARTIAL_ERROR, SEND_ADDRESS, SEND_OVERSIZE, SEND_SEQPACKET,
-    SEND_RIGHTS, SEND_RIGHTS_PARTIAL, SEND_IOV_MAX, SEND_DESCRIPTOR_ERRORS, SEND_MAPPED_PARTIAL
+    SEND_RIGHTS, SEND_RIGHTS_PARTIAL, SEND_RIGHTS_INVALID, SEND_IOV_MAX, SEND_DESCRIPTOR_ERRORS, SEND_MAPPED_PARTIAL,
+    SEND_PIPE_FALLBACK, SEND_DATAGRAM_FALLBACK, SEND_PROBE_NOSYS, SEND_PROBE_PERM, SEND_PROBE_ACCESS
 };
 struct send_probe {
     struct state observed;
     enum send_kind kind;
-    int fd, to, message_api, flags;
+    int fd, to, message_api, writing, flags;
     size_t length;
     unsigned char data[65536];
     struct sockaddr_in address;
@@ -2194,11 +2299,15 @@ static ssize_t (*selected_send)(int, const void *, size_t, int);
 static ssize_t (*selected_sendto)(int, const void *, size_t, int,
                                  const struct sockaddr *, socklen_t);
 static ssize_t (*selected_sendmsg)(int, const struct msghdr *, int);
+static ssize_t (*selected_write)(int, const void *, size_t);
+static ssize_t (*selected_writev)(int, const struct iovec *, int);
 
 static int pin_send_provider(const char *expected, int entry, int alias) {
     int base = pin_providers(expected, 0, EVENT_NONE);
     if (base != 0) return base;
-    const char *name = entry == 2 ? (alias ? "__sendmsg" : "sendmsg") :
+    const char *name = entry == 4 ? (alias ? "__writev" : "writev") :
+                       entry == 3 ? (alias ? "__write" : "write") :
+                       entry == 2 ? (alias ? "__sendmsg" : "sendmsg") :
                        entry == 1 ? (alias ? "__sendto" : "sendto") : alias ? "__send" : "send";
     Dl_info info = {0};
     struct stat actual, wanted;
@@ -2209,30 +2318,99 @@ static int pin_send_provider(const char *expected, int entry, int alias) {
         fprintf(stderr, "pthread-native-poll:provider-mismatch:%s\n", name);
         return 86;
     }
-    if (entry == 2) selected_sendmsg = (__typeof__(selected_sendmsg))symbol;
+    if (entry == 4) selected_writev = (__typeof__(selected_writev))symbol;
+    else if (entry == 3) selected_write = (__typeof__(selected_write))symbol;
+    else if (entry == 2) selected_sendmsg = (__typeof__(selected_sendmsg))symbol;
     else if (entry == 1) selected_sendto = (__typeof__(selected_sendto))symbol;
     else selected_send = (__typeof__(selected_send))symbol;
     return 0;
 }
 
 static ssize_t send_call(struct send_probe *probe) {
-    if (probe->message_api) {
+    if (probe->message_api || probe->writing == 2) {
         struct msghdr original = probe->message;
         struct iovec vectors[1024];
         REQUIRE(probe->message.msg_iovlen <= 1024, "bounded fixture vector snapshot");
         memcpy(vectors, probe->vectors, probe->message.msg_iovlen * sizeof(*vectors));
-        ssize_t result = selected_sendmsg(probe->fd, &probe->message, probe->flags);
+        ssize_t result = probe->writing == 2 ?
+            selected_writev(probe->fd, probe->vectors, (int)probe->message.msg_iovlen) :
+            selected_sendmsg(probe->fd, &probe->message, probe->flags);
         REQUIRE(memcmp(&original, &probe->message, sizeof(original)) == 0 &&
                     memcmp(vectors, probe->vectors,
                            probe->message.msg_iovlen * sizeof(*vectors)) == 0,
                 "sendmsg never modifies the caller header or vector geometry");
         return result;
     }
+    if (probe->writing) return selected_write(probe->fd, probe->data, probe->length);
     if (probe->to)
         return selected_sendto(probe->fd, probe->data, probe->length, probe->flags,
                                probe->address_length ? (struct sockaddr *)&probe->address : NULL,
                                probe->address_length);
     return selected_send(probe->fd, probe->data, probe->length, probe->flags);
+}
+
+static int write_probe_denial(enum send_kind kind) {
+    return kind == SEND_PROBE_NOSYS ? ENOSYS : kind == SEND_PROBE_PERM ? EPERM :
+           kind == SEND_PROBE_ACCESS ? EACCES : 0;
+}
+
+static ssize_t write_call(const struct send_probe *probe, int fd, const void *buffer, size_t length) {
+    if (probe->writing == 2) {
+        struct iovec vector = {(void *)buffer, length};
+        return selected_writev(fd, &vector, 1);
+    }
+    return selected_write(fd, buffer, length);
+}
+
+static void check_write_errors(struct send_probe *probe) {
+    int pipefd[2];
+    REQUIRE(pipe(pipefd) == 0, "write fallback error pipe");
+    REQUIRE(write_call(probe, -1, NULL, 0) == -1 && errno == EBADF,
+            "empty write still validates the descriptor");
+    REQUIRE(write_call(probe, pipefd[0], probe->data, 0) == -1 && errno == EBADF,
+            "empty write rejects a read-only descriptor");
+    errno = EDOM;
+    REQUIRE(write_call(probe, pipefd[1], NULL, 0) == 0 && errno == EDOM,
+            "zero-length pipe write preserves success and errno");
+    REQUIRE(write_call(probe, pipefd[1], NULL, 1) == -1 && errno == EFAULT,
+            "nonempty write keeps null-buffer EFAULT");
+    errno = EDOM;
+    REQUIRE(write_call(probe, pipefd[1], "P", 1) == 1 && errno == EDOM,
+            "ordinary pipe writes retain the original syscall");
+    unsigned char byte = 0;
+    REQUIRE(syscall(SYS_read, pipefd[0], &byte, 1) == 1 && byte == 'P',
+            "pipe fallback publishes exactly its successful payload");
+    REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "release write error pipe");
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(guard != MAP_FAILED, "guarded write payload");
+    REQUIRE(write_call(probe, probe->fd, guard, 1) == -1 && errno == EFAULT,
+            "stream write probe preserves inaccessible-payload EFAULT");
+    REQUIRE(munmap(guard, page) == 0, "release write payload guard");
+}
+
+static void check_writev_descriptors(struct send_probe *probe) {
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    REQUIRE(guard != MAP_FAILED, "guarded writev descriptor source");
+    REQUIRE(selected_writev(probe->fd, guard, 1) == -1 && errno == EFAULT,
+            "writev inaccessible descriptors remain EFAULT");
+    REQUIRE(selected_writev(probe->fd, guard, 1025) == -1 && errno == EINVAL,
+            "writev invalid count precedes descriptor copying");
+    REQUIRE(selected_writev(probe->fd, guard, -1) == -1 && errno == EINVAL,
+            "writev negative count remains EINVAL");
+    REQUIRE(selected_writev(-1, guard, 0) == -1 && errno == EBADF,
+            "empty writev validates the descriptor first");
+    errno = EDOM;
+    REQUIRE(selected_writev(probe->fd, guard, 0) == 0 && errno == EDOM,
+            "empty writev does not import inaccessible descriptors");
+    struct iovec empty[3] = {{guard, 0}, {NULL, 0}, {probe->data, 0}};
+    REQUIRE(selected_writev(probe->fd, empty, 3) == 0 && errno == EDOM,
+            "writev with only empty buffers remains a successful no-op");
+    struct iovec overflow[2] = {{probe->data, SIZE_MAX}, {NULL, 1}};
+    REQUIRE(selected_writev(probe->fd, overflow, 2) == -1 && errno == EINVAL,
+            "writev aggregate overflow remains EINVAL");
+    REQUIRE(munmap(guard, page) == 0, "release writev descriptor guard");
 }
 
 static void send_cleanup(void *argument) {
@@ -2257,7 +2435,10 @@ static void *send_worker(void *argument) {
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGUSR2);
+    if (probe->writing && probe->kind == SEND_PEER_CLOSED) sigaddset(&mask, SIGPIPE);
     REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "send entry signal mask");
+    if (write_probe_denial(probe->kind))
+        deny_io_probe(probe->writing == 2 ? SYS_sendmsg : SYS_sendto, write_probe_denial(probe->kind));
     pthread_cleanup_push(send_cleanup, probe);
     atomic_store_explicit(&state->ready, 1, memory_order_release);
     while (!atomic_load_explicit(&state->release, memory_order_acquire))
@@ -2268,13 +2449,27 @@ static void *send_worker(void *argument) {
         int original = probe->fd;
         probe->fd = -1;
         REQUIRE(send_call(probe) == -1 && errno == EBADF, "invalid send fd retains EBADF");
-        int pipefd[2];
-        REQUIRE(pipe(pipefd) == 0, "send error pipe");
-        probe->fd = pipefd[1];
-        REQUIRE(send_call(probe) == -1 && errno == ENOTSOCK,
-                "send metadata probes do not replace ENOTSOCK");
-        REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close send error pipe");
         probe->fd = original;
+        if (probe->writing) {
+            check_write_errors(probe);
+        } else {
+            int pipefd[2];
+            REQUIRE(pipe(pipefd) == 0, "send error pipe");
+            probe->fd = pipefd[1];
+            REQUIRE(send_call(probe) == -1 && errno == ENOTSOCK,
+                    "send metadata probes do not replace ENOTSOCK");
+            REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close send error pipe");
+            probe->fd = original;
+        }
+        state->result = 0;
+    } else if (probe->kind == SEND_RIGHTS_INVALID) {
+        int invalid = (int)syscall(SYS_fcntl, probe->fd, F_DUPFD_CLOEXEC, 0);
+        REQUIRE(invalid >= 0 && syscall(SYS_close, invalid) == 0,
+                "choose the descriptor number an unintended private pin would occupy");
+        memcpy(CMSG_DATA(CMSG_FIRSTHDR(&probe->message)), &invalid, sizeof(invalid));
+        state->result = (int)send_call(probe);
+    } else if (probe->kind == SEND_DESCRIPTOR_ERRORS && probe->writing == 2) {
+        check_writev_descriptors(probe);
         state->result = 0;
     } else if (probe->kind == SEND_DESCRIPTOR_ERRORS) {
         struct msghdr header = probe->message;
@@ -2302,6 +2497,11 @@ static void *send_worker(void *argument) {
         state->result = (int)send_call(probe);
     }
     state->error = errno;
+    if (probe->writing && probe->kind == SEND_PEER_CLOSED) {
+        sigset_t pending;
+        REQUIRE(sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1,
+                "an unsuccessful write generates SIGPIPE exactly as the raw syscall does");
+    }
     state->elapsed_ns = monotonic_ns() - started;
     atomic_store_explicit(&state->returned, 1, memory_order_release);
     pthread_cleanup_pop(1);
@@ -2314,15 +2514,17 @@ static void *send_worker(void *argument) {
     return state;
 }
 
-static void send_initialize(struct send_probe *probe, enum send_kind kind, int fd, int entry) {
+static void send_initialize(struct send_probe *probe, enum send_kind kind, int fd, int entry, int mapped) {
     memset(probe, 0, sizeof(*probe));
     probe->kind = kind;
     probe->fd = fd;
     probe->to = entry == 1;
     probe->message_api = entry == 2;
+    probe->writing = entry >= 3 ? entry - 2 : 0;
     probe->rights_fd = -1;
     probe->flags = kind == SEND_DONTWAIT ? MSG_DONTWAIT | MSG_NOSIGNAL :
                    kind == SEND_PARTIAL_ERROR ? 0 : MSG_NOSIGNAL;
+    if (probe->writing) probe->flags = 0;
     probe->length = kind == SEND_LENGTH_ZERO ? 0 :
                     kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL ||
                     kind == SEND_PARTIAL_ERROR || kind == SEND_RIGHTS_PARTIAL ||
@@ -2330,13 +2532,14 @@ static void send_initialize(struct send_probe *probe, enum send_kind kind, int f
                     kind == SEND_IOV_MAX ? 1024 : 1;
     for (size_t i = 0; i < sizeof(probe->data); ++i)
         probe->data[i] = (unsigned char)(i % 251);
-    if (probe->message_api) {
+    if (probe->message_api || probe->writing == 2) {
         probe->message.msg_iov = probe->vectors;
-        probe->message.msg_iovlen = kind == SEND_IOV_MAX || kind == SEND_MAPPED_PARTIAL ? 1024 : 4;
+        probe->message.msg_iovlen = kind == SEND_IOV_MAX || kind == SEND_MAPPED_PARTIAL || mapped ? 1024 : 4;
         if (probe->message.msg_iovlen == 1024) {
             size_t piece = probe->length / 1024;
             for (size_t i = 0; i < 1024; ++i)
                 probe->vectors[i] = (struct iovec){probe->data + i * piece, piece};
+            probe->vectors[1023].iov_len += probe->length % 1024;
         } else {
             // Empty entries and a non-page boundary expose incorrect prefix
             // accounting even when a short kernel send ends inside an iovec.
@@ -2374,6 +2577,27 @@ static size_t fill_send_socket(int fd) {
     return total;
 }
 
+static size_t fill_write_pipe(int fd) {
+    int original = fcntl(fd, F_GETFL);
+    REQUIRE(original >= 0 && fcntl(fd, F_SETFL, original | O_NONBLOCK) == 0,
+            "prepare nonblocking pipe fill before the worker starts");
+    unsigned char bytes[4096];
+    memset(bytes, 'F', sizeof(bytes));
+    size_t total = 0;
+    for (;;) {
+        ssize_t written = syscall(SYS_write, fd, bytes, sizeof(bytes));
+        if (written < 0) {
+            REQUIRE(errno == EAGAIN, "fill pipe to kernel backpressure");
+            break;
+        }
+        REQUIRE(written > 0, "positive pipe fill");
+        total += (size_t)written;
+    }
+    REQUIRE(total > 0 && fcntl(fd, F_SETFL, original) == 0,
+            "restore the original blocking pipe before the tested write");
+    return total;
+}
+
 static void drain_send_socket(int fd, size_t initial, size_t *filler, size_t *payload,
                               int *empty_records, struct send_probe *probe) {
     unsigned char bytes[8192];
@@ -2385,7 +2609,13 @@ static void drain_send_socket(int fd, size_t initial, size_t *filler, size_t *pa
         message.msg_iovlen = 1;
         message.msg_control = control.bytes;
         message.msg_controllen = sizeof(control.bytes);
-        ssize_t received = syscall(SYS_recvmsg, fd, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+        ssize_t received;
+        if (probe->kind == SEND_PIPE_FALLBACK) {
+            received = syscall(SYS_read, fd, bytes, sizeof(bytes));
+            message.msg_controllen = 0;
+        } else {
+            received = syscall(SYS_recvmsg, fd, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+        }
         if (received < 0) {
             REQUIRE(errno == EAGAIN, "drain only available send payload");
             return;
@@ -2426,7 +2656,9 @@ static void observe_send_parked(struct send_probe *probe, int memory) {
     struct state *state = &probe->observed;
     int sliced = expect_native && probe->kind != SEND_DISABLED &&
                  probe->kind != SEND_TIMEOUT && probe->kind != SEND_SIGNAL &&
-                 probe->kind != SEND_SIGNAL_RESTART;
+                 probe->kind != SEND_SIGNAL_RESTART &&
+                 probe->kind != SEND_PIPE_FALLBACK && probe->kind != SEND_DATAGRAM_FALLBACK &&
+                 !(probe->writing && probe->kind == SEND_SEQPACKET) && !write_probe_denial(probe->kind);
     int64_t deadline = monotonic_ns() + 2000000000;
     while (monotonic_ns() < deadline) {
         REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
@@ -2438,13 +2670,18 @@ static void observe_send_parked(struct send_probe *probe, int memory) {
             sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
                    &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 5)
             goto retry_send;
-        if (sliced) {
+        /* Prove cancellation of the already blocked operation. The old native
+         * raw write must reach the no-rescue join deadline after cancellation,
+         * rather than failing only because it did not enter ppoll. */
+        int raw_blocked_write = sliced && probe->writing && probe->kind == SEND_BLOCKED &&
+                                number == (probe->writing == 2 ? SYS_writev : SYS_write);
+        if (sliced && !raw_blocked_write) {
             struct pollfd interest;
             struct timespec duration;
             uint64_t mask;
             if (number != SYS_ppoll || args[1] != 1 ||
                 !snapshot(memory, args[0], &interest, sizeof(interest)) ||
-                interest.fd != probe->fd || interest.events != POLLOUT ||
+                !same_io_object((unsigned)interest.fd, probe->fd) || interest.events != POLLOUT ||
                 args[2] == 0 || !snapshot(memory, args[2], &duration, sizeof(duration)) ||
                 args[3] == 0 || !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_send;
             REQUIRE(duration.tv_sec == 0 && duration.tv_nsec > 0 && duration.tv_nsec <= 50000000,
@@ -2453,12 +2690,18 @@ static void observe_send_parked(struct send_probe *probe, int memory) {
                         ((mask >> (SIGUSR1 - 1)) & 1) == 0,
                     "native send atomically reinstates the complete original mask");
         } else {
-            if (probe->message_api) {
+            if (probe->writing == 2) {
+                if (number != SYS_writev || !same_io_object(args[0], probe->fd) ||
+                    args[2] != probe->message.msg_iovlen) goto retry_send;
+            } else if (probe->writing) {
+                if (number != SYS_write || !same_io_object(args[0], probe->fd) ||
+                    args[1] != (uintptr_t)probe->data || args[2] != probe->length) goto retry_send;
+            } else if (probe->message_api) {
                 struct msghdr message;
-                if (number != SYS_sendmsg || args[0] != (unsigned)probe->fd ||
+                if (number != SYS_sendmsg || !same_io_object(args[0], probe->fd) ||
                     !snapshot(memory, args[1], &message, sizeof(message)) ||
                     message.msg_iovlen != probe->message.msg_iovlen) goto retry_send;
-            } else if (number != SYS_sendto || args[0] != (unsigned)probe->fd ||
+            } else if (number != SYS_sendto || !same_io_object(args[0], probe->fd) ||
                        args[1] != (uintptr_t)probe->data || args[2] != probe->length) {
                 goto retry_send;
             }
@@ -2473,9 +2716,13 @@ retry_send:
 }
 
 static int send_contract_main(char **argv) {
+    int vector_write = strncmp(case_name, "writev-", 7) == 0;
+    int writing = vector_write || strncmp(case_name, "write-", 6) == 0;
     int to = strncmp(case_name, "sendto-", 7) == 0;
     int message_api = strncmp(case_name, "sendmsg-", 8) == 0;
-    const char *suffix = case_name + (message_api ? 8 : to ? 7 : 5);
+    const char *suffix = case_name + (vector_write ? 7 : writing ? 6 : message_api ? 8 : to ? 7 : 5);
+    int mapped = vector_write && strncmp(suffix, "mapped-", 7) == 0;
+    if (mapped) suffix += 7;
     int alias = strncmp(suffix, "alias-", 6) == 0;
     if (alias) suffix += 6;
     int datagram = message_api && strncmp(suffix, "datagram-", 9) == 0;
@@ -2484,16 +2731,21 @@ static int send_contract_main(char **argv) {
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "errors", "length-zero", "peer-closed", "partial",
                           "partial-cancel", "partial-error", "address", "oversize", "seqpacket",
-                          "rights", "rights-partial", "iov-max", "descriptor-errors", "mapped-partial"};
+                          "rights", "rights-partial", "rights-invalid", "iov-max", "descriptor-errors", "mapped-partial",
+                          "pipe-fallback", "datagram-fallback", "probe-enosys", "probe-eperm", "probe-eacces"};
     int value = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(suffix, names[i]) == 0) value = (int)i;
     if (value < 0 ||
         (to && (value == SEND_PARTIAL || value == SEND_PARTIAL_CANCEL || value == SEND_PARTIAL_ERROR)) ||
         (!to && !message_api && (value == SEND_ADDRESS || value == SEND_OVERSIZE)) ||
-        (!message_api && value >= SEND_RIGHTS)) return 2;
+        (writing && value == SEND_DONTWAIT) ||
+        (!message_api && (value == SEND_RIGHTS || value == SEND_RIGHTS_PARTIAL || value == SEND_RIGHTS_INVALID)) ||
+        (!message_api && !vector_write && value >= SEND_IOV_MAX && value <= SEND_MAPPED_PARTIAL) ||
+        (!writing && value >= SEND_PIPE_FALLBACK)) return 2;
     enum send_kind kind = (enum send_kind)value;
-    int pin = pin_send_provider(argv[2], message_api ? 2 : to, alias);
+    int entry = vector_write ? 4 : writing ? 3 : message_api ? 2 : to;
+    int pin = pin_send_provider(argv[2], entry, alias);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
                     strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
@@ -2512,9 +2764,16 @@ static int send_contract_main(char **argv) {
     alarm(15);
     int pair[2];
     int type = kind == SEND_SEQPACKET ? SOCK_SEQPACKET :
-               to || datagram || kind == SEND_ADDRESS ? SOCK_DGRAM : SOCK_STREAM;
+               to || datagram || kind == SEND_ADDRESS || kind == SEND_DATAGRAM_FALLBACK ? SOCK_DGRAM : SOCK_STREAM;
     struct sockaddr_in address = {0};
-    if (kind == SEND_ADDRESS) {
+    if (kind == SEND_PIPE_FALLBACK) {
+        int pipefd[2];
+        REQUIRE(pipe2(pipefd, O_CLOEXEC) == 0, "create original write pipe");
+        pair[0] = pipefd[1];
+        pair[1] = pipefd[0];
+        REQUIRE(fcntl(pair[1], F_SETFL, fcntl(pair[1], F_GETFL) | O_NONBLOCK) == 0,
+                "independent pipe reader drains only available bytes");
+    } else if (kind == SEND_ADDRESS) {
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         pair[0] = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
@@ -2530,8 +2789,9 @@ static int send_contract_main(char **argv) {
                 "create socket send endpoints");
     }
     int send_buffer = 8192;
-    REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer)) == 0,
-            "bound the kernel send buffer");
+    if (kind != SEND_PIPE_FALLBACK)
+        REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer)) == 0,
+                "bound the kernel send buffer");
     if (kind == SEND_NONBLOCK)
         REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
                 "set caller-owned send nonblocking flag");
@@ -2548,12 +2808,13 @@ static int send_contract_main(char **argv) {
     int empty_records = 0;
     if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
         kind == SEND_NONBLOCK || kind == SEND_DONTWAIT || kind == SEND_TIMEOUT ||
-        kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET)
-        initial = fill_send_socket(pair[0]);
+        kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET ||
+        kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind))
+        initial = kind == SEND_PIPE_FALLBACK ? fill_write_pipe(pair[0]) : fill_send_socket(pair[0]);
     if (kind == SEND_PEER_CLOSED)
         REQUIRE(close(pair[1]) == 0, "close send peer");
     struct send_probe probe;
-    send_initialize(&probe, kind, pair[0], message_api ? 2 : to);
+    send_initialize(&probe, kind, pair[0], entry, mapped);
     if (kind == SEND_ADDRESS) {
         probe.address = address;
         probe.address_length = sizeof(address);
@@ -2561,8 +2822,9 @@ static int send_contract_main(char **argv) {
         probe.message.msg_namelen = probe.address_length;
     }
     int rights[2] = {-1, -1};
-    if (kind == SEND_RIGHTS || kind == SEND_RIGHTS_PARTIAL) {
-        REQUIRE(pipe2(rights, O_CLOEXEC) == 0, "prepare sendmsg descriptor transfer");
+    if (kind == SEND_RIGHTS || kind == SEND_RIGHTS_PARTIAL || kind == SEND_RIGHTS_INVALID) {
+        if (kind != SEND_RIGHTS_INVALID)
+            REQUIRE(pipe2(rights, O_CLOEXEC) == 0, "prepare sendmsg descriptor transfer");
         probe.rights_fd = rights[0];
         probe.message.msg_control = probe.control.bytes;
         probe.message.msg_controllen = sizeof(probe.control.bytes);
@@ -2572,6 +2834,7 @@ static int send_contract_main(char **argv) {
         control->cmsg_len = CMSG_LEN(sizeof(int));
         memcpy(CMSG_DATA(control), &rights[0], sizeof(rights[0]));
     }
+    size_t original_descriptors = descriptor_count();
     REQUIRE(pthread_create(&probe.observed.thread, NULL, send_worker, &probe) == 0,
             "create send worker");
     wait_ready(&probe.observed);
@@ -2581,7 +2844,8 @@ static int send_contract_main(char **argv) {
     int partial = kind == SEND_PARTIAL || kind == SEND_PARTIAL_CANCEL ||
                   kind == SEND_PARTIAL_ERROR || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL;
     if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_READY_LATE ||
-        kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET || partial) {
+        kind == SEND_SIGNAL || kind == SEND_SIGNAL_RESTART || kind == SEND_SEQPACKET || partial ||
+        kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind)) {
         observe_send_parked(&probe, memory);
         if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL)
             REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request blocked send cancellation");
@@ -2598,7 +2862,8 @@ static int send_contract_main(char **argv) {
             REQUIRE(shutdown(pair[1], SHUT_RD) == 0, "fail send after its accepted prefix");
         if (kind == SEND_DISABLED || kind == SEND_READY_LATE || kind == SEND_SIGNAL_RESTART ||
             kind == SEND_PARTIAL || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL ||
-            kind == SEND_SEQPACKET) {
+            kind == SEND_SEQPACKET || kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK ||
+            write_probe_denial(kind)) {
             int64_t deadline = monotonic_ns() + 2000000000;
             while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire)) {
                 REQUIRE(monotonic_ns() < deadline, "send completion after draining backpressure");
@@ -2623,6 +2888,9 @@ static int send_contract_main(char **argv) {
     } else if (kind == SEND_SIGNAL) {
         REQUIRE(probe.observed.result == -1 && probe.observed.error == EINTR,
                 "non-restarting send preserves EINTR");
+    } else if (kind == SEND_RIGHTS_INVALID) {
+        REQUIRE(probe.observed.result == -1 && probe.observed.error == EBADF,
+                "a private pin must not turn invalid SCM_RIGHTS into a transmitted socket");
     } else if (kind == SEND_PEER_CLOSED) {
         REQUIRE(probe.observed.result == -1 &&
                     probe.observed.error == (type == SOCK_DGRAM ? ECONNREFUSED : EPIPE),
@@ -2648,6 +2916,8 @@ static int send_contract_main(char **argv) {
     REQUIRE(filler == initial, "send cancellation does not consume queued peer data");
     REQUIRE(probe.rights_received == (kind == SEND_RIGHTS || kind == SEND_RIGHTS_PARTIAL),
             "sendmsg delivers ancillary rights exactly once across all stream fragments");
+    REQUIRE(descriptor_count() == original_descriptors,
+            "completed or canceled send releases every private descriptor");
     if (rights[0] >= 0)
         REQUIRE(close(rights[0]) == 0 && close(rights[1]) == 0, "release sender rights sources");
     REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "send never changes shared O_NONBLOCK flags");
@@ -2657,13 +2927,158 @@ static int send_contract_main(char **argv) {
     return 0;
 }
 
+/* A blocked kernel I/O operation owns its original open file description even
+ * when dup2 replaces the public number. Keep the old endpoint alive explicitly
+ * so EPIPE/EOF cannot hide an adapter that silently switches to the new socket. */
+static void observe_reuse_parked(struct state *state, int memory, int fd, long raw, int writing) {
+    int64_t deadline = monotonic_ns() + 2000000000;
+    while (monotonic_ns() < deadline) {
+        REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
+                "I/O remains blocked before descriptor replacement");
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long args[6] = {0};
+        if (!read_proc(state, "syscall", call, sizeof(call)) ||
+            sscanf(call, "%ld %llx %llx %llx %llx %llx %llx", &number,
+                   &args[0], &args[1], &args[2], &args[3], &args[4], &args[5]) < 5)
+            goto retry_reuse;
+        int found = number == raw && same_io_object(args[0], fd);
+        if (expect_native && number == SYS_ppoll && args[1] == 1) {
+            struct pollfd interest;
+            found = snapshot(memory, args[0], &interest, sizeof(interest)) &&
+                    same_io_object((unsigned)interest.fd, fd) &&
+                    interest.events == (writing ? POLLOUT : POLLIN);
+        }
+        if (!found || !read_proc(state, "stat", status, sizeof(status))) goto retry_reuse;
+        char *end = strrchr(status, ')');
+        if (end != NULL && end[1] == ' ' && end[2] == 'S') return;
+retry_reuse:
+        pause_briefly();
+    }
+    fail("no independently observed sleeping I/O on the original socket");
+}
+
+static int io_reuse_contract_main(char **argv) {
+    const char *names[] = {"read", "recv", "recvfrom", "recvmsg", "readv",
+                           "write", "send", "sendto", "sendmsg", "writev"};
+    const long raw[] = {SYS_read, SYS_recvfrom, SYS_recvfrom, SYS_recvmsg, SYS_readv,
+                        SYS_write, SYS_sendto, SYS_sendto, SYS_sendmsg, SYS_writev};
+    const char *name = case_name + strlen("fd-reuse-");
+    int api = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(name, names[i]) == 0) api = (int)i;
+    if (api < 0) return 2;
+    int writing = api >= 5;
+    int entry = api == 5 ? 3 : api == 9 ? 4 : api - 6;
+    int pin = writing ? pin_send_provider(argv[2], entry, 0) :
+        pin_receive_provider(argv[2], api == 2, 0, 0, api == 3, api == 0 || api == 4, api == 4);
+    if (pin != 0) return pin;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    struct sigaction action = {0};
+    action.sa_handler = SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "reuse test signal disposition");
+    alarm(15);
+    int original[2], replacement[2];
+    REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, original) == 0 &&
+                socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, replacement) == 0,
+            "independent original and replacement socket pairs");
+    int keeper = (int)syscall(SYS_fcntl, original[0], F_DUPFD_CLOEXEC, 64);
+    REQUIRE(keeper >= 64, "retain the original socket without retaining its public number");
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("fd-reuse-snapshot-unavailable");
+    int original_flags = fcntl(original[0], F_GETFL);
+    int replacement_flags = fcntl(replacement[0], F_GETFL);
+    size_t initial = 0, filler = 0, payload = 0;
+    int empty_records = 0;
+    if (writing) {
+        int capacity = 8192;
+        REQUIRE(setsockopt(original[0], SOL_SOCKET, SO_SNDBUF, &capacity, sizeof(capacity)) == 0,
+                "bound the original socket's send buffer");
+        initial = fill_send_socket(original[0]);
+    }
+    struct receive_probe receiver;
+    struct send_probe sender;
+    struct state *state;
+    if (writing) {
+        send_initialize(&sender, SEND_READY_LATE, original[0], entry, 0);
+        state = &sender.observed;
+    } else {
+        receive_initialize(&receiver, RECEIVE_READY_LATE, original[0], api == 2, 0,
+                           api == 3, 0, api == 0 || api == 4, api == 4);
+        if (api == 3) {
+            receiver.header.msg_control = NULL;
+            receiver.header.msg_controllen = 0;
+        }
+        state = &receiver.observed;
+    }
+    size_t original_descriptors = descriptor_count();
+    REQUIRE(pthread_create(&state->thread, NULL, writing ? send_worker : receive_worker,
+                           writing ? (void *)&sender : (void *)&receiver) == 0,
+            "create descriptor reuse worker");
+    wait_ready(state);
+    atomic_store_explicit(&state->release, 1, memory_order_release);
+    observe_reuse_parked(state, memory, original[0], raw[api], writing);
+    REQUIRE(syscall(SYS_dup2, replacement[0], original[0]) == original[0],
+            "atomically close and replace the public descriptor number");
+    if (writing) {
+        int64_t deadline = monotonic_ns() + 2000000000;
+        while (!atomic_load_explicit(&state->returned, memory_order_acquire)) {
+            REQUIRE(monotonic_ns() < deadline, "bounded original socket write completion");
+            drain_send_socket(original[1], initial, &filler, &payload, &empty_records, &sender);
+            pause_briefly();
+        }
+    } else {
+        send_receive_bytes(original[1], "DATA", receiver.length);
+        send_receive_bytes(replacement[1], "NEW!", receiver.length);
+    }
+    REQUIRE(join_bounded(state) == state && state->cleaned == 1 && state->error == EDOM,
+            "reused descriptor I/O completes normally and cleans up once");
+    if (writing) {
+        drain_send_socket(original[1], initial, &filler, &payload, &empty_records, &sender);
+        REQUIRE(state->result == (int)sender.length && filler == initial && payload == sender.length &&
+                    empty_records == 0,
+                "blocked writes publish their entire payload only to the original socket");
+        unsigned char byte;
+        REQUIRE(syscall(SYS_recvfrom, replacement[1], &byte, 1, MSG_DONTWAIT, NULL, NULL) == -1 &&
+                    errno == EAGAIN, "descriptor replacement receives no misdirected write bytes");
+    } else {
+        REQUIRE(state->result == (int)receiver.length &&
+                    memcmp(receiver.data, "DATA", receiver.length) == 0,
+                "blocked reads consume the original socket's bytes after descriptor reuse");
+        unsigned char bytes[8];
+        REQUIRE(syscall(SYS_recvfrom, replacement[0], bytes, sizeof(bytes), MSG_DONTWAIT,
+                        NULL, NULL) == (ssize_t)receiver.length &&
+                    memcmp(bytes, "NEW!", receiver.length) == 0,
+                "descriptor replacement retains its independent queued bytes");
+        REQUIRE(syscall(SYS_recvfrom, keeper, bytes, sizeof(bytes), MSG_DONTWAIT, NULL, NULL) == -1 &&
+                    errno == EAGAIN, "original receive payload is consumed exactly once");
+    }
+    REQUIRE(fcntl(keeper, F_GETFL) == original_flags && fcntl(replacement[0], F_GETFL) == replacement_flags,
+            "reuse protection does not mutate either open file's status flags");
+    REQUIRE(descriptor_count() == original_descriptors,
+            "reused I/O releases its private pin after normal completion");
+    REQUIRE(close(original[0]) == 0 && close(original[1]) == 0 &&
+                close(replacement[0]) == 0 && close(replacement[1]) == 0 &&
+                close(keeper) == 0 && close(memory) == 0,
+            "release all descriptor reuse fixture resources");
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
-    if (strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0 ||
+    if (strncmp(case_name, "fd-reuse-", 9) == 0) return io_reuse_contract_main(argv);
+    if (strncmp(case_name, "write-", 6) == 0 || strncmp(case_name, "writev-", 7) == 0 ||
+        strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0 ||
         strncmp(case_name, "sendmsg-", 8) == 0)
         return send_contract_main(argv);
-    if (strncmp(case_name, "read-", 5) == 0 ||
+    if (strncmp(case_name, "read-", 5) == 0 || strncmp(case_name, "readv-", 6) == 0 ||
         strncmp(case_name, "recv-", 5) == 0 || strncmp(case_name, "recvfrom-", 9) == 0 ||
         strncmp(case_name, "recvmsg-", 8) == 0)
         return receive_contract_main(argv);

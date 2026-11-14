@@ -98,6 +98,41 @@ READ_CASES = tuple(
     for entry in ("alias", "fortified")
     for case in ("blocked", "pending", "competing", "errors", "length-zero")
 )
+READV_CASES = tuple(
+    f"readv-{case}"
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock",
+        "timeout", "signal", "signal-restart", "competing", "lowat", "eof",
+        "errors", "length-zero", "pipe-fallback", "datagram-fallback",
+        "probe-enosys", "probe-eperm", "probe-eacces", "alias-blocked", "alias-pending",
+        "alias-competing", "alias-errors", "mapped-blocked", "mapped-pending",
+        "mapped-ready-late", "mapped-competing", "mapped-length-zero",
+    )
+)
+WRITE_CASES = tuple(
+    f"{entry}-{case}"
+    for entry in ("write", "writev")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock",
+        "timeout", "signal", "signal-restart", "errors", "length-zero",
+        "peer-closed", "partial", "partial-error", "seqpacket", "pipe-fallback",
+        "datagram-fallback", "probe-enosys", "probe-eperm", "probe-eacces",
+        "alias-blocked", "alias-pending", "alias-partial", "alias-partial-error", "alias-errors",
+    )
+) + tuple(
+    f"writev-{case}"
+    for case in (
+        "iov-max", "descriptor-errors", "mapped-blocked", "mapped-pending",
+        "mapped-ready-late", "mapped-partial",
+    )
+)
+FD_REUSE_CASES = tuple(
+    f"fd-reuse-{entry}"
+    for entry in ("read", "recv", "recvfrom", "recvmsg", "readv",
+                  "write", "send", "sendto", "sendmsg", "writev")
+)
+FD_IO_CASES = READV_CASES + WRITE_CASES + FD_REUSE_CASES
+FD_IO_NATIVE_CASES = ("write-partial-cancel", "writev-partial-cancel")
 RECEIVE_CASES = tuple(
     f"{entry}-{case}"
     for entry in ("recv", "recvfrom")
@@ -119,6 +154,7 @@ RECEIVE_CASES = tuple(
         "length-zero", "waitall", "lowat", "eof", "alias-blocked", "alias-pending",
         "datagram-blocked", "datagram-pending", "datagram-ready-late", "datagram-zero",
         "datagram-truncate", "rights", "rights-cloexec", "control-truncate",
+        "rights-pressure", "mapped-rights-pressure",
         "mapped-blocked", "mapped-pending", "mapped-ready-late",
     )
 )
@@ -139,7 +175,7 @@ SENDMSG_CASES = tuple(
     for case in (
         "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
         "timeout", "signal", "signal-restart", "errors", "length-zero", "peer-closed",
-        "seqpacket", "partial", "partial-error", "address", "rights", "rights-partial",
+        "seqpacket", "partial", "partial-error", "address", "rights", "rights-partial", "rights-invalid",
         "iov-max", "descriptor-errors", "mapped-partial", "alias-blocked", "alias-pending",
         "datagram-blocked", "datagram-pending", "datagram-ready-late", "datagram-length-zero",
         "datagram-oversize", "datagram-rights",
@@ -152,7 +188,7 @@ SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
 
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
-CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + READ_CASES + RECEIVE_CASES +
+CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + READ_CASES + FD_IO_CASES + RECEIVE_CASES +
          SEND_CASES + SENDMSG_CASES)
 
 
@@ -179,6 +215,10 @@ def main() -> int:
         help="Run stream read cancellation and original-syscall fallback cases.",
     )
     parser.add_argument(
+        "--fd-io-only", action="store_true",
+        help="Run write/readv/writev cancellation, partial progress and syscall fallback cases.",
+    )
+    parser.add_argument(
         "--receive-only", action="store_true",
         help="Run only socket receive cases and the provider/backend negative controls.",
     )
@@ -191,16 +231,17 @@ def main() -> int:
         help="Run vectored and ancillary sendmsg cases, including native partial cancellation.",
     )
     args = parser.parse_args()
-    if sum((args.suspend_only, args.read_only, args.receive_only, args.send_only, args.sendmsg_only)) > 1:
-        parser.error("--suspend-only, --read-only, --receive-only, --send-only and --sendmsg-only are mutually exclusive")
+    if sum((args.suspend_only, args.read_only, args.fd_io_only, args.receive_only, args.send_only, args.sendmsg_only)) > 1:
+        parser.error("--suspend-only, --read-only, --fd-io-only, --receive-only, --send-only and --sendmsg-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
     cases = (SUSPEND_CASES if args.suspend_only else READ_CASES if args.read_only else
+             FD_IO_CASES + FD_IO_NATIVE_CASES if args.fd_io_only else
              RECEIVE_CASES if args.receive_only else
              SEND_CASES + SENDMSG_CASES + SEND_NATIVE_CASES if args.send_only else
              SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else CASES)
-    native_only_cases = SEND_NATIVE_CASES if args.send_only or args.sendmsg_only else ()
+    native_only_cases = SEND_NATIVE_CASES + FD_IO_NATIVE_CASES
     native_only_cases = tuple(case for case in native_only_cases if case in cases)
     candidate_cases = 0 if args.host_only else 4 * len(cases) - 2 * len(native_only_cases)
     source = root / "tests/integration/fixture_pthread_native_poll.c"
@@ -277,6 +318,8 @@ def main() -> int:
         ).replace("epoll-pwait-alias-", "epoll-pwait-").replace(
             "pselect-alias-", "pselect-"
         ).replace("select-alias-", "select-").replace("read-alias-", "read-").replace(
+            "readv-alias-", "readv-"
+        ).replace("write-alias-", "write-").replace("writev-alias-", "writev-").replace(
             "recv-alias-", "recv-"
         ).replace("recvmsg-alias-", "recvmsg-").replace(
             "send-alias-", "send-"
@@ -321,6 +364,7 @@ def main() -> int:
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
         "case_scope": "pause/sigsuspend only" if args.suspend_only else
                       "stream reads and fallback contracts only" if args.read_only else
+                      "stream write/readv/writev and fallback contracts only" if args.fd_io_only else
                       "socket receives only" if args.receive_only else
                       "socket sends only" if args.send_only else
                       "vectored socket sends only" if args.sendmsg_only else "poll/epoll/sleep/select/socket",
@@ -335,6 +379,7 @@ def main() -> int:
         "select_cases": sum(case in SELECT_CASES for case in cases),
         "suspend_cases": sum(case in SUSPEND_CASES for case in cases),
         "read_cases": sum(case in READ_CASES for case in cases),
+        "fd_io_cases": sum(case in FD_IO_CASES + FD_IO_NATIVE_CASES for case in cases),
         "receive_cases": sum(case in RECEIVE_CASES for case in cases),
         "send_cases": sum(case.startswith(("send-", "sendto-", "sendmsg-")) for case in cases),
         "native_only_cases": list(native_only_cases),

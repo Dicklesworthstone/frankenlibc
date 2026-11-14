@@ -6,12 +6,18 @@
 #endif
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <linux/futex.h>
 #include <mutex>
 #include <pthread.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -242,21 +248,308 @@ static void contended_retry() {
     std::puts("PASS contended-retry: 16 rounds, 8 waiters per round");
 }
 
+// Fork tests use pthreads directly so the same scenarios can select the owned
+// clone backend without relying on libstdc++ thread-local exception machinery
+// in those workers. Only the forking/main thread throws a C++ exception.
+static pid_t (*fork_fn)();
+static std::uintptr_t creator_tp;
+static bool native_backend;
+static pid_t parent_pid;
+static pthread_once_t fork_once = PTHREAD_ONCE_INIT;
+static std::atomic<unsigned> fork_attempts{0}, fork_cleanups{0};
+static std::atomic<int> owner_tid{0}, waiter_tid{0}, owner_release{0}, waiter_done{0};
+static bool child_retry;
+static int child_handler_calls;
+static int fork_value;
+
+static void verify_worker_backend() {
+    require((reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer()) == creator_tp) ==
+                native_backend,
+            "thread backend does not match hosted/native request");
+}
+
+static void orphan_init() {
+    CallbackCleanup cleanup{fork_cleanups};
+    const unsigned attempt = fork_attempts.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (static_cast<pid_t>(syscall(SYS_getpid)) == parent_pid) {
+        while (owner_release.load(std::memory_order_acquire) == 0) {
+            (void)syscall(SYS_futex, &owner_release, FUTEX_WAIT_PRIVATE, 0,
+                          nullptr, nullptr, 0);
+        }
+    } else if (child_retry && attempt == 2) {
+        throw InitFailure{129};
+    }
+    fork_value = 0x3157;
+}
+
+static void *fork_owner(void *) {
+    verify_worker_backend();
+    owner_tid.store(static_cast<int>(syscall(SYS_gettid)), std::memory_order_release);
+    require(once_fn(&fork_once, orphan_init) == 0, "parent owner failed");
+    return nullptr;
+}
+
+static void *fork_waiter(void *) {
+    verify_worker_backend();
+    waiter_tid.store(static_cast<int>(syscall(SYS_gettid)), std::memory_order_release);
+    require(once_fn(&fork_once, orphan_init) == 0, "parent waiter failed");
+    require(fork_value == 0x3157, "parent waiter did not acquire publication");
+    waiter_done.store(1, std::memory_order_release);
+    return nullptr;
+}
+
+static bool proc_text(int tid, const char *leaf, char *text, std::size_t capacity) {
+    char path[128];
+    std::snprintf(path, sizeof(path), "/proc/self/task/%d/%s", tid, leaf);
+    const int fd = static_cast<int>(syscall(SYS_openat, AT_FDCWD, path, O_RDONLY | O_CLOEXEC, 0));
+    if (fd < 0) return false;
+    const long count = syscall(SYS_read, fd, text, capacity - 1);
+    (void)syscall(SYS_close, fd);
+    if (count <= 0) return false;
+    text[count] = 0;
+    return true;
+}
+
+static void observe_futex(const std::atomic<int> &tid, const void *word) {
+    // A published "entered" flag is insufficient: require an independent
+    // kernel snapshot of the precise futex and a sleeping task before forking.
+    for (unsigned attempt = 0; attempt != 2000; ++attempt) {
+        const int worker = tid.load(std::memory_order_acquire);
+        char call[512], status[512];
+        long number = -1;
+        unsigned long long address = 0;
+        if (worker > 0 && proc_text(worker, "syscall", call, sizeof(call)) &&
+            std::sscanf(call, "%ld %llx", &number, &address) == 2 &&
+            number == SYS_futex && address == reinterpret_cast<std::uintptr_t>(word) &&
+            proc_text(worker, "stat", status, sizeof(status))) {
+            const char *tail = std::strrchr(status, ')');
+            if (tail != nullptr && tail[1] == ' ' && tail[2] == 'S') return;
+        }
+        const timespec delay{0, 1000000};
+        (void)syscall(SYS_nanosleep, &delay, nullptr);
+    }
+    fail("initializer or waiter was not observed sleeping on its expected futex");
+}
+
+[[noreturn]] static void child_success() {
+    (void)syscall(SYS_exit_group, 0);
+    __builtin_unreachable();
+}
+
+static void wait_child(pid_t child) {
+    int status = -1;
+    require(waitpid(child, &status, 0) == child, "waitpid failed");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "fork child failed or inherited a stranded once initializer");
+}
+
+static void child_once_handler() {
+    alarm(2);
+    require(once_fn(&fork_once, orphan_init) == 0, "child handler could not acquire once");
+    ++child_handler_calls;
+}
+
+static void fork_orphan(const char *test_name, bool in_handler, bool retry) {
+    child_retry = retry;
+    if (in_handler)
+        require(pthread_atfork(nullptr, nullptr, child_once_handler) == 0, "register child once handler");
+    pthread_t owner{}, waiter{};
+    require(pthread_create(&owner, nullptr, fork_owner, nullptr) == 0, "create once owner");
+    observe_futex(owner_tid, &owner_release);
+    require(pthread_create(&waiter, nullptr, fork_waiter, nullptr) == 0, "create once waiter");
+    observe_futex(waiter_tid, &fork_once);
+    // Independent siblings must both recover, while the parent's owner and
+    // waiter retain their original generation and execute the callback once.
+    for (unsigned sibling = 0; sibling != 2; ++sibling) {
+        const pid_t child = fork_fn();
+        require(child >= 0, "fork orphaned initializer");
+        if (child == 0) {
+            alarm(2);
+            if (retry) {
+                bool caught = false;
+                try {
+                    (void)once_fn(&fork_once, orphan_init);
+                } catch (const InitFailure &failure) {
+                    require(failure.attempt == 129, "child initializer exception changed");
+                    caught = true;
+                }
+                require(caught, "child initializer did not propagate its exception");
+            }
+            require(once_fn(&fork_once, orphan_init) == 0, "child once retry failed");
+            require(once_fn(&fork_once, must_not_run) == 0, "child once completion was lost");
+            require(fork_attempts.load() == (retry ? 3u : 2u) && fork_value == 0x3157,
+                    "child initialized the wrong number of times");
+            require(fork_cleanups.load() == (retry ? 2u : 1u), "child initializer cleanup missing");
+            require(child_handler_calls == (in_handler ? 1 : 0), "child handler execution mismatch");
+            child_success();
+        }
+        wait_child(child);
+        require(waiter_done.load(std::memory_order_acquire) == 0 && fork_attempts.load() == 1,
+                "child recovery changed the parent's in-progress initialization");
+    }
+    owner_release.store(1, std::memory_order_release);
+    (void)syscall(SYS_futex, &owner_release, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+    require(pthread_join(owner, nullptr) == 0 && pthread_join(waiter, nullptr) == 0,
+            "join parent once owner and waiter");
+    require(fork_attempts.load() == 1 && fork_cleanups.load() == 1 && waiter_done.load() == 1,
+            "parent once ownership or waiter wake changed across fork");
+    require(once_fn(&fork_once, must_not_run) == 0, "parent once completion was lost");
+    std::printf("PASS %s\n", test_name);
+}
+
+static pthread_once_t survivor_once = PTHREAD_ONCE_INIT;
+static unsigned survivor_attempts;
+static pid_t survivor_child;
+static bool survivor_throws;
+static int survivor_value;
+
+static void survivor_retry_init() {
+    ++survivor_attempts;
+    survivor_value = 81;
+}
+
+static void survivor_init() {
+    ++survivor_attempts;
+    survivor_child = fork_fn();
+    require(survivor_child >= 0, "fork from initializer");
+    if (survivor_child == 0 && survivor_throws) throw InitFailure{171};
+    survivor_value = 81;
+}
+
+static void fork_survivor(bool throws) {
+    survivor_throws = throws;
+    bool caught = false;
+    try {
+        require(once_fn(&survivor_once, survivor_init) == 0, "surviving initializer failed");
+    } catch (const InitFailure &failure) {
+        require(survivor_child == 0 && throws && failure.attempt == 171,
+                "surviving initializer exception reached the wrong process");
+        caught = true;
+    }
+    if (survivor_child == 0) {
+        alarm(2);
+        require(caught == throws, "surviving child's exception state changed");
+        require(once_fn(&survivor_once, throws ? survivor_retry_init : must_not_run) == 0,
+                "surviving child's once retry failed");
+        require(survivor_attempts == (throws ? 2u : 1u) && survivor_value == 81,
+                "surviving child lost initialization");
+        require(once_fn(&survivor_once, must_not_run) == 0, "surviving child lost DONE");
+        child_success();
+    }
+    wait_child(survivor_child);
+    require(!caught && survivor_attempts == 1 && survivor_value == 81,
+            "fork changed the parent's surviving initializer");
+    require(once_fn(&survivor_once, must_not_run) == 0, "surviving parent lost DONE");
+    std::puts(throws ? "PASS fork-survivor-retry" : "PASS fork-survivor");
+}
+
+static void fork_completed() {
+    require(once_fn(&survivor_once, survivor_retry_init) == 0, "initialize before fork");
+    const pid_t child = fork_fn();
+    require(child >= 0, "fork completed initializer");
+    if (child == 0) {
+        alarm(2);
+        require(once_fn(&survivor_once, must_not_run) == 0 && survivor_attempts == 1 &&
+                    survivor_value == 81,
+                "fork reran a completed initializer");
+        child_success();
+    }
+    wait_child(child);
+    require(once_fn(&survivor_once, must_not_run) == 0, "parent lost pre-fork DONE");
+    std::puts("PASS fork-completed");
+}
+
+static pthread_once_t cancel_once = PTHREAD_ONCE_INIT;
+static std::atomic<unsigned> cancel_attempts{0}, cancel_cleanups{0};
+static std::atomic<bool> cancel_entered{false}, cancel_release{false};
+static int cancel_value;
+
+static void cancel_init() {
+    CallbackCleanup cleanup{cancel_cleanups};
+    if (cancel_attempts.fetch_add(1, std::memory_order_relaxed) == 0) {
+        cancel_entered.store(true, std::memory_order_release);
+        while (!cancel_release.load(std::memory_order_acquire)) (void)syscall(SYS_sched_yield);
+        pthread_testcancel();
+        fail("pending cancellation did not leave the initializer");
+    }
+    cancel_value = 97;
+}
+
+static void *cancel_owner(void *) {
+    verify_worker_backend();
+    (void)once_fn(&cancel_once, cancel_init);
+    fail("canceled once owner returned");
+}
+
+static void canceled_retry() {
+    pthread_t owner{};
+    require(pthread_create(&owner, nullptr, cancel_owner, nullptr) == 0, "create canceled initializer");
+    while (!cancel_entered.load(std::memory_order_acquire)) (void)syscall(SYS_sched_yield);
+    require(pthread_cancel(owner) == 0, "cancel once owner");
+    cancel_release.store(true, std::memory_order_release);
+    void *result = nullptr;
+    require(pthread_join(owner, &result) == 0 && result == PTHREAD_CANCELED,
+            "once owner did not join as canceled");
+    require(cancel_cleanups.load() == 1, "canceled initializer destructor did not run");
+    require(once_fn(&cancel_once, cancel_init) == 0 && cancel_attempts.load() == 2 &&
+                cancel_cleanups.load() == 2 && cancel_value == 97,
+            "cancellation did not reset once for a successful retry");
+    require(once_fn(&cancel_once, must_not_run) == 0, "canceled retry lost DONE");
+    std::puts("PASS canceled-retry");
+}
+
+static void verify_provider(const char *symbol, const char *expected_path) {
+    void *address = dlsym(RTLD_DEFAULT, symbol);
+    Dl_info info{};
+    struct stat expected{}, actual{};
+    require(address != nullptr && dladdr(address, &info) != 0 && info.dli_fname != nullptr &&
+                stat(expected_path, &expected) == 0 && stat(info.dli_fname, &actual) == 0 &&
+                expected.st_dev == actual.st_dev && expected.st_ino == actual.st_ino,
+            "fork/once fixture symbol provider mismatch");
+}
+
 int main(int argc, char **argv) {
-    require(argc <= 2, "usage: fixture_pthread_once_unwind [expected-library]");
+    require(argc <= 3, "usage: fixture_pthread_once_unwind [expected-library] [--case]");
     alarm(20);
     void *symbol = dlsym(RTLD_DEFAULT, "pthread_once");
     require(symbol != nullptr, "pthread_once symbol missing");
     once_fn = reinterpret_cast<OnceFn>(symbol);
-    if (argc == 2) {
+    const char *expected_path = argc >= 2 && std::strncmp(argv[1], "--", 2) != 0 ? argv[1] : nullptr;
+    const char *test_case = argc == 3 ? argv[2] : argc == 2 && expected_path == nullptr ? argv[1] : nullptr;
+    if (expected_path != nullptr) {
         Dl_info info{};
         struct stat expected{}, actual{};
         require(dladdr(symbol, &info) != 0 && info.dli_fname != nullptr,
                 "cannot establish pthread_once symbol ownership");
-        require(stat(argv[1], &expected) == 0 && stat(info.dli_fname, &actual) == 0,
+        require(stat(expected_path, &expected) == 0 && stat(info.dli_fname, &actual) == 0,
                 "cannot stat expected/actual pthread_once library");
         require(expected.st_dev == actual.st_dev && expected.st_ino == actual.st_ino,
                 "pthread_once did not bind to the candidate library");
+    }
+    if (test_case != nullptr) {
+        Dl_info provider{};
+        require(dladdr(symbol, &provider) != 0 && provider.dli_fname != nullptr, "once provider path");
+        const char *wanted = expected_path != nullptr ? expected_path : provider.dli_fname;
+        // GNU pthread_atfork is a nonshared wrapper whose external binding is
+        // __register_atfork; pin that provider rather than require a default-
+        // version pthread_atfork symbol that GNU does not export.
+        for (const char *required : {"pthread_create", "pthread_join", "pthread_cancel", "pthread_testcancel", "fork", "__register_atfork"})
+            verify_provider(required, wanted);
+        fork_fn = reinterpret_cast<decltype(fork_fn)>(dlsym(RTLD_DEFAULT, "fork"));
+        const char *backend = std::getenv("FRANKENLIBC_THREAD_NATIVE");
+        native_backend = backend != nullptr && std::strcmp(backend, "1") == 0;
+        creator_tp = reinterpret_cast<std::uintptr_t>(__builtin_thread_pointer());
+        parent_pid = static_cast<pid_t>(syscall(SYS_getpid));
+        if (std::strcmp(test_case, "--fork-orphan") == 0) fork_orphan("fork-orphan", false, false);
+        else if (std::strcmp(test_case, "--fork-child-handler") == 0) fork_orphan("fork-child-handler", true, false);
+        else if (std::strcmp(test_case, "--fork-retry") == 0) fork_orphan("fork-retry", false, true);
+        else if (std::strcmp(test_case, "--fork-survivor") == 0) fork_survivor(false);
+        else if (std::strcmp(test_case, "--fork-survivor-retry") == 0) fork_survivor(true);
+        else if (std::strcmp(test_case, "--fork-completed") == 0) fork_completed();
+        else if (std::strcmp(test_case, "--canceled-retry") == 0) canceled_retry();
+        else fail("unknown once fixture case");
+        alarm(0);
+        return 0;
     }
     sequential_retry();
     nested_retry();

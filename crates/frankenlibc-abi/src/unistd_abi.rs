@@ -607,11 +607,14 @@ pub(crate) unsafe fn write_cp(fd: c_int, buf: *const c_void, count: usize) -> li
     let (effective_count, clamped) =
         maybe_clamp_io_len("write", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for write(2); write is a cancellation point.
-    let rc = unsafe {
-        crate::pthread_abi::cancellation_point_syscall(
-            libc::SYS_write,
-            [fd as usize, buf as usize, effective_count, 0, 0, 0],
-        )
+    let rc = match unsafe {
+        crate::pthread_abi::cancellation_point_write(fd, buf.cast(), effective_count)
+    } {
+        Ok(written) => written,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
