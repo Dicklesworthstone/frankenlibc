@@ -42,6 +42,15 @@ clap = { version = "4.6.1", features = ["derive"] }
 criterion = "0.8.2"
 libc = "0.2.185"
 
+# Native IDNA processing. Keep the Unicode backend on the Unicode 16 cohort
+# used by core's normative IDNA2008 property table. The ICU 2.0 crates constrain
+# their compiled-data dependencies to ~2.0.0; an untracked Cargo.lock must not
+# silently mix newer Unicode mappings with the pinned IDNA2008 properties.
+idna = "=1.1.0"
+idna_adapter = "=1.2.1"
+icu_normalizer = { version = "=2.0.0", default-features = false }
+icu_properties = { version = "=2.0.0", default-features = false, features = ["alloc"] }
+
 # Internal crates
 frankenlibc-membrane = { path = "crates/frankenlibc-membrane" }
 frankenlibc-core = { path = "crates/frankenlibc-core" }

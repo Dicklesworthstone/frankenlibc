@@ -7341,7 +7341,7 @@ fn build_hermetic_dns_reply(query: &[u8], is_tcp: bool) -> Option<Vec<u8>> {
     let mut flags = 0x8180u16; // NOERROR
 
     match qname.as_str() {
-        "dual.hermetic.test" => {
+        "dual.hermetic.test" | "xn--bcher-kva.hermetic.test" | "xn--r8jz45g.xn--zckzah" => {
             if qtype == 1 {
                 push_rr(&mut answers, &[0xc0, 0x0c], 1, &[198, 51, 100, 42]);
                 ancount = 1;
@@ -8409,9 +8409,11 @@ fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
     let _ = server_thread.join();
 }
 
-// GNU IDN output flags do not enable forward Unicode-name normalization.
+// GNU IDN input and output flags are independent.
+const TEST_AI_IDN: c_int = 0x40;
 const TEST_AI_CANONIDN: c_int = 0x80;
 const TEST_NI_IDN: c_int = 0x20;
+const TEST_EAI_IDN_ENCODE: c_int = -105;
 
 struct ResolverIdnLocale {
     handle: frankenlibc_abi::locale_abi::LocaleT,
@@ -8480,6 +8482,220 @@ fn resolver_idn_canonical(query: &CStr, flags: c_int) -> Vec<Option<Vec<u8>>> {
         );
         names
     }
+}
+
+#[test]
+fn resolver_idn_forward_lookup_normalizes_before_nss_and_canonical_output() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        for (input, encoded, decoded) in [
+            ("bücher.test", "xn--bcher-kva.test", "bücher.test"),
+            ("BÜCHER.test", "xn--bcher-kva.test", "bücher.test"),
+            ("bu\u{308}cher.test", "xn--bcher-kva.test", "bücher.test"),
+            ("例え。テスト", "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+            ("例え．テスト", "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+            ("例え｡テスト", "xn--r8jz45g.xn--zckzah", "例え.テスト"),
+        ] {
+            let input = CString::new(input).unwrap();
+            for obsolete in [0, 0x100, 0x200, 0x300] {
+                assert_eq!(
+                    resolver_idn_canonical(&input, TEST_AI_IDN | libc::AI_CANONNAME | obsolete),
+                    vec![Some(encoded.as_bytes().to_vec()), None, None],
+                );
+                assert_eq!(
+                    resolver_idn_canonical(
+                        &input,
+                        TEST_AI_IDN | libc::AI_CANONNAME | TEST_AI_CANONIDN | obsolete
+                    ),
+                    vec![Some(decoded.as_bytes().to_vec()), None, None],
+                );
+            }
+            assert_eq!(
+                resolver_idn_canonical(&input, TEST_AI_IDN | TEST_AI_CANONIDN),
+                vec![None, None, None],
+            );
+        }
+    });
+}
+
+#[test]
+fn resolver_idn_forward_native_dns_sends_normalized_ascii_queries() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    const CHILD: &str = "FRANKENLIBC_IDN_DNS_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        let latin = CString::new("bu\u{308}cher.hermetic.test.").unwrap();
+        assert_eq!(
+            resolver_idn_canonical(&latin, TEST_AI_IDN | libc::AI_CANONNAME),
+            vec![Some(b"xn--bcher-kva.hermetic.test".to_vec()), None, None],
+        );
+        let japanese = CString::new("例え。テスト.").unwrap();
+        assert_eq!(
+            resolver_idn_canonical(
+                &japanese,
+                TEST_AI_IDN | libc::AI_CANONNAME | TEST_AI_CANONIDN
+            ),
+            vec![Some("例え.テスト".as_bytes().to_vec()), None, None],
+        );
+        let _ascii = ResolverIdnLocale::new(c"C");
+        // SAFETY: a zeroed addrinfo is valid hints storage.
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_flags = TEST_AI_IDN;
+        assert_eq!(
+            resolver_idn_lookup_error(&latin, &hints, c"443"),
+            TEST_EAI_IDN_ENCODE,
+        );
+        return;
+    }
+
+    let resolv_path = temp_resolver_path("idn-dns-resolv");
+    let nsswitch_path = temp_resolver_path("idn-dns-nsswitch");
+    std::fs::write(
+        &resolv_path,
+        b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
+    )
+    .unwrap();
+    std::fs::write(&nsswitch_path, b"hosts: dns\n").unwrap();
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = udp.local_addr().unwrap().port();
+    udp.set_read_timeout(Some(Duration::from_millis(20)))
+        .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_server = Arc::clone(&stop);
+    let worker = std::thread::spawn(move || {
+        let mut observed = Vec::new();
+        let mut buffer = [0u8; 512];
+        while !stop_server.load(Ordering::Relaxed) {
+            if let Ok((length, peer)) = udp.recv_from(&mut buffer) {
+                let query = &buffer[..length];
+                let (name, kind, _) = parse_dns_question(query).unwrap();
+                observed.push((name, kind));
+                udp.send_to(&build_hermetic_dns_reply(query, false).unwrap(), peer)
+                    .unwrap();
+            }
+        }
+        observed
+    });
+    // Apply resolver settings only in a child. Parallel tests cannot observe
+    // these overrides or perturb the exact DNS wire-query assertions.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "resolver_idn_forward_native_dns_sends_normalized_ascii_queries",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env(CHILD, "1")
+        .env("FRANKENLIBC_RESOLV_CONF", &resolv_path)
+        .env("FRANKENLIBC_NSSWITCH_CONF", &nsswitch_path)
+        .env("FRANKENLIBC_DNS_PORT", port.to_string())
+        .env("LOCALDOMAIN", "")
+        .env("RES_OPTIONS", "")
+        .output();
+    stop.store(true, Ordering::Relaxed);
+    let observed = worker.join().unwrap();
+    let output = output.unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("test result: ok. 1 passed;"));
+    assert_eq!(
+        observed,
+        [
+            ("xn--bcher-kva.hermetic.test".to_owned(), 1),
+            ("xn--r8jz45g.xn--zckzah".to_owned(), 1),
+        ],
+    );
+}
+
+fn resolver_idn_lookup_error(query: &CStr, hints: &libc::addrinfo, service: &CStr) -> c_int {
+    let mut result = ptr::null_mut();
+    // SAFETY: all caller storage is initialized and stays live for the call.
+    let code =
+        unsafe { resolv_abi::getaddrinfo(query.as_ptr(), service.as_ptr(), hints, &mut result) };
+    assert!(result.is_null(), "unexpected result for {query:?}: {code}");
+    code
+}
+
+#[test]
+fn resolver_idn_forward_errors_respect_locale_flags_and_validation_order() {
+    with_resolver_backends(Some(IDN_HOSTS), None, |_| {
+        let _locale = ResolverIdnLocale::new(c"C.UTF-8");
+        // SAFETY: a zeroed addrinfo is valid input hints.
+        let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_flags = TEST_AI_IDN | libc::AI_NUMERICHOST;
+        let valid = CString::new("bücher.test").unwrap();
+        assert_eq!(
+            resolver_idn_lookup_error(&valid, &hints, c"443"),
+            libc::EAI_NONAME
+        );
+        for input in [
+            b"\xff.test".as_slice(),
+            b"\xc0\xaf.test",
+            b"\xed\xa0\x80.test",
+            b"\xf8\x88\x80\x80\x80.test",
+            "😀.test".as_bytes(),
+            "אa.test".as_bytes(),
+            "a\u{200d}b.test".as_bytes(),
+            "\u{378}.test".as_bytes(),
+        ] {
+            let input = CString::new(input).unwrap();
+            for obsolete in [0, 0x100, 0x200, 0x300] {
+                hints.ai_flags = TEST_AI_IDN | libc::AI_NUMERICHOST | obsolete;
+                assert_eq!(
+                    resolver_idn_lookup_error(&input, &hints, c"443"),
+                    TEST_EAI_IDN_ENCODE,
+                );
+            }
+            hints.ai_family = libc::AF_UNIX;
+            assert_eq!(
+                resolver_idn_lookup_error(&input, &hints, c"443"),
+                libc::EAI_FAMILY
+            );
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = 999;
+            assert_eq!(
+                resolver_idn_lookup_error(&input, &hints, c"443"),
+                libc::EAI_SOCKTYPE
+            );
+            hints.ai_socktype = 0;
+            hints.ai_flags = TEST_AI_IDN | libc::AI_NUMERICHOST | libc::AI_NUMERICSERV;
+            assert_eq!(
+                resolver_idn_lookup_error(&input, &hints, c"http"),
+                libc::EAI_NONAME
+            );
+        }
+        // Output conversion alone must not enable normalization of the query.
+        hints.ai_flags = TEST_AI_CANONIDN | libc::AI_CANONNAME;
+        assert_eq!(
+            resolver_idn_lookup_error(&valid, &hints, c"443"),
+            libc::EAI_NONAME
+        );
+        {
+            let _ascii = ResolverIdnLocale::new(c"C");
+            hints.ai_flags = TEST_AI_IDN;
+            assert_eq!(
+                resolver_idn_lookup_error(&valid, &hints, c"443"),
+                TEST_EAI_IDN_ENCODE,
+            );
+            assert_eq!(
+                resolver_idn_canonical(c"xn--bcher-kva.test", TEST_AI_IDN | libc::AI_CANONNAME),
+                vec![Some(b"xn--bcher-kva.test".to_vec()), None, None],
+            );
+        }
+        assert_eq!(
+            resolver_idn_canonical(&valid, TEST_AI_IDN | libc::AI_CANONNAME),
+            vec![Some(b"xn--bcher-kva.test".to_vec()), None, None],
+        );
+    });
 }
 
 #[test]

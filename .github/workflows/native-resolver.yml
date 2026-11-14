@@ -214,17 +214,20 @@ jobs:
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
-      - name: Verify IDN canonical and reverse output against GNU
+      - name: Verify native IDN input and output against GNU
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/resolver/idn
+          cargo test --locked -p frankenlibc-core --lib forward_idna_ -- --test-threads=1 \
+            2>&1 | tee artifacts/resolver/idn/core.log
+          grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' artifacts/resolver/idn/core.log
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test --locked -p frankenlibc-abi \
               --test resolv_abi_test resolver_idn_ -- --test-threads=1 --nocapture \
               2>&1 | tee "artifacts/resolver/idn/unit-$mode.log"
-            grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' \
+            grep -Eq '^test result: ok\. 6 passed; 0 failed; 0 ignored;' \
               "artifacts/resolver/idn/unit-$mode.log"
             FRANKENLIBC_MODE="$mode" cargo test --locked -p frankenlibc-abi \
               --test resolv_abi_test getnameinfo_ -- --test-threads=1 --nocapture \
@@ -257,7 +260,7 @@ jobs:
               env -u LD_PRELOAD -u FRANKENLIBC_HOSTS_PATH -u FRANKENLIBC_NSSWITCH_PATH \
                 FRANKENLIBC_MODE="$mode" "$PWD/target/idn-abi" "$candidate" --idn-only \
               2>&1 | tee "artifacts/resolver/idn/abi-$mode.log"
-            grep -Fxq 'native IDN ABI: 204 passed' "artifacts/resolver/idn/abi-$mode.log"
+            grep -Fxq 'native IDN ABI: 426 passed' "artifacts/resolver/idn/abi-$mode.log"
           done
       - name: Preserve complete passwd and group records and buffer retries
         if: always()

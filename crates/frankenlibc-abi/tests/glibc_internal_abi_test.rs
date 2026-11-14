@@ -6231,6 +6231,39 @@ fn test_inet6_scopeid_pton_invalid_name() {
 // bd-reality-202609-lx578q.7. A deployed caller under LD_PRELOAD sees `free()`
 // resolve to fl's own, which is why the ABI contract itself is unchanged.
 
+struct IdnaUtf8Locale {
+    selected: frankenlibc_abi::locale_abi::LocaleT,
+    previous: frankenlibc_abi::locale_abi::LocaleT,
+}
+
+impl IdnaUtf8Locale {
+    fn new() -> Self {
+        // SAFETY: select only this test thread's LC_CTYPE and retain both
+        // handles until the original selection has been restored.
+        unsafe {
+            let selected = frankenlibc_abi::locale_abi::newlocale(
+                libc::LC_CTYPE_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            );
+            assert!(!selected.is_null());
+            let previous = frankenlibc_abi::locale_abi::uselocale(selected);
+            assert!(!previous.is_null());
+            Self { selected, previous }
+        }
+    }
+}
+
+impl Drop for IdnaUtf8Locale {
+    fn drop(&mut self) {
+        // SAFETY: the selected locale remains live and belongs to this scope.
+        unsafe {
+            frankenlibc_abi::locale_abi::uselocale(self.previous);
+            frankenlibc_abi::locale_abi::freelocale(self.selected);
+        }
+    }
+}
+
 #[test]
 fn test_idna_to_dns_ascii_passthrough() {
     // Pure ASCII hostname should pass through unchanged.
@@ -6248,6 +6281,7 @@ fn test_idna_to_dns_ascii_passthrough() {
 
 #[test]
 fn test_idna_to_dns_unicode_label() {
+    let _locale = IdnaUtf8Locale::new();
     // "münchen.de" should encode to "xn--mnchen-3ya.de"
     let name = std::ffi::CString::new("münchen.de").unwrap();
     let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -6263,6 +6297,7 @@ fn test_idna_to_dns_unicode_label() {
 
 #[test]
 fn test_idna_to_dns_chinese() {
+    let _locale = IdnaUtf8Locale::new();
     // Chinese domain label.
     let name = std::ffi::CString::new("中文.com").unwrap();
     let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -6359,6 +6394,7 @@ fn test_idna_from_dns_chinese_punycode() {
 
 #[test]
 fn test_idna_roundtrip_unicode() {
+    let _locale = IdnaUtf8Locale::new();
     // Encode then decode should produce original.
     let original = "münchen.de";
     let name = std::ffi::CString::new(original).unwrap();
@@ -6410,6 +6446,7 @@ fn test_idna_from_dns_case_insensitive_prefix() {
 
 #[test]
 fn test_idna_roundtrip_japanese() {
+    let _locale = IdnaUtf8Locale::new();
     // Japanese domain: "日本語.jp"
     let original = "日本語.jp";
     let name = std::ffi::CString::new(original).unwrap();

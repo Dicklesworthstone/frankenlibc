@@ -9727,20 +9727,16 @@ pub static mut __resp: *mut c_void = std::ptr::null_mut();
 // IDNA internals — GLIBC_PRIVATE (native Punycode/IDNA implementation)
 // ---------------------------------------------------------------------------
 
-// RFC 3492 Punycode constants + helpers + encode + decode all moved
-// to frankenlibc_core::idna::punycode. Local punycode_encode /
-// punycode_decode aliases below keep the call sites in
-// __idna_to_dns_encoding / __idna_from_dns_encoding byte-identical.
-use frankenlibc_core::idna::punycode::{decode as punycode_decode, encode as punycode_encode};
+use frankenlibc_core::idna::punycode::decode as punycode_decode;
 
 /// `__idna_to_dns_encoding` — encode hostname to DNS-safe ASCII (native).
 ///
-/// Converts an internationalized hostname to its ACE (ASCII-Compatible
-/// Encoding) form using Punycode (RFC 3492). Each non-ASCII label is
-/// encoded with an `xn--` prefix. The result is malloc'd and must be
-/// freed by the caller.
+/// Decode the active LC_CTYPE, apply native UTS #46/IDNA2008 processing, and
+/// return the ASCII DNS form. Pure ASCII input is copied unchanged. The result
+/// is malloc'd and must be freed by the caller through the matching allocator.
 ///
-/// Returns 0 on success, EAI_FAIL on error.
+/// Returns 0 on success, EAI_IDN_ENCODE for conversion errors, EAI_MEMORY for
+/// allocation failure, or EAI_FAIL for invalid pointers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __idna_to_dns_encoding(
     name: *const c_char,
@@ -9754,57 +9750,22 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
         Some(bytes) => bytes,
         None => return libc::EAI_FAIL,
     };
-    let name_str = match std::str::from_utf8(&name_bytes) {
-        Ok(s) => s,
-        Err(_) => return libc::EAI_FAIL,
+    let output = match crate::resolv_abi::idn_name_to_dns(&name_bytes) {
+        Ok(output) => output,
+        Err(error) => return error,
     };
-
-    if name_str.is_empty() {
-        return libc::EAI_FAIL;
-    }
-
-    let mut encoded_parts: Vec<Vec<u8>> = Vec::new();
-    for label in name_str.split('.') {
-        if label.is_empty() {
-            encoded_parts.push(Vec::new());
-            continue;
-        }
-
-        // Check if label is all ASCII.
-        if label.is_ascii() {
-            encoded_parts.push(label.as_bytes().to_vec());
-        } else {
-            // Convert to Unicode code points and Punycode-encode.
-            let codepoints: Vec<u32> = label.chars().map(|c| c as u32).collect();
-            match punycode_encode(&codepoints) {
-                Some(encoded) => {
-                    let mut ace = b"xn--".to_vec();
-                    ace.extend_from_slice(&encoded);
-                    encoded_parts.push(ace);
-                }
-                None => return libc::EAI_FAIL,
-            }
-        }
-    }
-
-    // Join with dots.
-    let mut output = Vec::new();
-    for (i, part) in encoded_parts.iter().enumerate() {
-        if i > 0 {
-            output.push(b'.');
-        }
-        output.extend_from_slice(part);
-    }
-    output.push(0); // NUL terminator.
 
     // glibc IDNA contract: caller frees `*result` via free. Route through the
     // FrankenLibC allocator entrypoint so replacement mode has no direct host
     // call-through while keeping the public alloc/free pair matched.
-    let buf = unsafe { crate::malloc_abi::malloc(output.len()) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::malloc(output.len() + 1) } as *mut u8;
     if buf.is_null() {
-        return libc::EAI_FAIL;
+        return libc::EAI_MEMORY;
     }
+    // SAFETY: malloc reserved the complete output plus its terminating byte;
+    // the source slice is separate and the caller supplied a valid result slot.
     unsafe { std::ptr::copy_nonoverlapping(output.as_ptr(), buf, output.len()) };
+    unsafe { *buf.add(output.len()) = 0 };
     unsafe { *result = buf as *mut c_char };
     0
 }

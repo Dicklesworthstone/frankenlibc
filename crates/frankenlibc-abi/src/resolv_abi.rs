@@ -3113,9 +3113,39 @@ fn module_addrinfo_lookup(
     .map(convert)
 }
 
-// GNU output-conversion bits are independent of forward AI_IDN processing.
+// GNU input and output conversion flags are independent.
+const AI_IDN: c_int = 0x40;
 const AI_CANONIDN: c_int = 0x80;
 const NI_IDN: c_int = 0x20;
+pub(crate) const EAI_IDN_ENCODE: c_int = -105;
+
+/// Convert caller bytes from the effective LC_CTYPE into a DNS name. The core
+/// owns Unicode mapping/validation; this boundary owns locale conversion. Both
+/// getaddrinfo and the GLIBC_PRIVATE helper use the same native implementation.
+pub(crate) fn idn_name_to_dns(name: &[u8]) -> Result<Cow<'_, [u8]>, c_int> {
+    if name.is_ascii() {
+        return Ok(Cow::Borrowed(name));
+    }
+    use frankenlibc_core::string::wchar::Utf8Step;
+
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let mut input = name;
+    let mut unicode = String::with_capacity(name.len());
+    while !input.is_empty() {
+        let Utf8Step::Char { wc, len } = codec.decode(input) else {
+            return Err(EAI_IDN_ENCODE);
+        };
+        let character = char::from_u32(wc).ok_or(EAI_IDN_ENCODE)?;
+        if character == '\0' || len == 0 {
+            return Err(EAI_IDN_ENCODE);
+        }
+        unicode.push(character);
+        input = &input[len..];
+    }
+    frankenlibc_core::idna::to_dns_encoding(&unicode)
+        .map(|encoded| Cow::Owned(encoded.into_owned().into_bytes()))
+        .map_err(|_| EAI_IDN_ENCODE)
+}
 
 /// Decode DNS A-labels and render the complete name in the current LC_CTYPE.
 /// Punycode decoding does not require the normalization/mapping machinery
@@ -3410,6 +3440,32 @@ pub unsafe extern "C" fn getaddrinfo(
         flags & libc::AI_V4MAPPED != 0,
         flags & libc::AI_ALL != 0,
     );
+    // GNU performs input IDNA conversion after family/service validation but
+    // before AI_NUMERICHOST and NSS lookup. ASCII bypass preserves names and
+    // case; non-ASCII input is decoded using this thread's LC_CTYPE. Obsolete
+    // AI_IDN_ALLOW_UNASSIGNED/AI_IDN_USE_STD3_ASCII_RULES bits remain ignored.
+    let encoded_node = if flags & AI_IDN != 0
+        && let Some(name) = node_cstr.filter(|name| !name.to_bytes().is_ascii())
+    {
+        match idn_name_to_dns(name.to_bytes()).and_then(|encoded| {
+            std::ffi::CString::new(encoded.into_owned()).map_err(|_| EAI_IDN_ENCODE)
+        }) {
+            Ok(encoded) => Some(encoded),
+            Err(error) => {
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                return error;
+            }
+        }
+    } else {
+        None
+    };
+    let node_cstr = encoded_node.as_deref().or(node_cstr);
     let host_text = match node_cstr.map(CStr::to_str).transpose() {
         Ok(text) => text,
         Err(_) => {
