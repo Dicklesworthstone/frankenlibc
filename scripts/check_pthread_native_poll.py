@@ -264,6 +264,17 @@ RECVMMSG_CASES = tuple(
         "finite-timeout", "trunc-empty", "output-fault", "errors", "count-zero", "reuse",
         "rights", "signal", "signal-restart",
     )
+) + tuple(
+    f"recvmmsg-{transport}-explicit-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "single", "single-blocked",
+        "zero-ready", "zero-ready-late", "expired-blocked", "expired-ready-late",
+        "timeout", "zero-timeout", "output-fault", "errors", "count-zero", "reuse", "rights",
+        "readonly-ready", "readonly-ready-late", "readonly-timeout", "readonly-count-zero",
+        "readonly-output-fault", "unaligned-ready", "alias-ready", "denied-ready-late", "fullbatch",
+        "signal", "signal-restart", "nonblock", "dontwait", "trunc-empty",
+    )
 )
 SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
 SOCKET_TIMEOUT_CASES = tuple(
@@ -341,7 +352,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--recvmmsg-only", action="store_true",
-        help="Run record batch receives, WAITFORONE cancellation and deferred receive errors.",
+        help="Run record batch receives, WAITFORONE cancellation, explicit timeouts and deferred errors.",
     )
     parser.add_argument(
         "--socket-timeout-only", action="store_true",

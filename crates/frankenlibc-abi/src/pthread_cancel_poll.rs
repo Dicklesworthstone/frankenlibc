@@ -618,6 +618,13 @@ impl Receive {
         self
     }
 
+    fn with_timeout(mut self, replacement: *mut libc::timespec) -> Self {
+        if let Self::Messages { timeout, .. } = &mut self {
+            *timeout = replacement;
+        }
+        self
+    }
+
     fn can_pin(self) -> bool {
         let (messages, count, stride) = match self {
             Self::Message { message, .. } => (message, 1, 0),
@@ -680,18 +687,11 @@ impl Receive {
         {
             return false;
         }
-        if let Self::Messages {
-            count,
-            flags,
-            timeout,
-            ..
-        } = self
-        {
+        if let Self::Messages { count, flags, .. } = self {
             // A complete nonblocking batch has the blocking call's completion
-            // contract only for one entry or WAITFORONE. Keep finite timeouts
-            // and full blocking batches in the original kernel operation.
-            if !timeout.is_null()
-                || !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count)
+            // contract only for one entry or WAITFORONE. Full blocking batches
+            // retain the original kernel operation.
+            if !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count)
                 || (count != 1 && flags & libc::MSG_WAITFORONE == 0)
             {
                 return false;
@@ -836,6 +836,107 @@ impl Receive {
                 }
                 .map(|received| received as isize)
             }
+        }
+    }
+}
+
+/// recvmmsg's explicit timeout differs from SO_RCVTIMEO: Linux checks it
+/// only after receiving a record. Expiry therefore limits a successful batch,
+/// but must not end an empty first receive. Preserve that behavior while the
+/// socket timeout and cancellation word independently bound actual waiting.
+struct BatchTimeout {
+    user: *mut libc::timespec,
+    deadline: i128,
+}
+
+impl BatchTimeout {
+    unsafe fn capture(operation: Receive) -> Result<Option<Self>, c_int> {
+        let Receive::Messages { timeout, .. } = operation else {
+            return Ok(None);
+        };
+        if timeout.is_null() {
+            return Ok(None);
+        }
+        let address = timeout as usize;
+        let bytes = core::mem::size_of::<Timespec>();
+        if address.checked_add(bytes).is_none()
+            || crate::malloc_abi::known_remaining(address)
+                .is_some_and(|available| bytes > available)
+        {
+            return Err(libc::EFAULT);
+        }
+        let mut value = Timespec::default();
+        // SAFETY: the kernel copier validates the original, possibly unaligned
+        // timeout without creating a Rust reference to caller memory.
+        unsafe {
+            Self::copy_timeout(timeout.cast(), core::ptr::from_mut(&mut value).cast())?;
+        }
+        if value.tv_sec < 0 || !(0..1_000_000_000).contains(&value.tv_nsec) {
+            return Err(libc::EINVAL);
+        }
+        Ok(Some(Self {
+            user: timeout,
+            deadline: monotonic_nanoseconds()?
+                + i128::from(value.tv_sec) * NANOS_PER_SECOND
+                + i128::from(value.tv_nsec),
+        }))
+    }
+
+    fn remaining(&self) -> Result<Timespec, c_int> {
+        Ok(sleep_remainder(self.deadline - monotonic_nanoseconds()?))
+    }
+
+    unsafe fn publish(&self, remaining: &Timespec) -> Result<(), c_int> {
+        // Linux writes the remaining timeout only after a positive result,
+        // after publishing message data and lengths. An unwritable timeout
+        // reports EFAULT without undoing those already consumed records.
+        // SAFETY: the source is owned initialized storage; the kernel checks
+        // the caller's output extent, including an unaligned timespec.
+        unsafe { Self::copy_timeout(core::ptr::from_ref(remaining).cast(), self.user.cast()) }
+    }
+
+    unsafe fn copy_timeout(source: *const u8, destination: *mut u8) -> Result<(), c_int> {
+        let bytes = core::mem::size_of::<Timespec>();
+        // Caller bounds were checked during capture; the other extent is
+        // owned storage. Publication performs only fault-checked raw copies,
+        // without reacquiring allocator metadata after consuming records.
+        // Do not allocate a fallback pipe after receiving SCM_RIGHTS: those
+        // records may have consumed the last available descriptor slots.
+        // Requiring this direct copier during capture leaves unavailable
+        // mechanisms on the original syscall before any record is consumed.
+        // SAFETY: getpid has no pointer arguments; do not cache it across fork.
+        let pid = unsafe { syscall::syscall0(libc::SYS_getpid as usize) } as isize;
+        if pid < 0 {
+            return Err((-pid) as c_int);
+        }
+        let local = libc::iovec {
+            iov_base: destination.cast(),
+            iov_len: bytes,
+        };
+        let remote = libc::iovec {
+            iov_base: source.cast_mut().cast(),
+            iov_len: bytes,
+        };
+        // SAFETY: both descriptors are initialized owned storage. Linux checks
+        // the source read extent and destination write extent without Rust
+        // dereferencing either caller address or acquiring descriptor slots.
+        let copied = unsafe {
+            syscall::syscall6(
+                libc::SYS_process_vm_readv as usize,
+                pid as usize,
+                core::ptr::from_ref(&local) as usize,
+                1,
+                core::ptr::from_ref(&remote) as usize,
+                1,
+                0,
+            )
+        } as isize;
+        if copied == bytes as isize {
+            Ok(())
+        } else if (-4095..0).contains(&copied) {
+            Err((-copied) as c_int)
+        } else {
+            Err(libc::EFAULT)
         }
     }
 }
@@ -1816,6 +1917,11 @@ unsafe fn receive_slices(
     let Ok(deadline) = timeout.deadline() else {
         return Ok(ReceiveResult::Unsupported);
     };
+    // Invalid input and unavailable snapshot/clock mechanisms retain the
+    // original syscall's validation order, without consuming any message.
+    let Ok(batch_timeout) = (unsafe { BatchTimeout::capture(operation) }) else {
+        return Ok(ReceiveResult::Unsupported);
+    };
     let mut recheck_handlers = false;
     loop {
         if cancel.pending() {
@@ -1825,10 +1931,29 @@ unsafe fn receive_slices(
             return Ok(ReceiveResult::Unsupported);
         }
         recheck_handlers = true;
-        // A successful probe may consume a datagram or stream bytes. Never
-        // discard it for a request racing the kernel's completed operation.
-        match unsafe { operation.probe() } {
-            Ok(received) => return Ok(ReceiveResult::Ready(received)),
+        let mut remaining = match batch_timeout.as_ref().map(BatchTimeout::remaining).transpose() {
+            Ok(remaining) => remaining,
+            Err(_) => return Ok(ReceiveResult::Unsupported),
+        };
+        let submitted = match remaining.as_mut() {
+            Some(remaining) => operation.with_timeout(core::ptr::from_mut(remaining).cast()),
+            None => operation,
+        };
+        // Keep the complete kernel batch and its deferred socket errors. A zero
+        // remaining timeout still permits its first record, then stops further
+        // consumption. Empty probes never publish an intermediate remainder.
+        match unsafe { submitted.probe() } {
+            Ok(received) => {
+                if received > 0
+                    && let (Some(timeout), Some(remaining)) = (&batch_timeout, &remaining)
+                {
+                    // SAFETY: publication occurs once, after the final kernel
+                    // result; a copy fault must not replay consumed messages.
+                    unsafe { timeout.publish(remaining)? };
+                }
+                // Never discard completed I/O for a racing cancellation.
+                return Ok(ReceiveResult::Ready(received));
+            }
             Err(libc::EAGAIN) => {}
             // A sandbox may permit read/readv but deny recvfrom/recvmsg. No
             // bytes were acquired; preserve the caller's original operation.

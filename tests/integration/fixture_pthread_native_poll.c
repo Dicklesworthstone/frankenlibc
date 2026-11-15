@@ -3681,9 +3681,10 @@ struct batch_receive_probe {
     struct state observed;
     enum batch_receive_kind kind;
     int fd, flags, expected_right, fault_after_prefix;
-    int deferred_result, deferred_error;
+    int deferred_result, deferred_error, explicit_timeout, copy_denied;
     unsigned count;
     struct timespec timeout, *timeout_argument;
+    unsigned char timeout_bytes[sizeof(struct timespec) + 1];
     struct mmsghdr messages[3], *active;
     struct iovec vectors[3];
     unsigned char bytes[3][4];
@@ -3734,17 +3735,33 @@ static void *batch_receive_worker(void *argument) {
     atomic_store_explicit(&state->ready, 1, memory_order_release);
     while (!atomic_load_explicit(&state->release, memory_order_acquire))
         (void)syscall(SYS_sched_yield);
+    if (probe->copy_denied) deny_io_probe(SYS_process_vm_readv, EPERM);
     errno = EDOM;
     int64_t started = monotonic_ns();
     if (probe->kind == BATCH_RECEIVE_ERRORS) {
-        REQUIRE(selected_recvmmsg(-1, (void *)(uintptr_t)1, 1, MSG_WAITFORONE, NULL) == -1 &&
+        if (probe->explicit_timeout) {
+            REQUIRE(selected_recvmmsg(-1, (void *)(uintptr_t)1, 1, MSG_WAITFORONE,
+                                     (struct timespec *)(uintptr_t)1) == -1 && errno == EFAULT,
+                    "recvmmsg imports its timeout before validating the descriptor");
+            const struct timespec invalid[] = {{-1, 0}, {0, -1}, {0, 1000000000}};
+            for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+                struct timespec timeout = invalid[i];
+                REQUIRE(selected_recvmmsg(-1, (void *)(uintptr_t)1, 1, MSG_WAITFORONE,
+                                         &timeout) == -1 && errno == EINVAL,
+                        "recvmmsg validates timeout syntax before the descriptor and message");
+            }
+        }
+        REQUIRE(selected_recvmmsg(-1, (void *)(uintptr_t)1, 1, MSG_WAITFORONE,
+                                 probe->timeout_argument) == -1 &&
                     errno == EBADF, "recvmmsg retains invalid-descriptor precedence");
         int pipefd[2];
         REQUIRE(pipe2(pipefd, O_CLOEXEC) == 0, "batch receive error pipe");
-        REQUIRE(selected_recvmmsg(pipefd[0], (void *)(uintptr_t)1, 1, MSG_WAITFORONE, NULL) == -1 &&
+        REQUIRE(selected_recvmmsg(pipefd[0], (void *)(uintptr_t)1, 1, MSG_WAITFORONE,
+                                 probe->timeout_argument) == -1 &&
                     errno == ENOTSOCK, "recvmmsg retains nonsocket precedence");
         REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close batch receive error pipe");
-        REQUIRE(selected_recvmmsg(probe->fd, (void *)(uintptr_t)1, 1, MSG_WAITFORONE, NULL) == -1 &&
+        REQUIRE(selected_recvmmsg(probe->fd, (void *)(uintptr_t)1, 1, MSG_WAITFORONE,
+                                 probe->timeout_argument) == -1 &&
                     errno == EFAULT, "recvmmsg keeps fault-checked header import");
         state->result = 0;
     } else {
@@ -3801,6 +3818,20 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
     else return 2;
     int timed = strncmp(suffix, "timed-", 6) == 0;
     if (timed) suffix += 6;
+    int explicit_timeout = strncmp(suffix, "explicit-", 9) == 0;
+    if (explicit_timeout) suffix += 9;
+    int readonly_timeout = explicit_timeout && strncmp(suffix, "readonly-", 9) == 0;
+    if (readonly_timeout) suffix += 9;
+    int zero_timeout = explicit_timeout && strncmp(suffix, "zero-", 5) == 0;
+    if (zero_timeout) suffix += 5;
+    int expired_timeout = explicit_timeout && strncmp(suffix, "expired-", 8) == 0;
+    if (expired_timeout) suffix += 8;
+    int unaligned_timeout = explicit_timeout && strncmp(suffix, "unaligned-", 10) == 0;
+    if (unaligned_timeout) suffix += 10;
+    int aliased_timeout = explicit_timeout && strncmp(suffix, "alias-", 6) == 0;
+    if (aliased_timeout) suffix += 6;
+    int copy_denied = explicit_timeout && strncmp(suffix, "denied-", 7) == 0;
+    if (copy_denied) suffix += 7;
     const char *names[] = {
         "blocked", "pending", "disabled", "ready", "ready-late", "prefix",
         "single", "single-blocked", "fullbatch", "nonblock", "dontwait", "timeout",
@@ -3860,6 +3891,8 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
     probe.kind = kind;
     probe.fd = pair[0];
     probe.fault_after_prefix = fault_after_prefix;
+    probe.explicit_timeout = explicit_timeout;
+    probe.copy_denied = copy_denied;
     probe.flags = kind == BATCH_RECEIVE_SINGLE || kind == BATCH_RECEIVE_SINGLE_BLOCKED ||
                   kind == BATCH_RECEIVE_FULL ? 0 : MSG_WAITFORONE;
     if (kind == BATCH_RECEIVE_DONTWAIT) probe.flags |= MSG_DONTWAIT;
@@ -3870,10 +3903,17 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
                   kind == BATCH_RECEIVE_RIGHTS ? 1 :
                   kind == BATCH_RECEIVE_OUTPUT_FAULT ? 1U + (unsigned)fault_after_prefix : 3;
     probe.active = probe.messages;
-    if (kind == BATCH_RECEIVE_FINITE) {
-        probe.timeout = (struct timespec){1, 0};
+    if (explicit_timeout || kind == BATCH_RECEIVE_FINITE) {
+        probe.timeout = (struct timespec){1, explicit_timeout ? 500000000 : 0};
+        if (zero_timeout) probe.timeout = (struct timespec){0, 0};
+        if (expired_timeout) probe.timeout = (struct timespec){0, 150001000};
         probe.timeout_argument = &probe.timeout;
+        if (unaligned_timeout) {
+            memcpy(probe.timeout_bytes + 1, &probe.timeout, sizeof(probe.timeout));
+            probe.timeout_argument = (struct timespec *)(probe.timeout_bytes + 1);
+        }
     }
+    struct timespec original_timeout = probe.timeout;
     memset(probe.bytes, 0xa5, sizeof(probe.bytes));
     memset(probe.addresses, 0xa5, sizeof(probe.addresses));
     memset(&probe.control, 0xa5, sizeof(probe.control));
@@ -3892,8 +3932,19 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
         probe.messages[0].msg_hdr.msg_control = probe.control.bytes;
         probe.messages[0].msg_hdr.msg_controllen = sizeof(probe.control.bytes);
     }
+    if (aliased_timeout)
+        probe.vectors[0].iov_base = probe.timeout_argument;
     size_t page = (size_t)sysconf(_SC_PAGESIZE);
-    void *read_only = MAP_FAILED;
+    void *read_only = MAP_FAILED, *timeout_mapping = MAP_FAILED;
+    if (readonly_timeout) {
+        timeout_mapping = mmap(NULL, page, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        REQUIRE(timeout_mapping != MAP_FAILED, "read-only batch timeout mapping");
+        memcpy(timeout_mapping, &probe.timeout, sizeof(probe.timeout));
+        REQUIRE(mprotect(timeout_mapping, page, PROT_READ) == 0,
+                "timeout is readable on entry but unwritable after message consumption");
+        probe.timeout_argument = timeout_mapping;
+    }
     if (kind == BATCH_RECEIVE_OUTPUT_FAULT) {
         read_only = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE,
                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -3958,6 +4009,23 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
                   kind == BATCH_RECEIVE_SIGNAL_RESTART;
     if (blocked) {
         observe_reuse_parked(&probe.observed, memory, pair[0], SYS_recvmmsg, 0);
+        if (explicit_timeout) {
+            if (expired_timeout || kind == BATCH_RECEIVE_READY_LATE || kind == BATCH_RECEIVE_SINGLE) {
+                int64_t deadline = monotonic_ns() + (expired_timeout ? 230000000 : 120000000);
+                while (monotonic_ns() < deadline) {
+                    REQUIRE(!atomic_load_explicit(&probe.observed.returned, memory_order_acquire),
+                            "an explicit recvmmsg timeout cannot end an empty first receive");
+                    pause_briefly();
+                }
+                observe_reuse_parked(&probe.observed, memory, pair[0], SYS_recvmmsg, 0);
+            }
+            struct timespec unchanged;
+            REQUIRE(snapshot(memory, (unsigned long long)(uintptr_t)probe.timeout_argument,
+                             &unchanged, sizeof(unchanged)) &&
+                        unchanged.tv_sec == original_timeout.tv_sec &&
+                        unchanged.tv_nsec == original_timeout.tv_nsec,
+                    "empty receive retries never publish an intermediate timeout");
+        }
         if (kind == BATCH_RECEIVE_BLOCKED || kind == BATCH_RECEIVE_SINGLE_BLOCKED ||
             kind == BATCH_RECEIVE_DISABLED)
             REQUIRE(pthread_cancel(probe.observed.thread) == 0,
@@ -4027,8 +4095,11 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
     } else if (kind == BATCH_RECEIVE_OUTPUT_FAULT) {
         published = fault_after_prefix ? 1U : 0U;
         consumed = published + 1;
-        REQUIRE(probe.observed.result == (fault_after_prefix ? 1 : -1),
+        REQUIRE(probe.observed.result == (fault_after_prefix && !readonly_timeout ? 1 : -1),
                 "batch receive preserves the prefix preceding msg_len EFAULT");
+        if (readonly_timeout && fault_after_prefix)
+            REQUIRE(probe.observed.error == EFAULT,
+                    "a timeout publication fault overrides a completed prefix without replay");
         if (fault_after_prefix)
             REQUIRE(probe.deferred_result == -1 && probe.deferred_error == EFAULT,
                     "recvmmsg defers its later output fault to the next receive");
@@ -4037,8 +4108,33 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
     } else if (kind != BATCH_RECEIVE_ERRORS) {
         published = consumed = queued;
         if (kind == BATCH_RECEIVE_COUNT_ZERO) published = consumed = 0;
-        REQUIRE(probe.observed.result == (int)published,
-                "batch receive returns the completed message count");
+        if (zero_timeout && published > 1) published = consumed = 1;
+        REQUIRE(probe.observed.result == (readonly_timeout && published != 0 ? -1 : (int)published),
+                "batch receive returns its completed count or the final timeout publication fault");
+        if (readonly_timeout && published != 0)
+            REQUIRE(probe.observed.error == EFAULT,
+                    "an unwritable timeout reports EFAULT after messages and lengths are committed");
+    }
+    if (explicit_timeout) {
+        struct timespec remaining;
+        memcpy(&remaining, probe.timeout_argument, sizeof(remaining));
+        if (readonly_timeout || published == 0) {
+            REQUIRE(remaining.tv_sec == original_timeout.tv_sec &&
+                        remaining.tv_nsec == original_timeout.tv_nsec,
+                    "zero-result, error and canceled batches leave the explicit timeout unchanged");
+        } else if (zero_timeout || expired_timeout) {
+            REQUIRE(remaining.tv_sec == 0 && remaining.tv_nsec == 0,
+                    "the first record after explicit expiry publishes a zero remainder");
+        } else {
+            int64_t before = original_timeout.tv_sec * 1000000000 + original_timeout.tv_nsec;
+            int64_t after = remaining.tv_sec * 1000000000 + remaining.tv_nsec;
+            REQUIRE(remaining.tv_sec >= 0 && remaining.tv_nsec >= 0 &&
+                        remaining.tv_nsec < 1000000000 && after > 0 && after <= before,
+                    "a completed batch publishes a normalized explicit timeout remainder");
+            if (kind == BATCH_RECEIVE_READY_LATE || kind == BATCH_RECEIVE_SINGLE)
+                REQUIRE(after <= before - 80000000,
+                        "the explicit remainder includes time spent waiting before the first record");
+        }
     }
     if (kind == BATCH_RECEIVE_FINITE)
         REQUIRE(probe.timeout.tv_sec == 0 && probe.timeout.tv_nsec >= 0 &&
@@ -4078,7 +4174,8 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
                 REQUIRE(((unsigned char *)&probe.addresses[i])[j] == 0xa5,
                         "unreceived batch source storage is unchanged");
         }
-        size_t copied = i < consumed && batch_receive_length(i, truncated) != 0 ? 1 : 0;
+        size_t copied = i < consumed && batch_receive_length(i, truncated) != 0 &&
+                        !(aliased_timeout && i == 0) ? 1 : 0;
         for (size_t j = 0; j < sizeof(probe.bytes[i]); ++j)
             REQUIRE(probe.bytes[i][j] == (j < copied ? (unsigned char)('A' + i) : 0xa5),
                     "batch receive consumes each record once and preserves trailing buffers");
@@ -4129,6 +4226,8 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
                 "release original ancillary descriptors");
     if (read_only != MAP_FAILED)
         REQUIRE(munmap(read_only, 2 * page) == 0, "release batch receive output mapping");
+    if (timeout_mapping != MAP_FAILED)
+        REQUIRE(munmap(timeout_mapping, page) == 0, "release read-only batch timeout");
     return 0;
 }
 
