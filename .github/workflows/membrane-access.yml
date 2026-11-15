@@ -53,6 +53,14 @@ jobs:
           set -euo pipefail
           cargo test -p frankenlibc-membrane --lib -- --test-threads=1 --nocapture 2>&1 | tee artifacts/access/membrane-lib.log
           grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/membrane-lib.log
+      - name: Preserve validation-context isolation with owned TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-membrane --lib --features owned-tls-cache \
+            ptr_validator::tests::validation_context_ -- --test-threads=1 --nocapture \
+            2>&1 | tee artifacts/access/validation-context-owned.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/validation-context-owned.log
       - name: Prepare production-library integration targets
         shell: bash
         run: |
@@ -113,6 +121,13 @@ jobs:
           set -euo pipefail
           cargo test -p frankenlibc-abi --test hardened_integrity_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/abi.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/abi.log
+      - name: Preserve actual ABI bounds during another thread's owned validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-abi --features owned-tls-cache --test hardened_integrity_bounds_test \
+            -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/abi-owned.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/abi-owned.log
       - name: Reject a lost-verdict mutation on an actual ABI write
         shell: bash
         run: |

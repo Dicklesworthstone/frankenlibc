@@ -5508,8 +5508,20 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // its hardened memcpy takes pipeline locks.
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
-    let _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let _pipeline_guard = match crate::membrane_state::ready_pipeline() {
+        Some(pipeline) => match pipeline.try_atfork_prepare() {
+            Some(guard) => Some(guard),
+            None => {
+                drop(_environ_guard);
+                stdio_guard.release_in_parent();
+                loader_guard.release_in_parent();
+                crate::pthread_abi::run_atfork_parent(&atfork);
+                unsafe { set_abi_errno(libc::EAGAIN) };
+                return -1;
+            }
+        },
+        None => None,
+    };
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // Prevent a child handler from emitting through the parent's inherited
@@ -9371,8 +9383,22 @@ pub unsafe extern "C" fn forkpty(
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     // setenv holds ENVIRON_LOCK while hardened copies acquire pipeline locks.
-    let _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let _pipeline_guard = match crate::membrane_state::ready_pipeline() {
+        Some(pipeline) => match pipeline.try_atfork_prepare() {
+            Some(guard) => Some(guard),
+            None => {
+                drop(_environ_guard);
+                stdio_guard.release_in_parent();
+                loader_guard.release_in_parent();
+                crate::pthread_abi::run_atfork_parent(&atfork);
+                let _ = syscall::sys_close(master);
+                let _ = syscall::sys_close(slave);
+                unsafe { set_abi_errno(libc::EAGAIN) };
+                return -1;
+            }
+        },
+        None => None,
+    };
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // Keep application handlers out of the clone-to-reopen interval, exactly
@@ -30836,13 +30862,41 @@ pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn _Fork() -> c_int {
-    // `_Fork` exists specifically for async-signal-safe fork-without-handlers.
-    // Do not route through sys_clone_fork: that wrapper repairs the core's
-    // thread-local tid cache. Do not take the membrane pipeline, resolve host
-    // pthread state, reopen the log, or run atfork callbacks either. POSIX
-    // permits only async-signal-safe operations in the child before exec; the
-    // inherited log descriptor remains usable, and its raw-getpid keyed
-    // limiter distinguishes the new process without a child-side hook.
+    // Keep this path async-signal-safe: no host pthread resolution, compiler
+    // TLS repair, allocation, pipeline locks, runtime logs, or atfork handlers.
+    // Mask before reading the parent TID: a signal-side _Fork between that
+    // read and clone would otherwise leave an ancestor's identity here.
+    let all_signals = u64::MAX;
+    let mut old_signals = 0u64;
+    if let Err(error) = unsafe {
+        syscall::sys_rt_sigprocmask(
+            libc::SIG_BLOCK,
+            (&all_signals as *const u64).cast(),
+            (&mut old_signals as *mut u64).cast(),
+            std::mem::size_of::<u64>(),
+        )
+    } {
+        unsafe { crate::errno_abi::set_abi_errno_local(error) };
+        return -1;
+    }
+
+    let parent_tid = syscall::sys_gettid();
+    if parent_tid <= 0 {
+        let _ = unsafe {
+            syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                (&old_signals as *const u64).cast(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        };
+        unsafe { crate::errno_abi::set_abi_errno_local(libc::EAGAIN) };
+        return -1;
+    }
+
+    // Do not route through sys_clone_fork: _Fork deliberately omits the core's
+    // full TLS lifecycle. Only raw atomics used by membrane lock recursion need
+    // ownership repair before signals or inherited guarded code can resume.
     let raw = unsafe {
         syscall::syscall2(
             syscall::SYS_CLONE,
@@ -30852,17 +30906,30 @@ pub unsafe extern "C" fn _Fork() -> c_int {
     };
     let ret = syscall::syscall_result(raw).map(|pid| pid as c_int);
     if matches!(ret, Ok(0)) {
-        // One atomic generation increment lets later membrane lock users take
-        // over locks orphaned by vanished parent threads. It allocates nothing,
-        // touches no TLS, invokes no libc symbol, and cannot block.
+        // SAFETY: sole fork survivor, blockable signals still masked, parent
+        // identity captured after masking. This hook uses only raw gettid and
+        // fixed atomics, before any potentially interposed memory operation.
+        unsafe {
+            frankenlibc_membrane::ptr_validator::note_validation_fork_child(parent_tid)
+        };
         frankenlibc_membrane::util::note_fork_child();
     }
+
+    // Both sides restore exactly the caller's mask. Keep the clone result:
+    // after a successful clone an error return would hide an existing child.
+    // A policy which newly denies the matching restore syscall is unsupported.
+    let _ = unsafe {
+        syscall::sys_rt_sigprocmask(
+            libc::SIG_SETMASK,
+            (&old_signals as *const u64).cast(),
+            std::ptr::null_mut(),
+            std::mem::size_of::<u64>(),
+        )
+    };
 
     match ret {
         Ok(pid) => pid,
         Err(e) => {
-            // Use the hidden initial-exec TLS leaf explicitly so this error
-            // branch stays auditable as signal-safe at the ABI boundary.
             unsafe { crate::errno_abi::set_abi_errno_local(e) };
             -1
         }

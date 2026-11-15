@@ -825,6 +825,10 @@ fn rekey_fork_child_table(
 /// and parent_tid is its kernel TID captured before fork. Inherited table
 /// metadata must not be accessed concurrently while it is rebuilt.
 pub unsafe fn note_fork_child(parent_tid: i32) {
+    // First: the table rekey below can compile to an interposed memcpy. The
+    // survivor must retain validation recursion ownership while inherited
+    // pipeline guards still hold their locks. Fork callers keep signals masked.
+    unsafe { frankenlibc_membrane::ptr_validator::note_validation_fork_child(parent_tid) };
     if TLS_TABLE_USED.load(Ordering::Acquire) {
         let child_tid = syscall::sys_gettid();
         rekey_fork_child_table(

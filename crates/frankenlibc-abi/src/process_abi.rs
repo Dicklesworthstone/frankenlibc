@@ -339,8 +339,21 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // has locks to hold across the fork, and building one here gave every
     // strict process that forks the whole hardened pipeline (8 MB bloom
     // filter, 16 arena shards) to lock and COW-fault on every later fork.
-    let _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let _pipeline_guard = match crate::membrane_state::ready_pipeline() {
+        Some(pipeline) => match pipeline.try_atfork_prepare() {
+            Some(guard) => Some(guard),
+            None => {
+                drop(_environ_guard);
+                stdio_guard.release_in_parent();
+                loader_guard.release_in_parent();
+                crate::pthread_abi::run_atfork_parent(&atfork);
+                runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+                unsafe { set_abi_errno(libc::EAGAIN) };
+                return -1;
+            }
+        },
+        None => None,
+    };
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();

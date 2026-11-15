@@ -5635,9 +5635,8 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
         // memcpy/strlen check -- must not enter the membrane allocator, whose
         // arena shard / page-oracle locks the interrupted frame may hold:
         // waiting on them never ends (bd-na6ede). Take the reentrant path.
-        // (Only per-thread depth answers this; the owned-TLS lane's depth is
-        // process-wide.)
-        #[cfg(not(feature = "owned-tls-cache"))]
+        // The kernel-thread validation context is isolated in both cache modes,
+        // so this also protects owned-TLS validation from recursive allocation.
         if !strict_allocator_host_path_active()
             && frankenlibc_membrane::ptr_validator::in_validation_context()
         {
