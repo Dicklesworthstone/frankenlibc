@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use super::{
-    AioOp, aio_completion, aio_execute, aiocb_i32, aiocb_i64, aiocb_off, aiocb_ptr,
-    aiocb_set_error_atomic, aiocb_set_return, aiocb_usize, current_abi_errno, set_abi_errno,
+    AIO_PRIO_DELTA_MAX, AioOp, aio_completion, aio_execute, aiocb_i32, aiocb_i64, aiocb_off,
+    aiocb_ptr, aiocb_set_error_atomic, aiocb_set_return, aiocb_usize, current_abi_errno,
+    set_abi_errno,
 };
 use frankenlibc_core::syscall as raw;
 
@@ -21,6 +22,60 @@ const NOTIFY: u32 = 1;
 const ABANDON: u32 = 2;
 const COMPLETING: u32 = 3;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Scheduling {
+    policy: c_int,
+    priority: c_int,
+}
+
+impl Scheduling {
+    fn snapshot(reduction: c_int) -> Result<Self, c_int> {
+        let mut parameter = libc::sched_param { sched_priority: 0 };
+        // SAFETY: Linux sched_param is a single C int, owned on this stack.
+        // PID zero denotes this submitting thread, including native threads.
+        unsafe { raw::sys_sched_getparam(0, (&mut parameter as *mut libc::sched_param).cast()) }?;
+        Ok(Self {
+            policy: raw::sys_sched_getscheduler(0)?,
+            priority: parameter.sched_priority - reduction,
+        })
+    }
+
+    fn apply(self, applied: &mut Option<Self>) {
+        // Linux non-real-time policies only accept priority zero. Preserve
+        // the signed effective priority for queue ordering while bounding the
+        // worker's kernel priority to its policy's valid lower endpoint.
+        let minimum = match self.policy & !libc::SCHED_RESET_ON_FORK {
+            libc::SCHED_FIFO | libc::SCHED_RR => 1,
+            _ => 0,
+        };
+        let kernel = Self {
+            policy: self.policy,
+            priority: self.priority.max(minimum),
+        };
+        if *applied == Some(kernel) {
+            return;
+        }
+        let parameter = libc::sched_param {
+            sched_priority: kernel.priority,
+        };
+        // SAFETY: the parameter is live; only this internal worker is changed.
+        // Scheduling privileges can change after admission. Keep the I/O
+        // request live if the kernel denies this best-effort policy change;
+        // raw syscalls do not leak their errno into a successful I/O result.
+        if unsafe {
+            raw::sys_sched_setscheduler(
+                0,
+                kernel.policy,
+                (&parameter as *const libc::sched_param).cast(),
+            )
+        }
+        .is_ok()
+        {
+            *applied = Some(kernel);
+        }
+    }
+}
+
 struct Request {
     cb: usize,
     fd: c_int,
@@ -28,6 +83,7 @@ struct Request {
     length: usize,
     offset: i64,
     op: AioOp,
+    scheduling: Scheduling,
     notice: aio_completion::Notice,
     group: Option<Arc<aio_completion::Group>>,
     completion: AtomicU32,
@@ -158,6 +214,7 @@ unsafe extern "C-unwind" fn callback_waiter(arg: *mut c_void) -> *mut c_void {
 unsafe extern "C-unwind" fn worker(_arg: *mut c_void) -> *mut c_void {
     aio_completion::detach_current();
     let mut idle_since = None;
+    let mut scheduling = None;
     loop {
         // Observe before scanning to avoid lost wakes from submission/finish.
         let epoch = aio_completion::EPOCH.load(Ordering::Acquire);
@@ -179,6 +236,7 @@ unsafe extern "C-unwind" fn worker(_arg: *mut c_void) -> *mut c_void {
             }
         };
         if let Some(request) = request {
+            request.scheduling.apply(&mut scheduling);
             let result = aio_execute(
                 request.fd,
                 request.buffer,
@@ -216,6 +274,34 @@ pub(super) unsafe fn submit(
     op: AioOp,
     group: Option<Arc<aio_completion::Group>>,
 ) -> c_int {
+    let barrier = matches!(op, AioOp::Fsync | AioOp::Fdatasync);
+    // aio_fsync only consumes fildes/sigevent: even an otherwise invalid
+    // reqprio, buffer, length or offset must not influence its submission.
+    let reduction = if barrier {
+        0
+    } else {
+        // SAFETY: the caller supplies a live control block during submission.
+        unsafe { aiocb_i32(cb, aiocb_off::REQPRIO) }
+    };
+    if !(0..=AIO_PRIO_DELTA_MAX).contains(&reduction) {
+        // SAFETY: submission still owns this live control block's result.
+        unsafe {
+            status(cb as usize, -1, libc::EINVAL);
+            set_abi_errno(libc::EINVAL);
+        }
+        return -1;
+    }
+    let scheduling = match Scheduling::snapshot(reduction) {
+        Ok(value) => value,
+        Err(error) => {
+            // SAFETY: no request was accepted; the caller's block is live.
+            unsafe {
+                status(cb as usize, -1, error);
+                set_abi_errno(error);
+            }
+            return -1;
+        }
+    };
     // SAFETY: the exported entrypoint checked cb; submission borrows its event.
     let (notice, attributes) = match unsafe {
         aio_completion::Notice::read((cb as *const u8).add(32).cast::<libc::sigevent>())
@@ -233,10 +319,26 @@ pub(super) unsafe fn submit(
         cb: cb as usize,
         // SAFETY: the caller keeps this control block live during submission.
         fd: unsafe { aiocb_i32(cb, aiocb_off::FILDES) },
-        buffer: unsafe { aiocb_ptr(cb, aiocb_off::BUF) } as usize,
-        length: unsafe { aiocb_usize(cb, aiocb_off::NBYTES) },
-        offset: unsafe { aiocb_i64(cb, aiocb_off::OFFSET) },
+        buffer: if barrier {
+            0
+        } else {
+            // SAFETY: read/write callers initialize the live transfer fields.
+            (unsafe { aiocb_ptr(cb, aiocb_off::BUF) }) as usize
+        },
+        length: if barrier {
+            0
+        } else {
+            // SAFETY: read/write callers initialize the live transfer fields.
+            unsafe { aiocb_usize(cb, aiocb_off::NBYTES) }
+        },
+        offset: if barrier {
+            0
+        } else {
+            // SAFETY: read/write callers initialize the live transfer fields.
+            unsafe { aiocb_i64(cb, aiocb_off::OFFSET) }
+        },
         op,
+        scheduling,
         notice,
         group,
         completion: AtomicU32::new(WAITING),
@@ -290,6 +392,8 @@ pub(super) unsafe fn submit(
             request: Arc::clone(&request),
             fd: request.fd,
             state: State::Queued,
+            priority: request.scheduling.priority,
+            barrier,
         });
         q.started = true;
         let spawn = q.needs_worker();

@@ -3166,7 +3166,7 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_DELAYTIMER_MAX => libc::c_int::MAX as libc::c_long,
         libc::_SC_MQ_PRIO_MAX => 32768,
         libc::_SC_RTSIG_MAX => 32,
-        libc::_SC_AIO_PRIO_DELTA_MAX => 20,
+        libc::_SC_AIO_PRIO_DELTA_MAX => AIO_PRIO_DELTA_MAX as c_long,
         // `libc` does not expose every Linux/glibc _SC selector on every
         // supported Rust target. Keep the selector numbers here rather than
         // silently treating these documented glibc facilities as unknown.
@@ -16458,6 +16458,9 @@ const AIO_CANCELED: c_int = 0;
 const AIO_NOTCANCELED: c_int = 1;
 const AIO_ALLDONE: c_int = 2;
 
+/// GNU/Linux's accepted asynchronous priority reduction, shared with sysconf.
+const AIO_PRIO_DELTA_MAX: c_int = 20;
+
 /// O_SYNC / O_DSYNC flags for aio_fsync.
 #[allow(dead_code)]
 const O_SYNC_FLAG: c_int = 0x101000; // O_SYNC on Linux x86_64
@@ -16469,6 +16472,8 @@ mod aiocb_off {
     pub const FILDES: usize = 0;
     /// `int aio_lio_opcode` at offset 4
     pub const LIO_OPCODE: usize = 4;
+    /// `int aio_reqprio` at offset 8
+    pub const REQPRIO: usize = 8;
     /// `volatile void *aio_buf` at offset 16
     pub const BUF: usize = 16;
     /// `size_t aio_nbytes` at offset 24

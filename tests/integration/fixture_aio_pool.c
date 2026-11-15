@@ -6,7 +6,9 @@
 #include <fcntl.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
+#include <limits.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -29,7 +31,10 @@
 #endif
 _Static_assert(sizeof(struct aioinit)==32 && offsetof(struct aioinit,aio_idle_time)==24, "GNU aioinit layout");
 _Static_assert(offsetof(struct aiocb,aio_offset)==128 && offsetof(struct aiocb,__error_code)==112, "Linux LP64 aiocb layout");
+_Static_assert(offsetof(struct aiocb,aio_reqprio)==8, "Linux LP64 AIO priority layout");
 static int (*ar)(struct aiocb *);
+static int (*aw)(struct aiocb *);
+static int (*af)(int, struct aiocb *);
 static int (*ae)(const struct aiocb *);
 static ssize_t (*av)(struct aiocb *);
 static int (*ac)(int, struct aiocb *);
@@ -51,6 +56,7 @@ static void *bind(const char *name) {
 }
 static void init_api(void) {
     ar = bind(SYMBOL("aio_read")); ae = bind(SYMBOL("aio_error"));
+    aw = bind(SYMBOL("aio_write")); af = bind(SYMBOL("aio_fsync"));
     av = bind(SYMBOL("aio_return")); ac = bind(SYMBOL("aio_cancel"));
     ll = bind(SYMBOL("lio_listio")); ai = bind("aio_init");
 }
@@ -91,7 +97,7 @@ static int kernel_reader(int fd) {
         ssize_t n=read(f,text,sizeof text-1); close(f);
         if (n<=0) continue;
         text[n]=0; long call; unsigned long arg;
-        if (sscanf(text, "%ld %lx", &call, &arg)==2 && call==SYS_read && arg==(unsigned long)fd) found=1;
+        if (sscanf(text, "%ld %lx", &call, &arg)==2 && call==SYS_read && arg==(unsigned long)fd) found=(int)strtol(entry->d_name,NULL,10);
     }
     closedir(d); return found;
 }
@@ -258,6 +264,111 @@ static void startup_burst(void) {
     }
 }
 
+/* Hold the sole worker in an observed syscall while admitting priorities.
+ * The bytes consumed expose execution order, without racing notifications. */
+static void priority_same_fd(int batch) {
+    config(1,1); int p[2]; pair(p);
+    struct aiocb cb[5]; char bytes[5]={0};
+    const int priorities[5]={0,20,0,0,5};
+    for (int i=0;i<5;i++) {
+        request(&cb[i],p[0],&bytes[i]); cb[i].aio_reqprio=priorities[i];
+        cb[i].aio_lio_opcode=LIO_READ;
+    }
+    CHECK(ar(&cb[0])==0); running(p[0],&cb[0]);
+    if (batch) {
+        struct aiocb *list[]={&cb[1],&cb[2],&cb[3],&cb[4]};
+        CHECK(ll(LIO_NOWAIT,list,4,NULL)==0);
+    } else {
+        for (int i=1;i<5;i++) CHECK(ar(&cb[i])==0);
+    }
+    CHECK(write(p[1],"BHIML",5)==5);
+    const char expected[5]={'B','L','H','I','M'};
+    for (int i=0;i<5;i++) completed(&cb[i],&bytes[i],expected[i]);
+    finish_pair(p);
+}
+
+static void priority_across_fds(void) {
+    config(1,1); int gate[2], low[2], high[2]; pair(gate); pair(low); pair(high);
+    struct aiocb blocker, slow, urgent; char b=0,l=0,h=0;
+    request(&blocker,gate[0],&b); CHECK(ar(&blocker)==0); running(gate[0],&blocker);
+    CHECK(write(low[1],"l",1)==1);
+    request(&slow,low[0],&l); slow.aio_reqprio=20; CHECK(ar(&slow)==0);
+    request(&urgent,high[0],&h); CHECK(ar(&urgent)==0);
+    CHECK(write(gate[1],"b",1)==1); completed(&blocker,&b,'b');
+    running(high[0],&urgent);
+    CHECK(ae(&slow)==EINPROGRESS); /* later urgent fd passed earlier ready fd */
+    CHECK(write(high[1],"h",1)==1);
+    completed(&urgent,&h,'h'); completed(&slow,&l,'l');
+    finish_pair(gate); finish_pair(low); finish_pair(high);
+}
+
+static void priority_invalid(void) {
+    config(1,1);
+    int fd=(int)syscall(SYS_memfd_create,"aio-priority",0); CHECK(fd>=0);
+    CHECK(write(fd,"p",1)==1);
+    CHECK(sysconf(_SC_AIO_PRIO_DELTA_MAX)==20);
+    const int invalid[]={-1,21,INT_MIN,INT_MAX};
+    for (size_t i=0;i<sizeof invalid/sizeof invalid[0];i++) {
+        for (int write_request=0;write_request<2;write_request++) {
+            struct aiocb cb; char byte='x'; request(&cb,fd,&byte);
+            cb.aio_reqprio=invalid[i]; errno=0;
+            CHECK((write_request?aw(&cb):ar(&cb))==-1 && errno==EINVAL);
+        }
+    }
+    for (int priority=0;priority<=20;priority+=20) {
+        struct aiocb cb; char byte=0; request(&cb,fd,&byte); cb.aio_reqprio=priority;
+        CHECK(ar(&cb)==0); completed(&cb,&byte,'p');
+    }
+    struct aiocb valid, invalid_cb, nop; char a=0,b=0,c=0;
+    request(&valid,fd,&a); valid.aio_lio_opcode=LIO_READ;
+    request(&invalid_cb,fd,&b); invalid_cb.aio_lio_opcode=LIO_READ; invalid_cb.aio_reqprio=-1;
+    request(&nop,fd,&c); nop.aio_lio_opcode=LIO_NOP; nop.aio_reqprio=INT_MAX;
+    struct aiocb *list[]={&invalid_cb,&nop,&valid}; errno=0;
+    CHECK(ll(LIO_WAIT,list,3,NULL)==-1 && errno==EIO);
+    completed(&valid,&a,'p'); CHECK(ae(&invalid_cb)==EINVAL);
+    CHECK(b==0 && c==0); CHECK(close(fd)==0);
+}
+
+static void priority_fsync(void) {
+    config(1,1);
+    int fd=(int)syscall(SYS_memfd_create,"aio-sync-priority",0); CHECK(fd>=0);
+    CHECK(write(fd,"s",1)==1);
+    const int operations[]={O_SYNC,O_DSYNC};
+    const int ignored[]={INT_MIN,INT_MAX};
+    for (int op=0;op<2;op++) {
+        for (int priority=0;priority<2;priority++) {
+            struct aiocb sync; memset(&sync,0,sizeof sync); sync.aio_fildes=fd;
+            sync.aio_reqprio=ignored[priority]; sync.aio_buf=(void *)(uintptr_t)1;
+            sync.aio_nbytes=SIZE_MAX; sync.aio_offset=INT64_MIN;
+            sync.aio_sigevent.sigev_notify=SIGEV_NONE;
+            CHECK(af(operations[op],&sync)==0); /* only fildes/sigevent matter */
+            for (int i=0;i<5000 && ae(&sync)==EINPROGRESS;i++) pause_ms(1);
+            CHECK(ae(&sync)==0 && av(&sync)==0);
+        }
+    }
+    CHECK(close(fd)==0);
+}
+
+static void priority_policy(void) {
+    config(1,1); int gate[2], pending[2], later[2]; pair(gate); pair(pending); pair(later);
+    struct aiocb blocker, batch, ordinary; char a=0,b=0,c=0;
+    struct sched_param parameter={.sched_priority=0};
+    CHECK(pthread_setschedparam(pthread_self(),SCHED_OTHER,&parameter)==0);
+    request(&blocker,gate[0],&a); CHECK(ar(&blocker)==0); running(gate[0],&blocker);
+    CHECK(pthread_setschedparam(pthread_self(),SCHED_BATCH,&parameter)==0);
+    request(&batch,pending[0],&b); CHECK(ar(&batch)==0);
+    CHECK(pthread_setschedparam(pthread_self(),SCHED_OTHER,&parameter)==0);
+    request(&ordinary,later[0],&c); CHECK(ar(&ordinary)==0);
+    CHECK(write(gate[1],"a",1)==1); completed(&blocker,&a,'a');
+    running(pending[0],&batch);
+    CHECK(sched_getscheduler(kernel_reader(pending[0]))==SCHED_BATCH);
+    CHECK(write(pending[1],"b",1)==1); completed(&batch,&b,'b');
+    running(later[0],&ordinary);
+    CHECK(sched_getscheduler(kernel_reader(later[0]))==SCHED_OTHER);
+    CHECK(write(later[1],"c",1)==1); completed(&ordinary,&c,'c');
+    finish_pair(gate); finish_pair(pending); finish_pair(later);
+}
+
 struct rescue { int fd; _Atomic int go; };
 static void *rescue_worker(void *arg) {
     struct rescue *s=arg;
@@ -308,6 +419,12 @@ int main(int argc,char **argv) {
     else if (!strcmp(argv[1],"canceled-notifications")) canceled_notifications();
     else if (!strcmp(argv[1],"retirement-race")) retirement_race();
     else if (!strcmp(argv[1],"startup-burst")) startup_burst();
+    else if (!strcmp(argv[1],"priority-same-fd")) priority_same_fd(0);
+    else if (!strcmp(argv[1],"priority-list")) priority_same_fd(1);
+    else if (!strcmp(argv[1],"priority-across-fds")) priority_across_fds();
+    else if (!strcmp(argv[1],"priority-invalid")) priority_invalid();
+    else if (!strcmp(argv[1],"priority-fsync")) priority_fsync();
+    else if (!strcmp(argv[1],"priority-policy")) priority_policy();
     else if (!strcmp(argv[1],"spawn-failure")) spawn_failure();
     else CHECK(0);
     printf("PASS %s\n",argv[1]); return 0;
