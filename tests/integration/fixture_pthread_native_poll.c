@@ -2074,6 +2074,8 @@ static int receive_contract_main(char **argv) {
         from = 1;
         suffix += 9;
     }
+    int timed = strncmp(suffix, "timed-", 6) == 0;
+    if (timed) suffix += 6;
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late", "peek",
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "competing", "waitall", "lowat", "eof", "zero", "errors",
@@ -2139,10 +2141,15 @@ static int receive_contract_main(char **argv) {
     if (kind == RECEIVE_NONBLOCK)
         REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
                 "set caller-owned nonblocking flag");
-    if (kind == RECEIVE_TIMEOUT) {
-        struct timeval timeout = {0, 150000};
+    struct timeval configured_timeout = {0, 0};
+    if (timed || kind == RECEIVE_TIMEOUT) {
+        struct timeval timeout = {kind == RECEIVE_TIMEOUT ? 0 : 4, 150001};
         REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0,
                 "set caller-owned receive timeout");
+        socklen_t size = sizeof(configured_timeout);
+        REQUIRE(getsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &configured_timeout, &size) == 0 &&
+                    size == sizeof(configured_timeout),
+                "capture the kernel-rounded receive timeout");
     }
     if (kind == RECEIVE_LOWAT) {
         int lowat = 4;
@@ -2217,6 +2224,13 @@ static int receive_contract_main(char **argv) {
             kind == RECEIVE_WAITALL || kind == RECEIVE_LOWAT ||
             (kind >= RECEIVE_RIGHTS && kind != RECEIVE_RIGHTS_PRESSURE)) {
             observe_receive_parked(&probe, memory);
+            if (timed && kind == RECEIVE_READY_LATE) {
+                int64_t deadline = monotonic_ns() + 120000000;
+                while (monotonic_ns() < deadline) pause_briefly();
+                observe_receive_parked(&probe, memory);
+                REQUIRE(probe.data[0] == 0xa5,
+                        "finite receive retains its empty buffer across multiple wait slices");
+            }
             if (kind >= RECEIVE_RIGHTS) {
                 /* Cross several empty native retries before acquiring control
                  * data, proving EAGAIN did not shrink the caller's capacity. */
@@ -2278,8 +2292,10 @@ static int receive_contract_main(char **argv) {
             REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
                     "caller nonblocking and timeout contracts preserve EAGAIN");
             if (kind == RECEIVE_TIMEOUT)
-                REQUIRE(probe.observed.elapsed_ns >= 100000000 && probe.observed.elapsed_ns < 2000000000,
-                        "receive timeout retains its kernel deadline");
+                REQUIRE(probe.observed.elapsed_ns >=
+                            configured_timeout.tv_sec * 1000000000 + configured_timeout.tv_usec * 1000 - 5000000 &&
+                            probe.observed.elapsed_ns < 2000000000,
+                        "receive waits for its kernel-rounded deadline including the final fraction");
         } else if (kind == RECEIVE_SIGNAL) {
             REQUIRE(probe.observed.result == -1 && probe.observed.error == EINTR,
                     "non-restarting receive preserves EINTR");
@@ -2343,6 +2359,14 @@ static int receive_contract_main(char **argv) {
                     errno == EAGAIN, "receive consumes each queued payload at most once");
     }
     REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "receive never changes shared O_NONBLOCK flags");
+    if (timed || kind == RECEIVE_TIMEOUT) {
+        struct timeval after = {0, 0};
+        socklen_t size = sizeof(after);
+        REQUIRE(getsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &after, &size) == 0 &&
+                    size == sizeof(after) && after.tv_sec == configured_timeout.tv_sec &&
+                    after.tv_usec == configured_timeout.tv_usec,
+                "receive never rewrites the shared socket timeout");
+    }
     REQUIRE(descriptor_count() == original_descriptors,
             "completed or canceled receive releases every private descriptor");
     if (kind >= RECEIVE_RIGHTS)
@@ -2822,6 +2846,10 @@ static int send_contract_main(char **argv) {
     enum descriptor_transport transport = writing ? parse_descriptor_transport(&suffix) : DESCRIPTOR_STREAM;
     int datagram = message_api && strncmp(suffix, "datagram-", 9) == 0;
     if (datagram) suffix += 9;
+    int timed = strncmp(suffix, "timed-", 6) == 0;
+    if (timed) suffix += 6;
+    int partial_timeout = timed && strcmp(suffix, "partial-timeout") == 0;
+    if (partial_timeout) suffix = "partial";
     const char *names[] = {"blocked", "pending", "disabled", "ready", "ready-late",
                           "nonblock", "dontwait", "timeout", "signal", "signal-restart",
                           "errors", "length-zero", "peer-closed", "partial",
@@ -2898,10 +2926,15 @@ static int send_contract_main(char **argv) {
     if (kind == SEND_NONBLOCK)
         REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
                 "set caller-owned send nonblocking flag");
-    if (kind == SEND_TIMEOUT) {
-        struct timeval timeout = {0, 150000};
+    struct timeval configured_timeout = {0, 0};
+    if (timed || kind == SEND_TIMEOUT) {
+        struct timeval timeout = {kind == SEND_TIMEOUT || partial_timeout ? 0 : 4, 150001};
         REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0,
                 "set caller-owned send timeout");
+        socklen_t size = sizeof(configured_timeout);
+        REQUIRE(getsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &configured_timeout, &size) == 0 &&
+                    size == sizeof(configured_timeout),
+                "capture the kernel-rounded send timeout");
     }
     int original_flags = fcntl(pair[0], F_GETFL);
     REQUIRE(original_flags >= 0, "capture original sender flags");
@@ -2953,6 +2986,13 @@ static int send_contract_main(char **argv) {
         kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK || write_probe_denial(kind) ||
         kind == SEND_ZERO_BLOCKED || kind == SEND_ZERO_READY_LATE) {
         observe_send_parked(&probe, memory);
+        if (timed && kind == SEND_READY_LATE) {
+            int64_t deadline = monotonic_ns() + 120000000;
+            while (monotonic_ns() < deadline) pause_briefly();
+            observe_send_parked(&probe, memory);
+            REQUIRE(!probe.observed.returned,
+                    "finite send retains backpressure across multiple wait slices");
+        }
         if (kind == SEND_BLOCKED || kind == SEND_DISABLED || kind == SEND_PARTIAL_CANCEL ||
             kind == SEND_ZERO_BLOCKED)
             REQUIRE(pthread_cancel(probe.observed.thread) == 0, "request blocked send cancellation");
@@ -2967,10 +3007,10 @@ static int send_contract_main(char **argv) {
         }
         if (kind == SEND_PARTIAL_ERROR)
             REQUIRE(shutdown(pair[1], SHUT_RD) == 0, "fail send after its accepted prefix");
-        if (kind == SEND_DISABLED || kind == SEND_READY_LATE || kind == SEND_SIGNAL_RESTART ||
+        if (!partial_timeout && (kind == SEND_DISABLED || kind == SEND_READY_LATE || kind == SEND_SIGNAL_RESTART ||
             kind == SEND_PARTIAL || kind == SEND_RIGHTS_PARTIAL || kind == SEND_MAPPED_PARTIAL ||
             kind == SEND_SEQPACKET || kind == SEND_PIPE_FALLBACK || kind == SEND_DATAGRAM_FALLBACK ||
-            write_probe_denial(kind) || kind == SEND_ZERO_READY_LATE) {
+            write_probe_denial(kind) || kind == SEND_ZERO_READY_LATE)) {
             int64_t deadline = monotonic_ns() + 2000000000;
             while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire)) {
                 REQUIRE(monotonic_ns() < deadline, "send completion after draining backpressure");
@@ -2990,8 +3030,10 @@ static int send_contract_main(char **argv) {
         REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
                 "caller nonblocking and send timeout contracts preserve EAGAIN");
         if (kind == SEND_TIMEOUT)
-            REQUIRE(probe.observed.elapsed_ns >= 100000000 && probe.observed.elapsed_ns < 2000000000,
-                    "send timeout retains its kernel deadline");
+            REQUIRE(probe.observed.elapsed_ns >=
+                        configured_timeout.tv_sec * 1000000000 + configured_timeout.tv_usec * 1000 - 5000000 &&
+                        probe.observed.elapsed_ns < 2000000000,
+                    "send waits for its kernel-rounded deadline including the final fraction");
     } else if (kind == SEND_SIGNAL) {
         REQUIRE(probe.observed.result == -1 && probe.observed.error == EINTR,
                 "non-restarting send preserves EINTR");
@@ -3002,10 +3044,15 @@ static int send_contract_main(char **argv) {
         REQUIRE(probe.observed.result == -1 &&
                     probe.observed.error == (type == SOCK_DGRAM ? ECONNREFUSED : EPIPE),
                 "closed peer preserves its socket error without SIGPIPE");
-    } else if (kind == SEND_PARTIAL_CANCEL || kind == SEND_PARTIAL_ERROR) {
+    } else if (kind == SEND_PARTIAL_CANCEL || kind == SEND_PARTIAL_ERROR || partial_timeout) {
         REQUIRE(probe.observed.returned && probe.observed.result > 0 &&
                     probe.observed.result < (int)probe.length && probe.observed.error == EDOM,
                 "interrupted partial send returns its committed prefix");
+        if (partial_timeout)
+            REQUIRE(probe.observed.elapsed_ns >=
+                        configured_timeout.tv_sec * 1000000000 + configured_timeout.tv_usec * 1000 - 5000000 &&
+                        probe.observed.elapsed_ns < 2000000000,
+                    "a timed partial send spends one budget and preserves its successful prefix");
     } else if (kind == SEND_OVERSIZE) {
         REQUIRE(probe.observed.result == -1 && probe.observed.error == EMSGSIZE,
                 "oversized atomic datagram preserves EMSGSIZE");
@@ -3029,6 +3076,14 @@ static int send_contract_main(char **argv) {
     if (rights[0] >= 0)
         REQUIRE(close(rights[0]) == 0 && close(rights[1]) == 0, "release sender rights sources");
     REQUIRE(fcntl(pair[0], F_GETFL) == original_flags, "send never changes shared O_NONBLOCK flags");
+    if (timed || kind == SEND_TIMEOUT) {
+        struct timeval after = {0, 0};
+        socklen_t size = sizeof(after);
+        REQUIRE(getsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &after, &size) == 0 &&
+                    size == sizeof(after) && after.tv_sec == configured_timeout.tv_sec &&
+                    after.tv_usec == configured_timeout.tv_usec,
+                "send never rewrites the shared socket timeout");
+    }
     REQUIRE(close(memory) == 0 && close(pair[0]) == 0, "release sender fixture descriptors");
     if (kind != SEND_PEER_CLOSED) REQUIRE(close(pair[1]) == 0, "release sender peer");
     printf("pthread-native-poll:%s:PASS\n", case_name);
@@ -3318,6 +3373,10 @@ static int batch_send_contract_once(char **argv, int fault_after_prefix, int udp
     if (strncmp(suffix, "datagram-", 9) == 0) { type = SOCK_DGRAM; suffix += 9; }
     else if (strncmp(suffix, "seqpacket-", 10) == 0) { type = SOCK_SEQPACKET; suffix += 10; }
     else return 2;
+    int timed = strncmp(suffix, "timed-", 6) == 0;
+    if (timed) suffix += 6;
+    int separate_budgets = timed && strcmp(suffix, "budgets") == 0;
+    if (separate_budgets) suffix = "ready-late";
     const char *names[] = {
         "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
         "timeout", "signal", "signal-restart", "partial-error", "errors", "zero", "count-zero",
@@ -3373,8 +3432,9 @@ static int batch_send_contract_once(char **argv, int fault_after_prefix, int udp
     if (kind == BATCH_NONBLOCK)
         REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
                 "caller-owned nonblocking batch socket");
-    if (kind == BATCH_TIMEOUT) {
-        struct timeval timeout = {0, 150000};
+    if (timed || kind == BATCH_TIMEOUT) {
+        struct timeval timeout = {kind == BATCH_TIMEOUT || separate_budgets ? 0 : 4,
+                                  separate_budgets ? 500000 : 150001};
         REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0,
                 "caller-owned batch timeout");
     }
@@ -3473,6 +3533,33 @@ static int batch_send_contract_once(char **argv, int fault_after_prefix, int udp
             REQUIRE(dup2(replacement[0], pair[0]) == pair[0], "replace public batch socket fd");
         if (kind == BATCH_DISABLED || kind == BATCH_READY_LATE ||
             kind == BATCH_SIGNAL_RESTART || kind == BATCH_REUSE) {
+            if (separate_budgets) {
+                int64_t deadline = monotonic_ns() + 300000000;
+                while (monotonic_ns() < deadline) {
+                    REQUIRE(!probe.observed.returned, "first batch message waits for its own budget");
+                    pause_briefly();
+                }
+                unsigned char byte = 0;
+                REQUIRE(syscall(SYS_recvfrom, pair[1], &byte, 1, MSG_DONTWAIT, NULL, NULL) == 1 && byte == 'F',
+                        "free exactly one record slot after part of the first timeout");
+                ++filler;
+                unsigned first_length = UINT32_C(0xa5a5a5a5);
+                deadline = monotonic_ns() + 2000000000;
+                while (first_length != 1) {
+                    REQUIRE(!probe.observed.returned && monotonic_ns() < deadline,
+                            "first batch message publishes before its successor can proceed");
+                    REQUIRE(snapshot(memory, (unsigned long long)(uintptr_t)&probe.active[0].msg_len,
+                                     &first_length, sizeof(first_length)),
+                            "observe the committed first record without racing C memory");
+                    if (first_length != 1) pause_briefly();
+                }
+                deadline = monotonic_ns() + 300000000;
+                while (monotonic_ns() < deadline) {
+                    REQUIRE(!probe.observed.returned,
+                            "second batch message receives a fresh timeout instead of the first message's remainder");
+                    pause_briefly();
+                }
+            }
             int64_t deadline = monotonic_ns() + 2000000000;
             while (!atomic_load_explicit(&probe.observed.returned, memory_order_acquire)) {
                 REQUIRE(monotonic_ns() < deadline, "batch completion after draining backpressure");
@@ -3485,6 +3572,9 @@ static int batch_send_contract_once(char **argv, int fault_after_prefix, int udp
     int canceled = kind == BATCH_PENDING || kind == BATCH_BLOCKED || kind == BATCH_DISABLED;
     REQUIRE(result == (canceled ? PTHREAD_CANCELED : &probe.observed), "batch join result");
     REQUIRE(probe.observed.cleaned == 1, "batch cleanup count");
+    if (separate_budgets)
+        REQUIRE(probe.observed.elapsed_ns > 500000000,
+                "the complete batch may outlive one message's timeout while each message succeeds");
     unsigned published = 0, delivered = 0;
     if (kind == BATCH_PENDING || kind == BATCH_BLOCKED) {
         REQUIRE(!probe.observed.returned, "batch cancellation precedes result publication");
@@ -3709,6 +3799,8 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
     if (strncmp(suffix, "datagram-", 9) == 0) { type = SOCK_DGRAM; suffix += 9; }
     else if (strncmp(suffix, "seqpacket-", 10) == 0) { type = SOCK_SEQPACKET; suffix += 10; }
     else return 2;
+    int timed = strncmp(suffix, "timed-", 6) == 0;
+    if (timed) suffix += 6;
     const char *names[] = {
         "blocked", "pending", "disabled", "ready", "ready-late", "prefix",
         "single", "single-blocked", "fullbatch", "nonblock", "dontwait", "timeout",
@@ -3746,8 +3838,8 @@ static int batch_receive_contract_once(char **argv, int fault_after_prefix, int 
     if (kind == BATCH_RECEIVE_NONBLOCK)
         REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
                 "caller-owned nonblocking batch receive socket");
-    if (kind == BATCH_RECEIVE_TIMEOUT) {
-        struct timeval timeout = {0, 150000};
+    if (timed || kind == BATCH_RECEIVE_TIMEOUT) {
+        struct timeval timeout = {kind == BATCH_RECEIVE_TIMEOUT ? 0 : 4, 150001};
         REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0,
                 "caller-owned batch receive timeout");
     }

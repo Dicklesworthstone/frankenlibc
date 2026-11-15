@@ -266,12 +266,31 @@ RECVMMSG_CASES = tuple(
     )
 )
 SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
+SOCKET_TIMEOUT_CASES = tuple(
+    f"{entry}-timed-{case}"
+    for entry in ("read", "readv", "recv", "recvfrom", "recvmsg",
+                  "write", "writev", "send", "sendto", "sendmsg")
+    for case in ("blocked", "pending", "ready-late", "timeout")
+) + tuple(
+    f"{entry}-timed-partial-timeout"
+    for entry in ("write", "writev", "send", "sendmsg")
+) + (
+    "recv-timed-disabled", "send-timed-disabled",
+    "recv-alias-timed-blocked", "recvfrom-fortified-timed-blocked",
+    "send-alias-timed-blocked", "writev-alias-timed-blocked",
+    "recvmsg-timed-rights", "sendmsg-timed-rights-partial",
+) + tuple(
+    f"{entry}-{transport}-timed-{case}"
+    for entry in ("sendmmsg", "recvmmsg")
+    for transport in ("datagram", "seqpacket")
+    for case in ("blocked", "ready-late", "timeout")
+) + ("sendmmsg-datagram-timed-budgets", "sendmmsg-seqpacket-timed-budgets")
 
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
 CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + READ_CASES + FD_IO_CASES +
          MESSAGE_IO_CASES + RECEIVE_CASES + SEND_CASES + SENDMSG_CASES + SENDMMSG_CASES +
-         RECVMMSG_CASES)
+         RECVMMSG_CASES + SOCKET_TIMEOUT_CASES)
 
 
 def digest(path: Path) -> str:
@@ -324,11 +343,15 @@ def main() -> int:
         "--recvmmsg-only", action="store_true",
         help="Run record batch receives, WAITFORONE cancellation and deferred receive errors.",
     )
+    parser.add_argument(
+        "--socket-timeout-only", action="store_true",
+        help="Run finite socket timeouts, blocked cancellation, delayed progress and partial expiry.",
+    )
     args = parser.parse_args()
     if sum((args.suspend_only, args.read_only, args.fd_io_only, args.message_io_only,
             args.receive_only, args.send_only, args.sendmsg_only, args.sendmmsg_only,
-            args.recvmmsg_only)) > 1:
-        parser.error("--suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only, --sendmsg-only, --sendmmsg-only and --recvmmsg-only are mutually exclusive")
+            args.recvmmsg_only, args.socket_timeout_only)) > 1:
+        parser.error("--suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only, --sendmsg-only, --sendmmsg-only, --recvmmsg-only and --socket-timeout-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
@@ -339,7 +362,8 @@ def main() -> int:
              SEND_CASES + SENDMSG_CASES + SEND_NATIVE_CASES if args.send_only else
              SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else
              SENDMMSG_CASES if args.sendmmsg_only else
-             RECVMMSG_CASES if args.recvmmsg_only else CASES)
+             RECVMMSG_CASES if args.recvmmsg_only else
+             SOCKET_TIMEOUT_CASES if args.socket_timeout_only else CASES)
     native_only_cases = SEND_NATIVE_CASES + FD_IO_NATIVE_CASES
     native_only_cases = tuple(case for case in native_only_cases if case in cases)
     candidate_cases = 0 if args.host_only else 4 * len(cases) - 2 * len(native_only_cases)
@@ -471,7 +495,8 @@ def main() -> int:
                       "socket sends only" if args.send_only else
                       "vectored socket sends only" if args.sendmsg_only else
                       "batched atomic socket sends only" if args.sendmmsg_only else
-                      "batched record socket receives only" if args.recvmmsg_only else "poll/epoll/sleep/select/socket",
+                      "batched record socket receives only" if args.recvmmsg_only else
+                      "finite socket timeouts and cancellation only" if args.socket_timeout_only else "poll/epoll/sleep/select/socket",
         "revision": revision.stdout.strip() if revision.returncode == 0 else None,
         "fixture_sha256": digest(source), "runner_sha256": digest(Path(__file__)),
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
@@ -489,6 +514,7 @@ def main() -> int:
         "send_cases": sum(case.startswith(("send-", "sendto-", "sendmsg-")) for case in cases),
         "sendmmsg_cases": sum(case in SENDMMSG_CASES for case in cases),
         "recvmmsg_cases": sum(case in RECVMMSG_CASES for case in cases),
+        "socket_timeout_cases": sum(case in SOCKET_TIMEOUT_CASES for case in cases),
         "native_only_cases": list(native_only_cases),
         "oracle_cases": len(cases), "candidate_cases": candidate_cases,
         "provider_negatives": 1, "backend_negatives": 1,

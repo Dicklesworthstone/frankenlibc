@@ -627,7 +627,11 @@ impl Receive {
                 if !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count) {
                     return false;
                 }
-                (messages, count as usize, core::mem::size_of::<libc::mmsghdr>())
+                (
+                    messages,
+                    count as usize,
+                    core::mem::size_of::<libc::mmsghdr>(),
+                )
             }
             _ => return true,
         };
@@ -737,27 +741,7 @@ impl Receive {
         {
             return false;
         }
-        let mut timeout = libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        };
-        let mut size = core::mem::size_of::<libc::timeval>() as u32;
-        // SAFETY: both outputs are owned, aligned kernel ABI storage. Only a
-        // socket with no receive timeout is interchangeable with indefinite
-        // readiness waits; finite timeouts retain their exact kernel contract.
-        unsafe {
-            syscall::sys_getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVTIMEO,
-                core::ptr::from_mut(&mut timeout).cast(),
-                &mut size,
-            )
-        }
-        .is_ok()
-            && size as usize == core::mem::size_of::<libc::timeval>()
-            && timeout.tv_sec == 0
-            && timeout.tv_usec == 0
+        true
     }
 
     unsafe fn probe(self) -> Result<isize, c_int> {
@@ -871,6 +855,69 @@ fn socket_integer_option(fd: c_int, option: c_int) -> Option<c_int> {
     }
     .ok()?;
     (size as usize == core::mem::size_of::<c_int>()).then_some(value)
+}
+
+/// Socket timeouts are relative wait budgets. Read the value back from Linux:
+/// setsockopt rounds microseconds to its scheduler ticks, and reproducing that
+/// rounding from the application's original timeval would depend on kernel HZ.
+/// Zero means an infinite wait, not an immediately expired operation. Capture
+/// once per message, just as the kernel does; a peer's later setsockopt must not
+/// restart a partially completed stream send or an already blocked receive.
+#[derive(Clone, Copy)]
+struct SocketTimeout {
+    nanoseconds: Option<i128>,
+}
+
+impl SocketTimeout {
+    fn read(fd: c_int, option: c_int) -> Option<Self> {
+        let mut value = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        };
+        let mut size = core::mem::size_of::<libc::timeval>() as u32;
+        // SAFETY: the query writes only into aligned, initialized owned storage.
+        unsafe {
+            syscall::sys_getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                option,
+                core::ptr::from_mut(&mut value).cast(),
+                &mut size,
+            )
+        }
+        .ok()?;
+        if size as usize != core::mem::size_of::<libc::timeval>() {
+            return None;
+        }
+        Self::from_timeval(value)
+    }
+
+    fn from_timeval(value: libc::timeval) -> Option<Self> {
+        if value.tv_sec < 0 || !(0..1_000_000).contains(&value.tv_usec) {
+            return None;
+        }
+        let nanoseconds =
+            i128::from(value.tv_sec) * NANOS_PER_SECOND + i128::from(value.tv_usec) * 1_000;
+        Some(Self {
+            nanoseconds: (nanoseconds != 0).then_some(nanoseconds),
+        })
+    }
+
+    fn deadline(self) -> Result<Option<i128>, c_int> {
+        self.nanoseconds
+            .map(|duration| monotonic_nanoseconds().map(|now| now + duration))
+            .transpose()
+    }
+}
+
+fn socket_wait_slice(deadline: Option<i128>) -> Result<(Timespec, bool), c_int> {
+    let now = if deadline.is_some() {
+        monotonic_nanoseconds()?
+    } else {
+        0
+    };
+    let (slice, _) = next_slice(deadline, now);
+    Ok((slice, deadline.is_some_and(|end| now >= end)))
 }
 
 /// A blocked kernel operation retains its open file description even when
@@ -1080,26 +1127,7 @@ trait SendOperation {
                 return false;
             }
         }
-        let mut timeout = libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        };
-        let mut size = core::mem::size_of::<libc::timeval>() as u32;
-        // SAFETY: the query writes only to aligned, owned kernel ABI storage.
-        // Finite send deadlines retain their original kernel implementation.
-        unsafe {
-            syscall::sys_getsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_SNDTIMEO,
-                core::ptr::from_mut(&mut timeout).cast(),
-                &mut size,
-            )
-        }
-        .is_ok()
-            && size as usize == core::mem::size_of::<libc::timeval>()
-            && timeout.tv_sec == 0
-            && timeout.tv_usec == 0
+        true
     }
 
     unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int>;
@@ -1412,7 +1440,8 @@ pub(super) enum SendResult {
 /// Stream prefixes are accumulated until the original request completes. A
 /// later cancellation/error returns the already accepted prefix, as a single
 /// interrupted blocking send does; it must never replay or hide those bytes.
-/// Caught signals and nondefault flags/timeouts retain their kernel contracts.
+/// Caught signals and nondefault flags retain their kernel contracts. A finite
+/// socket timeout uses one monotonic budget across a stream's accepted prefixes.
 /// As with receives, concurrent installation and delivery of a new handler
 /// inside a slice is outside this cooperative path's supported scope.
 ///
@@ -1558,6 +1587,12 @@ unsafe fn send_slices(
     supports_handlers: fn(u64) -> bool,
     mask: &mut SignalMaskGuard,
 ) -> Result<SendResult, c_int> {
+    let Some(timeout) = SocketTimeout::read(operation.fd(), libc::SO_SNDTIMEO) else {
+        return Ok(SendResult::Unsupported);
+    };
+    let Ok(mut deadline) = timeout.deadline() else {
+        return Ok(SendResult::Unsupported);
+    };
     let mut sent = 0;
     let mut recheck_handlers = false;
     loop {
@@ -1588,6 +1623,19 @@ unsafe fn send_slices(
                 if written == 0 || sent == operation.length() {
                     return Ok(SendResult::Ready(sent as isize));
                 }
+                if operation.record_batch() {
+                    // sendmmsg applies the socket's timeout to each distinct
+                    // message, rather than to the whole vector. A completed
+                    // record commits its msg_len before the next budget starts.
+                    let Some(timeout) = SocketTimeout::read(operation.fd(), libc::SO_SNDTIMEO)
+                    else {
+                        return Ok(SendResult::Ready(sent as isize));
+                    };
+                    let Ok(next) = timeout.deadline() else {
+                        return Ok(SendResult::Ready(sent as isize));
+                    };
+                    deadline = next;
+                }
                 continue;
             }
             Err(libc::EAGAIN) => {}
@@ -1604,10 +1652,23 @@ unsafe fn send_slices(
             events: libc::POLLOUT,
             revents: 0,
         };
-        let mut slice = Timespec {
-            tv_sec: 0,
-            tv_nsec: SLICE_NS,
+        let (mut slice, expired) = match socket_wait_slice(deadline) {
+            Ok(slice) => slice,
+            Err(_) => {
+                return Ok(if sent == 0 {
+                    SendResult::Unsupported
+                } else {
+                    SendResult::Ready(sent as isize)
+                });
+            }
         };
+        if expired {
+            return if sent == 0 {
+                Err(libc::EAGAIN)
+            } else {
+                Ok(SendResult::Ready(sent as isize))
+            };
+        }
         // A concurrently installed handler may unwind; do not restore its
         // handler mask during that unwind. Ordinary return reblocks signals.
         mask.armed = false;
@@ -1640,10 +1701,12 @@ unsafe fn send_slices(
 
 /// Receive ordinary socket data with bounded native cancellation, leaving every
 /// successful receive committed even if a cancellation request races completion.
-/// Nondefault timeout/low-water/flag contracts and deliverable caught signals
+/// Nondefault low-water/flag contracts and deliverable caught signals
 /// keep the raw receive. In particular, ppoll must not replace recv's SA_RESTART
 /// behavior. As for child waits, concurrent installation and delivery of a new
 /// handler inside a slice is outside this cooperative path's supported scope.
+/// A finite socket timeout is captured once and cannot be extended by empty
+/// readiness wakes or by another receiver winning the race to consume data.
 ///
 /// # Safety
 /// The ABI supplies its original receive arguments and an enabled cancellation
@@ -1747,6 +1810,12 @@ unsafe fn receive_slices(
     supports_handlers: fn(u64) -> bool,
     mask: &mut SignalMaskGuard,
 ) -> Result<ReceiveResult, c_int> {
+    let Some(timeout) = SocketTimeout::read(operation.fd(), libc::SO_RCVTIMEO) else {
+        return Ok(ReceiveResult::Unsupported);
+    };
+    let Ok(deadline) = timeout.deadline() else {
+        return Ok(ReceiveResult::Unsupported);
+    };
     let mut recheck_handlers = false;
     loop {
         if cancel.pending() {
@@ -1775,10 +1844,13 @@ unsafe fn receive_slices(
             events: libc::POLLIN,
             revents: 0,
         };
-        let mut slice = Timespec {
-            tv_sec: 0,
-            tv_nsec: SLICE_NS,
+        let (mut slice, expired) = match socket_wait_slice(deadline) {
+            Ok(slice) => slice,
+            Err(_) => return Ok(ReceiveResult::Unsupported),
         };
+        if expired {
+            return Err(libc::EAGAIN);
+        }
         // A newly installed application handler may unwind. As in child_slices,
         // do not restore its signal mask during that unwind. Ordinary return
         // reinstates the blocked mask before inspecting cancellation or data.
@@ -2340,6 +2412,40 @@ unsafe fn wait_slices(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn socket_timeouts_preserve_kernel_timeval_precision_and_infinite_zero() {
+        for (seconds, microseconds, expected) in [
+            (0, 0, None),
+            (0, 1, Some(1_000)),
+            (0, 150_001, Some(150_001_000)),
+            (1, 999_999, Some(1_999_999_000)),
+            (
+                i64::MAX,
+                999_999,
+                Some(i128::from(i64::MAX) * NANOS_PER_SECOND + 999_999_000),
+            ),
+        ] {
+            let timeout = SocketTimeout::from_timeval(libc::timeval {
+                tv_sec: seconds,
+                tv_usec: microseconds,
+            })
+            .expect("valid kernel timeout");
+            assert_eq!(timeout.nanoseconds, expected);
+        }
+        for (seconds, microseconds) in [(-1, 0), (0, -1), (0, 1_000_000)] {
+            assert!(
+                SocketTimeout::from_timeval(libc::timeval {
+                    tv_sec: seconds,
+                    tv_usec: microseconds,
+                })
+                .is_none()
+            );
+        }
+        let (slice, expired) = socket_wait_slice(None).expect("infinite slice needs no clock");
+        assert_eq!(slice.tv_nsec, SLICE_NS);
+        assert!(!expired);
+    }
 
     #[test]
     fn sleep_remainders_keep_subsecond_precision_and_full_time_t_range() {
