@@ -127,17 +127,16 @@ def parse_sos_task(path_text: str, errors: list[str]) -> dict[str, Any]:
         return {}
 
     fields: dict[str, Any] = {}
-    matrix: list[list[int]] = []
-    reading_matrix = False
+    matrices: dict[str, list[list[int]]] = {"gram_matrix": [], "barrier_coefficients": []}
+    matrix_section: str | None = None
+    seen_keys: set[str] = set()
     for line_no, raw_line in enumerate(lines, start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if reading_matrix:
-            if ":" in line:
-                errors.append(
-                    f"{path_text}:{line_no}: key/value found while reading gram_matrix"
-                )
+        if ":" not in line:
+            if matrix_section is None:
+                errors.append(f"{path_text}:{line_no}: expected key/value line or declared matrix row")
                 continue
             row: list[int] = []
             for column, cell in enumerate(line.split(","), start=1):
@@ -149,19 +148,20 @@ def parse_sos_task(path_text: str, errors: list[str]) -> dict[str, Any]:
                     row.append(int(cell))
                 except ValueError:
                     errors.append(f"{path_text}:{line_no}: invalid integer matrix cell {cell!r}")
-            matrix.append(row)
-            continue
-        if ":" not in line:
-            errors.append(f"{path_text}:{line_no}: expected key/value line")
+            matrices[matrix_section].append(row)
             continue
         key, value = line.split(":", 1)
         key = key.strip()
         value = value.strip()
-        if key == "gram_matrix":
+        if key in seen_keys:
+            errors.append(f"{path_text}:{line_no}: duplicate {key} field")
+        seen_keys.add(key)
+        matrix_section = None
+        if key in matrices:
             if value:
-                errors.append(f"{path_text}:{line_no}: gram_matrix must not have inline values")
-            reading_matrix = True
-        elif key in {"schema_version", "dimension", "monomial_degree", "barrier_budget_milli"}:
+                errors.append(f"{path_text}:{line_no}: {key} must not have inline values")
+            matrix_section = key
+        elif key in {"schema_version", "dimension", "monomial_degree", "barrier_budget_milli", "barrier_constant_milli"}:
             try:
                 fields[key] = int(value)
             except ValueError:
@@ -170,7 +170,9 @@ def parse_sos_task(path_text: str, errors: list[str]) -> dict[str, Any]:
             if not value:
                 errors.append(f"{path_text}:{line_no}: {key} must be non-empty")
             fields[key] = value
-    fields["gram_matrix"] = matrix
+        else:
+            errors.append(f"{path_text}:{line_no}: unknown {key} field")
+    fields.update(matrices)
     return fields
 
 
@@ -185,6 +187,8 @@ def validate_certificate(contract: dict[str, Any], errors: list[str], rows: list
         return {}
 
     task = parse_sos_task(path_text, errors)
+    if task.get("schema_version") != 2:
+        errors.append("certificate schema_version must be 2 with an independent barrier polynomial")
     expected_fields = {
         "solver_family": "expected_solver_family",
         "certificate": "expected_certificate",
@@ -237,6 +241,37 @@ def validate_certificate(contract: dict[str, Any], errors: list[str], rows: list
                     errors.append(
                         f"gram_matrix is not symmetric at ({i}, {j}) => {row[j]} != {other_row[i]}"
                     )
+
+    # This is the same independently specified coefficient identity required
+    # by build.rs, not an invariant synthesized as B - sigma from the witness.
+    # It certifies a quadratic decomposition, not safety of system dynamics.
+    polynomial = task.get("barrier_coefficients")
+    if task.get("barrier_constant_milli") != task.get("barrier_budget_milli"):
+        errors.append("barrier polynomial constant residual must be zero")
+    if not isinstance(dimension, int) or not 0 < dimension <= 16:
+        errors.append("certificate dimension must be in 1..16")
+    elif not isinstance(polynomial, list) or len(polynomial) != dimension or any(
+        not isinstance(row, list) or len(row) != dimension for row in polynomial
+    ):
+        errors.append("barrier_coefficients must be a square matrix matching dimension")
+    else:
+        matrix_valid = isinstance(matrix, list) and len(matrix) == dimension and all(
+            isinstance(row, list) and len(row) == dimension for row in matrix
+        )
+        for i, row in enumerate(polynomial):
+            for j, coefficient in enumerate(row):
+                if not -(1 << 127) <= coefficient < (1 << 127):
+                    errors.append(f"barrier coefficient ({i}, {j}) is outside i128")
+                if j < i and coefficient != 0:
+                    errors.append("barrier_coefficients must be canonical upper-triangular")
+                elif j >= i and matrix_valid:
+                    gram_coefficient = matrix[i][j] + (matrix[j][i] if i != j else 0)
+                    if coefficient + gram_coefficient != 0:
+                        errors.append(f"barrier polynomial quadratic residual at ({i}, {j}) must be zero")
+        if matrix_valid and any(
+            not -(1 << 63) <= cell < (1 << 63) for row in matrix for cell in row
+        ):
+            errors.append("gram_matrix coefficients must fit i64")
 
     rows.append(
         {

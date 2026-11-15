@@ -338,6 +338,57 @@ fn checker_rejects_missing_runtime_source_needle() -> TestResult {
 }
 
 #[test]
+fn checker_rejects_independent_polynomial_witness_mismatches() -> TestResult {
+    let root = workspace_root()?;
+    let manifest = load_json(&manifest_path(&root))?;
+    let task_path = manifest["certificate_artifact"]["path"]
+        .as_str()
+        .ok_or_else(|| test_error("certificate path missing"))?;
+    let original = fs::read_to_string(root.join(task_path))?;
+    for (label, needle, replacement, diagnostic) in [
+        (
+            "psd-wrong-polynomial",
+            "350,40,60,30,30",
+            "351,40,60,30,30",
+            "quadratic residual",
+        ),
+        (
+            "wrong-target-coefficient",
+            "-350,-80,-120,-60,-60",
+            "-351,-80,-120,-60,-60",
+            "quadratic residual",
+        ),
+        (
+            "wrong-target-constant",
+            "barrier_constant_milli: 900000",
+            "barrier_constant_milli: 900001",
+            "constant residual",
+        ),
+        (
+            "duplicate-witness",
+            "gram_matrix:",
+            "gram_matrix:\ngram_matrix:",
+            "duplicate gram_matrix",
+        ),
+    ] {
+        let out_dir = unique_output_dir(&root, label)?;
+        let altered = original.replacen(needle, replacement, 1);
+        assert_ne!(altered, original, "mutation must change the task");
+        let altered_task_path = out_dir.join("altered.task");
+        fs::write(&altered_task_path, altered)?;
+        let mut changed_manifest = manifest.clone();
+        changed_manifest["certificate_artifact"]["path"] =
+            json!(altered_task_path.to_string_lossy());
+        let changed_manifest_path = out_dir.join("contract.json");
+        write_json(&changed_manifest_path, &changed_manifest)?;
+        let output = run_checker(&root, &changed_manifest_path, &out_dir)?;
+        assert!(!output.status.success(), "checker accepted {label}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains(diagnostic));
+    }
+    Ok(())
+}
+
+#[test]
 fn checker_rejects_missing_telemetry_item() -> TestResult {
     let root = workspace_root()?;
     let out_dir = unique_output_dir(&root, "missing-telemetry")?;

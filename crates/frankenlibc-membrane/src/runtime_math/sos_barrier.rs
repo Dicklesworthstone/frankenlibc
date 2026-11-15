@@ -14,10 +14,16 @@
 //! 2. B(x) < 0 for all x ∈ X_u (negative in unsafe states)
 //! 3. dB/dt ≥ 0 along system dynamics (non-decreasing along trajectories)
 //!
-//! The SOS program: find B(x) = z(x)ᵀ Q z(x) (sum of squares) satisfying
-//! (1-3). This reduces to a semidefinite program (SDP) solvable offline.
-//! Once solved, the certificate is a set of polynomial coefficients that
-//! runtime evaluates in O(d²) time.
+//! A full SOS proof of these conditions needs independently specified initial
+//! and unsafe sets, system dynamics, and appropriate polynomial multipliers.
+//! Those proof obligations are not encoded in the current task artifacts.
+//!
+//! The shipped artifacts instead specify a quadratic admission score and an
+//! independent barrier polynomial. The build checks Q numerically for positive
+//! semidefiniteness and checks every coefficient of B(z) + zᵀ Q z = budget
+//! exactly. Quadratic terms use the common fixed-point score divisor at runtime.
+//! This establishes consistency of the score decomposition, not conditions
+//! (1-3) or a proof that an admitted process state is memory-safe.
 //!
 //! ## Runtime Design
 //!
@@ -184,8 +190,8 @@ impl<const D: usize> SosCertificate<D> {
 
     /// Evaluate the barrier value in milli-units.
     ///
-    /// Positive values are certified-safe headroom; negative values indicate
-    /// certificate violation.
+    /// Positive values are headroom under this admission policy; negative values
+    /// exceed its score budget. This value alone is not a dynamical safety proof.
     #[must_use]
     pub fn evaluate_barrier(&self, basis: &[i64; D], scale: i64) -> i64 {
         self.barrier_budget_milli

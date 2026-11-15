@@ -17,12 +17,16 @@ const CHOLESKY_TOLERANCE: f64 = 1e-9;
 const MIN_BARRIER_MAP_SITES: usize = 20;
 const OPERATION_LOOKBACK_LINES: usize = 6;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SosTask {
     dimension: usize,
     monomial_degree: u32,
     barrier_budget_milli: i64,
     gram_matrix: Vec<Vec<i64>>,
+    /// Independently specified barrier polynomial. Quadratic coefficients use
+    /// the same score units as Q; the runtime applies its common fixed-point
+    /// divisor to either representation. Never derive this witness from Q.
+    barrier_polynomial: QuadraticPolynomial,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -146,14 +150,12 @@ fn generate_certificate_artifact(
             task_path.display()
         )
     });
-    verify_polynomial_identity(&task.gram_matrix, task.barrier_budget_milli).unwrap_or_else(
-        |err| {
-            panic!(
-                "SOS task artifact {} failed symbolic identity verification: {err}",
-                task_path.display()
-            )
-        },
-    );
+    verify_polynomial_identity(&task).unwrap_or_else(|err| {
+        panic!(
+            "SOS task artifact {} failed symbolic identity verification: {err}",
+            task_path.display()
+        )
+    });
 
     let proof_hash = compute_proof_hash(
         task.dimension,
@@ -196,11 +198,19 @@ fn generate_certificate_artifact(
 fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("unable to read {}: {err}", path.display()))?;
+    parse_sos_task_text(&text)
+}
+
+fn parse_sos_task_text(text: &str) -> Result<SosTask, String> {
+    let mut schema_version: Option<u32> = None;
     let mut dimension: Option<usize> = None;
     let mut monomial_degree: Option<u32> = None;
     let mut barrier_budget_milli: Option<i64> = None;
+    let mut barrier_constant_milli: Option<i64> = None;
+    let mut barrier_coefficients: Vec<Vec<i128>> = Vec::new();
     let mut gram_matrix: Vec<Vec<i64>> = Vec::new();
-    let mut reading_matrix = false;
+    let mut matrix_section = None;
+    let mut seen_keys = std::collections::BTreeSet::new();
 
     for (line_no, raw_line) in text.lines().enumerate() {
         let line_no = line_no + 1;
@@ -208,23 +218,36 @@ fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if reading_matrix {
-            if line.contains(':') {
-                return Err(format!(
-                    "line {line_no}: encountered key/value while parsing gram_matrix rows"
-                ));
+        let Some((key, value)) = line.split_once(':') else {
+            match matrix_section {
+                Some("gram_matrix") => gram_matrix.push(parse_matrix_row(line, line_no)?),
+                Some("barrier_coefficients") => {
+                    barrier_coefficients.push(parse_matrix_row(line, line_no)?);
+                }
+                _ => {
+                    return Err(format!(
+                        "line {line_no}: expected `key: value` or a declared matrix row"
+                    ));
+                }
             }
-            let row = parse_matrix_row(line, line_no)?;
-            gram_matrix.push(row);
             continue;
-        }
+        };
 
-        let (key, value) = line
-            .split_once(':')
-            .ok_or_else(|| format!("line {line_no}: expected `key: value` format, got `{line}`"))?;
         let key = key.trim();
         let value = value.trim();
+        if !seen_keys.insert(key) {
+            return Err(format!("line {line_no}: duplicate `{key}` field"));
+        }
+        matrix_section = None;
         match key {
+            "schema_version" => {
+                schema_version = Some(parse_u64_like_u32(value, line_no, key)?);
+            }
+            "solver_family" | "certificate" => {
+                if value.is_empty() {
+                    return Err(format!("line {line_no}: `{key}` must not be empty"));
+                }
+            }
             "dimension" => {
                 dimension = Some(parse_u64_like_usize(value, line_no, key)?);
             }
@@ -234,28 +257,52 @@ fn parse_sos_task(path: &Path) -> Result<SosTask, String> {
             "barrier_budget_milli" => {
                 barrier_budget_milli = Some(parse_i64_like(value, line_no, key)?);
             }
-            "gram_matrix" => {
+            "barrier_constant_milli" => {
+                barrier_constant_milli = Some(parse_i64_like(value, line_no, key)?);
+            }
+            "gram_matrix" | "barrier_coefficients" => {
                 if !value.is_empty() {
                     return Err(format!(
-                        "line {line_no}: `gram_matrix` key must not include inline values"
+                        "line {line_no}: `{key}` key must not include inline values"
                     ));
                 }
-                reading_matrix = true;
+                matrix_section = Some(key);
             }
-            _ => {}
+            _ => {
+                return Err(format!("line {line_no}: unknown `{key}` field"));
+            }
         }
     }
 
+    if schema_version != Some(2) {
+        return Err(
+            "schema_version must be 2 (independent barrier polynomial required)".to_string(),
+        );
+    }
+    if !seen_keys.contains("barrier_coefficients") {
+        return Err("missing `barrier_coefficients`".to_string());
+    }
     Ok(SosTask {
         dimension: dimension.ok_or_else(|| "missing `dimension`".to_string())?,
         monomial_degree: monomial_degree.ok_or_else(|| "missing `monomial_degree`".to_string())?,
         barrier_budget_milli: barrier_budget_milli
             .ok_or_else(|| "missing `barrier_budget_milli`".to_string())?,
         gram_matrix,
+        barrier_polynomial: QuadraticPolynomial {
+            constant: i128::from(
+                barrier_constant_milli
+                    .ok_or_else(|| "missing `barrier_constant_milli`".to_string())?,
+            ),
+            coefficients: barrier_coefficients,
+        },
     })
 }
 
-fn parse_matrix_row(line: &str, line_no: usize) -> Result<Vec<i64>, String> {
+fn parse_matrix_row<T>(line: &str, line_no: usize) -> Result<Vec<T>, String>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
     let mut row = Vec::new();
     for (idx, part) in line.split(',').enumerate() {
         let trimmed = part.trim();
@@ -265,9 +312,9 @@ fn parse_matrix_row(line: &str, line_no: usize) -> Result<Vec<i64>, String> {
                 idx + 1
             ));
         }
-        let value = trimmed
-            .parse::<i64>()
-            .map_err(|err| format!("line {line_no}: invalid i64 matrix cell `{trimmed}`: {err}"))?;
+        let value = trimmed.parse::<T>().map_err(|err| {
+            format!("line {line_no}: invalid integer matrix cell `{trimmed}`: {err}")
+        })?;
         row.push(value);
     }
     Ok(row)
@@ -298,6 +345,12 @@ fn validate_task(task: &SosTask) -> Result<(), String> {
     if task.dimension > 16 {
         return Err("dimension must be <= 16".to_string());
     }
+    if task.monomial_degree != 2 {
+        return Err("only degree-2 barrier polynomials are supported".to_string());
+    }
+    if task.barrier_budget_milli <= 0 {
+        return Err("barrier_budget_milli must be positive".to_string());
+    }
     if task.gram_matrix.len() != task.dimension {
         return Err(format!(
             "gram_matrix row count {} does not match dimension {}",
@@ -323,6 +376,27 @@ fn validate_task(task: &SosTask) -> Result<(), String> {
                     task.gram_matrix[i][j], task.gram_matrix[j][i]
                 ));
             }
+        }
+    }
+    if task.barrier_polynomial.coefficients.len() != task.dimension {
+        return Err(format!(
+            "barrier_coefficients row count {} does not match dimension {}",
+            task.barrier_polynomial.coefficients.len(),
+            task.dimension
+        ));
+    }
+    for (i, row) in task.barrier_polynomial.coefficients.iter().enumerate() {
+        if row.len() != task.dimension {
+            return Err(format!(
+                "barrier_coefficients row {i} has {} entries; expected {}",
+                row.len(),
+                task.dimension
+            ));
+        }
+        if row[..i].iter().any(|&coefficient| coefficient != 0) {
+            return Err(format!(
+                "barrier_coefficients row {i} must be canonical upper-triangular"
+            ));
         }
     }
     Ok(())
@@ -395,140 +469,193 @@ fn verify_psd_cholesky(gram_matrix: &[Vec<i64>]) -> Result<PsdVerification, Stri
     })
 }
 
-fn verify_polynomial_identity(
-    gram_matrix: &[Vec<i64>],
-    barrier_budget_milli: i64,
-) -> Result<(), String> {
-    let degree_two = canonical_degree_two_coefficients(gram_matrix);
-    let dim = degree_two.len();
-
-    // Runtime barrier polynomial: B(z) = budget - z^T Q z.
-    let mut barrier = QuadraticPolynomial {
-        constant: i128::from(barrier_budget_milli),
-        coefficients: vec![vec![0_i128; dim]; dim],
-    };
-    for (i, row) in degree_two.iter().enumerate().take(dim) {
-        for (j, coeff) in row.iter().enumerate().skip(i) {
-            barrier.coefficients[i][j] = -*coeff;
-        }
-    }
-
-    // SOS remainder polynomial: sigma(z) = z^T Q z (sum-of-squares when Q is PSD).
-    let sigma = QuadraticPolynomial {
-        constant: 0,
-        coefficients: degree_two,
-    };
-
-    // Invariant witness polynomial for identity check:
-    // I(z) = B(z) - sigma(z), so B(z) = I(z) + sigma(z).
-    let invariant = polynomial_sub(&barrier, &sigma)?;
-    let recomposed = polynomial_add(&invariant, &sigma)?;
-    if barrier != recomposed {
-        return Err(polynomial_identity_mismatch(&barrier, &recomposed));
-    }
-
-    Ok(())
-}
-
-fn canonical_degree_two_coefficients(gram_matrix: &[Vec<i64>]) -> Vec<Vec<i128>> {
-    let dim = gram_matrix.len();
-    let mut coeffs = vec![vec![0_i128; dim]; dim];
-    for (i, row) in gram_matrix.iter().enumerate() {
-        for (j, &entry) in row.iter().enumerate() {
-            let a = i.min(j);
-            let b = i.max(j);
-            coeffs[a][b] = coeffs[a][b].saturating_add(i128::from(entry));
-        }
-    }
-    coeffs
-}
-
-fn polynomial_add(
-    lhs: &QuadraticPolynomial,
-    rhs: &QuadraticPolynomial,
-) -> Result<QuadraticPolynomial, String> {
-    if lhs.coefficients.len() != rhs.coefficients.len() {
+/// Check an independently supplied polynomial against the Gram witness.
+///
+/// The task specifies B(z) separately from Q. We check every coefficient of
+/// B(z) + z^T Q z - budget, including the constant, using exact integer
+/// arithmetic. The quadratic numerators share the runtime fixed-point scale,
+/// so their cancellation is exact before or after that common scaling.
+///
+/// Together with PSD checking this establishes a quadratic decomposition. It
+/// does NOT establish initial/unsafe-set separation or invariance under system
+/// dynamics: those would require independently specified sets and dynamics.
+fn verify_polynomial_identity(task: &SosTask) -> Result<(), String> {
+    validate_task(task)?;
+    let constant_residual = task
+        .barrier_polynomial
+        .constant
+        .checked_sub(i128::from(task.barrier_budget_milli))
+        .ok_or_else(|| "constant residual overflow".to_string())?;
+    if constant_residual != 0 {
         return Err(format!(
-            "dimension mismatch in polynomial_add: {} vs {}",
-            lhs.coefficients.len(),
-            rhs.coefficients.len()
+            "constant residual must be zero, got {constant_residual}"
         ));
     }
-    let dim = lhs.coefficients.len();
-    let mut out = QuadraticPolynomial {
-        constant: lhs.constant.saturating_add(rhs.constant),
-        coefficients: vec![vec![0_i128; dim]; dim],
-    };
-    for (i, (lhs_row, rhs_row)) in lhs
-        .coefficients
-        .iter()
-        .zip(rhs.coefficients.iter())
-        .enumerate()
-        .take(dim)
-    {
-        for (j, (lhs_coeff, rhs_coeff)) in lhs_row.iter().zip(rhs_row.iter()).enumerate().skip(i) {
-            out.coefficients[i][j] = lhs_coeff.saturating_add(*rhs_coeff);
-        }
-    }
-    Ok(out)
-}
-
-fn polynomial_sub(
-    lhs: &QuadraticPolynomial,
-    rhs: &QuadraticPolynomial,
-) -> Result<QuadraticPolynomial, String> {
-    if lhs.coefficients.len() != rhs.coefficients.len() {
-        return Err(format!(
-            "dimension mismatch in polynomial_sub: {} vs {}",
-            lhs.coefficients.len(),
-            rhs.coefficients.len()
-        ));
-    }
-    let dim = lhs.coefficients.len();
-    let mut out = QuadraticPolynomial {
-        constant: lhs.constant.saturating_sub(rhs.constant),
-        coefficients: vec![vec![0_i128; dim]; dim],
-    };
-    for (i, (lhs_row, rhs_row)) in lhs
-        .coefficients
-        .iter()
-        .zip(rhs.coefficients.iter())
-        .enumerate()
-        .take(dim)
-    {
-        for (j, (lhs_coeff, rhs_coeff)) in lhs_row.iter().zip(rhs_row.iter()).enumerate().skip(i) {
-            out.coefficients[i][j] = lhs_coeff.saturating_sub(*rhs_coeff);
-        }
-    }
-    Ok(out)
-}
-
-fn polynomial_identity_mismatch(
-    expected: &QuadraticPolynomial,
-    actual: &QuadraticPolynomial,
-) -> String {
-    if expected.constant != actual.constant {
-        return format!(
-            "constant term mismatch: expected {}, got {}",
-            expected.constant, actual.constant
-        );
-    }
-    for (i, (lhs_row, rhs_row)) in expected
-        .coefficients
-        .iter()
-        .zip(actual.coefficients.iter())
-        .enumerate()
-    {
-        for j in i..lhs_row.len() {
-            if lhs_row[j] != rhs_row[j] {
-                return format!(
-                    "quadratic coefficient mismatch at ({i}, {j}): expected {}, got {}",
-                    lhs_row[j], rhs_row[j]
-                );
+    for i in 0..task.dimension {
+        for j in i..task.dimension {
+            // Off-diagonal entries contribute twice in the full matrix
+            // evaluation. Convert before addition so even i64 extremes are
+            // handled exactly rather than wrapping or saturating.
+            let mut gram_coefficient = i128::from(task.gram_matrix[i][j]);
+            if i != j {
+                gram_coefficient += i128::from(task.gram_matrix[j][i]);
+            }
+            let residual = task.barrier_polynomial.coefficients[i][j]
+                .checked_add(gram_coefficient)
+                .ok_or_else(|| format!("quadratic residual overflow at ({i}, {j})"))?;
+            if residual != 0 {
+                return Err(format!(
+                    "quadratic residual at ({i}, {j}) must be zero, got {residual}"
+                ));
             }
         }
     }
-    "polynomials differ but no mismatch was located".to_string()
+    Ok(())
+}
+
+#[cfg(test)]
+mod polynomial_witness_tests {
+    use super::*;
+
+    const ARTIFACTS: [&str; 3] = [
+        include_str!("artifacts/sos/fragmentation_certificate.task"),
+        include_str!("artifacts/sos/thread_safety_certificate.task"),
+        include_str!("artifacts/sos/size_class_certificate.task"),
+    ];
+
+    const SMALL_TASK: &str = "schema_version: 2\n\
+dimension: 2\n\
+monomial_degree: 2\n\
+barrier_budget_milli: 10\n\
+barrier_constant_milli: 10\n\
+barrier_coefficients:\n\
+-4,-2\n\
+0,-3\n\
+gram_matrix:\n\
+4,1\n\
+1,3\n";
+
+    #[test]
+    fn shipped_polynomials_match_their_psd_witnesses() {
+        for text in ARTIFACTS {
+            let task = parse_sos_task_text(text).expect("checked-in task parses");
+            validate_task(&task).expect("checked-in task has supported shape");
+            verify_psd_cholesky(&task.gram_matrix).expect("checked-in Q is PSD");
+            verify_polynomial_identity(&task).expect("independent polynomial matches Q");
+        }
+    }
+
+    #[test]
+    fn changed_psd_gram_witness_cannot_certify_unchanged_polynomial() {
+        for text in ARTIFACTS {
+            let original = parse_sos_task_text(text).unwrap();
+            for i in 0..original.dimension {
+                for j in i..original.dimension {
+                    let mut changed = original.clone();
+                    changed.gram_matrix[i][j] += 1;
+                    if i != j {
+                        changed.gram_matrix[j][i] += 1;
+                    }
+                    // Positive definiteness alone is insufficient: all these
+                    // witnesses are still PSD but certify a different target.
+                    verify_psd_cholesky(&changed.gram_matrix)
+                        .expect("small symmetric mutation remains PSD");
+                    let error = verify_polynomial_identity(&changed).unwrap_err();
+                    assert!(error.contains(&format!("quadratic residual at ({i}, {j})")));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn independently_changed_polynomial_and_budget_are_rejected() {
+        for text in ARTIFACTS {
+            let original = parse_sos_task_text(text).unwrap();
+            let mut changed = original.clone();
+            changed.barrier_polynomial.constant += 1;
+            assert!(
+                verify_polynomial_identity(&changed)
+                    .unwrap_err()
+                    .contains("constant residual")
+            );
+            let mut changed = original.clone();
+            changed.barrier_budget_milli += 1;
+            assert!(
+                verify_polynomial_identity(&changed)
+                    .unwrap_err()
+                    .contains("constant residual")
+            );
+            for i in 0..original.dimension {
+                for j in i..original.dimension {
+                    let mut changed = original.clone();
+                    changed.barrier_polynomial.coefficients[i][j] += 1;
+                    assert!(verify_polynomial_identity(&changed).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_or_missing_independent_witness_fails_closed() {
+        let invalid = [
+            SMALL_TASK.replace("schema_version: 2", "schema_version: 1"),
+            SMALL_TASK.replace("schema_version: 2\n", ""),
+            SMALL_TASK.replace("barrier_constant_milli: 10\n", ""),
+            SMALL_TASK.replace("barrier_coefficients:\n-4,-2\n0,-3\n", ""),
+            SMALL_TASK.replace("dimension: 2", "dimension: 2\ndimension: 2"),
+            SMALL_TASK.replace("gram_matrix:", "gram_matrix:\ngram_matrix:"),
+            SMALL_TASK.replace("barrier_constant_milli:", "barrier_constant_typo:"),
+            SMALL_TASK.replace("-4,-2", "-4,"),
+            SMALL_TASK.replace("-4,-2", "-4,NaN"),
+        ];
+        for text in invalid {
+            assert!(
+                parse_sos_task_text(&text).is_err(),
+                "accepted malformed task: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_polynomial_shapes_and_degree_are_rejected() {
+        for text in [
+            SMALL_TASK.replace("monomial_degree: 2", "monomial_degree: 3"),
+            SMALL_TASK.replace("0,-3", "1,-3"),
+            SMALL_TASK.replace("0,-3\n", ""),
+            SMALL_TASK.replace("-4,-2", "-4,-2,0"),
+            SMALL_TASK.replace("barrier_budget_milli: 10", "barrier_budget_milli: 0"),
+        ] {
+            let task = parse_sos_task_text(&text).expect("syntactically valid task");
+            assert!(
+                verify_polynomial_identity(&task).is_err(),
+                "accepted unsupported task: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn coefficient_residuals_use_exact_checked_arithmetic() {
+        let mut task = parse_sos_task_text(SMALL_TASK).unwrap();
+        let max = i64::MAX;
+        task.gram_matrix = vec![vec![max, max], vec![max, max]];
+        task.barrier_polynomial.coefficients = vec![
+            vec![-i128::from(max), -2 * i128::from(max)],
+            vec![0, -i128::from(max)],
+        ];
+        verify_polynomial_identity(&task).expect("off-diagonal sum exceeds i64 but fits i128");
+        task.barrier_polynomial.coefficients[0][1] += 1;
+        assert!(
+            verify_polynomial_identity(&task)
+                .unwrap_err()
+                .ends_with("got 1")
+        );
+        task.barrier_polynomial.coefficients[0][1] = i128::MAX;
+        assert!(
+            verify_polynomial_identity(&task)
+                .unwrap_err()
+                .contains("overflow")
+        );
+    }
 }
 
 fn write_soundness_report(out_dir: &Path, entries: &[SoundnessReportEntry]) -> Result<(), String> {
@@ -537,6 +664,8 @@ fn write_soundness_report(out_dir: &Path, entries: &[SoundnessReportEntry]) -> R
     out.push_str("{\n");
     out.push_str("  \"schema_version\": 1,\n");
     out.push_str("  \"verification\": \"sos_soundness\",\n");
+    out.push_str("  \"verification_scope\": \"numerical_psd_and_exact_polynomial_identity\",\n");
+    out.push_str("  \"dynamical_safety_verified\": false,\n");
     out.push_str("  \"entries\": [\n");
     for (idx, entry) in entries.iter().enumerate() {
         if idx > 0 {
