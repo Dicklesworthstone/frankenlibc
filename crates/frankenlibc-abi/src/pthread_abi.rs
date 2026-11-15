@@ -7892,9 +7892,34 @@ pub(crate) unsafe fn cancellation_point_recvmsg(
     }
 }
 
+/// Receive one record or a WAITFORONE batch with bounded native cancellation.
+/// The kernel owns the complete batch and its deferred error publication.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_recvmmsg(
+    fd: c_int,
+    messages: *mut u8,
+    count: u32,
+    flags: c_int,
+    timeout: *mut libc::timespec,
+) -> Result<isize, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_receive_window(
+            caller,
+            cancel_poll::Receive::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+                timeout,
+            },
+        )
+    }
+}
+
 /// Own no drop state across the unchanged hosted asynchronous window. Native
 /// cancellation happens only after the adapter restores the entry signal mask;
-/// a completed receive always returns its bytes and source-address publication.
+/// a completed receive always returns its committed result and publication.
 #[inline(never)]
 unsafe fn cancellation_receive_window(
     caller: usize,

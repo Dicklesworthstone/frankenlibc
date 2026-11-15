@@ -3574,10 +3574,492 @@ static int batch_send_contract_main(char **argv) {
     return 0;
 }
 
+
+/* Keep the complete kernel receive batch: recvmmsg defers a later error on
+ * the socket after returning a successful prefix. */
+enum batch_receive_kind {
+    BATCH_RECEIVE_BLOCKED, BATCH_RECEIVE_PENDING, BATCH_RECEIVE_DISABLED,
+    BATCH_RECEIVE_READY, BATCH_RECEIVE_READY_LATE, BATCH_RECEIVE_PREFIX,
+    BATCH_RECEIVE_SINGLE, BATCH_RECEIVE_SINGLE_BLOCKED, BATCH_RECEIVE_FULL,
+    BATCH_RECEIVE_NONBLOCK, BATCH_RECEIVE_DONTWAIT, BATCH_RECEIVE_TIMEOUT,
+    BATCH_RECEIVE_FINITE, BATCH_RECEIVE_TRUNC_EMPTY, BATCH_RECEIVE_OUTPUT_FAULT,
+    BATCH_RECEIVE_ERRORS, BATCH_RECEIVE_COUNT_ZERO, BATCH_RECEIVE_REUSE,
+    BATCH_RECEIVE_RIGHTS, BATCH_RECEIVE_SIGNAL, BATCH_RECEIVE_SIGNAL_RESTART
+};
+static int (*selected_recvmmsg)(int, struct mmsghdr *, unsigned int, int, struct timespec *);
+struct batch_receive_probe {
+    struct state observed;
+    enum batch_receive_kind kind;
+    int fd, flags, expected_right, fault_after_prefix;
+    int deferred_result, deferred_error;
+    unsigned count;
+    struct timespec timeout, *timeout_argument;
+    struct mmsghdr messages[3], *active;
+    struct iovec vectors[3];
+    unsigned char bytes[3][4];
+    struct sockaddr_storage addresses[3];
+    union { struct cmsghdr align; unsigned char bytes[CMSG_SPACE(sizeof(int))]; } control;
+};
+
+static int pin_batch_receive_provider(const char *expected) {
+    int base = pin_providers(expected, 0, EVENT_NONE);
+    if (base) return base;
+    void *symbol = dlsym(RTLD_DEFAULT, "recvmmsg");
+    Dl_info info = {0};
+    struct stat actual, wanted;
+    if (!symbol || !dladdr(symbol, &info) || !info.dli_fname ||
+        stat(expected, &wanted) || stat(info.dli_fname, &actual) ||
+        actual.st_dev != wanted.st_dev || actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "pthread-native-poll:provider-mismatch:recvmmsg\n");
+        return 86;
+    }
+    selected_recvmmsg = (__typeof__(selected_recvmmsg))symbol;
+    return 0;
+}
+
+static void batch_receive_cleanup(void *argument) {
+    struct batch_receive_probe *probe = argument;
+    sigset_t mask;
+    REQUIRE(pthread_sigmask(SIG_SETMASK, NULL, &mask) == 0 &&
+                sigismember(&mask, SIGUSR1) == 0 && sigismember(&mask, SIGUSR2) == 1,
+            "batch receive cleanup preserves the complete entry signal mask");
+    REQUIRE(atomic_fetch_add_explicit(&probe->observed.cleaned, 1, memory_order_release) == 0,
+            "batch receive cleanup runs once");
+}
+
+static void *batch_receive_worker(void *argument) {
+    struct batch_receive_probe *probe = argument;
+    struct state *state = &probe->observed;
+    capture_identity(state);
+    REQUIRE(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL) == 0,
+            "deferred batch receive cancellation");
+    if (probe->kind == BATCH_RECEIVE_DISABLED)
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) == 0,
+                "disable batch receive cancellation");
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "batch receive entry mask");
+    pthread_cleanup_push(batch_receive_cleanup, probe);
+    atomic_store_explicit(&state->ready, 1, memory_order_release);
+    while (!atomic_load_explicit(&state->release, memory_order_acquire))
+        (void)syscall(SYS_sched_yield);
+    errno = EDOM;
+    int64_t started = monotonic_ns();
+    if (probe->kind == BATCH_RECEIVE_ERRORS) {
+        REQUIRE(selected_recvmmsg(-1, (void *)(uintptr_t)1, 1, MSG_WAITFORONE, NULL) == -1 &&
+                    errno == EBADF, "recvmmsg retains invalid-descriptor precedence");
+        int pipefd[2];
+        REQUIRE(pipe2(pipefd, O_CLOEXEC) == 0, "batch receive error pipe");
+        REQUIRE(selected_recvmmsg(pipefd[0], (void *)(uintptr_t)1, 1, MSG_WAITFORONE, NULL) == -1 &&
+                    errno == ENOTSOCK, "recvmmsg retains nonsocket precedence");
+        REQUIRE(close(pipefd[0]) == 0 && close(pipefd[1]) == 0, "close batch receive error pipe");
+        REQUIRE(selected_recvmmsg(probe->fd, (void *)(uintptr_t)1, 1, MSG_WAITFORONE, NULL) == -1 &&
+                    errno == EFAULT, "recvmmsg keeps fault-checked header import");
+        state->result = 0;
+    } else {
+        if (probe->kind == BATCH_RECEIVE_RIGHTS) {
+            probe->expected_right = (int)syscall(SYS_fcntl, probe->fd, F_DUPFD_CLOEXEC, 3);
+            REQUIRE(probe->expected_right >= 0 &&
+                        syscall(SYS_close, probe->expected_right) == 0,
+                    "reserve the descriptor a receive pin must not consume");
+        }
+        state->result = selected_recvmmsg(probe->fd, probe->active, probe->count,
+                                         probe->flags, probe->timeout_argument);
+    }
+    state->error = errno;
+    state->elapsed_ns = monotonic_ns() - started;
+    if (probe->kind == BATCH_RECEIVE_OUTPUT_FAULT && probe->fault_after_prefix) {
+        unsigned char byte = 0xa5;
+        struct iovec vector = {&byte, 1};
+        struct mmsghdr next = {0};
+        next.msg_hdr.msg_iov = &vector;
+        next.msg_hdr.msg_iovlen = 1;
+        next.msg_len = UINT32_C(0xa5a5a5a5);
+        probe->deferred_result = selected_recvmmsg(probe->fd, &next, 1, MSG_DONTWAIT, NULL);
+        probe->deferred_error = errno;
+        REQUIRE(byte == 0xa5 && next.msg_len == UINT32_C(0xa5a5a5a5),
+                "the deferred receive error consumes no following record");
+    }
+    atomic_store_explicit(&state->returned, 1, memory_order_release);
+    pthread_cleanup_pop(1);
+    if (probe->kind == BATCH_RECEIVE_DISABLED) {
+        REQUIRE(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) == 0,
+                "restore batch receive cancellation");
+        pthread_testcancel();
+        fail("batch receive lost a disabled cancellation request");
+    }
+    return state;
+}
+
+static size_t batch_receive_length(unsigned index, int truncated) {
+    return truncated ? (index == 0 ? 4 : index == 1 ? 0 : 1) : (index == 2 ? 0 : 1);
+}
+
+static void feed_batch_receive(int fd, unsigned index, int truncated) {
+    const char *payload = index == 0 ? (truncated ? "ABCD" : "A") : index == 1 ? "B" : "C";
+    size_t length = batch_receive_length(index, truncated);
+    REQUIRE(syscall(SYS_sendto, fd, payload, length, MSG_NOSIGNAL, NULL, 0) == (long)length,
+            "queue an independent batch receive record");
+}
+
+static int batch_receive_contract_once(char **argv, int fault_after_prefix, int udp) {
+    const char *suffix = case_name + strlen("recvmmsg-");
+    int type;
+    if (strncmp(suffix, "datagram-", 9) == 0) { type = SOCK_DGRAM; suffix += 9; }
+    else if (strncmp(suffix, "seqpacket-", 10) == 0) { type = SOCK_SEQPACKET; suffix += 10; }
+    else return 2;
+    const char *names[] = {
+        "blocked", "pending", "disabled", "ready", "ready-late", "prefix",
+        "single", "single-blocked", "fullbatch", "nonblock", "dontwait", "timeout",
+        "finite-timeout", "trunc-empty", "output-fault", "errors", "count-zero", "reuse",
+        "rights", "signal", "signal-restart"
+    };
+    int value = -1;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+        if (strcmp(suffix, names[i]) == 0) value = (int)i;
+    if (value < 0) return 2;
+    enum batch_receive_kind kind = (enum batch_receive_kind)value;
+    int pin = pin_batch_receive_provider(argv[2]);
+    if (pin) return pin;
+    expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
+                    strcmp(getenv("FRANKENLIBC_THREAD_NATIVE"), "1") == 0;
+    creator_tp = (uintptr_t)__builtin_thread_pointer();
+    creator_tid = (pid_t)syscall(SYS_gettid);
+    creator_thread = pthread_self();
+    struct sigaction action = {0};
+    sigemptyset(&action.sa_mask);
+    action.sa_handler = kind == BATCH_RECEIVE_SIGNAL || kind == BATCH_RECEIVE_SIGNAL_RESTART ?
+                        user_signal : SIG_DFL;
+    action.sa_flags = kind == BATCH_RECEIVE_SIGNAL_RESTART ? SA_RESTART : 0;
+    REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "batch receive signal disposition");
+    alarm(15);
+    int pair[2];
+    descriptor_socket_pair(udp ? DESCRIPTOR_UDP :
+                           type == SOCK_DGRAM ? DESCRIPTOR_DATAGRAM : DESCRIPTOR_SEQPACKET, pair);
+    struct sockaddr_in peer = {0};
+    if (udp) {
+        socklen_t length = sizeof(peer);
+        REQUIRE(getsockname(pair[1], (struct sockaddr *)&peer, &length) == 0 &&
+                    length == sizeof(peer), "identify UDP batch sender");
+    }
+    if (kind == BATCH_RECEIVE_NONBLOCK)
+        REQUIRE(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0,
+                "caller-owned nonblocking batch receive socket");
+    if (kind == BATCH_RECEIVE_TIMEOUT) {
+        struct timeval timeout = {0, 150000};
+        REQUIRE(setsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0,
+                "caller-owned batch receive timeout");
+    }
+    int original_flags = fcntl(pair[0], F_GETFL);
+    REQUIRE(original_flags >= 0, "capture batch receive socket flags");
+    int memory = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    if (memory < 0) skip("batch-receive-wait-snapshot-unavailable");
+    int keeper = -1, replacement[2] = {-1, -1}, rights_pipe[2] = {-1, -1};
+    if (kind == BATCH_RECEIVE_REUSE) {
+        keeper = fcntl(pair[0], F_DUPFD_CLOEXEC, 3);
+        REQUIRE(keeper >= 0 && socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, replacement) == 0,
+                "prepare batch receive descriptor replacement");
+    }
+    if (kind == BATCH_RECEIVE_RIGHTS)
+        REQUIRE(pipe2(rights_pipe, O_CLOEXEC) == 0, "create batch ancillary descriptor");
+    struct batch_receive_probe probe;
+    memset(&probe, 0, sizeof(probe));
+    probe.kind = kind;
+    probe.fd = pair[0];
+    probe.fault_after_prefix = fault_after_prefix;
+    probe.flags = kind == BATCH_RECEIVE_SINGLE || kind == BATCH_RECEIVE_SINGLE_BLOCKED ||
+                  kind == BATCH_RECEIVE_FULL ? 0 : MSG_WAITFORONE;
+    if (kind == BATCH_RECEIVE_DONTWAIT) probe.flags |= MSG_DONTWAIT;
+    if (kind == BATCH_RECEIVE_TRUNC_EMPTY) probe.flags |= MSG_TRUNC;
+    if (kind == BATCH_RECEIVE_RIGHTS) probe.flags |= MSG_CMSG_CLOEXEC;
+    probe.count = kind == BATCH_RECEIVE_COUNT_ZERO ? 0 :
+                  kind == BATCH_RECEIVE_SINGLE || kind == BATCH_RECEIVE_SINGLE_BLOCKED ||
+                  kind == BATCH_RECEIVE_RIGHTS ? 1 :
+                  kind == BATCH_RECEIVE_OUTPUT_FAULT ? 1U + (unsigned)fault_after_prefix : 3;
+    probe.active = probe.messages;
+    if (kind == BATCH_RECEIVE_FINITE) {
+        probe.timeout = (struct timespec){1, 0};
+        probe.timeout_argument = &probe.timeout;
+    }
+    memset(probe.bytes, 0xa5, sizeof(probe.bytes));
+    memset(probe.addresses, 0xa5, sizeof(probe.addresses));
+    memset(&probe.control, 0xa5, sizeof(probe.control));
+    for (unsigned i = 0; i < 3; ++i) {
+        probe.vectors[i] = (struct iovec){probe.bytes[i], 1};
+        probe.messages[i].msg_hdr = (struct msghdr){
+            .msg_name = &probe.addresses[i],
+            .msg_namelen = sizeof(probe.addresses[i]),
+            .msg_iov = &probe.vectors[i],
+            .msg_iovlen = 1,
+            .msg_flags = 0x13579,
+        };
+        probe.messages[i].msg_len = UINT32_C(0xa5a5a5a5);
+    }
+    if (kind == BATCH_RECEIVE_RIGHTS) {
+        probe.messages[0].msg_hdr.msg_control = probe.control.bytes;
+        probe.messages[0].msg_hdr.msg_controllen = sizeof(probe.control.bytes);
+    }
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *read_only = MAP_FAILED;
+    if (kind == BATCH_RECEIVE_OUTPUT_FAULT) {
+        read_only = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        REQUIRE(read_only != MAP_FAILED, "batch receive output guard mapping");
+        /* The complete msghdr remains writable. Only msg_len and subsequent
+         * storage cross into the read-only page, after data is consumed. */
+        probe.active = (struct mmsghdr *)((unsigned char *)read_only + page -
+                         offsetof(struct mmsghdr, msg_len) -
+                         (fault_after_prefix ? sizeof(struct mmsghdr) : 0));
+        memcpy(probe.active, probe.messages, probe.count * sizeof(*probe.active));
+        REQUIRE(mprotect((unsigned char *)read_only + page, page, PROT_READ) == 0,
+                "writable receive header with unwritable message length");
+    }
+    struct iovec original_vectors[3];
+    struct msghdr original_headers[3];
+    memcpy(original_vectors, probe.vectors, sizeof(original_vectors));
+    for (unsigned i = 0; i < 3; ++i)
+        memcpy(&original_headers[i], &probe.messages[i].msg_hdr, sizeof(original_headers[i]));
+    unsigned queued = kind == BATCH_RECEIVE_READY || kind == BATCH_RECEIVE_PENDING ||
+                      kind == BATCH_RECEIVE_FINITE || kind == BATCH_RECEIVE_TRUNC_EMPTY ||
+                      kind == BATCH_RECEIVE_OUTPUT_FAULT ? 3 :
+                      kind == BATCH_RECEIVE_PREFIX || kind == BATCH_RECEIVE_COUNT_ZERO ? 1 : 0;
+    int truncated = kind == BATCH_RECEIVE_TRUNC_EMPTY;
+    /* One loopback record also proves WAITFORONE does not wait for the rest of
+     * its vector, without assuming all UDP packets arrive in one scheduling turn. */
+    if (udp) queued = 1;
+    for (unsigned i = 0; i < queued; ++i) feed_batch_receive(pair[1], i, truncated);
+    if (kind == BATCH_RECEIVE_RIGHTS) {
+        unsigned char byte = 'A';
+        struct iovec vector = {&byte, 1};
+        union { struct cmsghdr align; unsigned char bytes[CMSG_SPACE(sizeof(int))]; } control = {0};
+        struct msghdr message = {
+            .msg_iov = &vector, .msg_iovlen = 1,
+            .msg_control = control.bytes, .msg_controllen = sizeof(control.bytes),
+        };
+        struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+        header->cmsg_level = SOL_SOCKET;
+        header->cmsg_type = SCM_RIGHTS;
+        header->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(header), &rights_pipe[0], sizeof(rights_pipe[0]));
+        REQUIRE(syscall(SYS_sendmsg, pair[1], &message, MSG_NOSIGNAL) == 1,
+                "queue ancillary rights before the batch receive");
+        queued = 1;
+    }
+    probe.observed.result = -222;
+    atomic_init(&probe.observed.ready, 0);
+    atomic_init(&probe.observed.release, 0);
+    atomic_init(&probe.observed.returned, 0);
+    atomic_init(&probe.observed.cleaned, 0);
+    size_t original_descriptors = descriptor_count();
+    REQUIRE(pthread_create(&probe.observed.thread, NULL, batch_receive_worker, &probe) == 0,
+            "create batch receive worker");
+    wait_ready(&probe.observed);
+    if (kind == BATCH_RECEIVE_PENDING)
+        REQUIRE(pthread_cancel(probe.observed.thread) == 0, "pending batch receive cancellation");
+    atomic_store_explicit(&probe.observed.release, 1, memory_order_release);
+
+    int blocked = kind == BATCH_RECEIVE_BLOCKED || kind == BATCH_RECEIVE_DISABLED ||
+                  kind == BATCH_RECEIVE_READY_LATE || kind == BATCH_RECEIVE_SINGLE ||
+                  kind == BATCH_RECEIVE_SINGLE_BLOCKED || kind == BATCH_RECEIVE_FULL ||
+                  kind == BATCH_RECEIVE_REUSE || kind == BATCH_RECEIVE_SIGNAL ||
+                  kind == BATCH_RECEIVE_SIGNAL_RESTART;
+    if (blocked) {
+        observe_reuse_parked(&probe.observed, memory, pair[0], SYS_recvmmsg, 0);
+        if (kind == BATCH_RECEIVE_BLOCKED || kind == BATCH_RECEIVE_SINGLE_BLOCKED ||
+            kind == BATCH_RECEIVE_DISABLED)
+            REQUIRE(pthread_cancel(probe.observed.thread) == 0,
+                    "cancel an independently observed blocked batch receive");
+        if (kind == BATCH_RECEIVE_SIGNAL || kind == BATCH_RECEIVE_SIGNAL_RESTART) {
+            REQUIRE(pthread_kill(probe.observed.thread, SIGUSR1) == 0,
+                    "interrupt the original batch receive");
+            int64_t deadline = monotonic_ns() + 2000000000;
+            while (!atomic_load_explicit(&signals_delivered, memory_order_acquire)) {
+                REQUIRE(monotonic_ns() < deadline, "batch receive signal delivery deadline");
+                pause_briefly();
+            }
+            if (kind == BATCH_RECEIVE_SIGNAL_RESTART)
+                observe_reuse_parked(&probe.observed, memory, pair[0], SYS_recvmmsg, 0);
+        }
+        if (kind == BATCH_RECEIVE_FULL) {
+            feed_batch_receive(pair[1], 0, 0);
+            int64_t deadline = monotonic_ns() + 2000000000;
+            unsigned first_length = UINT32_C(0xa5a5a5a5);
+            while (first_length != 1) {
+                REQUIRE(!atomic_load_explicit(&probe.observed.returned, memory_order_acquire),
+                        "ordinary recvmmsg does not return a short available prefix");
+                REQUIRE(monotonic_ns() < deadline, "first ordinary batch record publication");
+                REQUIRE(snapshot(memory, (unsigned long long)(uintptr_t)&probe.active[0].msg_len,
+                                 &first_length, sizeof(first_length)),
+                        "observe kernel publication without racing C memory accesses");
+                if (first_length != 1) pause_briefly();
+            }
+            observe_reuse_parked(&probe.observed, memory, pair[0], SYS_recvmmsg, 0);
+            feed_batch_receive(pair[1], 1, 0);
+            feed_batch_receive(pair[1], 2, 0);
+            queued = 3;
+        } else if (kind == BATCH_RECEIVE_DISABLED || kind == BATCH_RECEIVE_READY_LATE ||
+                   kind == BATCH_RECEIVE_SINGLE || kind == BATCH_RECEIVE_REUSE ||
+                   kind == BATCH_RECEIVE_SIGNAL_RESTART) {
+            if (kind == BATCH_RECEIVE_REUSE) {
+                REQUIRE(syscall(SYS_sendto, replacement[1], "X", 1, MSG_NOSIGNAL, NULL, 0) == 1,
+                        "make replacement receive socket independently ready");
+                REQUIRE(dup2(replacement[0], pair[0]) == pair[0],
+                        "replace the public batch receive descriptor");
+            }
+            if (kind == BATCH_RECEIVE_DISABLED)
+                observe_reuse_parked(&probe.observed, memory, pair[0], SYS_recvmmsg, 0);
+            feed_batch_receive(pair[1], 0, 0);
+            queued = 1;
+        }
+    }
+    void *result = join_bounded(&probe.observed);
+    int canceled = kind == BATCH_RECEIVE_PENDING || kind == BATCH_RECEIVE_BLOCKED ||
+                   kind == BATCH_RECEIVE_SINGLE_BLOCKED || kind == BATCH_RECEIVE_DISABLED;
+    REQUIRE(result == (canceled ? PTHREAD_CANCELED : &probe.observed), "batch receive join result");
+    REQUIRE(probe.observed.cleaned == 1, "batch receive cleanup count");
+    unsigned published = 0, consumed = 0;
+    if (kind == BATCH_RECEIVE_PENDING || kind == BATCH_RECEIVE_BLOCKED ||
+        kind == BATCH_RECEIVE_SINGLE_BLOCKED) {
+        REQUIRE(!probe.observed.returned, "batch cancellation precedes result publication");
+    } else if (kind == BATCH_RECEIVE_NONBLOCK || kind == BATCH_RECEIVE_DONTWAIT ||
+               kind == BATCH_RECEIVE_TIMEOUT) {
+        REQUIRE(probe.observed.result == -1 && probe.observed.error == EAGAIN,
+                "batch receive preserves nonblocking and socket-timeout errors");
+        if (kind == BATCH_RECEIVE_TIMEOUT)
+            REQUIRE(probe.observed.elapsed_ns >= 100000000 && probe.observed.elapsed_ns < 2000000000,
+                    "batch receive keeps the kernel socket deadline");
+    } else if (kind == BATCH_RECEIVE_SIGNAL) {
+        REQUIRE(probe.observed.result == -1 && probe.observed.error == EINTR,
+                "batch receive retains non-restarting EINTR");
+    } else if (kind == BATCH_RECEIVE_OUTPUT_FAULT) {
+        published = fault_after_prefix ? 1U : 0U;
+        consumed = published + 1;
+        REQUIRE(probe.observed.result == (fault_after_prefix ? 1 : -1),
+                "batch receive preserves the prefix preceding msg_len EFAULT");
+        if (fault_after_prefix)
+            REQUIRE(probe.deferred_result == -1 && probe.deferred_error == EFAULT,
+                    "recvmmsg defers its later output fault to the next receive");
+        else
+            REQUIRE(probe.observed.error == EFAULT, "first output fault returns EFAULT");
+    } else if (kind != BATCH_RECEIVE_ERRORS) {
+        published = consumed = queued;
+        if (kind == BATCH_RECEIVE_COUNT_ZERO) published = consumed = 0;
+        REQUIRE(probe.observed.result == (int)published,
+                "batch receive returns the completed message count");
+    }
+    if (kind == BATCH_RECEIVE_FINITE)
+        REQUIRE(probe.timeout.tv_sec == 0 && probe.timeout.tv_nsec >= 0 &&
+                    probe.timeout.tv_nsec < 1000000000,
+                "nonnull batch timeout keeps kernel remaining-time publication");
+    for (unsigned i = 0; i < 3; ++i) {
+        const struct mmsghdr *actual = i < probe.count ? &probe.active[i] : &probe.messages[i];
+        const struct msghdr *header = &actual->msg_hdr;
+        const struct msghdr *original = &original_headers[i];
+        REQUIRE(actual->msg_len == (i < published ?
+                    (unsigned)batch_receive_length(i, truncated) : UINT32_C(0xa5a5a5a5)),
+                "only completed batch receive entries publish message lengths");
+        REQUIRE(header->msg_name == original->msg_name && header->msg_iov == original->msg_iov &&
+                    header->msg_iovlen == original->msg_iovlen &&
+                    header->msg_control == original->msg_control,
+                "batch receive preserves caller pointer and iovec inputs");
+        if (i < consumed) {
+            int expected_flags = truncated && i == 0 ? MSG_TRUNC : 0;
+            expected_flags |= probe.flags & MSG_CMSG_CLOEXEC;
+            REQUIRE((header->msg_flags & ~MSG_EOR) == expected_flags,
+                    "batch receive publishes per-record output flags");
+            if (udp) {
+                const struct sockaddr_in *address = (const struct sockaddr_in *)&probe.addresses[i];
+                REQUIRE(header->msg_namelen == sizeof(*address) && address->sin_family == AF_INET &&
+                            address->sin_addr.s_addr == peer.sin_addr.s_addr &&
+                            address->sin_port == peer.sin_port,
+                        "each UDP batch entry publishes its actual sender address");
+            } else {
+                REQUIRE(header->msg_namelen == 0, "unnamed local batch source address");
+            }
+            if (kind != BATCH_RECEIVE_RIGHTS)
+                REQUIRE(header->msg_controllen == 0, "ordinary batch receives publish no control");
+        } else {
+            REQUIRE(memcmp(header, original, sizeof(*header)) == 0,
+                    "unreceived batch headers retain every sentinel field");
+            for (size_t j = 0; j < sizeof(probe.addresses[i]); ++j)
+                REQUIRE(((unsigned char *)&probe.addresses[i])[j] == 0xa5,
+                        "unreceived batch source storage is unchanged");
+        }
+        size_t copied = i < consumed && batch_receive_length(i, truncated) != 0 ? 1 : 0;
+        for (size_t j = 0; j < sizeof(probe.bytes[i]); ++j)
+            REQUIRE(probe.bytes[i][j] == (j < copied ? (unsigned char)('A' + i) : 0xa5),
+                    "batch receive consumes each record once and preserves trailing buffers");
+    }
+    REQUIRE(memcmp(probe.vectors, original_vectors, sizeof(original_vectors)) == 0,
+            "batch receive never rewrites caller iovec geometry");
+    if (kind == BATCH_RECEIVE_RIGHTS) {
+        const struct msghdr *message = &probe.active[0].msg_hdr;
+        struct cmsghdr *header = CMSG_FIRSTHDR(message);
+        REQUIRE(header != NULL && header->cmsg_level == SOL_SOCKET &&
+                    header->cmsg_type == SCM_RIGHTS && header->cmsg_len == CMSG_LEN(sizeof(int)) &&
+                    message->msg_controllen <= sizeof(probe.control.bytes),
+                "batch receives one complete SCM_RIGHTS message");
+        int received = -1;
+        memcpy(&received, CMSG_DATA(header), sizeof(received));
+        REQUIRE(received == probe.expected_right && same_io_object((unsigned)received, rights_pipe[0]) &&
+                    (fcntl(received, F_GETFD) & FD_CLOEXEC) != 0,
+                "batch socket pin preserves the available rights slot and CLOEXEC");
+        REQUIRE(close(received) == 0, "release received batch descriptor");
+    }
+    int original_fd = keeper >= 0 ? keeper : pair[0];
+    for (unsigned i = consumed; i < queued; ++i) {
+        unsigned char bytes[8];
+        ssize_t length = syscall(SYS_recvfrom, original_fd, bytes, sizeof(bytes),
+                                 MSG_DONTWAIT, NULL, NULL);
+        size_t expected = batch_receive_length(i, truncated);
+        REQUIRE(length == (ssize_t)expected &&
+                    (expected == 0 || bytes[0] == (unsigned char)('A' + i)),
+                "each unconsumed record remains available in order");
+    }
+    unsigned char extra;
+    REQUIRE(syscall(SYS_recvfrom, original_fd, &extra, 1, MSG_DONTWAIT, NULL, NULL) == -1 &&
+                errno == EAGAIN, "batch receive neither duplicates nor hides queued records");
+    if (kind == BATCH_RECEIVE_REUSE) {
+        REQUIRE(syscall(SYS_recvfrom, replacement[0], &extra, 1, MSG_DONTWAIT, NULL, NULL) == 1 &&
+                    extra == 'X', "batch receive cannot migrate to the replacement description");
+    }
+    REQUIRE(descriptor_count() == original_descriptors, "batch receive releases private descriptors");
+    REQUIRE(fcntl(original_fd, F_GETFL) == original_flags,
+            "batch receive leaves shared socket status flags unchanged");
+    REQUIRE(close(memory) == 0 && close(pair[0]) == 0 && close(pair[1]) == 0,
+            "release batch receive fixture descriptors");
+    if (keeper >= 0)
+        REQUIRE(close(keeper) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0,
+                "release batch receive replacement descriptors");
+    if (rights_pipe[0] >= 0)
+        REQUIRE(close(rights_pipe[0]) == 0 && close(rights_pipe[1]) == 0,
+                "release original ancillary descriptors");
+    if (read_only != MAP_FAILED)
+        REQUIRE(munmap(read_only, 2 * page) == 0, "release batch receive output mapping");
+    return 0;
+}
+
+static int batch_receive_contract_main(char **argv) {
+    int result = batch_receive_contract_once(argv, 0, 0);
+    if (result != 0) return result;
+    if (strstr(case_name, "-output-fault") != NULL) {
+        result = batch_receive_contract_once(argv, 1, 0);
+        if (result != 0) return result;
+    }
+    if (strcmp(case_name, "recvmmsg-datagram-ready") == 0) {
+        result = batch_receive_contract_once(argv, 0, 1);
+        if (result != 0) return result;
+    }
+    printf("pthread-native-poll:%s:PASS\n", case_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     case_name = argv[1];
     if (strncmp(case_name, "sendmmsg-", 9) == 0) return batch_send_contract_main(argv);
+    if (strncmp(case_name, "recvmmsg-", 9) == 0) return batch_receive_contract_main(argv);
     if (strncmp(case_name, "fd-reuse-", 9) == 0) return io_reuse_contract_main(argv);
     if (strncmp(case_name, "write-", 6) == 0 || strncmp(case_name, "writev-", 7) == 0 ||
         strncmp(case_name, "send-", 5) == 0 || strncmp(case_name, "sendto-", 7) == 0 ||

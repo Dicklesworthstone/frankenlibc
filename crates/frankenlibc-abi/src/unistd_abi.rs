@@ -17289,11 +17289,15 @@ pub unsafe extern "C-unwind" fn recvmmsg(
     timeout: *mut libc::timespec,
 ) -> c_int {
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize)
-        })
+        crate::pthread_abi::cancellation_point_recvmmsg(
+            sockfd,
+            msgvec as *mut u8,
+            vlen,
+            flags,
+            timeout,
+        )
     } {
-        Ok(n) => n,
+        Ok(n) => n as c_int,
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1

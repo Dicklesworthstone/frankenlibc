@@ -57,6 +57,11 @@ jobs:
           python3 scripts/check_pthread_native_poll.py \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --sendmmsg-only --out-dir artifacts/c11-cancellation/sendmmsg
+      - name: Verify native batched socket receive cancellation
+        run: |
+          python3 scripts/check_pthread_native_poll.py \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --recvmmsg-only --out-dir artifacts/c11-cancellation/recvmmsg
       - name: Execute bounded C cancellation and signal cases in both modes
         run: bash scripts/check_c11_thread_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
       - name: Preserve existing C11 ABI tests

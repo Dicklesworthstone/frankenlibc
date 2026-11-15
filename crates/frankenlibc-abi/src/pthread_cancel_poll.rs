@@ -587,6 +587,13 @@ pub(super) enum Receive {
         message: *mut u8,
         flags: c_int,
     },
+    Messages {
+        fd: c_int,
+        messages: *mut u8,
+        count: u32,
+        flags: c_int,
+        timeout: *mut libc::timespec,
+    },
 }
 
 impl Receive {
@@ -595,7 +602,8 @@ impl Receive {
             Self::Read { fd, .. }
             | Self::ReadVector { fd, .. }
             | Self::From { fd, .. }
-            | Self::Message { fd, .. } => fd,
+            | Self::Message { fd, .. }
+            | Self::Messages { fd, .. } => fd,
         }
     }
 
@@ -604,40 +612,55 @@ impl Receive {
             Self::Read { fd, .. }
             | Self::ReadVector { fd, .. }
             | Self::From { fd, .. }
-            | Self::Message { fd, .. } => *fd = pinned,
+            | Self::Message { fd, .. }
+            | Self::Messages { fd, .. } => *fd = pinned,
         }
         self
     }
 
     fn can_pin(self) -> bool {
-        let Self::Message { message, .. } = self else {
-            return true;
+        let (messages, count, stride) = match self {
+            Self::Message { message, .. } => (message, 1, 0),
+            Self::Messages {
+                messages, count, ..
+            } => {
+                if !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count) {
+                    return false;
+                }
+                (messages, count as usize, core::mem::size_of::<libc::mmsghdr>())
+            }
+            _ => return true,
         };
-        // A private descriptor must not consume a slot that recvmsg could use
-        // to publish SCM_RIGHTS. Retain the established unpinned cancellation
-        // path for control receives; ordinary messages can own a socket pin.
-        // SAFETY: all-zero is valid for every scalar and pointer in msghdr.
-        let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
-        // SAFETY: the destination is initialized owned storage. The kernel
-        // copier validates the caller header, including unaligned pointers.
-        if unsafe {
-            copy_user_bytes(
-                message.cast_const(),
-                core::ptr::from_mut(&mut header).cast(),
-                core::mem::size_of::<libc::msghdr>(),
-            )
+        // A private descriptor must not consume a slot that any message could
+        // use to publish SCM_RIGHTS. Inspect the complete admitted batch before
+        // pinning; control receives retain the established unpinned wait path.
+        for index in 0..count {
+            // SAFETY: all-zero is valid for every scalar and pointer in msghdr.
+            let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+            // SAFETY: the destination is initialized owned storage. The kernel
+            // copier validates each caller header, including unaligned pointers.
+            if unsafe {
+                copy_user_bytes(
+                    messages.wrapping_add(index * stride).cast_const(),
+                    core::ptr::from_mut(&mut header).cast(),
+                    core::mem::size_of::<libc::msghdr>(),
+                )
+            }
+            .is_err()
+                || header.msg_controllen != 0
+            {
+                return false;
+            }
         }
-        .is_err()
-        {
-            return false;
-        }
-        header.msg_controllen == 0
+        true
     }
 
     fn flags(self) -> c_int {
         match self {
             Self::Read { .. } | Self::ReadVector { .. } => 0,
-            Self::From { flags, .. } | Self::Message { flags, .. } => flags,
+            Self::From { flags, .. }
+            | Self::Message { flags, .. }
+            | Self::Messages { flags, .. } => flags,
         }
     }
 
@@ -653,14 +676,36 @@ impl Receive {
         {
             return false;
         }
+        if let Self::Messages {
+            count,
+            flags,
+            timeout,
+            ..
+        } = self
+        {
+            // A complete nonblocking batch has the blocking call's completion
+            // contract only for one entry or WAITFORONE. Keep finite timeouts
+            // and full blocking batches in the original kernel operation.
+            if !timeout.is_null()
+                || !(1..=crate::io_abi::iov_snapshot::MAX_IOVECS as u32).contains(&count)
+                || (count != 1 && flags & libc::MSG_WAITFORONE == 0)
+            {
+                return false;
+            }
+        }
         // WAITALL, urgent/error-queue data, caller-requested nonblocking I/O,
         // and unfamiliar protocol flags keep the original kernel operation.
         // recvmsg's CLOEXEC changes only acquired descriptor flags, not waiting
         // behavior. Keep it on every probe so SCM_RIGHTS publication stays atomic.
         let supported_flags = libc::MSG_PEEK
             | libc::MSG_TRUNC
-            | if matches!(self, Self::Message { .. }) {
+            | if matches!(self, Self::Message { .. } | Self::Messages { .. }) {
                 libc::MSG_CMSG_CLOEXEC
+            } else {
+                0
+            }
+            | if matches!(self, Self::Messages { .. }) {
+                libc::MSG_WAITFORONE
             } else {
                 0
             };
@@ -677,6 +722,11 @@ impl Receive {
             return false;
         }
         let socket_type = socket_integer_option(fd, libc::SO_TYPE);
+        if matches!(self, Self::Messages { .. })
+            && !matches!(socket_type, Some(libc::SOCK_DGRAM | libc::SOCK_SEQPACKET))
+        {
+            return false;
+        }
         if !matches!(
             socket_type,
             Some(libc::SOCK_STREAM | libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)
@@ -780,6 +830,28 @@ impl Receive {
             Self::Message { fd, message, flags } => unsafe {
                 syscall::sys_recvmsg(fd, message, flags | additional_flags)
             },
+            Self::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+                timeout,
+            } => {
+                // Use the full kernel batch so a fault or receive error after
+                // a completed prefix retains recvmmsg's deferred socket error.
+                // Every successful probe is final, including a zero result;
+                // only a zero-progress EAGAIN may enter another wait slice.
+                unsafe {
+                    syscall::sys_recvmmsg(
+                        fd,
+                        messages,
+                        count,
+                        flags | additional_flags,
+                        timeout as usize,
+                    )
+                }
+                .map(|received| received as isize)
+            }
         }
     }
 }
