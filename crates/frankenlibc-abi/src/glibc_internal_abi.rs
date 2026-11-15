@@ -10752,29 +10752,41 @@ pub unsafe extern "C" fn _IO_enable_locks() {
 #[thread_local]
 pub static mut errno: c_int = 0;
 
-// xprt_register: SVC transport registration — no-op (RPC transport handled by rpc_abi)
+/// Register an existing RPC transport for service readiness dispatch.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xprt_register(_xprt: *mut c_void) {}
-// xprt_unregister: SVC transport unregistration — no-op
+pub unsafe extern "C" fn xprt_register(xprt: *mut c_void) {
+    // SAFETY: the caller retains the live service transport.
+    unsafe { crate::rpc_abi::register_transport(xprt) };
+}
+/// Stop service dispatch without closing or destroying the RPC transport.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn xprt_unregister(_xprt: *mut c_void) {}
+pub unsafe extern "C" fn xprt_unregister(xprt: *mut c_void) {
+    // SAFETY: the caller retains the live service transport.
+    unsafe { crate::rpc_abi::unregister_transport(xprt) };
+}
 
-// RPC data symbols — these are global variables in glibc.
-// svc_fdset is fd_set (128 bytes on Linux), svc_pollfd is *pollfd, etc.
-// Using static mut with zeroed data — programs that actually use RPC
-// will resolve these from glibc's data segment via the dynamic linker.
+// RPC service data objects back the first RPC-state owner's accessors. Other
+// threads use independent TLS slots; the first owner's poll backing storage
+// has process lifetime even when that owner is a short-lived worker. Keep
+// these exported data addresses preemptible for executable copy relocations.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut svc_fdset: [u8; 128] = [0u8; 128]; // fd_set
+// SAFETY: fd_set contains only integer masks. Its ABI type also supplies the
+// word alignment needed by FD_SET and by the native readiness publisher.
+pub static mut svc_fdset: libc::fd_set = unsafe { std::mem::zeroed() };
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut svc_max_pollfd: c_int = 0;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut svc_pollfd: *mut c_void = std::ptr::null_mut();
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut svcauthdes_stats: [c_int; 3] = [0; 3]; // accept/reject/misc counters
+pub static mut svcauthdes_stats: [libc::c_ulong; 3] = [0; 3]; // three LP64 counters
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _null_auth: [u8; 16] = [0u8; 16]; // opaque_auth struct (flavor=0, body={0,0})
+// LP64 opaque_auth is 24 bytes, including the pointer and trailing padding.
+// Word storage preserves its eight-byte alignment and all-zero AUTH_NONE value.
+pub static mut _null_auth: [u64; 3] = [0u64; 3];
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut rpc_createerr: [u8; 16] = [0u8; 16]; // struct rpc_createerr
+// glibc LP64 rpc_createerr is 32 bytes and contains pointer-width-aligned
+// rpc_err union members; a 16-byte byte array cannot back the public accessor.
+pub static mut rpc_createerr: [u64; 4] = [0u64; 4];
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut h_errlist: [*mut c_char; 5] = [
     std::ptr::null_mut(),

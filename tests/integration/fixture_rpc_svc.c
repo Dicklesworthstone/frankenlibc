@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <link.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
@@ -58,6 +59,16 @@ struct RpcClient { void *auth; const ClientOps *ops; void *private_state; };
 typedef struct { int status; unsigned padding; unsigned long detail[2]; } ClientError;
 typedef struct { int status; unsigned padding; ClientError error; } ClientCreateError;
 _Static_assert(sizeof(ClientError)==24 && sizeof(ClientCreateError)==32,"glibc LP64 client errors");
+#ifdef RPC_COPY_RELOC
+extern fd_set linked_svc_fdset;
+extern struct pollfd *linked_svc_pollfd;
+extern int linked_svc_max_pollfd;
+extern ClientCreateError linked_rpc_createerr;
+__asm__(".symver linked_svc_fdset,svc_fdset@GLIBC_2.2.5");
+__asm__(".symver linked_svc_pollfd,svc_pollfd@GLIBC_2.2.5");
+__asm__(".symver linked_svc_max_pollfd,svc_max_pollfd@GLIBC_2.2.5");
+__asm__(".symver linked_rpc_createerr,rpc_createerr@GLIBC_2.2.5");
+#endif
 typedef struct {
     void (*next)(void *); int (*marshal)(void *,void *); int (*validate)(void *,void *);
     int (*refresh)(void *); void (*destroy)(void *);
@@ -75,6 +86,7 @@ static Xprt *(*rawserver)(void);
 static int (*reg)(Xprt *,unsigned long,unsigned long,void (*)(Request *,Xprt *),int);
 static void (*unreg)(unsigned long,unsigned long), (*common)(int), (*getmask)(int), (*getset)(fd_set *), (*getpoll)(struct pollfd *,int);
 static void (*run)(void), (*stop)(void);
+static void (*xregister)(Xprt *), (*xunregister)(Xprt *);
 static int (*sendreply)(Xprt *,Proc,void *), (*xu32)(void *,void *), (*xstr)(void *,char **,unsigned);
 static void (*err_decode)(Xprt *), (*err_proc)(Xprt *), (*err_prog)(Xprt *), (*err_sys)(Xprt *), (*err_weak)(Xprt *), (*err_auth)(Xprt *,int), (*err_vers)(Xprt *,unsigned long,unsigned long);
 static void *(*fdset_slot)(void), *(*poll_slot)(void), *(*count_slot)(void);
@@ -120,6 +132,7 @@ static void load(void) {
     LOAD(unixcreate,"svcunix_create"); LOAD(unixfdcreate,"svcunixfd_create");
     LOAD(unixclient,"clntunix_create");
     LOAD(rawclient,"clntraw_create"); LOAD(rawserver,"svcraw_create");
+    LOAD(xregister,"xprt_register"); LOAD(xunregister,"xprt_unregister");
 }
 static int void_proc(void *x,void *p) { (void)x;(void)p; return 1; }
 static int string_proc(void *x,void *p) { return xstr(x,p,128); }
@@ -158,6 +171,7 @@ static void handler(Request *r,Xprt *x) {
         pthread_cleanup_pop(1);
     } else if (r->procedure==13) { CHECK(sendreply(x,void_proc,NULL)); stop(); }
     else if (r->procedure==14) { err_prog(x); }
+    else if (r->procedure==16) { xunregister(x); CHECK(sendreply(x,void_proc,NULL)); }
     else CHECK(sendreply(x,void_proc,NULL));
 }
 static void other_handler(Request *r,Xprt *x) { (void)r; (void)x; CHECK(0); }
@@ -295,6 +309,47 @@ static void exchange(unsigned proc,unsigned xid) {
     unsigned char data[2048]; size_t n=request(data,xid,PROGRAM,1,proc);
     if (proc==1) { word(data,n,35); n+=4; }
     send_packet(data,n); drive(); expect_reply(xid,0,0,proc==1?0:-1,42);
+}
+static void check_transport_registration(int expected) {
+    CHECK(!!FD_ISSET(server->fd,(fd_set *)fdset_slot())==expected);
+    int count=*(int *)count_slot(), matches=0;
+    struct pollfd *fds=*(struct pollfd **)poll_slot();
+    for(int i=0;i<count;++i) if(fds[i].fd==server->fd) ++matches;
+    if(matches!=expected) fprintf(stderr,"registration fd=%d matches=%d expected=%d extent=%d\n",server->fd,matches,expected,count);
+    CHECK(matches==expected);
+    CHECK(fcntl(server->fd,F_GETFD)>=0);
+}
+static void transport_registration(void) {
+    check_transport_registration(1);
+    unsigned char data[2048];
+    if (!strcmp(scenario,"xprt-callback")) {
+        size_t n=request(data,81,PROGRAM,1,16);send_packet(data,n);
+        n=request(data,82,PROGRAM,1,0);send_packet(data,n);
+        drive();expect_reply(81,0,0,-1,0);CHECK(calls==1);
+        check_transport_registration(0);
+        struct pollfd p={client,POLLIN,0};CHECK(poll(&p,1,30)==0);
+        xregister(server);check_transport_registration(1);
+        drive();expect_reply(82,0,0,-1,0);CHECK(calls==2);
+        return;
+    }
+    xunregister(server);
+    if (!strcmp(scenario,"xprt-idempotent")) xunregister(server);
+    check_transport_registration(0);
+    if (!strcmp(scenario,"xprt-destroy")) {
+        int fd=server->fd;server->ops->destroy(server);server=NULL;
+        CHECK(fcntl(fd,F_GETFD)==-1 && errno==EBADF);
+        return;
+    }
+    size_t n=request(data,83,PROGRAM,1,0);send_packet(data,n);
+    struct pollfd p={server->fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);
+    common(server->fd);
+    fd_set set;FD_ZERO(&set);FD_SET(server->fd,&set);getset(&set);
+    CHECK(calls==0 && poll(&p,1,0)==1);
+    xregister(server);
+    if (!strcmp(scenario,"xprt-idempotent")) xregister(server);
+    check_transport_registration(1);
+    drive();expect_reply(83,0,0,-1,0);CHECK(calls==1);
+    exchange(1,84);CHECK(calls==2);
 }
 static void *serve_thread(void *unused) { (void)unused; common(server->fd); return NULL; }
 static void *run_client(void *unused) {
@@ -1054,8 +1109,91 @@ static void raw_services(void) {
     c->ops->destroy(c);s->ops->destroy(s);unreg(PROGRAM,1);
     CHECK(fcntl(0,F_GETFD)==stdin_flags && fd_count()==before);
 }
+typedef struct {
+    fd_set *fds;
+    struct pollfd **polls;
+    int *count;
+    ClientCreateError *error;
+    void *(*error_slot)(void);
+    struct pollfd *first_poll;
+    int primary_worker;
+} RpcGlobals;
+static void check_global_slots(RpcGlobals *g,int primary) {
+    void *fds=fdset_slot(),*polls=poll_slot(),*count=count_slot(),*error=g->error_slot();
+    CHECK((fds==(void *)g->fds)==primary && (polls==(void *)g->polls)==primary);
+    CHECK((count==(void *)g->count)==primary && (error==(void *)g->error)==primary);
+    CHECK((uintptr_t)fds%_Alignof(fd_set)==0 && (uintptr_t)error%_Alignof(ClientCreateError)==0);
+}
+static void check_global_transport(RpcGlobals *g,Xprt *x,int registered) {
+    /* Inspect the exported objects directly; accessors must not repair this. */
+    CHECK(!!FD_ISSET(x->fd,g->fds)==registered);
+    CHECK(*g->count>=0 && *g->count<=FD_SETSIZE);
+    int matches=0;
+    for(int i=0;i<*g->count;++i) if((*g->polls)[i].fd==x->fd) ++matches;
+    CHECK(matches==registered);
+}
+static void *global_worker(void *opaque) {
+    RpcGlobals *g=opaque;
+    if(!strcmp(scenario,"globals-createerr-first")) CHECK(g->error_slot()==(void *)g->error);
+    check_global_slots(g,g->primary_worker);
+    ClientCreateError *error=g->error_slot();
+    error->error.detail[1]=0x123456789abcdef0UL;
+    if(g->primary_worker)g->first_poll=*g->polls;
+    else if(!strcmp(scenario,"globals-lifetime")) CHECK(*(struct pollfd **)poll_slot()!=g->first_poll);
+    return NULL;
+}
+static void check_rpc_data_layouts(void) {
+    Auth *null_auth=symbol("_null_auth");
+    unsigned long *stats=symbol("svcauthdes_stats");
+    Dl_info info;ElfW(Sym) *entry=NULL;
+    CHECK(dladdr1(null_auth,&info,(void **)&entry,RTLD_DL_SYMENT) && entry);
+    CHECK(entry->st_size==sizeof(*null_auth) && (uintptr_t)null_auth%_Alignof(Auth)==0);
+    CHECK(null_auth->flavor==0 && null_auth->base==NULL && null_auth->length==0);
+    CHECK(dladdr1(stats,&info,(void **)&entry,RTLD_DL_SYMENT) && entry);
+    CHECK(entry->st_size==3*sizeof(*stats) && (uintptr_t)stats%_Alignof(unsigned long)==0);
+    CHECK(stats[0]==0 && stats[1]==0 && stats[2]==0);
+}
+static void global_services(void) {
+    RpcGlobals g={0};
+    check_rpc_data_layouts();
+    LOAD(g.error_slot,"__rpc_thread_createerr");
+#ifdef RPC_COPY_RELOC
+    g.fds=&linked_svc_fdset;g.polls=&linked_svc_pollfd;
+    g.count=&linked_svc_max_pollfd;g.error=&linked_rpc_createerr;
+#else
+    g.fds=symbol("svc_fdset");g.polls=symbol("svc_pollfd");
+    g.count=symbol("svc_max_pollfd");g.error=symbol("rpc_createerr");
+#endif
+    Dl_info info;ElfW(Sym) *entry=NULL;
+    CHECK(dladdr1(g.error,&info,(void **)&entry,RTLD_DL_SYMENT) && entry);
+    CHECK(entry->st_size==sizeof(*g.error));
+    g.primary_worker=!strcmp(scenario,"globals-worker-first") ||
+        !strcmp(scenario,"globals-createerr-first") || !strcmp(scenario,"globals-lifetime");
+    pthread_t thread;
+    if(!g.primary_worker) {
+        check_global_slots(&g,1);
+        Xprt *x=create(-1);CHECK(x);check_global_transport(&g,x,1);
+        xunregister(x);check_global_transport(&g,x,0);CHECK(fcntl(x->fd,F_GETFD)>=0);
+        xregister(x);check_global_transport(&g,x,1);
+        int fd=x->fd;x->ops->destroy(x);CHECK(!FD_ISSET(fd,g.fds));
+        g.error->error.detail[1]=0;
+    }
+    CHECK(!pthread_create(&thread,NULL,global_worker,&g));CHECK(!pthread_join(thread,NULL));
+    check_global_slots(&g,!g.primary_worker);
+    CHECK(g.error->error.detail[1]==(g.primary_worker?0x123456789abcdef0UL:0));
+    if(!strcmp(scenario,"globals-lifetime")) {
+        CHECK(g.first_poll && *g.polls==g.first_poll && *g.count==0);
+        CHECK(g.first_poll[0].fd==-1);
+        g.primary_worker=0;
+        for(int i=0;i<8;++i) {
+            CHECK(!pthread_create(&thread,NULL,global_worker,&g));CHECK(!pthread_join(thread,NULL));
+            CHECK(*g.polls==g.first_poll && *g.count==0 && g.first_poll[0].fd==-1);
+        }
+    }
+}
 int main(int argc,char **argv) {
     CHECK(argc==2);scenario=argv[1];load();
+    if (!strncmp(scenario,"globals-",8)) { global_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"raw-",4)) { raw_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"clunix-",7)) { clunix_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"tcp-",4)) { tcp_services();printf("PASS %s\n",scenario);return 0; }
@@ -1076,6 +1214,7 @@ int main(int argc,char **argv) {
     else if (!strcmp(scenario,"auth-client")) {
         pthread_t t;CHECK(!pthread_create(&t,NULL,authenticated_client,NULL));drive();CHECK(!pthread_join(t,NULL));CHECK(calls==1);
     } else if (!strcmp(scenario,"transport")) transport();
+    else if (!strncmp(scenario,"xprt-",5)) transport_registration();
     else if (!strcmp(scenario,"errors")) {
         unsigned char data[2048];
         size_t n=request(data,30,PROGRAM+1,1,0);send_packet(data,n);drive();expect_reply(30,0,1,-1,0);

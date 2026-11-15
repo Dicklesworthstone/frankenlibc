@@ -28,6 +28,9 @@ HOST += ['clunix-created', 'clunix-auth', 'clunix-borrowed', 'clunix-close',
          'clunix-fragments', 'clunix-stale', 'clunix-error', 'clunix-disconnect',
          'clunix-timeout', 'clunix-connect-error', 'clunix-euid', 'clunix-controls']
 HOST += ['raw-handles', 'raw-controls']
+HOST += ['xprt-lifecycle', 'xprt-callback', 'xprt-destroy']
+HOST += ['globals-main', 'globals-worker-first', 'globals-createerr-first',
+         'globals-copy-reloc']
 # These are independently specified bounds/lifetime contracts, not host-parity
 # claims: some historical glibc servers accept truncated UDP prefixes or keep
 # their service registry in a different thread. Never label their failure green.
@@ -49,6 +52,10 @@ OWNED += ['clunix-invalid', 'clunix-rights', 'clunix-rights-truncated',
 OWNED += ['raw-basic', 'raw-string', 'raw-auth', 'raw-errors', 'raw-timeout',
           'raw-lifecycle', 'raw-bounds', 'raw-reentry', 'raw-no-network',
           'raw-threads', 'raw-encode-exit', 'raw-decode-exit', 'raw-dispatch-exit']
+# GNU repeats the poll entry on duplicate xprt_register; native registration
+# remains idempotent. Keep this stronger contract separate from host parity.
+OWNED += ['xprt-idempotent']
+OWNED += ['globals-lifetime']
 # glibc xdr_rec.c rejects a zero nonfinal marker. Keep that exact original
 # failing host probe as an explicit native extension, rather than parity proof.
 
@@ -148,6 +155,11 @@ def main():
     subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror',
                     str(root / 'tests/integration/fixture_rpc_svc.c'),
                     '-ldl', '-pthread', '-o', str(fixture)], check=True)
+    copy_fixture = out / 'fixture-copy-reloc'
+    subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror',
+                    '-DRPC_COPY_RELOC', '-fno-pie', '-no-pie',
+                    str(root / 'tests/integration/fixture_rpc_svc.c'),
+                    '-ldl', '-pthread', '-o', str(copy_fixture)], check=True)
     base = {k: v for k, v in os.environ.items()
             if k not in ('LD_PRELOAD', 'FRANKENLIBC_TEST_LIBRARY', 'RPC_TRACE',
                          'FRANKENLIBC_MODE')}
@@ -160,7 +172,8 @@ def main():
             if ((case.startswith('register-') and case not in ('register-zero', 'register-invalid'))
                     or case == 'tcp-publish'):
                 peer = RegistrationPeer(case)
-            p = subprocess.run([str(fixture), case], env=env, capture_output=True, timeout=12)
+            executable = copy_fixture if case == 'globals-copy-reloc' else fixture
+            p = subprocess.run([str(executable), case], env=env, capture_output=True, timeout=12)
             code, stdout, stderr = p.returncode, p.stdout, p.stderr
         except subprocess.TimeoutExpired as e:
             code, stdout, stderr = -999, e.stdout or b'', (e.stderr or b'') + b'\nTIMEOUT\n'
