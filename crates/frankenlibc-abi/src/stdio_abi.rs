@@ -2583,6 +2583,7 @@ fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamSta
 }
 
 pub(crate) struct StdioForkGuard {
+    parent_tid: usize,
     _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
     _streams: Option<parking_lot::MutexGuard<'static, StreamRegistry>>,
     _cookies:
@@ -2605,12 +2606,16 @@ impl StdioForkGuard {
     /// behind a fresh mutex; the old one is leaked and never touched again.
     pub(crate) fn release_in_child(self) {
         let StdioForkGuard {
+            parent_tid,
             _native,
             _streams,
             _cookies,
             _foreign,
             _host_streams,
         } = self;
+        // SAFETY: this guard spans clone; only the forking thread survives,
+        // signals remain blocked, and the native registry is still held.
+        unsafe { _native.recover_file_locks_in_child(parent_tid) };
         // SAFETY: the child is single-threaded and the old mutex (with the
         // value inside it) is never used again, so reading the value out is a
         // move, not a copy.
@@ -2675,6 +2680,7 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
                     && let Ok(host_streams) = host_streams
                 {
                     return StdioForkGuard {
+                        parent_tid: crate::util::AbiReentrantMutex::<()>::current_owner_tid(),
                         _native: native,
                         _streams: streams,
                         _cookies: cookies,

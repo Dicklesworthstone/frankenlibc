@@ -211,6 +211,41 @@ impl<T, const KERNEL_TID: bool> AbiReentrantMutex<T, KERNEL_TID> {
         );
     }
 
+    /// Recover a libc-owned lock in the sole surviving fork thread.
+    /// Caller-owned locks retain their depth. An orphan is released only when
+    /// its protected value can still be used without repairing an active borrow.
+    ///
+    /// # Safety
+    ///
+    /// Call only in a freshly forked child before threads or signal handlers
+    /// can run, using the forking caller's owner key captured before clone.
+    /// The predicate must inspect only independently coherent state and reject
+    /// any inherited active mutation without accessing the affected data.
+    #[allow(dead_code)]
+    pub(crate) unsafe fn recover_in_fork_child(
+        &self,
+        parent_tid: usize,
+        quiescent: impl FnOnce(&T) -> bool,
+    ) {
+        let state = self.owner_tid.load(Ordering::Relaxed);
+        let owner = if KERNEL_TID {
+            (state as u64 >> 32) as usize
+        } else {
+            state
+        };
+        if owner == parent_tid {
+            // SAFETY: the caller supplies the surviving parent's owner key.
+            unsafe { self.adopt_in_fork_child(parent_tid) };
+        } else if owner != 0 {
+            // SAFETY: no competing thread exists in this child. The predicate
+            // must reject inherited borrows before reading their mutable data.
+            if quiescent(unsafe { &*self.value.get() }) {
+                self.recursion_depth.store(0, Ordering::Relaxed);
+                self.owner_tid.store(0, Ordering::Release);
+            }
+        }
+    }
+
     /// Owner key used for ownership, exposed so fork paths can record the parent's.
     #[allow(dead_code)]
     #[inline]

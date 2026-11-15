@@ -1838,6 +1838,37 @@ impl NativeStreamRegistry {
         self.handle_slot(handle).and_then(|index| self.get(index))
     }
 
+    /// Recover quiescent public FILE locks in the fork child.
+    ///
+    /// Explicit flockfile holders do not borrow NativeFileLocked. A native
+    /// vtable operation may, so leave any inherited active RefCell borrow
+    /// untouched instead of exposing partially updated state.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold this registry across fork and still be the child's
+    /// sole thread, with signal delivery blocked and the parent's owner key.
+    pub(crate) unsafe fn recover_file_locks_in_child(&self, parent_tid: usize) {
+        for slot in self.slots().filter(|slot| slot.state == SLOT_OCCUPIED) {
+            let state = &slot.file._frankenlibc_state;
+            let lock = if state.std_lock_slot != 0 {
+                Some(&STD_STREAM_LOCKS[(state.std_lock_slot - 1) as usize])
+            } else {
+                state.locked.get()
+            };
+            if let Some(lock) = lock {
+                // SAFETY: the child has no competing access. try_borrow_mut
+                // checks the RefCell flag without reading an active borrow's
+                // data; its temporary guard is dropped before lock recovery.
+                unsafe {
+                    lock.recover_in_fork_child(parent_tid, |state| {
+                        state.try_borrow_mut().is_ok()
+                    });
+                }
+            }
+        }
+    }
+
     /// Flush all writable streams. Returns the number of streams that failed to flush.
     ///
     /// This implements `fflush(NULL)` semantics: flush every open output stream.
