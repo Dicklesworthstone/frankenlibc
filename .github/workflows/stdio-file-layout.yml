@@ -210,6 +210,13 @@ jobs:
           set -euo pipefail
           FRANKENLIBC_STDIO_CANCEL_OUT_DIR="$PWD/artifacts/stdio-layout/read-cancellation" \
             bash scripts/check_stdio_read_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
+      - name: Cancel socket-backed FILE operations without replaying flushed bytes
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_STDIO_CANCEL_OUT_DIR="$PWD/artifacts/stdio-layout/socket-cancellation" \
+            bash scripts/check_stdio_read_cancellation.sh \
+              "$PWD/target/release/libfrankenlibc_abi.so" --native-sockets
       - name: Preserve host stdio across local loading and native COPY relocations
         if: always() && steps.build.outcome == 'success'
         shell: bash

@@ -3861,34 +3861,34 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
 
 unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bool {
     let caller = stream_io_caller(stream, caller);
-    let len = stream.pending_flush().len();
-    if len == 0 {
+    if stream.pending_flush().is_empty() {
         return true;
     }
     let fd = stream.fd();
-    let mut written = 0usize;
-    while written < len {
+    while !stream.pending_flush().is_empty() {
         let pending = stream.pending_flush();
-        let ptr = pending[written..].as_ptr();
-        let chunk_len = pending.len() - written;
+        let ptr = pending.as_ptr();
+        let chunk_len = pending.len();
         let rc = unsafe { stream_write_fd(caller, fd, ptr.cast(), chunk_len) };
         if rc <= 0 {
             stream.set_error();
-            // A failed flush discards the pending span, including any prefix
-            // already written. Retaining it would replay that prefix on the
-            // next fflush/fclose. Buffered bytes already advanced offset, so
-            // remove the unwritten suffix and use the actual fd position when
-            // seekable (especially O_APPEND). Raw lseek preserves write errno.
+            // A failed flush discards the remaining span. Buffered bytes
+            // already advanced offset, so remove the unwritten suffix and use
+            // the actual fd position when seekable (especially O_APPEND).
+            // Raw lseek preserves write errno.
             stream.mark_flushed();
-            let unwritten = (len - written).min(i64::MAX as usize) as i64;
+            let unwritten = chunk_len.min(i64::MAX as usize) as i64;
             let position = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
                 .unwrap_or_else(|_| stream.offset().saturating_sub(unwritten));
             stream.set_offset(position);
             return false;
         }
-        written += rc as usize;
+        // Commit each acknowledged prefix before the next cancellation point.
+        // A native send may return its partial progress when a request arrives;
+        // the next write then unwinds. Keeping the whole buffer until the end
+        // would let an application's cleanup fflush/fclose replay that prefix.
+        stream.consume_flushed_prefix(rc as usize);
     }
-    stream.mark_flushed();
     // O_APPEND put the bytes at end of file wherever the stream's position
     // was; take the kernel's position so ftell and later reads agree ("a+").
     if stream.is_appending()
@@ -4013,14 +4013,17 @@ fn stream_io_caller(stream: &StdioStream, caller: usize) -> usize {
 /// cancellation point. The stream lock is always owned by an outer Drop guard.
 unsafe fn stream_read_fd(caller: usize, fd: c_int, buf: *mut c_void, count: usize) -> isize {
     // SAFETY: callers keep `buf` writable for `count` bytes and pass their
-    // captured public-entry caller (or zero). Only the read syscall is exposed
-    // to asynchronous cancellation; stream state updates happen after it.
-    unsafe {
-        crate::pthread_abi::cancellation_point_syscall_for_caller(
-            caller,
-            libc::SYS_read,
-            [fd as usize, buf as usize, count, 0, 0, 0],
-        )
+    // captured public-entry caller (or zero). The shared adapter cancels a
+    // parked native socket read after releasing its descriptor and signal-mask
+    // guards; hosted asynchronous cancellation still surrounds only the syscall.
+    match unsafe {
+        crate::pthread_abi::cancellation_point_read_for_caller(caller, fd, buf.cast(), count)
+    } {
+        Ok(read) => read,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     }
 }
 
@@ -4030,12 +4033,14 @@ unsafe fn stream_read_fd(caller: usize, fd: c_int, buf: *mut c_void, count: usiz
 unsafe fn stream_write_fd(caller: usize, fd: c_int, buf: *const c_void, count: usize) -> isize {
     // SAFETY: the caller keeps the byte span alive across the syscall and
     // supplies the captured external caller, or zero for internal I/O.
-    unsafe {
-        crate::pthread_abi::cancellation_point_syscall_for_caller(
-            caller,
-            libc::SYS_write,
-            [fd as usize, buf as usize, count, 0, 0, 0],
-        )
+    match unsafe {
+        crate::pthread_abi::cancellation_point_write_for_caller(caller, fd, buf.cast(), count)
+    } {
+        Ok(written) => written,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
     }
 }
 

@@ -1214,6 +1214,14 @@ impl StdioStream {
         self.buffer.mark_flushed();
     }
 
+    /// Remove an acknowledged write prefix without changing the logical
+    /// position, which already includes all buffered output. Call this before
+    /// a following descriptor write can cancel or fail, so cleanup cannot
+    /// replay bytes already accepted by the kernel.
+    pub fn consume_flushed_prefix(&mut self, count: usize) {
+        self.buffer.consume_flushed_prefix(count);
+    }
+
     // -----------------------------------------------------------------------
     // Read operations
     // -----------------------------------------------------------------------
@@ -2307,6 +2315,34 @@ mod tests {
         assert!(!result.flush_needed);
         assert!(result.flush_data.is_empty()); // fully buffered, not full yet
         assert_eq!(s.pending_flush(), b"hello");
+    }
+
+    #[test]
+    fn test_partial_flush_commits_prefix_before_stream_reuse() {
+        let flags = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let mut stream = StdioStream::new(3, flags);
+        assert!(!stream.buffer_write(b"prefix:suffix").unwrap().flush_needed);
+        stream.set_offset(13);
+
+        // A write has acknowledged exactly "prefix:" before the next write
+        // can cancel. Reusing the stream must expose only the unsent suffix.
+        stream.consume_flushed_prefix(7);
+        assert_eq!(stream.pending_flush(), b"suffix");
+        assert_eq!(stream.offset(), 13);
+        assert!(!stream.buffer_write(b":next").unwrap().flush_needed);
+        stream.set_offset(18);
+        assert_eq!(stream.pending_flush(), b"suffix:next");
+
+        stream.consume_flushed_prefix(0);
+        assert_eq!(stream.pending_flush(), b"suffix:next");
+        stream.consume_flushed_prefix(11);
+        assert!(stream.pending_flush().is_empty());
+        assert_eq!(stream.offset(), 18);
+        assert!(!stream.buffer_write(b"fresh").unwrap().flush_needed);
+        assert_eq!(stream.pending_flush(), b"fresh");
     }
 
     #[test]

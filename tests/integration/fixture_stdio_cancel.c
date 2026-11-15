@@ -1,8 +1,10 @@
 /* Native stdio cancellation, compiled as both C and C++.
  *
- * Each invocation owns only anonymous pipes. A blocked case is cancelled only
- * after /proc confirms the worker is inside read(2) or write(2) on the tested
- * descriptor. Output pipes start full, so output cannot pass accidentally.
+ * Each invocation owns only anonymous pipes or socket pairs. A blocked case
+ * is cancelled only after /proc confirms the worker is inside read(2),
+ * write(2), or the admitted native socket polling loop on the tested
+ * descriptor. Output transports start full unless the case explicitly
+ * verifies a partially committed write or buffered flush.
  * The cleanup handler reuses the same FILE, so a leaked stream lock cannot
  * masquerade as a successful join. C++ additionally checks both destructors and
  * the forced-unwind catch/rethrow path. No named files or production state are
@@ -16,6 +18,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
+#include <poll.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -23,6 +26,8 @@
 #include <stdio_ext.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
@@ -55,6 +60,15 @@ struct read_case {
   char *memory;
   wchar_t *wide_memory;
   size_t memory_size;
+  int socket_io;
+  int expect_native;
+  uintptr_t creator_tp;
+  int creator_tid;
+  pthread_t creator_thread;
+  int recursive;
+  int committed_prefix;
+  size_t pending_after_cancel;
+  char syscall_path[128];
 };
 
 static void fail(const char *message, int status) {
@@ -196,7 +210,8 @@ static void operate(struct read_case *test) {
     } else if (is_case(test, "fwrite") || is_case(test, "fwrite_unlocked") ||
                is_case(test, "fwrite-large") || is_case(test, "_IO_fwrite")) {
       size_t count = is_case(test, "fwrite-large") ? sizeof(bytes) : 2;
-      memset(bytes, 'R', count);
+      for (size_t i = 0; i < count; i++)
+        bytes[i] = strcmp(test->phase, "partial") == 0 ? (char)('!' + i % 90) : 'R';
       bytes[count - 1] = '\n';
       test->result = ((size_t (*)(const void *, size_t, size_t, FILE *))test->operation)(
                          bytes, 1, count, test->stream) == count;
@@ -337,7 +352,13 @@ static void cleanup(void *argument) {
   /* Both functions need the stream's normal state/lock after the interrupted
    * Rust frame has unwound. A successful ftrylockfile alone would check only
    * the separately managed explicit FILE lock. */
-  if (test->output) {
+  if (strcmp(test->phase, "partial-flush") == 0) {
+    /* Keep the pending output intact: purging here would hide replay of bytes
+     * that the native send adapter already reported as accepted. The parent
+     * drains that prefix and completes the remaining flush after the join. */
+    test->pending_after_cancel = __fpending(test->stream);
+    test->reused = fileno(test->stream) == test->fd;
+  } else if (test->output) {
     __fpurge(test->stream);
     clearerr(test->stream);
     test->reused = fileno(test->stream) == test->fd &&
@@ -349,6 +370,13 @@ static void cleanup(void *argument) {
     test->reused = ungetwc(L'Q', test->stream) == L'Q' && fgetwc(test->stream) == L'Q';
   } else {
     test->reused = ungetc('Q', test->stream) == 'Q' && fgetc(test->stream) == 'Q';
+  }
+  if (test->recursive) {
+    /* The application owns two explicit locks. The interrupted libc operation
+     * must release only its own lock before this handler runs. The joined
+     * parent then verifies that exactly these two unlocks release the FILE. */
+    funlockfile(test->stream);
+    funlockfile(test->stream);
   }
 }
 
@@ -363,6 +391,21 @@ struct destruction_count {
 static void *reader(void *argument) {
   struct read_case *test = (struct read_case *)argument;
   test->tid = (int)syscall(SYS_gettid);
+  if (test->socket_io) {
+    /* Native clone threads currently inherit the creator's thread pointer;
+     * owned-tls-cache does not create an independent TCB. This checks backend
+     * selection, not general native TLS safety. Keep the witness allocation-free. */
+    if (test->tid == test->creator_tid ||
+        pthread_equal(pthread_self(), test->creator_thread) ||
+        (((uintptr_t)__builtin_thread_pointer() == test->creator_tp) != test->expect_native))
+      fail("stdio cancellation: wrong thread backend", 89);
+    memcpy(test->syscall_path, "/proc/", 6);
+    ssize_t length = syscall(SYS_readlinkat, AT_FDCWD, "/proc/thread-self",
+                             test->syscall_path + 6, sizeof(test->syscall_path) - 15);
+    if (length <= 0 || (size_t)length >= sizeof(test->syscall_path) - 15)
+      fail("stdio cancellation: thread observation unavailable", 96);
+    memcpy(test->syscall_path + 6 + length, "/syscall", 9);
+  }
   if (!test->output && strcmp(test->path, "cold") != 0) {
     int primed = test->wide ? fgetwc(test->stream) == L'W' : fgetc(test->stream) == 'W';
     if (!primed)
@@ -371,6 +414,11 @@ static void *reader(void *argument) {
   if (strcmp(test->phase, "disabled") == 0 &&
       pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) != 0)
     fail("stdio cancellation: cannot disable cancellation", 93);
+
+  if (test->recursive) {
+    flockfile(test->stream);
+    flockfile(test->stream);
+  }
 
   pthread_cleanup_push(cleanup, argument);
 #ifdef __cplusplus
@@ -393,6 +441,10 @@ static void *reader(void *argument) {
   }
 #endif
   pthread_cleanup_pop(0);
+  if (test->recursive) {
+    funlockfile(test->stream);
+    funlockfile(test->stream);
+  }
   __atomic_store_n(&test->finished, 1, __ATOMIC_RELEASE);
   return (void *)(uintptr_t)0x5354494f;
 }
@@ -410,7 +462,88 @@ static struct timespec deadline(long milliseconds) {
   return now;
 }
 
+/* Do not format or allocate while an inherited-TLS native worker is running.
+ * The kernel's proc view supplies the syscall and its arguments; read its
+ * pointed-to pollfd through /proc/self/mem rather than trusting a test flag. */
+static int syscall_arguments(const char *text, unsigned long long fields[7]) {
+  for (int field = 0; field < 7; field++) {
+    while (*text == ' ' || *text == '\t') text++;
+    unsigned base = field == 0 ? 10 : 16;
+    if (base == 16 && text[0] == '0' && text[1] == 'x') text += 2;
+    int digits = 0;
+    unsigned long long value = 0;
+    for (;;) {
+      unsigned digit = *text >= '0' && *text <= '9' ? (unsigned)(*text - '0') :
+                       *text >= 'a' && *text <= 'f' ? (unsigned)(*text - 'a' + 10) : 16;
+      if (digit >= base) break;
+      if (value > (ULLONG_MAX - digit) / base) return 0;
+      value = value * base + digit;
+      digits++;
+      text++;
+    }
+    if (!digits || (*text != ' ' && *text != '\t' && *text != '\n' && *text != 0)) return 0;
+    fields[field] = value;
+  }
+  return 1;
+}
+
+static int same_socket(unsigned long long actual, int expected) {
+  struct stat left, right;
+  if (actual > INT_MAX || syscall(SYS_fstat, (int)actual, &left) != 0 ||
+      syscall(SYS_fstat, expected, &right) != 0)
+    return 0;
+  return left.st_dev == right.st_dev && left.st_ino == right.st_ino &&
+         (left.st_mode & S_IFMT) == S_IFSOCK && (right.st_mode & S_IFMT) == S_IFSOCK;
+}
+
+static void wait_for_socket(struct read_case *test) {
+  int memory = (int)syscall(SYS_openat, AT_FDCWD, "/proc/self/mem", O_RDONLY | O_CLOEXEC, 0);
+  if (memory < 0) fail("stdio cancellation: memory observation unavailable", 96);
+  for (int attempt = 0; attempt < 2000; attempt++) {
+    if (__atomic_load_n(&test->entered, __ATOMIC_ACQUIRE)) {
+      char data[512];
+      int fd = (int)syscall(SYS_openat, AT_FDCWD, test->syscall_path, O_RDONLY | O_CLOEXEC, 0);
+      if (fd >= 0) {
+        ssize_t size = syscall(SYS_read, fd, data, sizeof(data) - 1);
+        (void)syscall(SYS_close, fd);
+        if (size > 0) {
+          data[size] = 0;
+          unsigned long long fields[7];
+          if (syscall_arguments(data, fields)) {
+            int parked = fields[0] == (unsigned long long)(test->output ? SYS_write : SYS_read) &&
+                         same_socket(fields[1], test->fd);
+            if (test->expect_native && strcmp(test->phase, "disabled") != 0 &&
+                fields[0] == SYS_ppoll && fields[2] == 1 && fields[3] != 0) {
+              struct pollfd interest;
+              struct timespec slice;
+              parked = syscall(SYS_pread64, memory, &interest, sizeof(interest),
+                                (off_t)fields[1]) == (ssize_t)sizeof(interest) &&
+                       syscall(SYS_pread64, memory, &slice, sizeof(slice),
+                                (off_t)fields[3]) == (ssize_t)sizeof(slice) &&
+                       same_socket((unsigned long long)interest.fd, test->fd) &&
+                       interest.events == (test->output ? POLLOUT : POLLIN) &&
+                       slice.tv_sec == 0 && slice.tv_nsec > 0 && slice.tv_nsec <= 50000000;
+            }
+            if (parked) {
+              (void)syscall(SYS_close, memory);
+              return;
+            }
+          }
+        }
+      }
+    }
+    const struct timespec pause = {0, 1000000};
+    (void)syscall(SYS_nanosleep, &pause, NULL);
+  }
+  (void)syscall(SYS_close, memory);
+  fail("stdio cancellation: worker never blocked on the selected socket", 96);
+}
+
 static void wait_for_read(struct read_case *test) {
+  if (test->socket_io) {
+    wait_for_socket(test);
+    return;
+  }
   for (int attempt = 0; attempt < 2000; attempt++) {
     if (__atomic_load_n(&test->entered, __ATOMIC_ACQUIRE)) {
       char pathname[96], data[256];
@@ -458,9 +591,82 @@ static void drain_pipe(int fd) {
     fail("stdio cancellation: pipe drain failed", 108);
 }
 
+static void fill_socket(int fd) {
+  char bytes[4096];
+  memset(bytes, 'F', sizeof(bytes));
+  while (syscall(SYS_sendto, fd, bytes, sizeof(bytes), MSG_DONTWAIT | MSG_NOSIGNAL,
+                 NULL, 0) > 0) {}
+  if (errno != EAGAIN) fail("stdio cancellation: socket fill failed", 108);
+}
+
+static void drain_socket(int fd) {
+  char bytes[4096];
+  ssize_t n;
+  do {
+    n = syscall(SYS_recvfrom, fd, bytes, sizeof(bytes), MSG_DONTWAIT, NULL, NULL);
+  } while (n > 0);
+  if (n < 0 && errno != EAGAIN) fail("stdio cancellation: socket drain failed", 108);
+}
+
+static void verify_partial_output(const struct read_case *test, int peer) {
+  char bytes[16384];
+  size_t total = 0;
+  for (;;) {
+    ssize_t count = syscall(SYS_recvfrom, peer, bytes, sizeof(bytes), MSG_DONTWAIT, NULL, NULL);
+    if (count < 0 && errno == EAGAIN) break;
+    if (count <= 0) fail("stdio cancellation: partial output read failed", 111);
+    for (ssize_t i = 0; i < count; i++)
+      if (bytes[i] != (char)('!' + (total + (size_t)i) % 90))
+        fail("stdio cancellation: committed prefix changed or replayed", 111);
+    total += (size_t)count;
+  }
+  if (total != (size_t)test->committed_prefix || total == 0 || total >= sizeof(bytes))
+    fail("stdio cancellation: committed prefix was lost or duplicated", 111);
+}
+
+static void verify_partial_flush(const struct read_case *test, int peer) {
+  if (!test->expect_native) {
+    /* GNU has one canceled blocking write: it cannot recover a partial count
+     * that the kernel never returned. Retain the observation as a comparator,
+     * not as an assertion that it implements native prefix accounting. */
+    printf("GNU partial fflush: committed=%d pending=%zu\n",
+           test->committed_prefix, test->pending_after_cancel);
+    __fpurge(test->stream);
+    drain_socket(peer);
+    return;
+  }
+  if (test->pending_after_cancel != 16384U - (size_t)test->committed_prefix)
+    fail("stdio cancellation: acknowledged flush prefix remained buffered", 112);
+  char bytes[32768];
+  size_t total = 0;
+  for (int pass = 0; pass < 2; pass++) {
+    for (;;) {
+      ssize_t count = syscall(SYS_recvfrom, peer, bytes + total, sizeof(bytes) - total,
+                              MSG_DONTWAIT, NULL, NULL);
+      if (count < 0 && errno == EAGAIN) break;
+      if (count <= 0) fail("stdio cancellation: partial flush drain failed", 112);
+      total += (size_t)count;
+      if (total >= sizeof(bytes)) fail("stdio cancellation: flush replay overflow", 112);
+    }
+    if (pass == 0) {
+      if (total != (size_t)test->committed_prefix)
+        fail("stdio cancellation: committed flush prefix changed", 112);
+      int capacity = 65536;
+      if (setsockopt(test->fd, SOL_SOCKET, SO_SNDBUF, &capacity, sizeof(capacity)) != 0 ||
+          fflush(test->stream) != 0)
+        fail("stdio cancellation: remaining flush failed", 112);
+    }
+  }
+  if (total != 16384 || __fpending(test->stream) != 0)
+    fail("stdio cancellation: resumed flush lost or duplicated bytes", 112);
+  for (size_t i = 0; i < total; i++)
+    if (bytes[i] != (char)('!' + i % 90))
+      fail("stdio cancellation: resumed flush changed byte order", 112);
+}
+
 int main(int argc, char **argv) {
-  if (argc != 4)
-    fail("usage: fixture SYMBOL blocked|pending|disabled|buffered cold|warm|unbuffered", 2);
+  if (argc != 4 && argc != 6)
+    fail("usage: fixture SYMBOL PHASE PATH [socket host|native]", 2);
   struct read_case test;
   memset(&test, 0, sizeof(test));
   test.name = argv[1];
@@ -468,18 +674,36 @@ int main(int argc, char **argv) {
   test.path = argv[3];
   test.output = named_in(test.name, output_cases);
   test.wide = named_in(test.name, wide_cases);
+  if (argc == 6) {
+    if (strcmp(argv[4], "socket") || (strcmp(argv[5], "host") && strcmp(argv[5], "native")))
+      fail("stdio cancellation: unknown transport or backend", 2);
+    test.socket_io = 1;
+    test.expect_native = strcmp(argv[5], "native") == 0;
+    test.creator_tp = (uintptr_t)__builtin_thread_pointer();
+    test.creator_tid = (int)syscall(SYS_gettid);
+    test.creator_thread = pthread_self();
+  }
+  test.recursive = strcmp(test.path, "recursive") == 0;
   if (setlocale(LC_ALL, "C.UTF-8") == NULL)
     fail("stdio cancellation: UTF-8 locale unavailable", 2);
   if (strcmp(test.phase, "blocked") && strcmp(test.phase, "pending") &&
-      strcmp(test.phase, "disabled") && strcmp(test.phase, "buffered"))
+      strcmp(test.phase, "disabled") && strcmp(test.phase, "buffered") &&
+      strcmp(test.phase, "partial") && strcmp(test.phase, "partial-flush"))
     fail("stdio cancellation: unknown phase", 2);
   if (strcmp(test.path, "cold") && strcmp(test.path, "warm") &&
       strcmp(test.path, "unbuffered") && strcmp(test.path, "line") &&
-      strcmp(test.path, "memory") && strcmp(test.path, "partial"))
+      strcmp(test.path, "memory") && strcmp(test.path, "partial") &&
+      strcmp(test.path, "recursive"))
     fail("stdio cancellation: unknown path", 2);
   if (strcmp(test.phase, "buffered") == 0 && strcmp(test.path, "warm") != 0 &&
       strcmp(test.path, "memory") != 0)
     fail("stdio cancellation: buffer-only control must use a warm stream", 2);
+  if (strcmp(test.phase, "partial") == 0 &&
+      (!test.socket_io || !is_case(&test, "fwrite-large")))
+    fail("stdio cancellation: partial transfer requires socket fwrite-large", 2);
+  if (strcmp(test.phase, "partial-flush") == 0 &&
+      (!test.socket_io || !is_case(&test, "fflush")))
+    fail("stdio cancellation: partial flush requires socket fflush", 2);
 
   const char *lookup_name = test.name;
   if (is_case(&test, "fread-large"))
@@ -498,11 +722,31 @@ int main(int argc, char **argv) {
   verify_provider(dlsym(RTLD_DEFAULT, "fdopen"));
   verify_provider(dlsym(RTLD_DEFAULT, "fclose"));
   verify_provider(dlsym(RTLD_DEFAULT, "pthread_create"));
+  if (test.socket_io) {
+    const char *const providers[] = {"pthread_join", "pthread_timedjoin_np", "pthread_cancel",
+        "pthread_self", "pthread_setcancelstate", "__pthread_register_cancel",
+        "__pthread_unregister_cancel", "__pthread_unwind_next", "flockfile", "funlockfile",
+        "ftrylockfile", "__fpurge", "__errno_location", NULL};
+    for (size_t i = 0; providers[i]; i++) verify_provider(dlsym(RTLD_DEFAULT, providers[i]));
+    /* A line read must not discover an allocator hazard instead of testing I/O
+     * cancellation: provide its caller-owned space before creating the worker. */
+    test.line = (char *)malloc(16384);
+    test.line_size = 16384;
+    if (!test.line) fail("stdio cancellation: line storage allocation failed", 97);
+  }
 
   int descriptors[2];
-  if (pipe(descriptors) != 0)
-    fail("stdio cancellation: pipe failed", 97);
+  if ((test.socket_io ? socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, descriptors)
+                      : pipe(descriptors)) != 0)
+    fail("stdio cancellation: transport creation failed", 97);
   test.fd = descriptors[test.output ? 1 : 0];
+  int partial_transfer = strcmp(test.phase, "partial") == 0 ||
+                         strcmp(test.phase, "partial-flush") == 0;
+  if (partial_transfer) {
+    int size = 4096;
+    if (setsockopt(test.fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) != 0)
+      fail("stdio cancellation: send capacity setup failed", 97);
+  }
   if (strcmp(test.path, "memory") == 0) {
     test.stream = test.wide ? open_wmemstream(&test.wide_memory, &test.memory_size)
                             : open_memstream(&test.memory, &test.memory_size);
@@ -518,8 +762,10 @@ int main(int argc, char **argv) {
       (strcmp(test.path, "unbuffered") == 0 ||
        (test.output && strcmp(test.phase, "buffered") != 0 && !flushing)
            ? _IONBF : _IOFBF);
+  char flush_buffer[32768];
   if (strcmp(test.path, "memory") != 0 &&
-      setvbuf(test.stream, NULL, buffering, 8192) != 0)
+      setvbuf(test.stream, strcmp(test.phase, "partial-flush") == 0 ? flush_buffer : NULL, buffering,
+              strcmp(test.phase, "partial-flush") == 0 ? 32768 : 8192) != 0)
     fail("stdio cancellation: setvbuf failed", 97);
   FILE *saved_stdin = stdin;
   FILE *saved_stdout = stdout;
@@ -530,10 +776,19 @@ int main(int argc, char **argv) {
       stdin = test.stream;
   }
   if (test.output) {
-    if (strcmp(test.path, "memory") != 0)
-      fill_pipe(descriptors[1]);
-    if (flushing && fputs("R", test.stream) < 0)
+    if (strcmp(test.path, "memory") != 0 && !partial_transfer) {
+      if (test.socket_io) fill_socket(descriptors[1]);
+      else fill_pipe(descriptors[1]);
+    }
+    if (strcmp(test.phase, "partial-flush") == 0) {
+      char bytes[16384];
+      for (size_t i = 0; i < sizeof(bytes); i++) bytes[i] = (char)('!' + i % 90);
+      if (fwrite(bytes, 1, sizeof(bytes), test.stream) != sizeof(bytes) ||
+          __fpending(test.stream) != sizeof(bytes))
+        fail("stdio cancellation: partial flush setup failed", 98);
+    } else if (flushing && fputs("R", test.stream) < 0) {
       fail("stdio cancellation: flush setup failed", 98);
+    }
   }
 
   if (!test.output && strcmp(test.path, "cold") != 0) {
@@ -547,8 +802,13 @@ int main(int argc, char **argv) {
   if (pthread_create(&thread, NULL, reader, &test) != 0)
     fail("stdio cancellation: thread creation failed", 99);
   void *result = NULL;
-  if (strcmp(test.phase, "blocked") == 0 || strcmp(test.phase, "disabled") == 0) {
+  if (strcmp(test.phase, "blocked") == 0 || strcmp(test.phase, "disabled") == 0 ||
+      partial_transfer) {
     wait_for_read(&test);
+    if (partial_transfer &&
+        (syscall(SYS_ioctl, descriptors[0], FIONREAD, &test.committed_prefix) != 0 ||
+         test.committed_prefix <= 0 || test.committed_prefix >= 16384))
+      fail("stdio cancellation: no independently observed partial transfer", 111);
     if (pthread_cancel(thread) != 0)
       fail("stdio cancellation: cancel failed", 100);
     if (strcmp(test.phase, "disabled") == 0) {
@@ -557,7 +817,8 @@ int main(int argc, char **argv) {
         fail("stdio cancellation: disabled request acted", 101);
       if (test.output) {
         for (int attempt = 0; attempt < 2000; attempt++) {
-          drain_pipe(descriptors[0]);
+          if (test.socket_io) drain_socket(descriptors[0]);
+          else drain_pipe(descriptors[0]);
           if (__atomic_load_n(&test.finished, __ATOMIC_ACQUIRE))
             break;
           struct timespec pause = {0, 1000000};
@@ -575,7 +836,8 @@ int main(int argc, char **argv) {
   if (pthread_timedjoin_np(thread, &result, &finish) != 0)
     fail("stdio cancellation: join did not complete", 103);
   int expected_cancel = strcmp(test.phase, "pending") == 0 ||
-                        strcmp(test.phase, "blocked") == 0;
+                        strcmp(test.phase, "blocked") == 0 ||
+                        partial_transfer;
   if (expected_cancel) {
     if (result != PTHREAD_CANCELED || test.cleaned != 1 || test.reused != 1)
       fail("stdio cancellation: cancellation or stream cleanup was lost", 104);
@@ -590,8 +852,14 @@ int main(int argc, char **argv) {
   stdin = saved_stdin;
   stdout = saved_stdout;
   free(test.line);
-  if (test.output && strcmp(test.path, "memory") != 0)
-    drain_pipe(descriptors[0]);
+  if (strcmp(test.phase, "partial") == 0)
+    verify_partial_output(&test, descriptors[0]);
+  else if (strcmp(test.phase, "partial-flush") == 0)
+    verify_partial_flush(&test, descriptors[0]);
+  else if (test.output && strcmp(test.path, "memory") != 0) {
+    if (test.socket_io) drain_socket(descriptors[0]);
+    else drain_pipe(descriptors[0]);
+  }
   if (!test.closed && ftrylockfile(test.stream) != 0)
     fail("stdio cancellation: explicit stream lock remained owned", 109);
   if (!test.closed)

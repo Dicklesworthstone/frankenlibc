@@ -2226,7 +2226,8 @@ unsafe fn native_pthread_create(
                 Ok(mask) => mask,
                 Err(error) => return error,
             };
-            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() }) else {
+            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
+            else {
                 return libc::ENOSYS;
             };
             let rc = unsafe { getdetachstate(attr, &mut detach_state) };
@@ -6007,7 +6008,9 @@ unsafe fn host_attr_signal_mask(source: *const libc::pthread_attr_t) -> Result<O
                     8,
                 );
             }
-            Ok(Some(u64::from_ne_bytes(kernel_mask) & !((1 << 31) | (1 << 32))))
+            Ok(Some(
+                u64::from_ne_bytes(kernel_mask) & !((1 << 31) | (1 << 32)),
+            ))
         }
         error => Err(error),
     }
@@ -7069,49 +7072,6 @@ pub unsafe extern "C-unwind" fn __pthread_setcanceltype(typ: c_int, oldtype: *mu
 // the same reason. The window opens only when the exported entry point's
 // return address lies outside fl's loaded image.
 
-/// A cancellation point whose public entry captured its caller before entering
-/// shared, out-of-line I/O machinery. `caller == 0` explicitly requests internal
-/// non-cancelling I/O; a nonzero address still goes through the normal host-thread
-/// and own-image checks. This must surround only the raw syscall, never stream
-/// mutation, allocation, or a callback.
-///
-/// # Safety
-/// The caller supplies valid syscall arguments and keeps its surrounding state
-/// unwind-safe. `caller` must be the actual public entry's return address, or zero
-/// for internal work; inventing an external address would bypass its admission.
-pub(crate) unsafe fn cancellation_point_syscall_for_caller(
-    caller: usize,
-    nr: libc::c_long,
-    args: [usize; 6],
-) -> isize {
-    let syscall = || {
-        // SAFETY: forwarded from this function's caller without alteration.
-        unsafe {
-            raw_syscall::syscall6(
-                nr as usize,
-                args[0],
-                args[1],
-                args[2],
-                args[3],
-                args[4],
-                args[5],
-            ) as isize
-        }
-    };
-    let ret = if caller == 0 {
-        syscall()
-    } else {
-        // SAFETY: the closure captures only the syscall number and arguments;
-        // cancellation_window opens asynchronous cancellation for that syscall.
-        unsafe { cancellation_window(caller, syscall) }
-    };
-    if (-4095..0).contains(&ret) {
-        unsafe { set_abi_errno(-ret as c_int) };
-        return -1;
-    }
-    ret
-}
-
 /// Run `blocking_syscall` (one blocking system call) as a POSIX cancellation
 /// point of the exported function this is inlined into.
 ///
@@ -7827,6 +7787,25 @@ pub(crate) unsafe fn cancellation_point_read(
     length: usize,
 ) -> Result<isize, c_int> {
     let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_point_read_for_caller(caller, fd, buffer, length) }
+}
+
+/// Preserve a public stdio entry's caller through shared buffer/refill helpers.
+/// Socket-backed FILE reads use the same native cancellation adapter as read;
+/// hosted and unsupported descriptors retain the original syscall window.
+/// `caller == 0` suppresses cancellation for internal I/O and GNU fopen `c` mode.
+///
+/// # Safety
+/// `buffer` must satisfy read's writable-span contract. `caller` is the actual
+/// public entry's captured return address, or zero for non-cancelling work.
+/// Stream state and locks must be owned by surrounding unwind-safe guards.
+#[inline]
+pub(crate) unsafe fn cancellation_point_read_for_caller(
+    caller: usize,
+    fd: c_int,
+    buffer: *mut u8,
+    length: usize,
+) -> Result<isize, c_int> {
     unsafe {
         cancellation_receive_window(caller, cancel_poll::Receive::Read { fd, buffer, length })
     }
@@ -7960,6 +7939,24 @@ pub(crate) unsafe fn cancellation_point_write(
     length: usize,
 ) -> Result<isize, c_int> {
     let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_point_write_for_caller(caller, fd, buffer, length) }
+}
+
+/// Preserve a public stdio entry's caller through shared output/flush helpers.
+/// A successful native send publishes its accepted prefix before cancellation
+/// can act at a later write. Zero retains non-cancelling internal descriptor I/O.
+///
+/// # Safety
+/// `buffer` must satisfy write's readable-span contract. `caller` is the actual
+/// public entry's captured return address, or zero. Surrounding stream state
+/// must remain consistent across a forced unwind before any bytes are accepted.
+#[inline]
+pub(crate) unsafe fn cancellation_point_write_for_caller(
+    caller: usize,
+    fd: c_int,
+    buffer: *const u8,
+    length: usize,
+) -> Result<isize, c_int> {
     unsafe { cancellation_send_window(caller, cancel_poll::Send::Write { fd, buffer, length }) }
 }
 
@@ -8378,7 +8375,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_addr = stack_addr;
             (*data).inherit_sched = inherit_sched;
         }
-        return unsafe { finish_thread_attr_snapshot(attr, resolve_thread_tid(thread).unwrap_or(0)) };
+        return unsafe {
+            finish_thread_attr_snapshot(attr, resolve_thread_tid(thread).unwrap_or(0))
+        };
     }
 
     // Fallback: /proc/self/maps, for the main thread (not created by
