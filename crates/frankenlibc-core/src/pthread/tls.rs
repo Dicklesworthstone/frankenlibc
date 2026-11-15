@@ -857,6 +857,10 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
 
 /// Call before cloning a thread that shares its creator's TLS.
 pub(crate) fn disable_tid_cache() {
+    // Publish the membrane transition before a native child can inherit the
+    // creator's compiler TLS. Existing creator borrows may finish; no new
+    // native or hosted membrane entry may borrow that compiler-TLS state.
+    frankenlibc_membrane::tls_cache::note_native_thread_tls_sharing();
     TID_CACHE_DISABLED.store(true, Ordering::SeqCst);
 }
 

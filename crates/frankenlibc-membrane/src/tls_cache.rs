@@ -42,7 +42,31 @@
 //! monotonicity-only consumer; it is no longer used as the cache-entry tag.
 
 use crate::lattice::SafetyState;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+// Native clone threads currently inherit their creator's compiler TLS. This
+// latch switches membrane cache and EBR entrypoints away from that shared
+// storage for every thread, including the creator and ordinary host threads.
+static NATIVE_THREADS_MAY_SHARE_COMPILER_TLS: AtomicBool = AtomicBool::new(false);
+
+/// Disable compiler-TLS-backed membrane caches before admitting a native thread.
+///
+/// Publish before clone can start a child that inherits its creator's TLS.
+/// The latch remains set after spawn failure, fork, and thread exit. Existing
+/// creator cache borrows and EBR registrations are left untouched; new accesses
+/// use independent temporary storage. This does not provide a native TCB or
+/// make other compiler-TLS state safe to share.
+#[inline]
+pub fn note_native_thread_tls_sharing() {
+    NATIVE_THREADS_MAY_SHARE_COMPILER_TLS.store(true, Ordering::SeqCst);
+}
+
+/// Whether native-thread admission requires avoiding compiler-TLS membrane state.
+#[inline(always)]
+#[must_use]
+pub fn native_threads_may_share_compiler_tls() -> bool {
+    NATIVE_THREADS_MAY_SHARE_COMPILER_TLS.load(Ordering::Acquire)
+}
 
 /// Number of entries in the TLS cache (must be power of 2).
 const CACHE_SIZE: usize = 1024;
@@ -943,6 +967,10 @@ pub fn with_tls_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
+    if native_threads_may_share_compiler_tls() {
+        let mut fallback = TlsValidationCache::unbacked();
+        return f(&mut fallback);
+    }
     let mut maybe_f = Some(f);
     let result = TLS_CACHE.try_with(|cache| {
         match cache.try_borrow_mut() {
@@ -979,6 +1007,9 @@ pub(crate) fn try_with_tls_cache_hit<F, R: Copy>(default: R, f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
+    if native_threads_may_share_compiler_tls() {
+        return default;
+    }
     TLS_CACHE
         .try_with(|cache| match cache.try_borrow_mut() {
             Ok(mut borrowed) => f(&mut borrowed),
@@ -989,6 +1020,9 @@ where
 
 #[cfg(not(feature = "owned-tls-cache"))]
 pub(crate) fn flush_current_thread_hit_metrics() {
+    if native_threads_may_share_compiler_tls() {
+        return;
+    }
     let _ = TLS_CACHE.try_with(|cache| {
         if let Ok(mut borrowed) = cache.try_borrow_mut() {
             borrowed.flush_pipeline_hits();

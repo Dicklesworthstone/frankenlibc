@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-membrane/**'
+      - 'crates/frankenlibc-core/src/pthread/tls.rs'
+      - 'crates/frankenlibc-core/src/pthread/thread.rs'
+      - 'crates/frankenlibc-core/tests/native_membrane_tls_test.rs'
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/src/segment_mapping.rs'
       - 'crates/frankenlibc-abi/src/rpc_svc.rs'
@@ -61,6 +64,17 @@ jobs:
             ptr_validator::tests::validation_context_ -- --test-threads=1 --nocapture \
             2>&1 | tee artifacts/access/validation-context-owned.log
           grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/validation-context-owned.log
+      - name: Preserve membrane storage isolation across native thread creation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --test native_membrane_tls_test \
+            -- --nocapture --test-threads=1 2>&1 | tee artifacts/access/native-membrane-default.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/native-membrane-default.log
+          cargo test -p frankenlibc-core --features owned-tls-cache,frankenlibc-membrane/owned-tls-cache \
+            --test native_membrane_tls_test -- --nocapture --test-threads=1 \
+            2>&1 | tee artifacts/access/native-membrane-owned.log
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/access/native-membrane-owned.log
       - name: Prepare production-library integration targets
         shell: bash
         run: |

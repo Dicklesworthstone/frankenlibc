@@ -996,7 +996,7 @@ impl ValidationPipeline {
     /// Pin the EBR epoch for the duration of validation.
     fn pin_epoch(&self) -> PinnedEpochGuard<'_> {
         #[cfg(not(feature = "owned-tls-cache"))]
-        {
+        if !crate::tls_cache::native_threads_may_share_compiler_tls() {
             let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
             // `try_with`: validation also runs during thread teardown -- host
             // thread-key destructors (OpenSSL's per-thread cleanup) call
