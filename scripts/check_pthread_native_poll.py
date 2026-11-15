@@ -242,12 +242,25 @@ SENDMSG_CASES = tuple(
 # GNU 2.41 preserves a send prefix when cancellation arrives after progress.
 # The hosted bridge still uses its documented asynchronous window; validate
 # this stronger contract for the native adapter in the GNU 2.41 socket job.
+SENDMMSG_CASES = tuple(
+    f"sendmmsg-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in (
+        "blocked", "pending", "disabled", "ready", "ready-late", "nonblock", "dontwait",
+        "timeout", "signal", "signal-restart", "partial-error", "errors", "zero", "count-zero",
+        "rights-invalid", "output-fault", "reuse",
+    )
+) + tuple(
+    f"sendmmsg-alias-{transport}-{case}"
+    for transport in ("datagram", "seqpacket")
+    for case in ("blocked", "pending", "partial-error", "output-fault")
+)
 SEND_NATIVE_CASES = ("send-partial-cancel", "sendmsg-partial-cancel")
 
 # Suspension cleanup follows the GNU 2.41 oracle in its dedicated CI job.
 # Keep the existing descriptor/sleep gate on its established GNU baseline.
 CASES = (POLL_CASES + EPOLL_CASES + SLEEP_CASES + SELECT_CASES + READ_CASES + FD_IO_CASES +
-         MESSAGE_IO_CASES + RECEIVE_CASES + SEND_CASES + SENDMSG_CASES)
+         MESSAGE_IO_CASES + RECEIVE_CASES + SEND_CASES + SENDMSG_CASES + SENDMMSG_CASES)
 
 
 def digest(path: Path) -> str:
@@ -292,10 +305,14 @@ def main() -> int:
         "--sendmsg-only", action="store_true",
         help="Run vectored and ancillary sendmsg cases, including native partial cancellation.",
     )
+    parser.add_argument(
+        "--sendmmsg-only", action="store_true",
+        help="Run atomic batch sends, cancellation, prefix errors and message-length publication.",
+    )
     args = parser.parse_args()
     if sum((args.suspend_only, args.read_only, args.fd_io_only, args.message_io_only,
-            args.receive_only, args.send_only, args.sendmsg_only)) > 1:
-        parser.error("--suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only and --sendmsg-only are mutually exclusive")
+            args.receive_only, args.send_only, args.sendmsg_only, args.sendmmsg_only)) > 1:
+        parser.error("--suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only, --sendmsg-only and --sendmmsg-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
@@ -304,7 +321,8 @@ def main() -> int:
              MESSAGE_IO_CASES if args.message_io_only else
              RECEIVE_CASES if args.receive_only else
              SEND_CASES + SENDMSG_CASES + SEND_NATIVE_CASES if args.send_only else
-             SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else CASES)
+             SENDMSG_CASES + ("sendmsg-partial-cancel",) if args.sendmsg_only else
+             SENDMMSG_CASES if args.sendmmsg_only else CASES)
     native_only_cases = SEND_NATIVE_CASES + FD_IO_NATIVE_CASES
     native_only_cases = tuple(case for case in native_only_cases if case in cases)
     candidate_cases = 0 if args.host_only else 4 * len(cases) - 2 * len(native_only_cases)
@@ -388,6 +406,8 @@ def main() -> int:
         ).replace("recvmsg-alias-", "recvmsg-").replace(
             "send-alias-", "send-"
         ).replace("sendto-alias-", "sendto-").replace("sendmsg-alias-", "sendmsg-").replace(
+            "sendmmsg-alias-", "sendmmsg-"
+        ).replace(
             "pause-alias-", "pause-"
         ).replace("sigsuspend-alias-", "sigsuspend-")
         if "-alias-" in case and not case.endswith("-alias-remainder"):
@@ -432,7 +452,8 @@ def main() -> int:
                       "descriptor I/O on datagram and SEQPACKET sockets only" if args.message_io_only else
                       "socket receives only" if args.receive_only else
                       "socket sends only" if args.send_only else
-                      "vectored socket sends only" if args.sendmsg_only else "poll/epoll/sleep/select/socket",
+                      "vectored socket sends only" if args.sendmsg_only else
+                      "batched atomic socket sends only" if args.sendmmsg_only else "poll/epoll/sleep/select/socket",
         "revision": revision.stdout.strip() if revision.returncode == 0 else None,
         "fixture_sha256": digest(source), "runner_sha256": digest(Path(__file__)),
         "binary_sha256": digest(binary), "library_sha256": digest(library) if library else None,
@@ -448,6 +469,7 @@ def main() -> int:
         "message_io_cases": sum(case in MESSAGE_IO_CASES for case in cases),
         "receive_cases": sum(case in RECEIVE_CASES for case in cases),
         "send_cases": sum(case.startswith(("send-", "sendto-", "sendmsg-")) for case in cases),
+        "sendmmsg_cases": sum(case in SENDMMSG_CASES for case in cases),
         "native_only_cases": list(native_only_cases),
         "oracle_cases": len(cases), "candidate_cases": candidate_cases,
         "provider_negatives": 1, "backend_negatives": 1,

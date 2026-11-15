@@ -7994,6 +7994,30 @@ pub(crate) unsafe fn cancellation_point_sendmsg(
     unsafe { cancellation_send_window(caller, cancel_poll::Send::Message { fd, message, flags }) }
 }
 
+/// Batched message sends share record-counted native cancellation. Stream
+/// batches and unsupported socket contracts retain the original syscall.
+#[inline(always)]
+pub(crate) unsafe fn cancellation_point_sendmmsg(
+    fd: c_int,
+    messages: *mut u8,
+    count: u32,
+    flags: c_int,
+) -> Result<c_int, c_int> {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe {
+        cancellation_send_window(
+            caller,
+            cancel_poll::Send::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+            },
+        )
+    }
+    .map(|sent| sent as c_int)
+}
+
 /// This frame owns no drop state across hosted asynchronous cancellation.
 /// Partial sends remain successful; a pending request then belongs to the next
 /// cancellation point, exactly as for an interrupted raw send with progress.

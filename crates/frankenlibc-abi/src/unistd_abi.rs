@@ -17251,10 +17251,19 @@ pub unsafe extern "C-unwind" fn sendmmsg(
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
+    unsafe { sendmmsg_cp(sockfd, msgvec, vlen, flags) }
+}
+
+/// Keep caller capture at the public or reserved-alias boundary.
+#[inline(always)]
+pub(crate) unsafe fn sendmmsg_cp(
+    sockfd: c_int,
+    msgvec: *mut c_void,
+    vlen: c_uint,
+    flags: c_int,
+) -> c_int {
     match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
-        })
+        crate::pthread_abi::cancellation_point_sendmmsg(sockfd, msgvec.cast(), vlen, flags)
     } {
         Ok(n) => n,
         Err(e) => {

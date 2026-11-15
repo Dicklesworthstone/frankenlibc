@@ -8874,17 +8874,7 @@ pub unsafe extern "C-unwind" fn __sendmmsg(
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
-        })
-    } {
-        Ok(v) => v,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::unistd_abi::sendmmsg_cp(sockfd, msgvec, vlen, flags) }
 }
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,11 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/c11threads_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_cancel_poll.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'tests/integration/fixture_pthread_native_poll.c'
+      - 'scripts/check_pthread_native_poll.py'
       - 'crates/frankenlibc-abi/tests/c11threads_abi_test.rs'
       - 'tests/integration/fixture_c11_thread_cancel*'
       - 'scripts/check_c11_thread_cancellation.sh'
@@ -47,6 +52,11 @@ jobs:
           mkdir -p artifacts/c11-cancellation
           git rev-parse HEAD > artifacts/c11-cancellation/revision.txt
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/c11-cancellation/build.log
+      - name: Verify native batch send cancellation and record ownership against GNU
+        run: |
+          python3 scripts/check_pthread_native_poll.py \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --sendmmsg-only --out-dir artifacts/c11-cancellation/sendmmsg
       - name: Execute bounded C cancellation and signal cases in both modes
         run: bash scripts/check_c11_thread_cancellation.sh "$PWD/target/release/libfrankenlibc_abi.so"
       - name: Preserve existing C11 ABI tests

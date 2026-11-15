@@ -865,14 +865,21 @@ pub(super) enum Send {
         message: *const u8,
         flags: c_int,
     },
+    Messages {
+        fd: c_int,
+        messages: *mut u8,
+        count: u32,
+        flags: c_int,
+    },
 }
 
 impl Send {
     fn with_fd(mut self, pinned: c_int) -> Self {
         match &mut self {
-            Self::Write { fd, .. } | Self::WriteVector { fd, .. } | Self::Message { fd, .. } => {
-                *fd = pinned
-            }
+            Self::Write { fd, .. }
+            | Self::WriteVector { fd, .. }
+            | Self::Message { fd, .. }
+            | Self::Messages { fd, .. } => *fd = pinned,
             Self::To(operation) => operation.fd = pinned,
         }
         self
@@ -901,6 +908,14 @@ impl Send {
             Self::Message { fd, message, flags } => unsafe {
                 syscall::sys_sendmsg(fd, message, flags)
             },
+            Self::Messages {
+                fd,
+                messages,
+                count,
+                flags,
+            } => unsafe {
+                syscall::sys_sendmmsg(fd, messages, count, flags).map(|sent| sent as isize)
+            },
         }
     }
 }
@@ -912,6 +927,11 @@ trait SendOperation {
     fn set_fd(&mut self, fd: c_int);
     fn flags(&self) -> c_int;
     fn length(&self) -> usize;
+
+    /// Batch progress counts whole records, never bytes of a stream message.
+    fn record_batch(&self) -> bool {
+        false
+    }
 
     fn can_pin(&self) -> bool {
         true
@@ -939,6 +959,12 @@ trait SendOperation {
             return false;
         }
         let socket_type = socket_integer_option(fd, libc::SO_TYPE);
+        if self.record_batch()
+            && (self.length() == 0
+                || !matches!(socket_type, Some(libc::SOCK_DGRAM | libc::SOCK_SEQPACKET)))
+        {
+            return false;
+        }
         // Scalar write of zero bytes emits an empty datagram/SEQPACKET record
         // and can block on a full queue. Empty stream writes keep their raw
         // no-op/error ordering. Empty writev is rejected during its import:
@@ -965,6 +991,22 @@ trait SendOperation {
             )
         ) {
             return false;
+        }
+        if self.record_batch() && matches!(domain, Some(libc::AF_INET | libc::AF_INET6)) {
+            let mut address = [0u8; 128];
+            let mut size = address.len() as u32;
+            // SAFETY: getsockname writes only into these owned sockaddr/length
+            // buffers. Both admitted Internet sockaddr layouts put their
+            // network-order port in bytes 2..4; testing zero is endian-neutral.
+            if unsafe { syscall::sys_getsockname(fd, address.as_mut_ptr(), &mut size) }.is_err()
+                || size < 4
+                || (address[2] == 0 && address[3] == 0)
+            {
+                // On an unbound UDP socket EAGAIN can mean ephemeral-port
+                // exhaustion, not backpressure. Preserve its immediate raw
+                // sendmmsg result instead of entering an endless readiness wait.
+                return false;
+            }
         }
         let mut timeout = libc::timeval {
             tv_sec: 0,
@@ -1026,6 +1068,84 @@ impl SendOperation for SendTo {
                 self.address,
                 self.address_length,
             )
+        }
+    }
+}
+
+/// Native sendmmsg keeps each message's kernel-validated output publication.
+/// Probing the whole vector nonblockingly would hide the error following a
+/// successful prefix: retrying that suffix could erase an asynchronous error
+/// or retransmit a record whose msg_len write faulted. A one-message syscall
+/// makes each committed record and each error distinguishable instead.
+struct SendMessages {
+    fd: c_int,
+    messages: *mut u8,
+    count: u32,
+    flags: c_int,
+}
+
+impl SendOperation for SendMessages {
+    fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    fn set_fd(&mut self, fd: c_int) {
+        self.fd = fd;
+    }
+
+    fn flags(&self) -> c_int {
+        self.flags
+    }
+
+    fn length(&self) -> usize {
+        // Linux clips sendmmsg's vector to UIO_MAXIOV before importing it.
+        (self.count as usize).min(crate::io_abi::iov_snapshot::MAX_IOVECS)
+    }
+
+    fn record_batch(&self) -> bool {
+        true
+    }
+
+    fn can_pin(&self) -> bool {
+        for index in 0..self.length() {
+            // SAFETY: all-zero is valid for msghdr's integer and pointer fields.
+            let mut header: libc::msghdr = unsafe { core::mem::zeroed() };
+            let source = self
+                .messages
+                .wrapping_add(index * core::mem::size_of::<libc::mmsghdr>());
+            // SAFETY: the destination is initialized owned storage. Faulting
+            // or unaligned caller headers remain checked by the kernel copier.
+            if unsafe {
+                copy_user_bytes(
+                    source.cast_const(),
+                    core::ptr::from_mut(&mut header).cast(),
+                    core::mem::size_of::<libc::msghdr>(),
+                )
+            }
+            .is_err()
+                || header.msg_controllen != 0
+            {
+                // A private fd could turn an invalid SCM_RIGHTS source into
+                // a valid socket. Preserve the established unpinned path for
+                // any ancillary or inaccessible header in the batch.
+                return false;
+            }
+        }
+        true
+    }
+
+    unsafe fn probe(&mut self, sent: usize) -> Result<isize, c_int> {
+        let message = self
+            .messages
+            .wrapping_add(sent * core::mem::size_of::<libc::mmsghdr>());
+        // SAFETY: sent counts only entries whose complete record and msg_len
+        // were published by previous syscalls. The caller's current header,
+        // payload, address and control graph remain entirely kernel-validated.
+        // Preserve SIGPIPE behavior for a later message: unlike a byte prefix
+        // of one stream send, it is a distinct message in the original batch.
+        unsafe {
+            syscall::sys_sendmmsg(self.fd, message, 1, self.flags | libc::MSG_DONTWAIT)
+                .map(|count| count as isize)
         }
     }
 }
@@ -1264,6 +1384,24 @@ pub(super) unsafe fn wait_send(
         Send::Message { fd, message, flags } => unsafe {
             wait_send_message(fd, message, flags, cancel, supports_handlers)
         },
+        Send::Messages {
+            fd,
+            messages,
+            count,
+            flags,
+        } => unsafe {
+            wait_send_operation(
+                SendMessages {
+                    fd,
+                    messages,
+                    count,
+                    flags,
+                },
+                operation,
+                cancel,
+                supports_handlers,
+            )
+        },
     }
 }
 
@@ -1368,8 +1506,10 @@ unsafe fn send_slices(
             });
         }
         recheck_handlers = true;
-        // Datagram/SEQPACKET sends are atomic; only stream probes can accept a
-        // prefix. Do not turn a temporary lack of space into a short success.
+        // Atomic-message probes preserve complete records. A batch probe
+        // commits one record and its msg_len at a time; only a single-message
+        // stream probe can accept a byte prefix. Backpressure is never a
+        // fabricated short success while cancellation remains enabled.
         match unsafe { operation.probe(sent) } {
             Ok(written) => {
                 sent += written as usize;
