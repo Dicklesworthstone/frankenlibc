@@ -1312,13 +1312,12 @@ pub(crate) fn resolved_mode() -> SafetyLevel {
 
 #[must_use]
 pub(crate) fn mode() -> SafetyLevel {
-    // Owned scratch storage grows through the allocator. Its first access can
-    // therefore call back into mode() while RUNTIME_POLICY_OWNED_TLS is locked,
-    // including before the process mode has been resolved. Consult only the
-    // immutable atomic in that context: trying the TLS cache again waits for
-    // this very frame. Unresolved/resolving retains the existing strict
-    // bootstrap behavior, without caching that temporary answer.
-    #[cfg(feature = "owned-tls-cache")]
+    // Owned policy state, including default native-thread state, can be in use
+    // when allocator callbacks or signal handlers reenter mode(). Consult only
+    // the immutable process atomic: avoid another owned borrow and the
+    // unavailable-TLS sampler's environment scan and logging lock.
+    // Unresolved/resolving retains the existing strict bootstrap behavior,
+    // without caching that temporary answer.
     if runtime_policy_tls_reentry_active() {
         return u8_to_mode(MODE_STATE.load(AtomicOrdering::Acquire));
     }
@@ -5258,6 +5257,18 @@ mod tests {
             risk_upper_bound_ppm: 0,
             evidence_seqno: 9,
         };
+        fn reentrant_mode_keeps_sampler_idle() -> bool {
+            // A signal-handler write reaches mode() through decide() even
+            // while this thread's owned policy slot is accessed. At this
+            // boundary the unavailable-TLS fallback would scan environ and
+            // potentially acquire the mode-event log lock. Reentry must read
+            // the immutable mode without touching that sampler.
+            let boundary = MODE_SWITCH_CHECK_STRIDE - 1;
+            let previous = MODE_SWITCH_CHECK_COUNTER.swap(boundary, AtomicOrdering::SeqCst);
+            let resolved = mode();
+            let sampled = MODE_SWITCH_CHECK_COUNTER.swap(previous, AtomicOrdering::SeqCst);
+            resolved == SafetyLevel::Hardened && sampled == boundary
+        }
         unsafe extern "C" fn worker(raw: *mut c_void) -> *mut c_void {
             // The creator allocates all test state. Native code below uses
             // only policy POD, owned mmap slots, raw identity and atomics; it
@@ -5333,14 +5344,16 @@ mod tests {
                 probe
                     .payload_addr
                     .store(state as *mut _ as usize, AtomicOrdering::Release);
-                runtime_policy_tls_reentry_active() && RUNTIME_POLICY_TLS.try_with(|_| ()).is_err()
+                runtime_policy_tls_reentry_active()
+                    && RUNTIME_POLICY_TLS.try_with(|_| ()).is_err()
+                    && reentrant_mode_keeps_sampler_idle()
             });
             #[cfg(feature = "owned-tls-cache")]
             let protected = with_runtime_policy_tls(|state| {
                 probe
                     .payload_addr
                     .store(state as *mut _ as usize, AtomicOrdering::Release);
-                runtime_policy_tls_reentry_active()
+                runtime_policy_tls_reentry_active() && reentrant_mode_keeps_sampler_idle()
             });
             if !protected {
                 failures |= 256;
@@ -5349,6 +5362,7 @@ mod tests {
         }
 
         prepare_native_thread_runtime().expect("prepare policy key without activating math");
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
         with_mode_cache(|value| *value = MODE_STRICT);
         with_trace_counter(|value| *value = 100);
         with_decision_counter(|value| *value = 200);
