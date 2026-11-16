@@ -7316,10 +7316,10 @@ unsafe fn cancellation_sleep_window(
                 std::mem::size_of::<raw_syscall::Timespec>(),
             )
         };
-        let result = imported.and_then(|()| {
+        let result = match imported {
             // SAFETY: owned is initialized and aligned, and cancel belongs to
             // this live native thread for the entire bounded sleep.
-            unsafe {
+            Ok(()) => unsafe {
                 cancel_poll::wait_sleep(
                     &owned,
                     clock,
@@ -7328,8 +7328,16 @@ unsafe fn cancellation_sleep_window(
                     cancel,
                     crate::signal_abi::supports_native_child_wait,
                 )
-            }
-        });
+            },
+            // Preserve known allocation bounds and genuine copy faults. Other
+            // errors belong to the snapshot transport (for example, seccomp
+            // denial or pipe descriptor exhaustion), not to the sleep request.
+            Err(libc::EFAULT) => Err(libc::EFAULT),
+            // The original syscall safely imports the original timespec. This
+            // retains pending-only native cancellation when the bounded adapter
+            // cannot acquire a snapshot; it must not invent a new sleep error.
+            Err(_) => Ok(cancel_poll::SleepResult::Unsupported),
+        };
         if cancel.pending() {
             unsafe { pthread_testcancel() };
         }

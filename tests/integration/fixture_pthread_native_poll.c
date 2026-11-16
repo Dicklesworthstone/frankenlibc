@@ -890,6 +890,8 @@ struct sleep_probe {
     struct state observed;
     enum sleep_api api;
     enum sleep_kind kind;
+    int import_denied;
+    int syscall_denied;
     const struct timespec *request;
     struct timespec *output;
     struct timespec remaining;
@@ -992,6 +994,16 @@ static void *sleep_worker(void *argument) {
     sigaddset(&mask, SIGUSR2);
     if (probe->kind == SLEEP_MASK_BLOCK) sigaddset(&mask, SIGUSR1);
     REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "sleep worker signal mask");
+    if (probe->import_denied) {
+        deny_io_probe(SYS_process_vm_readv, EPERM);
+        deny_io_probe(SYS_pipe2, EPERM);
+    }
+    if (probe->syscall_denied) {
+#ifdef SYS_nanosleep
+        deny_io_probe(SYS_nanosleep, EPERM);
+#endif
+        deny_io_probe(SYS_clock_nanosleep, EPERM);
+    }
     if (probe->kind == SLEEP_TIMER_CREATE_DENIED)
         deny_io_probe(SYS_timerfd_create, EPERM);
     else if (probe->kind == SLEEP_TIMER_ARM_DENIED)
@@ -1061,7 +1073,8 @@ static void observe_sleep_parked(struct sleep_probe *probe, int memory) {
     const int fallback = timer && (sleep_has_deliverable_handler(probe->kind) ||
         probe->kind == SLEEP_TIMER_CREATE_DENIED || probe->kind == SLEEP_TIMER_ARM_DENIED ||
         probe->kind == SLEEP_PERSONALITY_DENIED);
-    const int sliced = expect_native && probe->kind != SLEEP_DISABLED && !fallback;
+    const int sliced = expect_native && probe->kind != SLEEP_DISABLED &&
+                       !fallback && !probe->import_denied;
     int64_t deadline = monotonic_ns() + 2000000000;
     while (monotonic_ns() < deadline) {
         REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
@@ -1122,6 +1135,11 @@ static int sleep_contract_main(char **argv) {
     for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
         if (strncmp(entry, prefixes[i], strlen(prefixes[i])) == 0) { api = (int)i; entry += strlen(prefixes[i]); break; }
     if (api < 0) return 2;
+    int import_denied = strncmp(entry, "import-denied-", 14) == 0;
+    if (import_denied) entry += 14;
+    int syscall_denied = strncmp(entry, "syscall-denied-", 15) == 0;
+    if (syscall_denied) entry += 15;
+    if (syscall_denied && !import_denied) return 2;
     int alias = strncmp(entry, "alias-", 6) == 0;
     /* alias-remainder is a pointer-aliasing case, not an exported symbol. */
     if (strcmp(entry, "alias-remainder") == 0) alias = 0;
@@ -1135,6 +1153,7 @@ static int sleep_contract_main(char **argv) {
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(entry, names[i]) == 0) kind = (int)i;
     if (kind < 0 || ((api == SLEEP_SECONDS || api == SLEEP_MICRO) && kind >= SLEEP_READONLY)) return 2;
+    if (syscall_denied && kind != SLEEP_TIMEOUT) return 2;
     if (kind == SLEEP_EXPIRED && !sleep_is_absolute((enum sleep_api)api)) return 2;
     if ((kind == SLEEP_TIMER_CREATE_DENIED || kind == SLEEP_TIMER_ARM_DENIED ||
          kind == SLEEP_PERSONALITY_DENIED) && !sleep_uses_timer((enum sleep_api)api)) return 2;
@@ -1193,6 +1212,8 @@ static int sleep_contract_main(char **argv) {
     struct sleep_probe probe = {0};
     probe.api = (enum sleep_api)api;
     probe.kind = (enum sleep_kind)kind;
+    probe.import_denied = import_denied;
+    probe.syscall_denied = syscall_denied;
     probe.request = (const struct timespec *)(storage + offset);
     probe.remaining = sentinel;
     probe.output = &probe.remaining;
@@ -1209,7 +1230,8 @@ static int sleep_contract_main(char **argv) {
     wait_ready(state);
     if (kind == SLEEP_PENDING) REQUIRE(pthread_cancel(state->thread) == 0, "queue pending sleep cancellation");
     atomic_store_explicit(&state->release, 1, memory_order_release);
-    if (kind != SLEEP_PENDING && kind != SLEEP_ZERO && kind != SLEEP_ERRORS && kind != SLEEP_EXPIRED)
+    if (!syscall_denied && kind != SLEEP_PENDING && kind != SLEEP_ZERO &&
+        kind != SLEEP_ERRORS && kind != SLEEP_EXPIRED)
         observe_sleep_parked(&probe, memory);
     if (kind == SLEEP_BLOCKED || kind == SLEEP_DISABLED) {
         REQUIRE(pthread_cancel(state->thread) == 0, "cancel observed kernel sleep");
@@ -1227,7 +1249,9 @@ static int sleep_contract_main(char **argv) {
     REQUIRE(atomic_load_explicit(&state->cleaned, memory_order_acquire) == 1, "sleep cleanup exactly once");
     REQUIRE(atomic_load_explicit(&state->returned, memory_order_acquire) == (!canceled || kind == SLEEP_DISABLED),
             "sleep return versus cancellation");
-    if (interrupted) {
+    if (syscall_denied) {
+        verify_sleep_error(&probe, state->result, state->error, EPERM);
+    } else if (interrupted) {
         int expected = kind == SLEEP_READONLY_REMAINDER && !sleep_is_absolute((enum sleep_api)api) ? EFAULT : EINTR;
         if (api == SLEEP_SECONDS)
             REQUIRE(state->result == 1 && state->error == EINTR,
@@ -1256,6 +1280,8 @@ static int sleep_contract_main(char **argv) {
         }
     } else if (!canceled || kind == SLEEP_DISABLED) {
         REQUIRE(state->result == 0, "sleep reaches its finite deadline");
+        if (import_denied && kind != SLEEP_ERRORS)
+            REQUIRE(state->error == EDOM, "successful import fallback preserves the caller's errno");
         if (kind != SLEEP_ZERO && kind != SLEEP_ERRORS && kind != SLEEP_EXPIRED)
             REQUIRE(state->elapsed_ns >= (api == SLEEP_SECONDS ? 900000000 : 200000000) &&
                         state->elapsed_ns < 2000000000,
