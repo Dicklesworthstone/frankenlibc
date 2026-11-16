@@ -15,6 +15,289 @@ use frankenlibc_abi::wchar_abi::*;
 /// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static STDIO_GLOBAL_STREAM_LOCK: Mutex<()> = Mutex::new(());
 
+fn run_native_wchar_test_in_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_NATIVE_WCHAR_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return false;
+    }
+    // Native admission permanently disables shared compiler-TLS caches. Keep
+    // every regression's first-clone transition out of other test processes.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start native wchar child");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out && output.status.success() && stdout.contains("1 passed;"),
+        "native wchar child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+        output.status
+    );
+    true
+}
+
+fn run_native_wchar_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> usize {
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(
+        frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests(),
+    );
+    let mut thread = 0;
+    // SAFETY: the caller keeps all callback arguments alive through join.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::pthread_abi::pthread_create(
+                &mut thread,
+                std::ptr::null(),
+                Some(worker),
+                argument,
+            )
+        },
+        0
+    );
+    let mut result = std::ptr::null_mut();
+    // SAFETY: this is the live joinable native thread returned above.
+    assert_eq!(
+        unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) },
+        0
+    );
+    result as usize
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn wchar_native_tls_formatting_avoids_the_creators_borrowed_pool() {
+    if run_native_wchar_test_in_child(
+        "wchar_native_tls_formatting_avoids_the_creators_borrowed_pool",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn format(_: *mut c_void) -> *mut c_void {
+        let long = [b'[' as i32, b'%' as i32, b'd' as i32, b']' as i32, 0];
+        let short = [b'%' as i32, b'd' as i32, 0];
+        let mut out = [0_i32; 16];
+        // SAFETY: terminated wide formats, matching promoted arguments, and a
+        // writable output buffer. Report scalar failures without unwinding.
+        unsafe {
+            if swprintf(out.as_mut_ptr(), out.len(), long.as_ptr(), 42 as c_int) != 4
+                || out[..5] != [b'[' as i32, b'4' as i32, b'2' as i32, b']' as i32, 0]
+            {
+                return 1usize as *mut c_void;
+            }
+            if swprintf(out.as_mut_ptr(), out.len(), short.as_ptr(), 7 as c_int) != 1
+                || out[..2] != [b'7' as i32, 0]
+            {
+                return 2usize as *mut c_void;
+            }
+        }
+        std::ptr::null_mut()
+    }
+    let result = with_wchar_format_pool_borrow_for_tests(|| {
+        run_native_wchar_worker(format, std::ptr::null_mut())
+    });
+    assert_eq!(result, 0);
+}
+
+#[test]
+fn wchar_native_tls_preserves_the_creators_returned_wide_line() {
+    if run_native_wchar_test_in_child("wchar_native_tls_preserves_the_creators_returned_wide_line")
+    {
+        return;
+    }
+    unsafe extern "C" fn read_line(stream: *mut c_void) -> *mut c_void {
+        let mut length = 0;
+        // SAFETY: the creator keeps this independent FILE alive until join.
+        let line = unsafe { fgetwln(stream, &mut length) };
+        if line.is_null() || length != 6 {
+            return 1usize as *mut c_void;
+        }
+        let expected = [
+            b'c' as i32,
+            b'h' as i32,
+            b'i' as i32,
+            b'l' as i32,
+            b'd' as i32,
+            10,
+        ];
+        // SAFETY: the returned buffer has exactly length readable wide chars.
+        if unsafe { std::slice::from_raw_parts(line, length) } != expected.as_slice() {
+            return 2usize as *mut c_void;
+        }
+        std::ptr::null_mut()
+    }
+    let creator_line = wstr(b"creator-wide\n");
+    let child_line = wstr(b"child\n");
+    // SAFETY: both FILEs and terminated wide strings outlive native execution.
+    unsafe {
+        let creator = frankenlibc_abi::stdio_abi::tmpfile();
+        let child = frankenlibc_abi::stdio_abi::tmpfile();
+        assert!(!creator.is_null() && !child.is_null());
+        assert!(verify_native_file(creator).is_some());
+        assert!(verify_native_file(child).is_some());
+        assert_eq!(fputws(creator_line.as_ptr().cast(), creator), 0);
+        assert_eq!(fputws(child_line.as_ptr().cast(), child), 0);
+        assert_eq!(
+            frankenlibc_abi::stdio_abi::fseek(creator, 0, libc::SEEK_SET),
+            0
+        );
+        assert_eq!(
+            frankenlibc_abi::stdio_abi::fseek(child, 0, libc::SEEK_SET),
+            0
+        );
+        let mut length = 0;
+        let retained = fgetwln(creator, &mut length);
+        assert!(!retained.is_null());
+        assert_eq!(length, creator_line.len() - 1);
+
+        assert_eq!(run_native_wchar_worker(read_line, child), 0);
+        assert_eq!(
+            std::slice::from_raw_parts(retained.cast::<u32>(), length),
+            &creator_line[..creator_line.len() - 1]
+        );
+        assert_eq!(
+            frankenlibc_abi::stdio_abi::fseek(creator, 0, libc::SEEK_SET),
+            0
+        );
+        let next = fgetwln(creator, &mut length);
+        assert!(!next.is_null());
+        assert_eq!(
+            std::slice::from_raw_parts(next.cast::<u32>(), length),
+            &creator_line[..creator_line.len() - 1]
+        );
+        assert_eq!(frankenlibc_abi::stdio_abi::fclose(creator), 0);
+        assert_eq!(frankenlibc_abi::stdio_abi::fclose(child), 0);
+    }
+}
+
+#[test]
+fn wchar_native_tls_keeps_pending_utf8_and_utf16_state_per_thread() {
+    if run_native_wchar_test_in_child(
+        "wchar_native_tls_keeps_pending_utf8_and_utf16_state_per_thread",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn convert(_: *mut c_void) -> *mut c_void {
+        let mut wide: libc::wchar_t = 0;
+        let mut unit = 0_u16;
+        let mut bytes = [0_u8; 4];
+        let mut failures = 0usize;
+        // SAFETY: all input/output arrays are live; null ps deliberately tests
+        // the three separate implicit conversion states, without assertions.
+        unsafe {
+            if mbrtowc(&mut wide, c"A".as_ptr(), 1, std::ptr::null_mut()) != 1
+                || wide != b'A' as i32
+            {
+                failures |= 1;
+            }
+            if mbrtoc16(&mut unit, c"B".as_ptr(), 1, std::ptr::null_mut()) != 1
+                || unit != b'B' as u16
+            {
+                failures |= 2;
+            }
+            if c16rtomb(bytes.as_mut_ptr().cast(), b'C' as u16, std::ptr::null_mut()) != 1
+                || bytes[0] != b'C'
+            {
+                failures |= 4;
+            }
+            if mbrtowc(
+                &mut wide,
+                [0xe2_u8].as_ptr().cast(),
+                1,
+                std::ptr::null_mut(),
+            ) != usize::MAX - 1
+                || mbrtowc(
+                    &mut wide,
+                    [0x82_u8, 0xac].as_ptr().cast(),
+                    2,
+                    std::ptr::null_mut(),
+                ) != 2
+                || wide != 0x20ac
+            {
+                failures |= 8;
+            }
+        }
+        failures as *mut c_void
+    }
+    // Use a global UTF-8 locale in this isolated process. This regression does
+    // not rely on the separately unfinished native uselocale implementation.
+    // SAFETY: all input arrays are live for their calls and the local output
+    // objects have the complete wchar/char16/four-byte extents required below.
+    unsafe {
+        assert!(
+            !frankenlibc_abi::locale_abi::setlocale(libc::LC_CTYPE, c"C.UTF-8".as_ptr()).is_null()
+        );
+        let mut wide: libc::wchar_t = 0;
+        let mut unit = 0_u16;
+        let mut bytes = [0_u8; 4];
+        assert_eq!(
+            mbrtowc(
+                &mut wide,
+                [0xe2_u8].as_ptr().cast(),
+                1,
+                std::ptr::null_mut()
+            ),
+            usize::MAX - 1
+        );
+        assert_eq!(
+            mbrtoc16(
+                &mut unit,
+                [0xf0_u8, 0x9f, 0x98, 0x80].as_ptr().cast(),
+                4,
+                std::ptr::null_mut(),
+            ),
+            4
+        );
+        assert_eq!(unit, 0xd83d);
+        assert_eq!(
+            c16rtomb(bytes.as_mut_ptr().cast(), 0xd83d, std::ptr::null_mut()),
+            0
+        );
+
+        assert_eq!(run_native_wchar_worker(convert, std::ptr::null_mut()), 0);
+        assert_eq!(
+            mbrtowc(
+                &mut wide,
+                [0x82_u8, 0xac].as_ptr().cast(),
+                2,
+                std::ptr::null_mut(),
+            ),
+            2
+        );
+        assert_eq!(wide, 0x20ac);
+        assert_eq!(
+            mbrtoc16(&mut unit, c"".as_ptr(), 0, std::ptr::null_mut()),
+            usize::MAX - 2
+        );
+        assert_eq!(unit, 0xde00);
+        assert_eq!(
+            c16rtomb(bytes.as_mut_ptr().cast(), 0xde00, std::ptr::null_mut()),
+            4
+        );
+        assert_eq!(bytes, [0xf0, 0x9f, 0x98, 0x80]);
+    }
+}
+
 #[test]
 fn swprintf_unknown_conversions_keep_following_arguments_and_count() {
     let fmt: Vec<libc::wchar_t> = "%*.*lQ:%d:%s:%.1f%n\0".chars().map(|c| c as i32).collect();

@@ -6333,6 +6333,11 @@ impl WideScanWriter {
 // Native wide I/O helpers
 // ===========================================================================
 
+#[inline]
+fn wide_compiler_tls_cache_available() -> bool {
+    !frankenlibc_membrane::tls_cache::native_threads_may_share_compiler_tls()
+}
+
 thread_local! {
     static WPRINTF_FORMAT_BUF: std::cell::RefCell<Vec<u8>> =
         const { std::cell::RefCell::new(Vec::new()) };
@@ -6351,9 +6356,14 @@ impl PooledWideFormat {
 
 impl Drop for PooledWideFormat {
     fn drop(&mut self) {
+        // A formatting callback may have admitted the first native thread
+        // after this buffer was taken. Never return it into inherited TLS.
+        if !wide_compiler_tls_cache_available() {
+            return;
+        }
         let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
-        WPRINTF_FORMAT_BUF.with(|slot| {
+        let _ = WPRINTF_FORMAT_BUF.try_with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.capacity() < buf.capacity() {
                 *slot = buf;
@@ -6406,9 +6416,26 @@ unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
 }
 
 unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
-    let mut buf = WPRINTF_FORMAT_BUF.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+    let mut buf = if wide_compiler_tls_cache_available() {
+        WPRINTF_FORMAT_BUF
+            .try_with(|slot| std::mem::take(&mut *slot.borrow_mut()))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     unsafe { wide_to_narrow_into(wcs, &mut buf) };
     PooledWideFormat { buf }
+}
+
+/// Hold the creator's real format-pool borrow across native-thread admission.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_wchar_format_pool_borrow_for_tests<R>(f: impl FnOnce() -> R) -> R {
+    assert!(wide_compiler_tls_cache_available());
+    WPRINTF_FORMAT_BUF.with(|slot| {
+        let _borrow = slot.borrow_mut();
+        f()
+    })
 }
 
 // The inline `#[cfg(test)] mod wide_format_pool_tests` that stood here never
@@ -7632,9 +7659,7 @@ unsafe fn orient_wprintf_stream(stream: *mut c_void) -> bool {
         };
         // Orient before rendering, including empty output and reached %n
         // stores. Byte-oriented host streams reject the entire operation.
-        if let Some(orientation) =
-            unsafe { try_host_wide_io(stream, &HOST, "fwide", 0, call) }
-        {
+        if let Some(orientation) = unsafe { try_host_wide_io(stream, &HOST, "fwide", 0, call) } {
             return orientation > 0;
         }
     }
@@ -7669,8 +7694,7 @@ unsafe fn write_wprintf_rendered(
                 unsafe { std::mem::transmute(address) };
             let mut offset = 0;
             while offset < rendered.len() {
-                let (wc, length) =
-                    wchar_core::mbtowc(&rendered[offset..]).ok_or(libc::EILSEQ)?;
+                let (wc, length) = wchar_core::mbtowc(&rendered[offset..]).ok_or(libc::EILSEQ)?;
                 // The host owns the retained codec and conversion state.
                 // NUL is one wide output character, never a terminator.
                 if unsafe { host(wc as libc::wchar_t, stream) } == WEOF_VALUE {
@@ -10521,7 +10545,9 @@ enum MultibyteState {
     LegacyWide,
 }
 
-#[cfg(feature = "owned-tls-cache")]
+// Native callers need independent pending input, including when their creator
+// has already started a conversion. Hosted default callers retain the same
+// compiler-TLS state through admission and all late host C++ TLS callbacks.
 static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 8]> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 8]);
 
@@ -10542,6 +10568,18 @@ fn with_implicit_mbstate(which: MultibyteState, f: impl FnOnce(*mut c_void) -> u
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if !wide_compiler_tls_cache_available() {
+            let tid = frankenlibc_core::syscall::sys_gettid();
+            if tid <= 0 {
+                // Without identity, neither compiler TLS nor a private key can
+                // establish ownership. Never operate on a creator's state.
+                std::process::abort();
+            }
+            if frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some() {
+                return MULTIBYTE_STATES_OWNED_TLS
+                    .with(|states| f(states[which as usize].as_mut_ptr().cast()));
+            }
+        }
         MULTIBYTE_STATES.with(|states| f(states.borrow_mut()[which as usize].as_mut_ptr().cast()))
     }
 }
@@ -11156,7 +11194,6 @@ pub unsafe extern "C" fn __wcsftime_l(
 // Built atop our own `fgetwc`, which already handles UTF-8 decoding and
 // pushback of incomplete sequences.
 
-#[cfg(feature = "owned-tls-cache")]
 static FGETWLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<libc::wchar_t>> =
     crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
 
@@ -11207,6 +11244,11 @@ fn fgetwln_current_buffer(
     stream: *mut std::ffi::c_void,
     caller: usize,
 ) -> Option<(*mut libc::wchar_t, usize)> {
+    if !wide_compiler_tls_cache_available() {
+        // Keep any pointer returned before admission alive in the creator's
+        // dormant buffer. New calls use their own lifecycle-owned storage.
+        return FGETWLN_BUFFER_OWNED_TLS.with(|buf| fgetwln_read_into_buffer(stream, buf, caller));
+    }
     FGETWLN_BUFFER.with(|cell| {
         let mut buf = cell.borrow_mut();
         fgetwln_read_into_buffer(stream, &mut buf, caller)
