@@ -1239,6 +1239,15 @@ impl FastFixedMemRead {
 
 type FastFixedMemReadMap = StreamMap<Arc<FastFixedMemRead>>;
 
+/// Native clones currently inherit the creator's compiler TLS. Once one can
+/// exist, optional stdio caches must miss without even borrowing that storage:
+/// a cache hit is not worth sharing RefCell borrows or owning Vec/Arc values
+/// across kernel threads. The admission latch is set before the raw clone.
+#[inline]
+fn compiler_tls_caches_available() -> bool {
+    !frankenlibc_membrane::tls_cache::native_threads_may_share_compiler_tls()
+}
+
 thread_local! {
     static FAST_FIXED_MEM_READ_CACHE: RefCell<Option<(usize, Arc<FastFixedMemRead>)>> =
         const { RefCell::new(None) };
@@ -1274,6 +1283,15 @@ fn register_fast_fixed_mem_read(id: usize, memory: Arc<FixedMemCookie>) {
 fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
         return None;
+    }
+    if !compiler_tls_caches_available() {
+        let map = fast_fixed_mem_reads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        return map
+            .get(&id)
+            .filter(|cursor| !cursor.closed.load(Ordering::Acquire))
+            .cloned();
     }
     FAST_FIXED_MEM_READ_CACHE.with(|cache| {
         if let Some((cached_id, cursor)) = cache.borrow().as_ref()
@@ -1314,6 +1332,9 @@ thread_local! {
 /// Pointer-keyed fmemopen read fast path. `Some(byte)` on a gen-valid, open, non-empty cached
 /// cursor; `None` on any miss (uncached / gen-stale / closed / EOF) ⇒ caller falls through.
 fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
+    if !compiler_tls_caches_available() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     FGETC_MEM_PTR_CACHE.with(|c| {
@@ -1328,6 +1349,9 @@ fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
 
 /// Populate the pointer cache after a slow-path resolve confirms `stream` is a fixed-mem reader.
 fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>) {
+    if !compiler_tls_caches_available() {
+        return;
+    }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     FGETC_MEM_PTR_CACHE.with(|c| {
         *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
@@ -1339,6 +1363,9 @@ fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>
 /// `Some(bytes_read)` on a gen-valid, open cached cursor for `stream`; `None` on any miss
 /// (uncached / different stream / gen-stale / closed) ⇒ caller falls through and re-caches.
 fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    if !compiler_tls_caches_available() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     FGETC_MEM_PTR_CACHE.with(|c| {
@@ -1356,6 +1383,9 @@ fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Op
 /// cursor. `Some(bytes_written)` on a gen-valid, open cached cursor; `None` on any miss ⇒
 /// caller falls through to `canonical_stream_id` and re-caches on the registry slow path.
 fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    if !compiler_tls_caches_available() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     FGETC_MEM_PTR_CACHE.with(|c| {
@@ -1388,6 +1418,9 @@ fn unregister_fast_fixed_mem_read(id: usize) {
         // transiently over-approximate but must never hit 0 while a cursor is live).
         FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
         cursor.closed.store(true, Ordering::Release);
+    }
+    if !compiler_tls_caches_available() {
+        return;
     }
     FAST_FIXED_MEM_READ_CACHE.with(|cache| {
         let clear = cache
@@ -2033,6 +2066,9 @@ thread_local! {
 }
 
 fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
+    if !compiler_tls_caches_available() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     // C++ static destructors can flush streams after Rust TLS destructors.
@@ -2053,35 +2089,70 @@ fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
 }
 
 thread_local! {
-    static WIDE_IO_ACTIVE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     static WIDE_STREAM_CACHE: std::cell::Cell<(usize, u64, *mut StdioStream)> =
         const { std::cell::Cell::new((usize::MAX, 0, std::ptr::null_mut())) };
 }
+
+// Wide mode changes semantics, so it cannot use the optional-cache fallback.
+// Use lifecycle-owned storage even before the first native thread: an active
+// wide callback may create that thread, and its creator's nested scope must
+// remain intact across admission while the child starts with depth zero.
+static WIDE_IO_ACTIVE: crate::owned_tls_cache::OwnedTlsCache<u32> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
+static WIDE_IO_EVER_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 struct WideIoGuard;
 
 impl Drop for WideIoGuard {
     #[inline]
     fn drop(&mut self) {
-        WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
+        WIDE_IO_ACTIVE.with(|depth| *depth = depth.saturating_sub(1));
     }
 }
 
 #[inline]
 pub(crate) fn with_wide_io_active<R>(f: impl FnOnce() -> R) -> R {
-    WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_add(1)));
+    WIDE_IO_EVER_ACTIVE.store(true, Ordering::Release);
+    WIDE_IO_ACTIVE.with(|depth| *depth = depth.saturating_add(1));
     let _guard = WideIoGuard;
     f()
 }
 
+/// Hold the real wide bridge scope across a test's native-thread admission.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_stdio_wide_scope_for_tests<R>(f: impl FnOnce() -> R) -> R {
+    with_wide_io_active(f)
+}
+
+/// Keep the creator's cache borrows live while a test starts a native child.
+/// A child must use the ordinary uncached paths without touching these cells.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_stdio_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> R {
+    assert!(compiler_tls_caches_available());
+    FAST_FIXED_MEM_READ_CACHE.with(|fixed| {
+        let _fixed = fixed.borrow_mut();
+        FGETC_MEM_PTR_CACHE.with(|pointer| {
+            let _pointer = pointer.borrow_mut();
+            STREAM_CELL_CACHE.with(|streams| {
+                let _streams = streams.borrow_mut();
+                f()
+            })
+        })
+    })
+}
+
 #[inline]
 pub(crate) fn wide_io_active() -> bool {
-    WIDE_IO_ACTIVE.with(|c| c.get() != 0)
+    WIDE_IO_EVER_ACTIVE.load(Ordering::Acquire) && WIDE_IO_ACTIVE.with(|depth| *depth != 0)
 }
 
 #[inline]
 fn wide_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+    if !compiler_tls_caches_available()
+        || crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0
+    {
         return None;
     }
     let key = stream as usize;
@@ -2099,6 +2170,9 @@ fn wide_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> 
 
 #[inline]
 fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
+    if !compiler_tls_caches_available() {
+        return;
+    }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);
     WIDE_STREAM_CACHE.with(|c| {
         c.set((stream as usize, generation, ptr));
@@ -2106,7 +2180,7 @@ fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
 }
 
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
-    if wide_io_active() {
+    if !compiler_tls_caches_available() || wide_io_active() {
         return;
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
@@ -2128,6 +2202,9 @@ fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
 /// the slow path's buffered-read step (decide/observe skipped exactly like the
 /// established ST fast paths). Empty buffer / any miss ⇒ `None` ⇒ slow path refills.
 fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
+    if !compiler_tls_caches_available() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     let cached = STREAM_CELL_CACHE.try_with(|c| {
@@ -2153,6 +2230,9 @@ fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
 /// inline success; `false` on any miss (not cached / would flush / mem / cookie) ⇒ caller
 /// falls through to the full per-stream-locked path.
 fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
+    if !compiler_tls_caches_available() {
+        return false;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     let written = STREAM_CELL_CACHE.try_with(|c| {
@@ -2235,7 +2315,9 @@ thread_local! {
 /// registry lock — sound only because single-threaded ⇒ no concurrent access.
 #[inline]
 fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+    if !compiler_tls_caches_available()
+        || crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0
+    {
         return None;
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
@@ -2257,7 +2339,9 @@ fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
 /// while `cid` is the `0x1000_000x` sentinel) or the canonical id (`cid`).
 #[inline]
 fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+    if !compiler_tls_caches_available()
+        || crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0
+    {
         return None;
     }
     let key = stream as usize;
@@ -2278,7 +2362,10 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
 /// under the registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
 fn write_cache_store(stream: *mut c_void, id: usize, ptr: *mut StdioStream) {
-    if wide_io_active() || unsafe { (*ptr).effective_orientation() } >= 0 {
+    if !compiler_tls_caches_available()
+        || wide_io_active()
+        || unsafe { (*ptr).effective_orientation() } >= 0
+    {
         return;
     }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);
@@ -3937,9 +4024,24 @@ thread_local! {
 }
 
 struct RefillTmpGuard(Vec<u8>);
+
+impl RefillTmpGuard {
+    fn take() -> Self {
+        Self(if compiler_tls_caches_available() {
+            REFILL_TMP.try_with(|cell| cell.take()).unwrap_or_default()
+        } else {
+            Vec::new()
+        })
+    }
+}
+
 impl Drop for RefillTmpGuard {
     fn drop(&mut self) {
-        REFILL_TMP.with(|c| c.set(std::mem::take(&mut self.0)));
+        // A callback may have created the first native thread after take().
+        // In that case this call keeps ownership and drops its buffer locally.
+        if compiler_tls_caches_available() {
+            let _ = REFILL_TMP.try_with(|cell| cell.set(std::mem::take(&mut self.0)));
+        }
     }
 }
 
@@ -3954,7 +4056,7 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
     // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
     // Vec. `sys_read_fd` overwrites the first `want` bytes, so no pre-zeroing is required for
     // correctness; `resize(want, 0)` only grows (a no-op once warmed to the common size).
-    let mut guard = RefillTmpGuard(REFILL_TMP.with(|c| c.take()));
+    let mut guard = RefillTmpGuard::take();
     let tmp = &mut guard.0;
     if tmp.len() < want {
         tmp.resize(want, 0);
@@ -9824,6 +9926,9 @@ mod printf_out_pool {
         static POOL: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
     }
     pub(super) fn take() -> Vec<u8> {
+        if !super::compiler_tls_caches_available() {
+            return Vec::with_capacity(256);
+        }
         // Process callbacks can format after the calling thread's TLS
         // destructors drained this optional cache. Reuse is not required for
         // rendering: an unavailable slot needs the same fresh-buffer fallback
@@ -9837,6 +9942,9 @@ mod printf_out_pool {
         )
     }
     pub(super) fn give(v: Vec<u8>) {
+        if !super::compiler_tls_caches_available() {
+            return;
+        }
         // If TLS has been destroyed, the uncalled closure drops v normally.
         // Never recreate thread-local state while returning a scratch buffer.
         let _ = POOL.try_with(|p| {
@@ -17027,10 +17135,26 @@ thread_local! {
 }
 
 struct GetdelimScratchGuard(Vec<u8>);
+
+impl GetdelimScratchGuard {
+    fn take() -> Self {
+        Self(if compiler_tls_caches_available() {
+            GETDELIM_SCRATCH
+                .try_with(|cell| cell.take())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        })
+    }
+}
+
 impl Drop for GetdelimScratchGuard {
     fn drop(&mut self) {
-        // Return the (grown) buffer to the thread-local so its capacity is reused next call.
-        GETDELIM_SCRATCH.with(|c| c.set(std::mem::take(&mut self.0)));
+        // Do not republish into inherited TLS after native-thread admission,
+        // including when admission happened inside an application callback.
+        if compiler_tls_caches_available() {
+            let _ = GETDELIM_SCRATCH.try_with(|cell| cell.set(std::mem::take(&mut self.0)));
+        }
     }
 }
 
@@ -17176,7 +17300,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     // skipping canonical_stream_id's native lock + registry_contains + registry().lock() +
     // decide/observe per line (getline is hot for file processing). Byte-identical.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
-        let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+        let mut scratch = GetdelimScratchGuard::take();
         let buf = &mut scratch.0;
         buf.clear();
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
@@ -17192,7 +17316,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     if let Some(cell) = stream_cell_cache_lookup(stream) {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+            let mut scratch = GetdelimScratchGuard::take();
             let buf = &mut scratch.0;
             buf.clear();
             // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
@@ -17264,7 +17388,7 @@ pub(crate) unsafe fn getdelim_for_caller(
     }
 
     // Reuse the thread-local scratch (retains capacity) instead of a fresh per-call Vec.
-    let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+    let mut scratch = GetdelimScratchGuard::take();
     let buf = &mut scratch.0;
     buf.clear();
 
@@ -17518,7 +17642,6 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
 /// Thread-local counter for tmpnam uniqueness.
 static TMPNAM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-#[cfg(feature = "owned-tls-cache")]
 static TMPNAM_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 64]);
 
@@ -17540,6 +17663,14 @@ fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if !compiler_tls_caches_available() {
+            return TMPNAM_BUF_OWNED_TLS.with(|buf| {
+                // SAFETY: this thread owns the initialized 64-byte buffer;
+                // the bounded formatter supplies at most that many bytes.
+                unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), buf.as_mut_ptr(), total) };
+                buf.as_mut_ptr().cast()
+            });
+        }
         TMPNAM_BUF.with(|cell| {
             let buf = cell.get();
             // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
@@ -19794,7 +19925,6 @@ pub use _io_internal::*;
 // fpurge is a thin wrapper over our existing __fpurge that returns int
 // (the BSD signature) instead of void (the GNU signature).
 
-#[cfg(feature = "owned-tls-cache")]
 static FGETLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
     crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
 
@@ -19836,6 +19966,9 @@ fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
+    if !compiler_tls_caches_available() {
+        return FGETLN_BUFFER_OWNED_TLS.with(|buf| fgetln_read_into_buffer(stream, buf));
+    }
     FGETLN_BUFFER.with(|cell| {
         let mut buf = cell.borrow_mut();
         fgetln_read_into_buffer(stream, &mut buf)
