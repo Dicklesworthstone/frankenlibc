@@ -361,7 +361,7 @@ jobs:
                    ('cancel-wait', ['cargo', 'test', '-p', 'frankenlibc-abi',
                     '--test', 'pthread_cancel_wait_test', 'cancel_wait::tests::'], 'strict', 4),
                    ('cancel-poll', ['cargo', 'test', '-p', 'frankenlibc-abi',
-                    '--test', 'pthread_cancel_wait_test', 'cancel_poll::tests::'], 'strict', 3)]
+                    '--test', 'pthread_cancel_wait_test', 'cancel_poll::tests::'], 'strict', 4)]
           for label, features in [('keys', []), ('keys-owned', ['--features', 'owned-tls-cache'])]:
               cases.append((label, ['cargo', 'test', '-p', 'frankenlibc-core', '--lib',
                   *features, 'pthread::tls::tests::'], 'strict', 51))

@@ -13,6 +13,7 @@ on:
       - 'crates/frankenlibc-abi/src/rpc_svc.rs'
       - 'crates/frankenlibc-abi/src/string_abi.rs'
       - 'crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs'
+      - 'crates/frankenlibc-abi/tests/malloc_abi_test.rs'
       - 'scripts/check_membrane_access.py'
       - 'scripts/check_allocation_integrity.py'
       - 'tests/integration/fixture_membrane_access.c'

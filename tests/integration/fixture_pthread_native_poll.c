@@ -1070,9 +1070,9 @@ static int sleep_timer_matches(int descriptor, clockid_t expected_clock) {
 static void observe_sleep_parked(struct sleep_probe *probe, int memory) {
     struct state *state = &probe->observed;
     const int timer = sleep_uses_timer(probe->api);
-    const int fallback = timer && (sleep_has_deliverable_handler(probe->kind) ||
-        probe->kind == SLEEP_TIMER_CREATE_DENIED || probe->kind == SLEEP_TIMER_ARM_DENIED ||
-        probe->kind == SLEEP_PERSONALITY_DENIED);
+    const int fallback = probe->kind == SLEEP_PERSONALITY_DENIED ||
+        (timer && (sleep_has_deliverable_handler(probe->kind) ||
+         probe->kind == SLEEP_TIMER_CREATE_DENIED || probe->kind == SLEEP_TIMER_ARM_DENIED));
     const int sliced = expect_native && probe->kind != SLEEP_DISABLED &&
                        !fallback && !probe->import_denied;
     int64_t deadline = monotonic_ns() + 2000000000;
@@ -1140,6 +1140,8 @@ static int sleep_contract_main(char **argv) {
     int syscall_denied = strncmp(entry, "syscall-denied-", 15) == 0;
     if (syscall_denied) entry += 15;
     if (syscall_denied && !import_denied) return 2;
+    int no_remainder = strncmp(entry, "null-remainder-", 15) == 0;
+    if (no_remainder) entry += 15;
     int alias = strncmp(entry, "alias-", 6) == 0;
     /* alias-remainder is a pointer-aliasing case, not an exported symbol. */
     if (strcmp(entry, "alias-remainder") == 0) alias = 0;
@@ -1155,8 +1157,8 @@ static int sleep_contract_main(char **argv) {
     if (kind < 0 || ((api == SLEEP_SECONDS || api == SLEEP_MICRO) && kind >= SLEEP_READONLY)) return 2;
     if (syscall_denied && kind != SLEEP_TIMEOUT) return 2;
     if (kind == SLEEP_EXPIRED && !sleep_is_absolute((enum sleep_api)api)) return 2;
-    if ((kind == SLEEP_TIMER_CREATE_DENIED || kind == SLEEP_TIMER_ARM_DENIED ||
-         kind == SLEEP_PERSONALITY_DENIED) && !sleep_uses_timer((enum sleep_api)api)) return 2;
+    if ((kind == SLEEP_TIMER_CREATE_DENIED || kind == SLEEP_TIMER_ARM_DENIED) &&
+        !sleep_uses_timer((enum sleep_api)api)) return 2;
     int pin = pin_sleep_provider(argv[2], (enum sleep_api)api, alias);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
@@ -1216,7 +1218,7 @@ static int sleep_contract_main(char **argv) {
     probe.syscall_denied = syscall_denied;
     probe.request = (const struct timespec *)(storage + offset);
     probe.remaining = sentinel;
-    probe.output = &probe.remaining;
+    probe.output = no_remainder ? NULL : &probe.remaining;
     probe.observed.kind = kind == SLEEP_MASK_BLOCK ? MASK_UNBLOCK : BLOCKED;
     if (kind == SLEEP_ALIAS_REMAINDER) {
         probe.remaining = request;
@@ -1280,8 +1282,8 @@ static int sleep_contract_main(char **argv) {
         }
     } else if (!canceled || kind == SLEEP_DISABLED) {
         REQUIRE(state->result == 0, "sleep reaches its finite deadline");
-        if (import_denied && kind != SLEEP_ERRORS)
-            REQUIRE(state->error == EDOM, "successful import fallback preserves the caller's errno");
+        if ((import_denied || kind == SLEEP_PERSONALITY_DENIED) && kind != SLEEP_ERRORS)
+            REQUIRE(state->error == EDOM, "successful sleep fallback preserves the caller's errno");
         if (kind != SLEEP_ZERO && kind != SLEEP_ERRORS && kind != SLEEP_EXPIRED)
             REQUIRE(state->elapsed_ns >= (api == SLEEP_SECONDS ? 900000000 : 200000000) &&
                         state->elapsed_ns < 2000000000,

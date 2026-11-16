@@ -332,11 +332,11 @@ pub(super) enum SleepResult {
 /// handler takes longer than the requested sleep. A deadline read after the
 /// handler would incorrectly deduct that time.
 ///
-/// STICKY_TIMEOUTS suppresses ppoll's remainder update. When a relative caller
-/// needs a remainder, query the current personality while signals are blocked,
-/// then retain the original syscall if the flag is set or the query is denied.
-/// Never change the thread's personality or manufacture an estimated remainder.
-/// Such fallback calls keep the existing pending-only cancellation behavior.
+/// STICKY_TIMEOUTS suppresses ppoll's remainder update and changes restart after
+/// stop/continue into EINTR, including absolute sleeps and null remainders.
+/// Query the personality while signals are blocked, then retain the original
+/// syscall if the flag is set or the query is denied. Never change personality
+/// or manufacture a remainder. Fallback keeps pending-only cancellation.
 ///
 /// # Safety
 /// The ABI supplies a valid owned timespec and selects one of the clock forms
@@ -364,16 +364,14 @@ pub(super) unsafe fn wait_sleep(
     }
 
     let mut guard = SignalMaskGuard::block_all()?;
-    if !absolute && need_remainder {
-        // SAFETY: this is a read-only personality query, with no pointers. It
-        // changes neither the persona nor errno. Blocking handlers keeps this
-        // per-task setting stable until ppoll has written the interruption
-        // remainder; a handler can change it only after that kernel copy.
-        let persona =
-            unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
-        if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
-            return guard.restore().map(|()| SleepResult::Unsupported);
-        }
+    // SAFETY: this read-only query changes neither personality nor errno.
+    // Blocking handlers keeps the setting stable until ppoll has copied any
+    // remainder. Check every sleep: STICKY_TIMEOUTS also changes restart
+    // behavior for absolute deadlines and callers that need no remainder.
+    let persona =
+        unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+    if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
+        return guard.restore().map(|()| SleepResult::Unsupported);
     }
     // SAFETY: the original mask and request are owned, stationary values. The
     // wait uses no application descriptors or pointers and owns no resources.

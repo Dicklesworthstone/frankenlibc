@@ -67,7 +67,11 @@ SLEEP_CASES = tuple(
 ) + tuple(
     f"sleep-{entry}-{case}"
     for entry in ("realtime", "boottime")
-    for case in ("timer-create-denied", "timer-arm-denied", "personality-denied")
+    for case in ("timer-create-denied", "timer-arm-denied")
+) + tuple(
+    f"sleep-{entry}-{case}"
+    for entry in ("nano", "clock", "absolute", "realtime", "boottime", "c11")
+    for case in ("personality-denied", "null-remainder-personality-denied")
 ) + tuple(
     f"sleep-{entry}-import-denied-{case}"
     for entry in ("nano", "clock", "absolute", "realtime", "boottime", "c11")
