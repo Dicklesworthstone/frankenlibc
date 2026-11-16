@@ -2554,16 +2554,35 @@ fn fallback_metadata_failure_does_not_publish_untracked_allocation() {
     let mut aligned_output = 0x1234usize as *mut c_void;
     let mut aligned_status = 0;
     // SAFETY: all pointers below name owned live allocations or rlimit cells.
-    let (host_succeeded, candidate, candidate_errno) = unsafe {
+    let (host_succeeded, candidate, candidate_errno, permission_result, permission_errno) = unsafe {
         assert_eq!(libc::getrlimit(libc::RLIMIT_DATA, &mut original), 0);
+        const PROBE_LEN: usize = 64 * 1024;
+        let permission_probe = libc::mmap(
+            ptr::null_mut(),
+            PROBE_LEN,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        );
+        assert_ne!(permission_probe, libc::MAP_FAILED);
         let cached = libc::malloc(80);
         assert!(!cached.is_null());
         libc::free(cached);
         let limited = libc::rlimit {
-            rlim_cur: 0,
+            // Linux permits growth up to the hard limit when the soft limit is
+            // zero. One byte avoids that exception and admits no data pages.
+            rlim_cur: 1,
             rlim_max: original.rlim_max,
         };
         assert_eq!(libc::setrlimit(libc::RLIMIT_DATA, &limited), 0);
+        *libc::__errno_location() = 0;
+        let permission_result = libc::mprotect(
+            permission_probe,
+            PROBE_LEN,
+            libc::PROT_READ | libc::PROT_WRITE,
+        );
+        let permission_errno = *libc::__errno_location();
         let host = match operation.as_str() {
             "calloc" => libc::calloc(1, 80),
             "memalign" | "aligned_alloc" | "posix_memalign" => libc::memalign(16, 80),
@@ -2588,8 +2607,16 @@ fn fallback_metadata_failure_does_not_publish_untracked_allocation() {
         };
         let candidate_errno = *libc::__errno_location();
         let restored = libc::setrlimit(libc::RLIMIT_DATA, &original);
+        let unmapped = libc::munmap(permission_probe, PROBE_LEN);
         assert_eq!(restored, 0);
-        (host_succeeded, candidate, candidate_errno)
+        assert_eq!(unmapped, 0);
+        (
+            host_succeeded,
+            candidate,
+            candidate_errno,
+            permission_result,
+            permission_errno,
+        )
     };
     malloc_restore_reentry_depth_for_tests(previous_depth);
     let tracked = fallback_size_for_bench(candidate);
@@ -2599,6 +2626,11 @@ fn fallback_metadata_failure_does_not_publish_untracked_allocation() {
         fallback_remove_sized_for_bench(candidate);
         unsafe { libc::free(candidate) };
     }
+    assert_eq!(
+        (permission_result, permission_errno),
+        (-1, libc::ENOMEM),
+        "kernel control must deny a new writable mapping before testing metadata failure"
+    );
     assert!(
         host_succeeded,
         "host tcache control must allocate under the limit"
@@ -2648,8 +2680,27 @@ fn fallback_realloc_metadata_failure_preserves_old_block() {
         rlim_max: 0,
     };
     // SAFETY: this fresh subprocess owns these blocks and its resource limit.
-    let (old, padding, fence, replacement, host_succeeded, saved_errno) = unsafe {
+    let (
+        old,
+        padding,
+        fence,
+        replacement,
+        host_succeeded,
+        saved_errno,
+        permission_result,
+        permission_errno,
+    ) = unsafe {
         assert_eq!(libc::getrlimit(libc::RLIMIT_DATA, &mut original), 0);
+        const PROBE_LEN: usize = 64 * 1024;
+        let permission_probe = libc::mmap(
+            ptr::null_mut(),
+            PROBE_LEN,
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        );
+        assert_ne!(permission_probe, libc::MAP_FAILED);
         // Keep these allocations in the host arena, and retain a fence after
         // the replacement so freeing it cannot trim away its writable pages.
         assert_ne!(libc::mallopt(libc::M_MMAP_THRESHOLD, 4 * 1024 * 1024), 0);
@@ -2672,10 +2723,19 @@ fn fallback_realloc_metadata_failure_preserves_old_block() {
         );
         libc::free(spare);
         let limited = libc::rlimit {
-            rlim_cur: 0,
+            // Linux permits growth up to the hard limit when the soft limit is
+            // zero. One byte avoids that exception and admits no data pages.
+            rlim_cur: 1,
             rlim_max: original.rlim_max,
         };
         assert_eq!(libc::setrlimit(libc::RLIMIT_DATA, &limited), 0);
+        *libc::__errno_location() = 0;
+        let permission_result = libc::mprotect(
+            permission_probe,
+            PROBE_LEN,
+            libc::PROT_READ | libc::PROT_WRITE,
+        );
+        let permission_errno = *libc::__errno_location();
         let host = libc::malloc(4096);
         let host_succeeded = !host.is_null() && granule(host) == granule(spare);
         libc::free(host);
@@ -2683,7 +2743,9 @@ fn fallback_realloc_metadata_failure_preserves_old_block() {
         let replacement = realloc(old, 4096);
         let saved_errno = *libc::__errno_location();
         let restored = libc::setrlimit(libc::RLIMIT_DATA, &original);
+        let unmapped = libc::munmap(permission_probe, PROBE_LEN);
         assert_eq!(restored, 0);
+        assert_eq!(unmapped, 0);
         (
             old,
             padding,
@@ -2691,6 +2753,8 @@ fn fallback_realloc_metadata_failure_preserves_old_block() {
             replacement,
             host_succeeded,
             saved_errno,
+            permission_result,
+            permission_errno,
         )
     };
     let old_tracked = fallback_size_for_bench(old);
@@ -2711,6 +2775,11 @@ fn fallback_realloc_metadata_failure_preserves_old_block() {
         libc::free(fence);
     }
     malloc_restore_reentry_depth_for_tests(previous_depth);
+    assert_eq!(
+        (permission_result, permission_errno),
+        (-1, libc::ENOMEM),
+        "kernel control must deny a new writable mapping before testing metadata failure"
+    );
     assert!(
         host_succeeded,
         "host control must reuse the retained replacement block"
