@@ -1,10 +1,9 @@
-//! Lifecycle-owned scratch storage for opt-in TLS-removal experiments.
+//! Lifecycle-owned runtime and scratch storage.
 //!
-//! This intentionally avoids Rust `thread_local!` so experiment lanes can
-//! replace per-thread ABI scratch buffers without introducing a `__tls_get_addr`
-//! relocation. It is feature-gated because the default ABI path still uses the
-//! existing Rust TLS implementation until every tracked source surface has been
-//! migrated and artifact-level nm/readelf checks prove the blocker is gone.
+//! This intentionally avoids Rust `thread_local!` so native clones never share
+//! these values with the creator whose compiler TLS they inherit. Hosted fast
+//! paths can retain compiler TLS; the `owned-tls-cache` experiment also uses
+//! these slots to remove that dependency from additional ABI scratch buffers.
 //!
 //! The core private key table owns each slot's thread identity and destructor.
 //! In particular, a recycled kernel TID must never inherit an exited thread's
@@ -120,6 +119,12 @@ where
             key_owner: AtomicU64::new(0),
             init,
         }
+    }
+
+    /// Publish the private key before starting a native thread. The per-thread
+    /// payload stays lazy and is allocated from anonymous pages on first use.
+    pub(crate) fn prepare_key(&self) {
+        let _ = self.key();
     }
 
     /// Detect allocation reentry without consulting or locking this cache.

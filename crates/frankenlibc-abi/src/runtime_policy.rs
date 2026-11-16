@@ -1745,8 +1745,8 @@ pub(crate) fn runtime_policy_tls_access_active() -> bool {
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
-pub(crate) const fn runtime_policy_tls_access_active() -> bool {
-    false
+pub(crate) fn runtime_policy_tls_access_active() -> bool {
+    runtime_policy_tls_reentry_active()
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -1757,8 +1757,14 @@ pub(crate) fn runtime_policy_tls_reentry_active() -> bool {
 
 #[cfg(not(feature = "owned-tls-cache"))]
 #[inline]
-pub(crate) const fn runtime_policy_tls_reentry_active() -> bool {
-    false
+pub(crate) fn runtime_policy_tls_reentry_active() -> bool {
+    match native_runtime_policy_state_required() {
+        Ok(true) => NATIVE_RUNTIME_POLICY_TLS.is_accessed_by_current_thread(),
+        Ok(false) => false,
+        // If identity is unavailable after native admission, fail closed.
+        // Reading inherited compiler TLS cannot establish exclusive ownership.
+        Err(()) => true,
+    }
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -1777,9 +1783,9 @@ struct RuntimePolicyCells {
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static RUNTIME_POLICY_TLS: RuntimePolicyCells = const {
-        RuntimePolicyCells {
+impl RuntimePolicyCells {
+    const fn new() -> Self {
+        Self {
             mode_cache: Cell::new(MODE_UNRESOLVED),
             mode_switch_counter: Cell::new(0),
             trace_counter: Cell::new(0),
@@ -1794,7 +1800,56 @@ thread_local! {
                 DECISION_CONTRACT_CLEAR_THRESHOLD,
             )),
         }
-    };
+    }
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static HOST_RUNTIME_POLICY_TLS: RuntimePolicyCells = const { RuntimePolicyCells::new() };
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+static NATIVE_RUNTIME_POLICY_TLS: crate::owned_tls_cache::OwnedTlsCache<RuntimePolicyCells> =
+    crate::owned_tls_cache::OwnedTlsCache::new(RuntimePolicyCells::new);
+
+/// Hosted callers retain their compiler-TLS state even after creating a native
+/// child. Registered native callers instead use the private key table whose
+/// lifetime is tied to their own kernel TID. Never let a child's policy guard,
+/// trace, certificate or RefCell borrow become its creator's state.
+#[cfg(not(feature = "owned-tls-cache"))]
+struct RuntimePolicyTlsAccess;
+
+#[cfg(not(feature = "owned-tls-cache"))]
+static RUNTIME_POLICY_TLS: RuntimePolicyTlsAccess = RuntimePolicyTlsAccess;
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[inline]
+fn native_runtime_policy_state_required() -> Result<bool, ()> {
+    if !frankenlibc_membrane::tls_cache::native_threads_may_share_compiler_tls() {
+        return Ok(false);
+    }
+    let tid = frankenlibc_core::syscall::sys_gettid();
+    if tid <= 0 {
+        return Err(());
+    }
+    Ok(frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some())
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+impl RuntimePolicyTlsAccess {
+    #[inline]
+    fn try_with<R>(&self, callback: impl FnOnce(&RuntimePolicyCells) -> R) -> Result<R, ()> {
+        if native_runtime_policy_state_required()? {
+            // Initialization can reach an interposed memcpy before the payload
+            // exists. A recursive access must fail, never borrow the same slot
+            // twice or fall back to the creator's inherited compiler TLS.
+            if NATIVE_RUNTIME_POLICY_TLS.is_accessed_by_current_thread() {
+                return Err(());
+            }
+            return Ok(NATIVE_RUNTIME_POLICY_TLS.with(|state| callback(state)));
+        }
+        HOST_RUNTIME_POLICY_TLS.try_with(callback).map_err(|_| ())
+    }
 }
 
 fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
@@ -2721,6 +2776,13 @@ pub(crate) fn prewarm_kernel() {
 /// already native creator may only use prepared storage; allocating from its
 /// inherited host allocator would race its creator's allocator state.
 pub(crate) fn prepare_native_thread_runtime() -> Result<(), i32> {
+    // Key publication and per-thread slot allocation use raw mappings. Publish
+    // the key on the creator so the child's first policy access only needs its
+    // own payload; strict cold startup still leaves the math kernel lazy.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    NATIVE_RUNTIME_POLICY_TLS.prepare_key();
+    #[cfg(feature = "owned-tls-cache")]
+    RUNTIME_POLICY_OWNED_TLS.prepare_key();
     let state = KERNEL_STATE.load(AtomicOrdering::Acquire);
     if state == STATE_BROKEN {
         return Ok(());
@@ -2744,8 +2806,7 @@ pub(crate) fn prepare_native_thread_runtime() -> Result<(), i32> {
             return Err(libc::EAGAIN);
         }
         // SAFETY: READY publishes the process-lifetime kernel.
-        let ready = unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) }
-            .runtime_storage_ready();
+        let ready = unsafe { &*KERNEL_PTR.load(AtomicOrdering::Acquire) }.runtime_storage_ready();
         return if ready { Ok(()) } else { Err(libc::EAGAIN) };
     }
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
@@ -5135,6 +5196,230 @@ mod tests {
         assert!(in_policy_reentry_context());
         drop(outer);
         assert!(!in_policy_reentry_context());
+    }
+
+    #[test]
+    fn native_policy_state_isolated_from_creator_and_reclaimed() {
+        use std::ffi::c_void;
+        use std::sync::atomic::AtomicUsize;
+
+        const CHILD: &str = "FRANKENLIBC_NATIVE_POLICY_TLS_CHILD";
+        const NAME: &str =
+            "runtime_policy::tests::native_policy_state_isolated_from_creator_and_reclaimed";
+        if std::env::var_os(CHILD).is_none() {
+            // Native admission irreversibly disables shared compiler-TLS
+            // caches. Isolate that transition from the rest of this test binary.
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .env("FRANKENLIBC_MODE", "strict")
+                .env("FRANKENLIBC_RUNTIME_MATH", "off")
+                .env_remove("FRANKENLIBC_LOG")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start native policy child");
+            let deadline = Instant::now() + std::time::Duration::from_secs(30);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !timed_out && output.status.success() && stdout.contains("1 passed;"),
+                "native policy child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+                output.status
+            );
+            return;
+        }
+
+        struct Probe {
+            payload_addr: AtomicUsize,
+        }
+        const CONTEXT: RuntimeContext = RuntimeContext {
+            family: ApiFamily::Socket,
+            addr_hint: 0x1234,
+            requested_bytes: 64,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: false,
+        };
+        const DECISION: RuntimeDecision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Fast,
+            policy_id: 42,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 9,
+        };
+        unsafe extern "C" fn worker(raw: *mut c_void) -> *mut c_void {
+            // The creator allocates all test state. Native code below uses
+            // only policy POD, owned mmap slots, raw identity and atomics; it
+            // must not format, assert, panic or call the inherited allocator.
+            let probe = unsafe { &*raw.cast::<Probe>() };
+            let mut failures = 0usize;
+            if in_policy_reentry_context()
+                || with_mode_cache(|value| *value) != Some(MODE_UNRESOLVED)
+                || with_trace_counter(|value| *value) != Some(0)
+                || with_decision_counter(|value| *value) != Some(0)
+                || with_last_explainability(|value| value.is_none()) != Some(true)
+                || peek_active_pcc_index().is_some()
+            {
+                failures |= 1;
+            }
+            let guard = enter_policy_reentry_guard();
+            if guard.is_none()
+                || !in_policy_reentry_context()
+                || enter_policy_reentry_guard().is_some()
+            {
+                failures |= 2;
+            }
+            let scope = entrypoint_scope_active("memcmp", FFI_PCC_MEMCMP_INDEX);
+            let trace = with_trace_context(|context| *context).flatten();
+            if !trace.is_some_and(|trace| {
+                trace.symbol == "memcmp" && trace.trace_seq == 1 && trace.parent_span_seq == 1
+            }) || peek_active_pcc_index() != Some(FFI_PCC_MEMCMP_INDEX)
+            {
+                failures |= 4;
+            }
+            record_last_explainability(
+                SafetyLevel::Hardened,
+                CONTEXT,
+                DECISION,
+                DECISION_GATE_RUNTIME_POLICY,
+            );
+            if !peek_last_explainability().is_some_and(|record| {
+                record.symbol == "memcmp" && record.policy_id == 42 && record.span_seq == 1
+            }) {
+                failures |= 8;
+            }
+            record_pcc_explainability(
+                SafetyLevel::Hardened,
+                FFI_PCC_MEMCMP_INDEX,
+                0x5678,
+                17,
+                false,
+                false,
+            );
+            if !peek_last_explainability().is_some_and(|record| {
+                record.symbol == "memcmp"
+                    && record.addr_hint == 0x5678
+                    && record.requested_bytes == 17
+                    && record.span_seq == 2
+            }) {
+                failures |= 16;
+            }
+            let nested = entrypoint_scope_active("memcpy", FFI_PCC_MEMCPY_INDEX);
+            if peek_active_pcc_index() != Some(FFI_PCC_MEMCPY_INDEX) {
+                failures |= 32;
+            }
+            drop(nested);
+            if with_trace_context(|context| *context).flatten() != trace {
+                failures |= 64;
+            }
+            drop(scope);
+            drop(guard);
+            if peek_active_pcc_index().is_some() || in_policy_reentry_context() {
+                failures |= 128;
+            }
+            #[cfg(not(feature = "owned-tls-cache"))]
+            let protected = NATIVE_RUNTIME_POLICY_TLS.with(|state| {
+                probe
+                    .payload_addr
+                    .store(state as *mut _ as usize, AtomicOrdering::Release);
+                runtime_policy_tls_reentry_active() && RUNTIME_POLICY_TLS.try_with(|_| ()).is_err()
+            });
+            #[cfg(feature = "owned-tls-cache")]
+            let protected = with_runtime_policy_tls(|state| {
+                probe
+                    .payload_addr
+                    .store(state as *mut _ as usize, AtomicOrdering::Release);
+                runtime_policy_tls_reentry_active()
+            });
+            if !protected {
+                failures |= 256;
+            }
+            failures as *mut c_void
+        }
+
+        prepare_native_thread_runtime().expect("prepare policy key without activating math");
+        with_mode_cache(|value| *value = MODE_STRICT);
+        with_trace_counter(|value| *value = 100);
+        with_decision_counter(|value| *value = 200);
+        let guard = enter_policy_reentry_guard().expect("creator policy guard");
+        let scope = entrypoint_scope_active("memcpy", FFI_PCC_MEMCPY_INDEX);
+        record_last_explainability(
+            SafetyLevel::Hardened,
+            CONTEXT,
+            DECISION,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let creator_trace = with_trace_context(|context| *context).flatten();
+        let creator_record = peek_last_explainability();
+        let probe = Probe {
+            payload_addr: AtomicUsize::new(0),
+        };
+        // SAFETY: sysconf reads a process property before native execution.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        assert!(page_size > 0);
+        let joined = with_last_explainability(|record| {
+            let before = *record;
+            // Keep the creator's RefCell/cache borrow live throughout native
+            // execution: a child must neither share it nor evade that borrow.
+            // SAFETY: worker has the C entry ABI and probe outlives the join.
+            let handle = unsafe {
+                frankenlibc_core::pthread::create_thread(
+                    worker as *const () as usize,
+                    &probe as *const Probe as usize,
+                    0,
+                )
+            }
+            .expect("create native policy worker");
+            // SAFETY: this is the live joinable handle; probe outlives join.
+            let result = unsafe { frankenlibc_core::pthread::join_thread(handle) };
+            assert_eq!(*record, before, "child overwrote creator explainability");
+            result
+        });
+        assert_eq!(joined, Some(Ok(0)), "native policy regression bitmask");
+        assert_eq!(
+            with_trace_context(|context| *context).flatten(),
+            creator_trace
+        );
+        assert_eq!(peek_last_explainability(), creator_record);
+        assert_eq!(peek_active_pcc_index(), Some(FFI_PCC_MEMCPY_INDEX));
+        assert!(in_policy_reentry_context());
+        assert_eq!(with_mode_cache(|value| *value), Some(MODE_STRICT));
+        assert_eq!(with_trace_counter(|value| *value), Some(101));
+        assert_eq!(with_decision_counter(|value| *value), Some(201));
+
+        let payload_addr = probe.payload_addr.load(AtomicOrdering::Acquire);
+        assert_ne!(
+            payload_addr, 0,
+            "worker did not expose its owned policy slot"
+        );
+        let page = payload_addr / page_size as usize * page_size as usize;
+        let mut residency = 0u8;
+        // SAFETY: mincore only queries this page; it never dereferences the
+        // reclaimed payload. No intervening mmap can reuse the slot's address.
+        assert_eq!(
+            unsafe { libc::mincore(page as *mut c_void, page_size as usize, &mut residency) },
+            -1,
+            "native policy slot mapping survived thread exit"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ENOMEM)
+        );
+        drop(scope);
+        drop(guard);
+        assert!(!in_policy_reentry_context());
+        assert!(peek_active_pcc_index().is_none());
     }
 
     #[test]

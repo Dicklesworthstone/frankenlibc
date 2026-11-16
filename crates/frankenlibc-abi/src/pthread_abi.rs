@@ -5520,6 +5520,13 @@ pub unsafe extern "C" fn pthread_setspecific(
     rc
 }
 
+const HOST_KEY_TEARDOWN_UNCHECKED: u8 = 0;
+const HOST_KEY_TEARDOWN_DECIDED: u8 = 1;
+const HOST_KEY_TEARDOWN_REARM: u8 = 2;
+thread_local! {
+    static HOST_KEY_TEARDOWN_STATE: Cell<u8> = const { Cell::new(HOST_KEY_TEARDOWN_UNCHECKED) };
+}
+
 /// Key destructors of host-created threads (bd-v6cz9v).
 ///
 /// Threads made by the host's pthread_create exit through the host's
@@ -5538,21 +5545,23 @@ pub(crate) fn ensure_host_thread_key_teardown() {
     if core_current_thread_handle().is_some() {
         return;
     }
-    thread_local! {
-        static DECIDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    }
-    // Once per thread: the backend and main-thread checks cannot change for
+    // Once per drain: the backend and main-thread checks cannot change for
     // its lifetime, and they cost a gettid and a getpid syscall on every
     // non-null pthread_setspecific when they ran first.
-    if DECIDED.try_with(|d| d.replace(true)).unwrap_or(true) {
+    let previous = HOST_KEY_TEARDOWN_STATE
+        .try_with(|state| state.replace(HOST_KEY_TEARDOWN_DECIDED))
+        .unwrap_or(HOST_KEY_TEARDOWN_DECIDED);
+    if previous == HOST_KEY_TEARDOWN_DECIDED {
         return;
     }
-    if current_threading_backend() != THREAD_BACKEND_HOST {
-        return;
-    }
-    let tid = frankenlibc_core::syscall::sys_gettid();
-    if tid == frankenlibc_core::syscall::sys_getpid() {
-        return;
+    if previous != HOST_KEY_TEARDOWN_REARM {
+        if current_threading_backend() != THREAD_BACKEND_HOST {
+            return;
+        }
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        if tid == frankenlibc_core::syscall::sys_getpid() {
+            return;
+        }
     }
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -5563,7 +5572,8 @@ pub(crate) fn ensure_host_thread_key_teardown() {
             std::process::abort();
         }
     }
-    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.
+    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle
+    // pins this callback's code until the host has finished invoking it.
     #[cfg(not(feature = "owned-tls-cache"))]
     unsafe {
         // C/C-unwind share the callback ABI. The actual callback must permit
@@ -5686,6 +5696,69 @@ unsafe extern "C-unwind" fn run_host_thread_key_destructors(_: *mut c_void) {
     if unsafe { set(key, std::ptr::null()) } != 0 {
         std::process::abort();
     }
+    // A remaining host C++ TLS callback may create another private cache or
+    // public key value after this drain. Let it register a fresh DSO-pinned
+    // callback, keeping the marker set throughout the drain itself so cache
+    // destructors cannot recursively register an endless chain of callbacks.
+    // Preserve the established host/non-main eligibility: Rust's PTHREAD_TLS
+    // may already be destroyed when a later C++ callback needs this rearm.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let _ = HOST_KEY_TEARDOWN_STATE.try_with(|state| state.set(HOST_KEY_TEARDOWN_REARM));
+}
+
+/// Run once in an isolated integration-test process. Returns the cache value
+/// seen by a late host C++ TLS callback and the number of payload destructions.
+/// Integration coverage is required: lib unit tests omit the ABI modules and
+/// disable OwnedTlsCache's automatic host-teardown registration.
+#[cfg(all(debug_assertions, not(feature = "standalone")))]
+#[doc(hidden)]
+pub fn pthread_host_cache_late_callback_counts_for_tests() -> (usize, usize) {
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    static OBSERVED: AtomicUsize = AtomicUsize::new(0);
+    struct State(usize);
+    impl Drop for State {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    static CACHE: crate::owned_tls_cache::OwnedTlsCache<State> =
+        crate::owned_tls_cache::OwnedTlsCache::new(|| State(5));
+    unsafe extern "C" fn late_callback(_: *mut c_void) {
+        // This uses production automatic bridge registration, including rearm
+        // after a completed default drain and destroyed pthread compiler TLS.
+        CACHE.with(|state| {
+            OBSERVED.store(state.0, Ordering::SeqCst);
+            state.0 = 91;
+        });
+    }
+    std::thread::spawn(|| {
+        // Register before first backend-TLS/cache access. Default drains are
+        // LIFO, so this callback follows the first cache drain and Rust's
+        // backend-TLS destructor; the owned POSIX bridge instead follows it.
+        // SAFETY: stable C callback and a DSO handle in this loaded library.
+        assert_eq!(
+            unsafe {
+                crate::startup_abi::__cxa_thread_atexit_impl(
+                    late_callback,
+                    core::ptr::null_mut(),
+                    (&raw const crate::unistd_abi::__dso_handle)
+                        .cast_mut()
+                        .cast(),
+                )
+            },
+            0
+        );
+        // This real host worker must not inherit another test's global native
+        // override. Set its local override before initializing the probe cache.
+        pthread_threading_restore_for_tests(false);
+        CACHE.with(|state| state.0 = 55);
+    })
+    .join()
+    .expect("host cache worker panicked");
+    (
+        OBSERVED.load(Ordering::SeqCst),
+        DROPS.load(Ordering::SeqCst),
+    )
 }
 
 // ===========================================================================

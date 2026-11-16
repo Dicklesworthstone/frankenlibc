@@ -31,6 +31,7 @@ on:
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/io_abi.rs'
       - 'crates/frankenlibc-abi/tests/pthread_stack_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/pthread_host_thread_handoff_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_cancel_wait_test.rs'
       - 'crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs'
       - 'crates/frankenlibc-abi/tests/time_abi_test.rs'
@@ -301,6 +302,15 @@ jobs:
           git rev-parse HEAD > "$root/revision.txt"
           args=()
           if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo test -p frankenlibc-abi --lib "${args[@]}" \
+            native_policy_state_ -- --test-threads=1 2>&1 | tee "$root/native-policy.log"
+          grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$root/native-policy.log"
+          cargo test -p frankenlibc-abi --lib "${args[@]}" \
+            owned_tls_cache::tests:: -- --test-threads=1 2>&1 | tee "$root/cache-owner.log"
+          grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-owner.log"
+          cargo test -p frankenlibc-abi "${args[@]}" --test pthread_host_thread_handoff_test \
+            host_tls_late_callback_ -- --test-threads=1 2>&1 | tee "$root/host-cache-rearm.log"
+          grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$root/host-cache-rearm.log"
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           bash scripts/check_runtime_ready_arm_e2e.sh \
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
@@ -309,9 +319,6 @@ jobs:
             --library "$PWD/target/release/libfrankenlibc_abi.so" \
             --thread-backend native --case fresh-serial --out-dir "$root/native-serial"
           if [[ "$FEATURE" == owned-tls-cache ]]; then
-            cargo test -p frankenlibc-abi --lib --features owned-tls-cache \
-              owned_tls_cache::tests:: -- --test-threads=1 2>&1 | tee "$root/cache-owner.log"
-            grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-owner.log"
             python3 scripts/check_pthread_native_poll.py \
               --library "$PWD/target/release/libfrankenlibc_abi.so" \
               --out-dir "$root/native-waits"

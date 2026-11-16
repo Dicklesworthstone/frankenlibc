@@ -58,7 +58,6 @@ pub(crate) mod host_resolve;
 #[doc(hidden)]
 pub mod htm_fast_path;
 mod membrane_state;
-#[cfg(feature = "owned-tls-cache")]
 mod owned_tls_cache;
 mod runtime_policy;
 /// Address-derived slab ownership test (bd-e0y02p).

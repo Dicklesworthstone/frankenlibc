@@ -6,8 +6,8 @@
 //!
 //! ## Design
 //!
-//! - **Key registry**: 1024 public POSIX slots, plus private scratch-cache slots
-//!   in the owned-cache experiment, with serialized publication.
+//! - **Key registry**: 1024 public POSIX slots, plus private runtime and
+//!   scratch-cache slots, with serialized publication.
 //!
 //! - **Per-thread values**: A static open-addressed hash table mapping kernel TID
 //!   to a pointer to a `[TlsEntry; TLS_KEY_SLOTS]` array. For clone-based threads,
@@ -39,13 +39,10 @@ pub const PTHREAD_KEYS_MAX: usize = 1024;
 
 // Internal libc scratch state must remain available to application key
 // destructors, and exhausting public keys must not break an unrelated libc
-// call. Keep a separate, bounded key domain in the owned-cache experiment.
-#[cfg(feature = "owned-tls-cache")]
+// call. Native policy state also needs these keys when hosted scratch caches
+// retain their compiler-TLS fast path. Keep the public budget unchanged.
 const INTERNAL_TLS_KEYS_MAX: usize = 128;
-#[cfg(feature = "owned-tls-cache")]
 pub(crate) const TLS_KEY_SLOTS: usize = PTHREAD_KEYS_MAX + INTERNAL_TLS_KEYS_MAX;
-#[cfg(not(feature = "owned-tls-cache"))]
-pub(crate) const TLS_KEY_SLOTS: usize = PTHREAD_KEYS_MAX;
 
 /// Maximum destructor-call iterations on thread exit (POSIX requires >= 4).
 pub const PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4;
@@ -71,7 +68,6 @@ pub struct PthreadKey {
 }
 
 /// Private libc key domain, reclaimed after application thread destructors.
-#[cfg(feature = "owned-tls-cache")]
 #[doc(hidden)]
 #[derive(Clone, Copy, Default)]
 pub struct InternalTlsKey {
@@ -234,7 +230,7 @@ const FALLBACK_INLINE_KEYS: usize = 32;
 #[cfg(not(feature = "owned-tls-cache"))]
 struct FallbackTls {
     inline: [core::cell::Cell<TlsEntry>; FALLBACK_INLINE_KEYS],
-    /// Heap block of `PTHREAD_KEYS_MAX - FALLBACK_INLINE_KEYS` entries, or null.
+    /// Owned mapping of `TLS_KEY_SLOTS - FALLBACK_INLINE_KEYS` entries, or null.
     spill: core::cell::Cell<*mut core::cell::Cell<TlsEntry>>,
 }
 
@@ -250,7 +246,7 @@ std::thread_local! {
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
-const FALLBACK_SPILL_KEYS: usize = PTHREAD_KEYS_MAX - FALLBACK_INLINE_KEYS;
+const FALLBACK_SPILL_KEYS: usize = TLS_KEY_SLOTS - FALLBACK_INLINE_KEYS;
 
 #[cfg(not(feature = "owned-tls-cache"))]
 impl FallbackTls {
@@ -263,7 +259,7 @@ impl FallbackTls {
             return TlsEntry::default();
         }
         // SAFETY: `spill` is this thread's live block of FALLBACK_SPILL_KEYS
-        // entries; key_id < PTHREAD_KEYS_MAX is checked by callers.
+        // entries; key_id < TLS_KEY_SLOTS is checked by callers.
         unsafe { (*spill.add(key_id - FALLBACK_INLINE_KEYS)).get() }
     }
 
@@ -278,12 +274,26 @@ impl FallbackTls {
                 // Clearing a never-set high key: nothing to store.
                 return;
             }
-            // Allocate directly on the heap (a stack temporary of this size
-            // would itself overflow the small stacks this layout protects).
-            let block: Box<[core::cell::Cell<TlsEntry>]> = (0..FALLBACK_SPILL_KEYS)
-                .map(|_| core::cell::Cell::new(TlsEntry::default()))
-                .collect();
-            spill = Box::into_raw(block).cast::<core::cell::Cell<TlsEntry>>();
+            // Private runtime keys can be initialized by the allocator itself.
+            // A Box would recurse before its owned cache slot is published.
+            // Anonymous zeroed pages initialize every Cell<TlsEntry> without
+            // touching the host allocator or creating a large stack temporary.
+            // SAFETY: this thread exclusively owns the fresh zero-valid array.
+            spill = unsafe {
+                syscall::sys_mmap(
+                    core::ptr::null_mut(),
+                    core::mem::size_of::<[core::cell::Cell<TlsEntry>; FALLBACK_SPILL_KEYS]>(),
+                    3,    // PROT_READ | PROT_WRITE
+                    0x22, // MAP_PRIVATE | MAP_ANONYMOUS
+                    -1,
+                    0,
+                )
+                .unwrap_or_else(|_| std::process::abort())
+                .cast()
+            };
+            if spill.is_null() {
+                std::process::abort();
+            }
             self.spill.set(spill);
         }
         // SAFETY: as in `get`.
@@ -298,18 +308,18 @@ impl FallbackTls {
         self.release_spill();
     }
 
-    /// Free the spill block (thread teardown / reset).
+    /// Unmap the spill block (thread teardown / reset).
     fn release_spill(&self) {
         let spill = self.spill.replace(core::ptr::null_mut());
         if !spill.is_null() {
-            // SAFETY: `spill` came from `Box::into_raw` of a boxed slice of
-            // exactly FALLBACK_SPILL_KEYS entries and is no longer reachable.
-            drop(unsafe {
-                Box::from_raw(core::ptr::slice_from_raw_parts_mut(
-                    spill,
-                    FALLBACK_SPILL_KEYS,
-                ))
-            });
+            // SAFETY: this is the original mapping of FALLBACK_SPILL_KEYS
+            // entries, detached from this thread after all key destructors.
+            let _ = unsafe {
+                syscall::sys_munmap(
+                    spill.cast(),
+                    core::mem::size_of::<[core::cell::Cell<TlsEntry>; FALLBACK_SPILL_KEYS]>(),
+                )
+            };
         }
     }
 }
@@ -1029,7 +1039,6 @@ pub fn pthread_key_create(
 }
 
 /// Allocate a private key without consuming the public POSIX key budget.
-#[cfg(feature = "owned-tls-cache")]
 #[doc(hidden)]
 pub fn internal_tls_key_create(
     key: &mut InternalTlsKey,
@@ -1144,7 +1153,6 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
 }
 
 /// Read only the calling thread's private libc key value.
-#[cfg(feature = "owned-tls-cache")]
 #[doc(hidden)]
 pub fn internal_tls_getspecific(key: InternalTlsKey) -> u64 {
     let id = (key.id & 1023) as usize;
@@ -1160,7 +1168,6 @@ pub fn internal_tls_getspecific(key: InternalTlsKey) -> u64 {
 /// The caller must own this private key. A nonzero value must satisfy the
 /// registered destructor's contract and remain valid until replaced or torn
 /// down by this thread; overwriting another cache's key violates its ownership.
-#[cfg(feature = "owned-tls-cache")]
 #[doc(hidden)]
 pub unsafe fn internal_tls_setspecific(key: InternalTlsKey, value: u64) -> i32 {
     let id = (key.id & 1023) as usize;
@@ -1391,7 +1398,6 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
     // live through every application destructor, including late native C++
     // callbacks. Only then reclaim private cache values, keeping their lookup
     // table registered so cache Drop implementations can reenter safely.
-    #[cfg(feature = "owned-tls-cache")]
     run_thread_key_destructor_rounds(tid, values_ptr, PTHREAD_KEYS_MAX, TLS_KEY_SLOTS);
 
     if registered {
@@ -1519,6 +1525,36 @@ mod tests {
         let k1 = create_key(None);
         let k2 = create_key(None);
         assert_ne!(k1.id, k2.id, "two keys should have different IDs");
+    }
+
+    #[test]
+    fn private_keys_preserve_public_capacity_and_last_slot_isolation() {
+        let _g = lock_and_reset();
+        let mut private = [InternalTlsKey::default(); INTERNAL_TLS_KEYS_MAX];
+        for key in &mut private {
+            assert_eq!(internal_tls_key_create(key, None), 0);
+        }
+        assert_eq!(
+            internal_tls_key_create(&mut InternalTlsKey::default(), None),
+            EAGAIN
+        );
+        let mut public = [PthreadKey::default(); PTHREAD_KEYS_MAX];
+        for key in &mut public {
+            assert_eq!(pthread_key_create(key, None), 0);
+        }
+        assert_eq!(pthread_key_create(&mut PthreadKey::default(), None), EAGAIN);
+        let last_private = private[INTERNAL_TLS_KEYS_MAX - 1];
+        let last_public = public[PTHREAD_KEYS_MAX - 1];
+        // SAFETY: this test owns all private keys; these have no destructor.
+        assert_eq!(unsafe { internal_tls_setspecific(last_private, 0xcafe) }, 0);
+        assert_eq!(pthread_setspecific(last_public, 0xbeef), 0);
+        assert_eq!(internal_tls_getspecific(last_private), 0xcafe);
+        assert_eq!(pthread_getspecific(last_public), 0xbeef);
+        assert_eq!(internal_tls_getspecific(private[0]), 0);
+        assert_eq!(pthread_getspecific(public[INTERNAL_TLS_KEYS_MAX - 1]), 0);
+        teardown_thread_tls(current_tid());
+        assert_eq!(internal_tls_getspecific(last_private), 0);
+        assert_eq!(pthread_getspecific(last_public), 0);
     }
 
     #[test]
@@ -1663,6 +1699,7 @@ mod tests {
         let _g = lock_and_reset();
         static KEY: AtomicU32 = AtomicU32::new(0);
         static ROUNDS: AtomicU32 = AtomicU32::new(0);
+        static PRIVATE_DROPS: AtomicU32 = AtomicU32::new(0);
         unsafe extern "C" fn rearm(value: *mut c_void) {
             ROUNDS.fetch_add(1, AtomicOrdering::SeqCst);
             if (value as usize) < 3 {
@@ -1677,7 +1714,18 @@ mod tests {
         let key = create_key(Some(rearm));
         KEY.store(key.id, AtomicOrdering::SeqCst);
         ROUNDS.store(0, AtomicOrdering::SeqCst);
+        PRIVATE_DROPS.store(0, AtomicOrdering::SeqCst);
         assert_eq!(pthread_setspecific(key, 1), 0);
+        unsafe extern "C" fn drop_private(value: *mut c_void) {
+            if value as usize != 0xcafe || ROUNDS.load(AtomicOrdering::SeqCst) != 3 {
+                syscall::sys_exit_group(108);
+            }
+            PRIVATE_DROPS.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        let mut private = InternalTlsKey::default();
+        assert_eq!(internal_tls_key_create(&mut private, Some(drop_private)), 0);
+        // SAFETY: this key's destructor accepts exactly this sentinel value.
+        assert_eq!(unsafe { internal_tls_setspecific(private, 0xcafe) }, 0);
         let parent_tid = syscall::sys_gettid();
         #[cfg(feature = "owned-tls-cache")]
         let spare_tid = parent_tid + TLS_TABLE_SLOTS as i32;
@@ -1698,7 +1746,7 @@ mod tests {
         if pid == 0 {
             // SAFETY: this is the sole surviving thread in the copied process.
             unsafe { note_fork_child(parent_tid) };
-            if pthread_getspecific(key) != 1 {
+            if pthread_getspecific(key) != 1 || internal_tls_getspecific(private) != 0xcafe {
                 syscall::sys_exit_group(103);
             }
             #[cfg(feature = "owned-tls-cache")]
@@ -1736,7 +1784,11 @@ mod tests {
                 unsafe { drop_fallback_tls_block(fallback_table_remove(fresh_tid)) };
             }
             teardown_thread_tls(syscall::sys_gettid());
-            if ROUNDS.load(AtomicOrdering::SeqCst) != 3 || pthread_getspecific(key) != 0 {
+            if ROUNDS.load(AtomicOrdering::SeqCst) != 3
+                || pthread_getspecific(key) != 0
+                || PRIVATE_DROPS.load(AtomicOrdering::SeqCst) != 1
+                || internal_tls_getspecific(private) != 0
+            {
                 syscall::sys_exit_group(107);
             }
             syscall::sys_exit_group(0);
@@ -1764,6 +1816,10 @@ mod tests {
         assert_eq!(status, 0, "fork child rejected inherited TLS state");
         assert_eq!(pthread_getspecific(key), 1, "child mutated parent TLS");
         assert_eq!(ROUNDS.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(internal_tls_getspecific(private), 0xcafe);
+        assert_eq!(PRIVATE_DROPS.load(AtomicOrdering::SeqCst), 0);
+        // SAFETY: the parent owns this key; clear its sentinel without a drop.
+        assert_eq!(unsafe { internal_tls_setspecific(private, 0) }, 0);
         assert_eq!(pthread_setspecific(key, 0), 0);
         assert_eq!(pthread_key_delete(key), 0);
     }
