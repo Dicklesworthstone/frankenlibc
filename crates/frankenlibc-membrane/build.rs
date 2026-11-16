@@ -841,11 +841,13 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/ptr_validator.rs",
         domain: "tsm",
-        // 10 -> 13 (bd-rc0923-epic-eeuy4f.9): ACTIVE_VALIDATION_CONTEXTS tracks
-        // threads with non-zero VALIDATION_DEPTH (fetch_add Release on 0->1,
-        // fetch_sub Release on 1->0, load Acquire short-circuit in
-        // in_validation_context).
-        expected_sites: 13,
+        // Kernel-TID context ownership: 39 production ContextTable orderings,
+        // 27 test setup/assertion orderings, 6 native/fallback entry orderings,
+        // and 5 logging orderings. Slot/alias publication uses AcqRel CAS and
+        // Acquire readers; activity credits are reserved before publication
+        // and released after the slot. Child repair's Relaxed slot load runs
+        // only in the sole fork survivor with signals blocked.
+        expected_sites: 77,
         stop_at_cfg_test: false,
         optional: false,
     },
@@ -870,8 +872,10 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // now applied per-shard (current_shard_epoch, snapshot_shard_epochs,
         // bump_shard_epoch, bump_tls_cache_epoch, current_epoch) and the
         // race-safety + cross-shard isolation tests each touch SHARD_EPOCHS
-        // directly. Adjust here when the in-file barrier surface changes.
-        expected_sites: 8,
+        // directly. The native-thread TLS-sharing flag adds a SeqCst publish
+        // before thread admission and an Acquire read before compiler-TLS use.
+        // Adjust here when the in-file barrier surface changes.
+        expected_sites: 10,
         stop_at_cfg_test: false,
         optional: false,
     },
@@ -908,6 +912,71 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     },
 ];
 
+fn verify_atomic_site_count(
+    source: &MemoryModelSource,
+    observed_sites: usize,
+) -> Result<(), String> {
+    if observed_sites != source.expected_sites {
+        return Err(format!(
+            "BarrierMap drift in {}: expected {} sites, observed {}. \
+Update MEMORY_MODEL_SOURCES after reviewing barrier requirements.",
+            source.relative_path, source.expected_sites, observed_sites
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod memory_model_inventory_tests {
+    use super::*;
+
+    const REVIEWED_SOURCES: [(&str, &str); 2] = [
+        ("src/ptr_validator.rs", include_str!("src/ptr_validator.rs")),
+        ("src/tls_cache.rs", include_str!("src/tls_cache.rs")),
+    ];
+
+    fn source_for(path: &str) -> &'static MemoryModelSource {
+        MEMORY_MODEL_SOURCES
+            .iter()
+            .find(|source| source.relative_path == path)
+            .expect("reviewed source must remain in the build-time audit")
+    }
+
+    #[test]
+    fn reviewed_context_and_tls_sources_pass_inventory() {
+        for (path, text) in REVIEWED_SOURCES {
+            let source = source_for(path);
+            let observed = extract_atomic_sites(source, text).len();
+            verify_atomic_site_count(source, observed)
+                .unwrap_or_else(|error| panic!("{error}"));
+        }
+    }
+
+    #[test]
+    fn added_or_removed_ordering_requires_inventory_review() {
+        for (path, text) in REVIEWED_SOURCES {
+            let source = source_for(path);
+            let added = format!("{text}\nflag.load(Ordering::Acquire);\n");
+            let removed = text.replacen("Ordering::Acquire", "ordering", 1);
+
+            for (mutated, delta) in [(&added, 1isize), (&removed, -1isize)] {
+                let observed = extract_atomic_sites(source, mutated).len();
+                assert_eq!(
+                    observed as isize,
+                    source.expected_sites as isize + delta,
+                    "mutation must change exactly one audited ordering in {path}"
+                );
+                let error = verify_atomic_site_count(source, observed)
+                    .expect_err("unreviewed ordering changes must fail closed");
+                assert!(
+                    error.starts_with(&format!("BarrierMap drift in {path}:")),
+                    "gate must identify the changed source: {error}"
+                );
+            }
+        }
+    }
+}
+
 fn write_memory_model_audit(manifest_dir: &Path, out_dir: &Path) -> Result<(), String> {
     let mut source_summaries = Vec::new();
     let mut sites = Vec::new();
@@ -931,13 +1000,7 @@ fn write_memory_model_audit(manifest_dir: &Path, out_dir: &Path) -> Result<(), S
         let source_hash = compute_file_sha256_hex(&source_path)?;
         let source_sites = extract_atomic_sites(source, &source_text);
         let observed_sites = source_sites.len();
-        if observed_sites != source.expected_sites {
-            return Err(format!(
-                "BarrierMap drift in {}: expected {} sites, observed {}. \
-Update MEMORY_MODEL_SOURCES after reviewing barrier requirements.",
-                source.relative_path, source.expected_sites, observed_sites
-            ));
-        }
+        verify_atomic_site_count(source, observed_sites)?;
 
         source_summaries.push(MemoryModelSourceSummary {
             relative_path: source.relative_path,
