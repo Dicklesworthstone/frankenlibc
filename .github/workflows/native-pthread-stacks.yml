@@ -171,6 +171,13 @@ jobs:
             2>&1 | tee artifacts/signal-waits/build.log
       # Keep these regressions independent of the broader native-poll gate:
       # an unrelated failure there must not skip signal-wait execution.
+      - name: Compare native sleep clocks and cancellation with live GNU libc
+        if: always()
+        shell: bash
+        run: |
+          python3 scripts/check_pthread_native_poll.py --sleep-only \
+            --library "$PWD/target/release/libfrankenlibc_abi.so" \
+            --out-dir "$PWD/artifacts/signal-waits/sleep"
       - name: Compare parked sigwait cancellation with live GNU libc
         shell: bash
         run: |

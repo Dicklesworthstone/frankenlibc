@@ -844,12 +844,41 @@ static void reuse_case(int use_ppoll, const int pipefd[2],
     }
 }
 
-enum sleep_api { SLEEP_NANO, SLEEP_CLOCK, SLEEP_ABSOLUTE, SLEEP_SECONDS, SLEEP_MICRO, SLEEP_C11 };
+enum sleep_api {
+    SLEEP_NANO, SLEEP_CLOCK, SLEEP_ABSOLUTE, SLEEP_SECONDS, SLEEP_MICRO, SLEEP_C11,
+    SLEEP_REALTIME, SLEEP_BOOTTIME
+};
 enum sleep_kind {
     SLEEP_BLOCKED, SLEEP_PENDING, SLEEP_DISABLED, SLEEP_SIGNAL, SLEEP_SIGNAL_RESTART,
     SLEEP_TIMEOUT, SLEEP_MASK_BLOCK, SLEEP_ZERO, SLEEP_READONLY, SLEEP_UNALIGNED,
-    SLEEP_REMAINDER, SLEEP_ALIAS_REMAINDER, SLEEP_READONLY_REMAINDER, SLEEP_ERRORS
+    SLEEP_REMAINDER, SLEEP_ALIAS_REMAINDER, SLEEP_READONLY_REMAINDER, SLEEP_ERRORS,
+    SLEEP_EXPIRED, SLEEP_TIMER_CREATE_DENIED, SLEEP_TIMER_ARM_DENIED, SLEEP_PERSONALITY_DENIED
 };
+
+static void deny_io_probe(int number, int error);
+
+static int sleep_is_absolute(enum sleep_api api) {
+    return api == SLEEP_ABSOLUTE || api == SLEEP_REALTIME || api == SLEEP_BOOTTIME;
+}
+
+static int sleep_is_clock(enum sleep_api api) {
+    return api == SLEEP_CLOCK || sleep_is_absolute(api);
+}
+
+static int sleep_uses_timer(enum sleep_api api) {
+    return api == SLEEP_REALTIME || api == SLEEP_BOOTTIME;
+}
+
+static clockid_t sleep_clock(enum sleep_api api) {
+    return api == SLEEP_REALTIME ? CLOCK_REALTIME :
+           api == SLEEP_BOOTTIME ? CLOCK_BOOTTIME : CLOCK_MONOTONIC;
+}
+
+static int sleep_has_deliverable_handler(enum sleep_kind kind) {
+    return kind == SLEEP_SIGNAL || kind == SLEEP_SIGNAL_RESTART ||
+           kind == SLEEP_REMAINDER || kind == SLEEP_ALIAS_REMAINDER ||
+           kind == SLEEP_READONLY_REMAINDER;
+}
 typedef int (*nanosleep_function)(const struct timespec *, struct timespec *);
 typedef int (*clock_sleep_function)(clockid_t, int, const struct timespec *, struct timespec *);
 static nanosleep_function selected_nanosleep, selected_thrd_sleep;
@@ -871,7 +900,7 @@ static int pin_sleep_provider(const char *expected, enum sleep_api api, int alia
     int rc = pin_providers(expected, 0, EVENT_NONE);
     if (rc != 0) return rc;
     const char *name = api == SLEEP_NANO ? (alias ? "__nanosleep" : "nanosleep") :
-        api == SLEEP_CLOCK || api == SLEEP_ABSOLUTE ? (alias ? "__clock_nanosleep" : "clock_nanosleep") :
+        sleep_is_clock(api) ? (alias ? "__clock_nanosleep" : "clock_nanosleep") :
         api == SLEEP_SECONDS ? "sleep" : api == SLEEP_MICRO ? "usleep" : "thrd_sleep";
     struct stat wanted, actual;
     Dl_info info = {0};
@@ -883,7 +912,7 @@ static int pin_sleep_provider(const char *expected, enum sleep_api api, int alia
         return 86;
     }
     if (api == SLEEP_NANO) selected_nanosleep = (nanosleep_function)address;
-    else if (api == SLEEP_CLOCK || api == SLEEP_ABSOLUTE)
+    else if (sleep_is_clock(api))
         selected_clock_sleep = (clock_sleep_function)address;
     else if (api == SLEEP_SECONDS) selected_sleep = (unsigned (*)(unsigned))address;
     else if (api == SLEEP_MICRO) selected_usleep = (int (*)(useconds_t))address;
@@ -897,7 +926,9 @@ static int invoke_sleep(const struct sleep_probe *probe, const struct timespec *
     case SLEEP_NANO: return selected_nanosleep(request, remaining);
     case SLEEP_CLOCK: return selected_clock_sleep(CLOCK_REALTIME, 0, request, remaining);
     case SLEEP_ABSOLUTE:
-        return selected_clock_sleep(CLOCK_MONOTONIC, TIMER_ABSTIME, request, remaining);
+    case SLEEP_REALTIME:
+    case SLEEP_BOOTTIME:
+        return selected_clock_sleep(sleep_clock(probe->api), TIMER_ABSTIME, request, remaining);
     case SLEEP_SECONDS: return (int)selected_sleep((unsigned)request->tv_sec);
     case SLEEP_MICRO:
         return selected_usleep((useconds_t)(request->tv_sec * 1000000 + request->tv_nsec / 1000));
@@ -909,7 +940,7 @@ static int invoke_sleep(const struct sleep_probe *probe, const struct timespec *
 
 static void verify_sleep_error(const struct sleep_probe *probe, int result, int error,
                               int expected) {
-    if (probe->api == SLEEP_CLOCK || probe->api == SLEEP_ABSOLUTE)
+    if (sleep_is_clock(probe->api))
         REQUIRE(result == expected && error == EDOM, "clock_nanosleep returns errors without changing errno");
     else if (probe->api == SLEEP_C11)
         REQUIRE(result == (expected == EINTR ? -1 : -2) && error == EDOM,
@@ -919,7 +950,7 @@ static void verify_sleep_error(const struct sleep_probe *probe, int result, int 
 }
 
 static void sleep_errors(struct sleep_probe *probe) {
-    const struct timespec invalid[] = {{-1, 0}, {0, 1000000000}};
+    const struct timespec invalid[] = {{-1, 0}, {0, -1}, {0, 1000000000}};
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         errno = EDOM;
         int result = invoke_sleep(probe, &invalid[i], &probe->remaining);
@@ -934,7 +965,7 @@ static void sleep_errors(struct sleep_probe *probe) {
             "successful zero/past sleep does not access remainder output");
     REQUIRE(probe->remaining.tv_sec == 71 && probe->remaining.tv_nsec == 72,
             "invalid sleep requests do not publish a remainder");
-    if (probe->api == SLEEP_CLOCK || probe->api == SLEEP_ABSOLUTE) {
+    if (sleep_is_clock(probe->api)) {
         errno = EDOM;
         REQUIRE(selected_clock_sleep(CLOCK_THREAD_CPUTIME_ID, 0, &zero, NULL) == EINVAL && errno == EDOM,
                 "unsupported sleep clock retains original error convention");
@@ -961,6 +992,12 @@ static void *sleep_worker(void *argument) {
     sigaddset(&mask, SIGUSR2);
     if (probe->kind == SLEEP_MASK_BLOCK) sigaddset(&mask, SIGUSR1);
     REQUIRE(pthread_sigmask(SIG_SETMASK, &mask, NULL) == 0, "sleep worker signal mask");
+    if (probe->kind == SLEEP_TIMER_CREATE_DENIED)
+        deny_io_probe(SYS_timerfd_create, EPERM);
+    else if (probe->kind == SLEEP_TIMER_ARM_DENIED)
+        deny_io_probe(SYS_timerfd_settime, EPERM);
+    else if (probe->kind == SLEEP_PERSONALITY_DENIED)
+        deny_io_probe(SYS_personality, EPERM);
     pthread_cleanup_push(sleep_cleanup, probe);
     atomic_store_explicit(&state->ready, 1, memory_order_release);
     while (!atomic_load_explicit(&state->release, memory_order_acquire))
@@ -988,9 +1025,43 @@ static void *sleep_worker(void *argument) {
     return state;
 }
 
+static int sleep_timer_matches(int descriptor, clockid_t expected_clock) {
+    char path[80], identity[64], info[512];
+    int length = snprintf(path, sizeof(path), "/proc/self/fd/%d", descriptor);
+    REQUIRE(length > 0 && (size_t)length < sizeof(path), "timer descriptor path");
+    ssize_t count = readlink(path, identity, sizeof(identity) - 1);
+    if (count < 0) return 0;
+    identity[count] = 0;
+    REQUIRE(strcmp(identity, "anon_inode:[timerfd]") == 0,
+            "absolute clock sleep waits on its kernel timer");
+    length = snprintf(path, sizeof(path), "/proc/self/fdinfo/%d", descriptor);
+    REQUIRE(length > 0 && (size_t)length < sizeof(path), "timer descriptor metadata path");
+    int file = open(path, O_RDONLY | O_CLOEXEC);
+    if (file < 0) return 0;
+    count = read(file, info, sizeof(info) - 1);
+    REQUIRE(close(file) == 0, "close timer descriptor metadata");
+    if (count <= 0) return 0;
+    info[count] = 0;
+    const char *clock = strstr(info, "clockid:");
+    const char *flags = strstr(info, "settime flags:");
+    int observed_clock = -1;
+    unsigned observed_flags = 0;
+    REQUIRE(clock != NULL && sscanf(clock, "clockid: %d", &observed_clock) == 1 &&
+                observed_clock == expected_clock,
+            "kernel timer retains the requested REALTIME or BOOTTIME clock");
+    REQUIRE(flags != NULL && sscanf(flags, "settime flags: %x", &observed_flags) == 1 &&
+                observed_flags == TIMER_ABSTIME,
+            "kernel timer uses an absolute deadline without CANCEL_ON_SET");
+    return 1;
+}
+
 static void observe_sleep_parked(struct sleep_probe *probe, int memory) {
     struct state *state = &probe->observed;
-    const int sliced = expect_native && probe->kind != SLEEP_DISABLED;
+    const int timer = sleep_uses_timer(probe->api);
+    const int fallback = timer && (sleep_has_deliverable_handler(probe->kind) ||
+        probe->kind == SLEEP_TIMER_CREATE_DENIED || probe->kind == SLEEP_TIMER_ARM_DENIED ||
+        probe->kind == SLEEP_PERSONALITY_DENIED);
+    const int sliced = expect_native && probe->kind != SLEEP_DISABLED && !fallback;
     int64_t deadline = monotonic_ns() + 2000000000;
     while (monotonic_ns() < deadline) {
         REQUIRE(!atomic_load_explicit(&state->returned, memory_order_acquire),
@@ -1005,9 +1076,17 @@ static void observe_sleep_parked(struct sleep_probe *probe, int memory) {
         struct timespec duration;
         if (sliced) {
             uint64_t mask;
-            if (number != SYS_ppoll || args[0] != 0 || args[1] != 0 || args[2] == 0 || args[3] == 0 ||
+            if (number != SYS_ppoll || args[2] == 0 || args[3] == 0 ||
                 !snapshot(memory, args[2], &duration, sizeof(duration)) ||
                 !snapshot(memory, args[3], &mask, sizeof(mask))) goto retry_sleep;
+            if (timer) {
+                struct pollfd interest;
+                if (args[0] == 0 || args[1] != 1 ||
+                    !snapshot(memory, args[0], &interest, sizeof(interest))) goto retry_sleep;
+                REQUIRE(interest.fd >= 0 && interest.events == POLLIN,
+                        "absolute sleep observes its one private timer");
+                if (!sleep_timer_matches(interest.fd, sleep_clock(probe->api))) goto retry_sleep;
+            } else if (args[0] != 0 || args[1] != 0) goto retry_sleep;
             REQUIRE(args[4] == sizeof(mask), "native sleep uses the kernel signal-mask width");
             REQUIRE(duration.tv_sec == 0 && duration.tv_nsec > 0 && duration.tv_nsec <= 50000000,
                     "native sleep blocks for a bounded nonzero quantum");
@@ -1022,6 +1101,10 @@ static void observe_sleep_parked(struct sleep_probe *probe, int memory) {
             if (number == SYS_clock_nanosleep) request = args[2];
             if (request == 0 || !snapshot(memory, request, &duration, sizeof(duration))) goto retry_sleep;
             REQUIRE(duration.tv_sec > 0 || duration.tv_nsec > 0, "original sleep has a positive duration");
+            if (timer)
+                REQUIRE(number == SYS_clock_nanosleep && args[0] == (unsigned long long)sleep_clock(probe->api) &&
+                            args[1] == TIMER_ABSTIME,
+                        "unsupported timer adapter retains the original clock and absolute deadline");
         }
         if (!read_proc(state, "stat", status, sizeof(status))) goto retry_sleep;
         char *end = strrchr(status, ')');
@@ -1034,7 +1117,7 @@ retry_sleep:
 
 static int sleep_contract_main(char **argv) {
     const char *entry = case_name + 6;
-    const char *prefixes[] = {"nano-", "clock-", "absolute-", "seconds-", "micro-", "c11-"};
+    const char *prefixes[] = {"nano-", "clock-", "absolute-", "seconds-", "micro-", "c11-", "realtime-", "boottime-"};
     int api = -1;
     for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
         if (strncmp(entry, prefixes[i], strlen(prefixes[i])) == 0) { api = (int)i; entry += strlen(prefixes[i]); break; }
@@ -1046,11 +1129,15 @@ static int sleep_contract_main(char **argv) {
     if (alias && api != SLEEP_NANO && api != SLEEP_CLOCK) return 2;
     const char *names[] = {"blocked", "pending", "disabled", "signal", "signal-restart", "timeout",
                           "mask-block", "zero", "readonly-request", "unaligned-request", "remainder",
-                          "alias-remainder", "readonly-remainder", "errors"};
+                          "alias-remainder", "readonly-remainder", "errors", "expired",
+                          "timer-create-denied", "timer-arm-denied", "personality-denied"};
     int kind = -1;
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (strcmp(entry, names[i]) == 0) kind = (int)i;
     if (kind < 0 || ((api == SLEEP_SECONDS || api == SLEEP_MICRO) && kind >= SLEEP_READONLY)) return 2;
+    if (kind == SLEEP_EXPIRED && !sleep_is_absolute((enum sleep_api)api)) return 2;
+    if ((kind == SLEEP_TIMER_CREATE_DENIED || kind == SLEEP_TIMER_ARM_DENIED ||
+         kind == SLEEP_PERSONALITY_DENIED) && !sleep_uses_timer((enum sleep_api)api)) return 2;
     int pin = pin_sleep_provider(argv[2], (enum sleep_api)api, alias);
     if (pin != 0) return pin;
     expect_native = getenv("FRANKENLIBC_THREAD_NATIVE") != NULL &&
@@ -1059,7 +1146,9 @@ static int sleep_contract_main(char **argv) {
     creator_tid = (pid_t)syscall(SYS_gettid);
     creator_thread = pthread_self();
     struct sigaction action = {0};
-    action.sa_handler = user_signal;
+    action.sa_handler = sleep_uses_timer((enum sleep_api)api) &&
+                        !sleep_has_deliverable_handler((enum sleep_kind)kind) && kind != SLEEP_MASK_BLOCK
+                          ? SIG_DFL : user_signal;
     action.sa_flags = kind == SLEEP_SIGNAL_RESTART ? SA_RESTART : 0;
     sigemptyset(&action.sa_mask);
     REQUIRE(sigaction(SIGUSR1, &action, NULL) == 0, "install sleep signal handler");
@@ -1075,17 +1164,26 @@ static int sleep_contract_main(char **argv) {
     unsigned char *storage = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE,
                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     REQUIRE(storage != MAP_FAILED, "sleep timeout mapping");
-    int interrupted = kind == SLEEP_SIGNAL || kind == SLEEP_SIGNAL_RESTART || kind == SLEEP_REMAINDER ||
-                      kind == SLEEP_ALIAS_REMAINDER || kind == SLEEP_READONLY_REMAINDER;
+    int interrupted = sleep_has_deliverable_handler((enum sleep_kind)kind);
     struct timespec duration = {0, 250000000};
     if (kind == SLEEP_BLOCKED || kind == SLEEP_PENDING) duration = (struct timespec){60, 0};
     else if (interrupted) duration = (struct timespec){2, 0};
     else if (kind == SLEEP_ZERO || kind == SLEEP_ERRORS) duration = (struct timespec){0, 0};
     else if (api == SLEEP_SECONDS) duration = (struct timespec){1, 0};
     struct timespec request = duration;
-    if (api == SLEEP_ABSOLUTE && kind != SLEEP_ZERO && kind != SLEEP_ERRORS) {
-        int64_t end = monotonic_ns() + duration.tv_sec * 1000000000 + duration.tv_nsec;
-        request = (struct timespec){end / 1000000000, end % 1000000000};
+    if (sleep_is_absolute((enum sleep_api)api) && kind != SLEEP_ZERO && kind != SLEEP_ERRORS) {
+        if (kind == SLEEP_EXPIRED) {
+            request = (struct timespec){1, 1};
+        } else {
+            REQUIRE(clock_gettime(sleep_clock((enum sleep_api)api), &request) == 0,
+                    "read the requested absolute sleep clock");
+            request.tv_sec += duration.tv_sec;
+            request.tv_nsec += duration.tv_nsec;
+            if (request.tv_nsec >= 1000000000) {
+                ++request.tv_sec;
+                request.tv_nsec -= 1000000000;
+            }
+        }
     }
     const size_t offset = kind == SLEEP_UNALIGNED ? 1 : 0;
     memcpy(storage + offset, &request, sizeof(request));
@@ -1104,12 +1202,14 @@ static int sleep_contract_main(char **argv) {
         probe.request = &probe.remaining;
     }
     if (kind == SLEEP_READONLY_REMAINDER) probe.output = (struct timespec *)(storage + 64);
+    if (kind == SLEEP_EXPIRED) probe.output = (struct timespec *)(uintptr_t)1;
+    size_t original_descriptors = descriptor_count();
     struct state *state = &probe.observed;
     REQUIRE(pthread_create(&state->thread, NULL, sleep_worker, &probe) == 0, "create sleep worker");
     wait_ready(state);
     if (kind == SLEEP_PENDING) REQUIRE(pthread_cancel(state->thread) == 0, "queue pending sleep cancellation");
     atomic_store_explicit(&state->release, 1, memory_order_release);
-    if (kind != SLEEP_PENDING && kind != SLEEP_ZERO && kind != SLEEP_ERRORS)
+    if (kind != SLEEP_PENDING && kind != SLEEP_ZERO && kind != SLEEP_ERRORS && kind != SLEEP_EXPIRED)
         observe_sleep_parked(&probe, memory);
     if (kind == SLEEP_BLOCKED || kind == SLEEP_DISABLED) {
         REQUIRE(pthread_cancel(state->thread) == 0, "cancel observed kernel sleep");
@@ -1128,14 +1228,14 @@ static int sleep_contract_main(char **argv) {
     REQUIRE(atomic_load_explicit(&state->returned, memory_order_acquire) == (!canceled || kind == SLEEP_DISABLED),
             "sleep return versus cancellation");
     if (interrupted) {
-        int expected = kind == SLEEP_READONLY_REMAINDER && api != SLEEP_ABSOLUTE ? EFAULT : EINTR;
+        int expected = kind == SLEEP_READONLY_REMAINDER && !sleep_is_absolute((enum sleep_api)api) ? EFAULT : EINTR;
         if (api == SLEEP_SECONDS)
             REQUIRE(state->result == 1 && state->error == EINTR,
                     "sleep truncates fractional unslept seconds as GNU does");
         else verify_sleep_error(&probe, state->result, state->error, expected);
         REQUIRE(atomic_load_explicit(&signals_delivered, memory_order_relaxed) == 1,
                 "sleep interruption invokes one signal handler without SA_RESTART retry");
-        if (api == SLEEP_ABSOLUTE)
+        if (sleep_is_absolute((enum sleep_api)api))
             REQUIRE(probe.remaining.tv_sec == (kind == SLEEP_ALIAS_REMAINDER ? request.tv_sec : 71) &&
                         probe.remaining.tv_nsec == (kind == SLEEP_ALIAS_REMAINDER ? request.tv_nsec : 72),
                     "absolute sleep leaves the remainder unused");
@@ -1145,7 +1245,7 @@ static int sleep_contract_main(char **argv) {
                         probe.remaining.tv_nsec < 1000000000 && left > 0 && left < 2000000000,
                     "interrupted relative sleep publishes a normalized unslept duration");
         }
-        if (kind == SLEEP_REMAINDER && api != SLEEP_ABSOLUTE) {
+        if (kind == SLEEP_REMAINDER && !sleep_is_absolute((enum sleep_api)api)) {
             int64_t onset = atomic_load_explicit(&sleep_signal_started, memory_order_relaxed);
             int64_t ended = atomic_load_explicit(&sleep_signal_finished, memory_order_relaxed);
             int64_t expected_left = 2000000000 - (onset - probe.started);
@@ -1156,7 +1256,7 @@ static int sleep_contract_main(char **argv) {
         }
     } else if (!canceled || kind == SLEEP_DISABLED) {
         REQUIRE(state->result == 0, "sleep reaches its finite deadline");
-        if (kind != SLEEP_ZERO && kind != SLEEP_ERRORS)
+        if (kind != SLEEP_ZERO && kind != SLEEP_ERRORS && kind != SLEEP_EXPIRED)
             REQUIRE(state->elapsed_ns >= (api == SLEEP_SECONDS ? 900000000 : 200000000) &&
                         state->elapsed_ns < 2000000000,
                     "sleep finite deadline spans quanta without early return or repeated-duration drift");
@@ -1175,6 +1275,8 @@ static int sleep_contract_main(char **argv) {
             "sleep never changes the caller's const request");
     REQUIRE(memcmp(storage + 64, &sentinel, sizeof(sentinel)) == 0,
             "read-only sleep remainder control remains untouched");
+    REQUIRE(descriptor_count() == original_descriptors,
+            "completed, canceled and fallback sleeps release every private timer descriptor");
     REQUIRE(munmap(storage, (size_t)page) == 0 && close(memory) == 0, "release sleep fixture resources");
     printf("pthread-native-poll:%s:PASS\n", case_name);
     return 0;

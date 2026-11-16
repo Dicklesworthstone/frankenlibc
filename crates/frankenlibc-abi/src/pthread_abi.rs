@@ -7260,9 +7260,9 @@ pub(crate) unsafe fn cancellation_point_nanosleep(
     }
 }
 
-/// Clock-selected sleep with native cancellation for the relative monotonic
-/// clocks and absolute CLOCK_MONOTONIC deadlines. Other clock/flag contracts
-/// retain the original syscall, including CPU clocks and settable deadlines.
+/// Clock-selected sleep with bounded native cancellation. Absolute REALTIME
+/// and BOOTTIME deadlines use kernel timers when no caught signal is deliverable;
+/// unsupported clocks, flags and handler dispositions retain the original syscall.
 #[inline(always)]
 pub(crate) unsafe fn cancellation_point_clock_nanosleep(
     clock: c_int,
@@ -7292,7 +7292,11 @@ unsafe fn cancellation_sleep_window(
 ) -> Result<(), c_int> {
     let absolute = flags == libc::TIMER_ABSTIME;
     let supported = (flags == 0 && matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC))
-        || (absolute && clock == libc::CLOCK_MONOTONIC);
+        || (absolute
+            && matches!(
+                clock,
+                libc::CLOCK_REALTIME | libc::CLOCK_MONOTONIC | libc::CLOCK_BOOTTIME
+            ));
     if supported
         && caller != 0
         && let Some(cancel) = core_current_cancellation_wait()
@@ -7315,7 +7319,16 @@ unsafe fn cancellation_sleep_window(
         let result = imported.and_then(|()| {
             // SAFETY: owned is initialized and aligned, and cancel belongs to
             // this live native thread for the entire bounded sleep.
-            unsafe { cancel_poll::wait_sleep(&owned, absolute, !remaining.is_null(), cancel) }
+            unsafe {
+                cancel_poll::wait_sleep(
+                    &owned,
+                    clock,
+                    absolute,
+                    !remaining.is_null(),
+                    cancel,
+                    crate::signal_abi::supports_native_child_wait,
+                )
+            }
         });
         if cancel.pending() {
             unsafe { pthread_testcancel() };

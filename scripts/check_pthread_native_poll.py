@@ -45,14 +45,14 @@ EPOLL_CASES = tuple(
 )
 SLEEP_CASES = tuple(
     f"sleep-{entry}-{case}"
-    for entry in ("nano", "clock", "absolute", "seconds", "micro", "c11")
+    for entry in ("nano", "clock", "absolute", "seconds", "micro", "c11", "realtime", "boottime")
     for case in (
         "pending", "blocked", "disabled", "signal", "signal-restart", "timeout",
         "mask-block", "zero",
     )
 ) + tuple(
     f"sleep-{entry}-{case}"
-    for entry in ("nano", "clock", "absolute", "c11")
+    for entry in ("nano", "clock", "absolute", "c11", "realtime", "boottime")
     for case in (
         "readonly-request", "unaligned-request", "remainder", "alias-remainder",
         "readonly-remainder", "errors",
@@ -61,6 +61,13 @@ SLEEP_CASES = tuple(
     f"sleep-{entry}-alias-{case}"
     for entry in ("nano", "clock")
     for case in ("pending", "blocked")
+) + tuple(
+    f"sleep-{entry}-expired"
+    for entry in ("absolute", "realtime", "boottime")
+) + tuple(
+    f"sleep-{entry}-{case}"
+    for entry in ("realtime", "boottime")
+    for case in ("timer-create-denied", "timer-arm-denied", "personality-denied")
 )
 SELECT_CASES = tuple(
     f"{entry}-{case}"
@@ -319,6 +326,10 @@ def main() -> int:
         help="Run only the GNU oracle; report no candidate validation.",
     )
     parser.add_argument(
+        "--sleep-only", action="store_true",
+        help="Run sleep cancellation, absolute clocks, timer fallback and remainder contracts.",
+    )
+    parser.add_argument(
         "--suspend-only", action="store_true",
         help="Run only pause/sigsuspend cases and the provider/backend negative controls.",
     )
@@ -359,14 +370,15 @@ def main() -> int:
         help="Run finite socket timeouts, blocked cancellation, delayed progress and partial expiry.",
     )
     args = parser.parse_args()
-    if sum((args.suspend_only, args.read_only, args.fd_io_only, args.message_io_only,
+    if sum((args.sleep_only, args.suspend_only, args.read_only, args.fd_io_only, args.message_io_only,
             args.receive_only, args.send_only, args.sendmsg_only, args.sendmmsg_only,
             args.recvmmsg_only, args.socket_timeout_only)) > 1:
-        parser.error("--suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only, --sendmsg-only, --sendmmsg-only, --recvmmsg-only and --socket-timeout-only are mutually exclusive")
+        parser.error("--sleep-only, --suspend-only, --read-only, --fd-io-only, --message-io-only, --receive-only, --send-only, --sendmsg-only, --sendmmsg-only, --recvmmsg-only and --socket-timeout-only are mutually exclusive")
     if not args.host_only and args.library is None:
         parser.error("--library is required unless --host-only is selected")
     root = Path(__file__).resolve().parents[1]
-    cases = (SUSPEND_CASES if args.suspend_only else READ_CASES if args.read_only else
+    cases = (SLEEP_CASES if args.sleep_only else
+             SUSPEND_CASES if args.suspend_only else READ_CASES if args.read_only else
              FD_IO_CASES + FD_IO_NATIVE_CASES if args.fd_io_only else
              MESSAGE_IO_CASES if args.message_io_only else
              RECEIVE_CASES if args.receive_only else
@@ -498,7 +510,8 @@ def main() -> int:
     report = {
         "schema_version": 2,
         "validation_scope": "GNU oracle only" if args.host_only else "GNU and deployed candidate ABI",
-        "case_scope": "pause/sigsuspend only" if args.suspend_only else
+        "case_scope": "sleep cancellation and absolute clock contracts only" if args.sleep_only else
+                      "pause/sigsuspend only" if args.suspend_only else
                       "stream reads and fallback contracts only" if args.read_only else
                       "stream write/readv/writev and fallback contracts only" if args.fd_io_only else
                       "descriptor I/O on datagram and SEQPACKET sockets only" if args.message_io_only else

@@ -319,11 +319,11 @@ pub(super) enum SleepResult {
     Unsupported,
 }
 
-/// Sleep against one monotonic deadline, checking native cancellation between
-/// bounded kernel waits. This supports relative nanosleep and the relative
-/// CLOCK_REALTIME/CLOCK_MONOTONIC clock_nanosleep forms, plus absolute
-/// CLOCK_MONOTONIC. The ABI must leave other clocks and flags on their original
-/// path: CPU clocks and clocks that advance through suspend are not equivalent.
+/// Sleep against the requested clock, checking native cancellation between
+/// bounded kernel waits. Relative REALTIME/MONOTONIC sleeps and absolute
+/// MONOTONIC use the existing monotonic deadline. Absolute REALTIME/BOOTTIME
+/// use a kernel timer, preserving clock adjustments and time spent suspended.
+/// CPU clocks, alarm clocks and other flag contracts retain the original syscall.
 ///
 /// ppoll atomically installs the entry mask for each slice. Signals remain
 /// blocked between slices, so a handler cannot run in an internal gap and lose
@@ -345,15 +345,22 @@ pub(super) enum SleepResult {
 /// cancellation before publishing an Interrupted remainder to caller memory.
 pub(super) unsafe fn wait_sleep(
     request: &Timespec,
+    clock: c_int,
     absolute: bool,
     need_remainder: bool,
     cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
 ) -> Result<SleepResult, c_int> {
     if request.tv_sec < 0
         || !(0..1_000_000_000).contains(&request.tv_nsec)
         || (request.tv_sec == 0 && request.tv_nsec == 0)
     {
         return Ok(SleepResult::Unsupported);
+    }
+    if absolute && clock != libc::CLOCK_MONOTONIC {
+        // SAFETY: request is owned and validated; the ABI admitted only the
+        // absolute REALTIME/BOOTTIME contracts. No relative remainder is used.
+        return unsafe { wait_absolute_clock(request, clock, cancel, supports_handlers) };
     }
 
     let mut guard = SignalMaskGuard::block_all()?;
@@ -372,6 +379,126 @@ pub(super) unsafe fn wait_sleep(
     // wait uses no application descriptors or pointers and owns no resources.
     let result = unsafe { sleep_slices(request, absolute, need_remainder, &mut guard, cancel) };
     guard.restore().and(result)
+}
+
+/// The timer is acquired only after ruling out deliverable caught handlers.
+/// Close before restoring the entry mask or delivering native cancellation.
+struct AbsoluteSleepTimer(c_int);
+
+impl Drop for AbsoluteSleepTimer {
+    fn drop(&mut self) {
+        // Linux releases the descriptor even when close reports EINTR. A retry
+        // could close an unrelated descriptor opened concurrently by a peer.
+        let _ = syscall::sys_close(self.0);
+    }
+}
+
+unsafe fn wait_absolute_clock(
+    request: &Timespec,
+    clock: c_int,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+) -> Result<SleepResult, c_int> {
+    if !matches!(clock, libc::CLOCK_REALTIME | libc::CLOCK_BOOTTIME) {
+        return Ok(SleepResult::Unsupported);
+    }
+    let Ok(mut mask) = SignalMaskGuard::block_all() else {
+        return Ok(SleepResult::Unsupported);
+    };
+    // A caught handler can siglongjmp across Rust destructors. Do not acquire
+    // a descriptor in that case; the original clock_nanosleep owns no fd.
+    if !supports_handlers(mask.original) {
+        return mask.restore().map(|()| SleepResult::Unsupported);
+    }
+    // SAFETY: this read-only query changes neither personality nor errno.
+    // STICKY_TIMEOUTS makes ppoll expose EINTR after stop/continue, whereas
+    // absolute clock_nanosleep restarts. Preserve that contract on the raw path.
+    let persona =
+        unsafe { syscall::syscall1(libc::SYS_personality as usize, u32::MAX as usize) };
+    if (-4095..0).contains(&(persona as isize)) || persona & STICKY_TIMEOUTS != 0 {
+        return mask.restore().map(|()| SleepResult::Unsupported);
+    }
+    let timer = match syscall::sys_timerfd_create(clock, libc::TFD_CLOEXEC | libc::TFD_NONBLOCK) {
+        Ok(fd) => AbsoluteSleepTimer(fd),
+        Err(_) => return mask.restore().map(|()| SleepResult::Unsupported),
+    };
+    let settings = syscall::ItimerSpec {
+        it_interval: Timespec::default(),
+        it_value: *request,
+    };
+    // SAFETY: settings is a complete owned kernel-layout object. The timer is
+    // private and one-shot. Deliberately omit CANCEL_ON_SET: a wall-clock step
+    // must adjust the deadline, not turn a sleep into an ECANCELED error.
+    let armed = unsafe {
+        syscall::sys_timerfd_settime_spec(
+            timer.0,
+            libc::TFD_TIMER_ABSTIME,
+            core::ptr::from_ref(&settings),
+            core::ptr::null_mut(),
+        )
+    };
+    let result = if armed.is_ok() {
+        // SAFETY: the timer and original mask remain live through each bounded
+        // kernel wait. Cancellation is delivered only after this helper returns.
+        unsafe { absolute_sleep_slices(timer.0, cancel, supports_handlers, &mut mask) }
+    } else {
+        // Adapter denial/exhaustion must not add new errors to clock_nanosleep.
+        // Falling back with the original absolute deadline cannot repeat time.
+        Ok(SleepResult::Unsupported)
+    };
+    drop(timer);
+    mask.restore().and(result)
+}
+
+// This raw-wait frame owns no Drop state. A concurrently installed handler can
+// unwind with its active mask. As in the native socket adapters, dispositions
+// are rechecked before each slice, but installation racing that final check can
+// still race a nonlocal jump. An observed change falls back before unblocking.
+#[inline(never)]
+unsafe fn absolute_sleep_slices(
+    timer: c_int,
+    cancel: CancellationWait,
+    supports_handlers: fn(u64) -> bool,
+    mask: &mut SignalMaskGuard,
+) -> Result<SleepResult, c_int> {
+    loop {
+        if cancel.pending() {
+            return Ok(SleepResult::Interrupted(Timespec::default()));
+        }
+        if !supports_handlers(mask.original) {
+            return Ok(SleepResult::Unsupported);
+        }
+        let mut interest = libc::pollfd {
+            fd: timer,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let mut slice = Timespec {
+            tv_sec: 0,
+            tv_nsec: SLICE_NS,
+        };
+        mask.armed = false;
+        // SAFETY: all poll, timeout and signal-set storage is initialized and
+        // owned. Readiness comes from the kernel timer, never a sampled clock.
+        let result = unsafe {
+            syscall::sys_ppoll(
+                core::ptr::from_mut(&mut interest).cast(),
+                1,
+                core::ptr::from_mut(&mut slice).cast(),
+                core::ptr::from_ref(&mask.original).cast(),
+                KERNEL_SIGSET_BYTES,
+            )
+        };
+        mask.armed = true;
+        match result {
+            Ok(0) => {}
+            Ok(_) if interest.revents == libc::POLLIN => return Ok(SleepResult::Complete),
+            Err(libc::EINTR) => return Ok(SleepResult::Interrupted(Timespec::default())),
+            // No caller memory or relative timeout was changed. Release the
+            // timer and retry the original absolute sleep on adapter failure.
+            _ => return Ok(SleepResult::Unsupported),
+        }
+    }
 }
 
 /// Convert a nonnegative remaining duration, bounded by the caller's valid
