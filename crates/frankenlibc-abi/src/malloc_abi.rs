@@ -7190,6 +7190,38 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         })
 }
 
+/// Decision-sensitive remaining-bytes check for synchronously kernel-routed
+/// hardened ABI entrypoints (`Socket`, `IoFd`). When `RuntimeMathKernel::decide`
+/// escalates a family (`risk_upper_bound_ppm >= ESCALATED_RISK_THRESHOLD_PPM`
+/// or `Deny`), forces synchronous SipHash header + trailing canary verification
+/// on live arena allocations instead of relying on the warm `1-in-16`
+/// `TLS_CACHE` cadence.
+#[inline]
+pub(crate) fn known_remaining_for_decision(
+    addr: usize,
+    decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
+) -> Option<usize> {
+    let rem = known_remaining(addr);
+    if !runtime_policy::strict_passthrough_active()
+        && (decision.risk_upper_bound_ppm >= crate::runtime_policy::ESCALATED_RISK_THRESHOLD_PPM
+            || matches!(
+                decision.action,
+                frankenlibc_membrane::runtime_math::MembraneAction::Deny
+            ))
+        && rem.is_some_and(|r| r > 0)
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+        && let Some((slot, _)) = pipeline.arena.remaining_from(addr)
+        && slot.state.is_live()
+        && !pipeline.arena.verify_live_canary(slot.user_base)
+    {
+        frankenlibc_membrane::metrics::MembraneMetrics::inc(
+            &frankenlibc_membrane::metrics::global_metrics().canary_failures,
+        );
+        return Some(0);
+    }
+    rem
+}
+
 // ---------------------------------------------------------------------------
 // malloc
 // ---------------------------------------------------------------------------

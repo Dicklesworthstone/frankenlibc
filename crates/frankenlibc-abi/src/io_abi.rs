@@ -10,7 +10,7 @@ use frankenlibc_core::syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{known_remaining, known_remaining_for_decision};
 use crate::runtime_policy;
 
 #[path = "iov_snapshot.rs"]
@@ -19,6 +19,15 @@ pub(crate) mod iov_snapshot;
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+fn tracked_region_fits_for_decision(
+    ptr: *const c_void,
+    len: usize,
+    decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
+) -> bool {
+    known_remaining_for_decision(ptr as usize, decision).is_none_or(|remaining| len <= remaining)
 }
 
 #[inline]
@@ -369,7 +378,9 @@ pub(crate) unsafe fn pread_cp(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if (buf.is_null() && count > 0) || !tracked_region_fits(buf.cast_const(), count) {
+    if (buf.is_null() && count > 0)
+        || !tracked_region_fits_for_decision(buf.cast_const(), count, &decision)
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -417,7 +428,7 @@ pub(crate) unsafe fn pwrite_cp(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if (buf.is_null() && count > 0) || !tracked_region_fits(buf, count) {
+    if (buf.is_null() && count > 0) || !tracked_region_fits_for_decision(buf, count, &decision) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;

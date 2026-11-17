@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.13",
+  "contract": {
+    "behavior": "Baseline x86-64 default release build without global AVX2/FMA flags, runtime CPUID dispatch twins, IRELATIVE cpu_guard refusal on release-x86-64-v3, zero internal GOT calls to exported math symbols, and 28/28 Nehalem/qemu64 parity gate",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      ".cargo/config.toml",
+      "Cargo.toml",
+      "crates/frankenlibc-abi/src/lib.rs",
+      "crates/frankenlibc-core/src/math/mod.rs",
+      "scripts/check_baseline_isa.sh"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs"
+    ],
+    "source": {
+      "commit": "fe794bd624174176964445cfc9d68074d6a97b68",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-abi/src/lib.rs": "eb7f5595e198c7ea465a9241062d66f21ec468dff327fc6b70e798ca71053411",
+        "crates/frankenlibc-core/src/math/mod.rs": "4eab707ae58c6949c695a96c6e72c9c707d060c82b8f488c032edd36d2fc1e91",
+        "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs": "9ef14fefef5b534fe96a65ee863a92af4fb2c1482d243dd99922b502a9e2a253",
+        "scripts/check_baseline_isa.sh": "4b3297ad0d69758fbb7762ddd0b69bd5c2930a77ec8ce6faac9081634753adb6"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-17T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/baseline_isa_gate_test"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs",
+        "-o",
+        "target/closure_bins/baseline_isa_gate_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/baseline_isa_gate_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "cargo_config_and_profiles_isolate_x86_64_v3_from_default_release",
+        "baseline_isa_gate_script_and_cpu_guard_contract_are_complete"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs",
+      "-o",
+      "target/closure_bins/baseline_isa_gate_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T11:01:04.620865+00:00",
+    "finished_at": "2026-11-17T11:01:04.939198+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/baseline_isa_gate_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T11:01:04.941483+00:00",
+    "finished_at": "2026-11-17T11:01:04.946714+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "50056bb2da051c19097d15c721b73740661b7b402603b922936b79927fdd3191",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/baseline_isa_gate_test": "1a235b064248ce519fda41809c8b2f89266b9f289b04990c1b5e7b02907e2ec1"
+  },
+  "artifact_files": {
+    "target/closure_bins/baseline_isa_gate_test": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-abi/src/lib.rs": "eb7f5595e198c7ea465a9241062d66f21ec468dff327fc6b70e798ca71053411",
+    "crates/frankenlibc-core/src/math/mod.rs": "4eab707ae58c6949c695a96c6e72c9c707d060c82b8f488c032edd36d2fc1e91",
+    "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs": "9ef14fefef5b534fe96a65ee863a92af4fb2c1482d243dd99922b502a9e2a253",
+    "scripts/check_baseline_isa.sh": "4b3297ad0d69758fbb7762ddd0b69bd5c2930a77ec8ce6faac9081634753adb6"
+  },
+  "executable_sha256": "1a235b064248ce519fda41809c8b2f89266b9f289b04990c1b5e7b02907e2ec1"
+}

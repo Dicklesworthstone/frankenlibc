@@ -11,6 +11,8 @@ GLIBC_2.2.5 {
         __frankenlibc_runtime_phase;
         __frankenlibc_is_feedback_enabled;
         __frankenlibc_decision_count;
+        __frankenlibc_runtime_decision_snapshot;
+        __frankenlibc_runtime_route_counts;
         __frankenlibc_healing_double_free_count;
         __frankenlibc_healing_foreign_free_count;
         __frankenlibc_healing_action_count;

@@ -1,0 +1,6083 @@
+//! Runtime policy bridge for ABI entrypoints.
+//!
+//! This module centralizes access to the membrane RuntimeMathKernel so ABI
+//! functions can cheaply obtain per-call decisions and publish observations
+//! without duplicating orchestration code.
+
+#![allow(dead_code)]
+
+use std::ffi::{c_char, c_int};
+use std::fmt::Write as _;
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::Mutex;
+use std::sync::atomic::{
+    AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering as AtomicOrdering,
+};
+
+#[cfg(not(feature = "owned-tls-cache"))]
+use std::cell::{Cell, RefCell};
+
+use frankenlibc_core::syscall;
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::decision_contract::{
+    DecisionAction as DecisionContractAction, DecisionContractMachine,
+    DecisionEvent as DecisionContractEvent, TsmState,
+};
+use frankenlibc_membrane::runtime_math::{
+    ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeEvidenceContractSnapshot,
+    RuntimeKernelSnapshot, RuntimeMathKernel, ValidationProfile,
+};
+use frankenlibc_membrane::{HealingAction, MEMBRANE_SCHEMA_VERSION};
+use sha2::{Digest, Sha256};
+
+// Kernel lifecycle states.
+const STATE_UNINIT: u8 = 0;
+const STATE_INITIALIZING: u8 = 1;
+const STATE_READY: u8 = 2;
+const STATE_BROKEN: u8 = 3;
+const MODE_UNRESOLVED: u8 = 0;
+const MODE_STRICT: u8 = 1;
+const MODE_HARDENED: u8 = 2;
+const MODE_OFF: u8 = 3;
+const MODE_RESOLVING: u8 = 255;
+const PANIC_HOOK_UNSET: u8 = 0;
+const PANIC_HOOK_INSTALLED: u8 = 1;
+const PANIC_HOOK_WRITE_IDLE: u8 = 0;
+const PANIC_HOOK_WRITE_ACTIVE: u8 = 1;
+const PANIC_HOOK_LOG_LIMIT: u32 = 64;
+const TRACE_UNKNOWN_SYMBOL: &str = "unknown";
+const CONTROLLER_ID_RUNTIME_MATH: &str = "runtime_math_kernel.v1";
+const DECISION_GATE_RUNTIME_POLICY: &str = "runtime_policy.decide";
+const DECISION_GATE_FFI_PCC: &str = "runtime_policy.ffi_pcc.decide";
+const DECISION_GATE_HOT_CACHED: &str = "runtime_policy.hot_cached.decide";
+const DECISION_GATE_MATH_OFF: &str = "runtime_policy.math_off.bypass";
+const DECISION_GATE_PASSTHROUGH: &str = "runtime_policy.passthrough";
+const DECISION_CONTRACT_CLEAR_THRESHOLD: u16 = 3;
+const MODE_SWITCH_CHECK_STRIDE: u64 = 4096;
+const MODE_LOG_CAPACITY: usize = 256;
+// Export helpers are non-hotpath and should tolerate cross-thread kernel init.
+const KERNEL_EXPORT_RETRY_ATTEMPTS: usize = 5_000;
+const CONTROLLER_ID_RUNTIME_MODE: &str = "runtime_policy.mode.v1";
+const MODE_LOG_ARTIFACT: &str = "crates/frankenlibc-abi/src/runtime_policy.rs";
+const FFI_PCC_ARTIFACT: &str = "crates/frankenlibc-abi/src/runtime_policy.rs";
+const FFI_PCC_DOC_ARTIFACT: &str = "docs/pcc_proof_format.md";
+const FFI_PCC_STATE_UNVERIFIED: u8 = 0;
+const FFI_PCC_STATE_VERIFYING: u8 = 1;
+const FFI_PCC_STATE_VERIFIED: u8 = 2;
+const FFI_PCC_STATE_REJECTED: u8 = 3;
+const FFI_PCC_POLICY_BASE: u32 = 0x5043_4300;
+const FFI_PCC_NO_INDEX: u8 = u8::MAX;
+pub(crate) const FFI_PCC_MEMCMP_INDEX: u8 = 7;
+pub(crate) const FFI_PCC_STRLEN_INDEX: u8 = 8;
+pub(crate) const FFI_PCC_MEMCPY_INDEX: u8 = 9;
+pub(crate) const FFI_PCC_STRCMP_INDEX: u8 = 12;
+pub(crate) const FFI_PCC_STRNCMP_INDEX: u8 = 13;
+pub(crate) const FFI_PCC_STRCHR_INDEX: u8 = 14;
+pub(crate) const FFI_PCC_STRRCHR_INDEX: u8 = 15;
+pub(crate) const FFI_PCC_STRSTR_INDEX: u8 = 16;
+pub(crate) const FFI_PCC_MEMCHR_INDEX: u8 = 17;
+pub(crate) const FFI_PCC_MEMRCHR_INDEX: u8 = 18;
+pub(crate) const FFI_PCC_STRNLEN_INDEX: u8 = 19;
+pub(crate) const FFI_PCC_MEMMOVE_INDEX: u8 = 20;
+pub(crate) const FFI_PCC_MEMSET_INDEX: u8 = 21;
+pub(crate) const FFI_PCC_STRCPY_INDEX: u8 = 22;
+pub(crate) const FFI_PCC_STRNCPY_INDEX: u8 = 23;
+
+// Manual init guard that avoids OnceLock's internal futex.
+// OnceLock::get_or_init uses a futex wait when it sees init-in-progress,
+// which causes deadlock if a reentrant call from the same thread arrives
+// during RuntimeMathKernel::new(). Instead, we use a simple atomic state
+// machine: UNINIT -> INITIALIZING -> READY, and any reentrant call that
+// sees INITIALIZING returns None (passthrough).
+static KERNEL_STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
+static KERNEL_PTR: AtomicPtr<RuntimeMathKernel> = AtomicPtr::new(std::ptr::null_mut());
+static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);
+static PANIC_HOOK_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_UNSET);
+static PANIC_HOOK_WRITE_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_WRITE_IDLE);
+static PANIC_HOOK_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
+// Counts actual env-rescan samples; per-call cadence is thread-local.
+static MODE_SWITCH_CHECK_COUNTER: AtomicU64 = AtomicU64::new(0);
+static MODE_LOG_DECISION_SEQ: AtomicU64 = AtomicU64::new(0);
+static MODE_EVENT_LOGS: Mutex<ModeEventRing> = Mutex::new(ModeEventRing::new());
+static FFI_PCC_STATE: AtomicU8 = AtomicU8::new(FFI_PCC_STATE_UNVERIFIED);
+static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
+static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
+static ALLOCATOR_OBSERVE_TICKS: AtomicU32 = AtomicU32::new(0);
+
+// Runtime-math kill-switch state (bd-06bxm.9)
+// FRANKENLIBC_RUNTIME_MATH=on|off controls whether decide() consults the
+// runtime-math kernel. Default is ON. When OFF, basic membrane validation
+// (null/bloom/arena/fingerprint/canary) still runs but kernel consultation
+// is skipped. Resolved once at init, immutable after.
+const RUNTIME_MATH_UNRESOLVED: u8 = 0;
+const RUNTIME_MATH_RESOLVING: u8 = 1;
+const RUNTIME_MATH_ON: u8 = 2;
+const RUNTIME_MATH_OFF: u8 = 3;
+static RUNTIME_MATH_STATE: AtomicU8 = AtomicU8::new(RUNTIME_MATH_UNRESOLVED);
+
+#[cfg(test)]
+type RuntimePolicyTestGuard = crate::util::AbiReentrantMutexGuard<'static, ()>;
+
+#[cfg(test)]
+pub(crate) fn runtime_policy_test_lock() -> RuntimePolicyTestGuard {
+    static LOCK: crate::util::AbiReentrantMutex<()> = crate::util::AbiReentrantMutex::new(());
+    LOCK.lock()
+}
+
+unsafe extern "C" {
+    static mut environ: *mut *mut c_char;
+}
+
+fn mode_to_u8(level: SafetyLevel) -> u8 {
+    match level {
+        SafetyLevel::Strict => MODE_STRICT,
+        SafetyLevel::Hardened => MODE_HARDENED,
+        SafetyLevel::Off => MODE_OFF,
+    }
+}
+
+fn u8_to_mode(v: u8) -> SafetyLevel {
+    match v {
+        MODE_HARDENED => SafetyLevel::Hardened,
+        MODE_OFF => SafetyLevel::Off,
+        _ => SafetyLevel::Strict,
+    }
+}
+
+#[cfg(test)]
+fn parse_mode_value(raw: &str) -> SafetyLevel {
+    match raw.to_ascii_lowercase().as_str() {
+        "hardened" | "repair" | "tsm" | "full" => SafetyLevel::Hardened,
+        "strict" | "default" | "abi" => SafetyLevel::Strict,
+        // Runtime contract is strict|hardened only. Keep benchmark-only Off
+        // reachable through direct API use, not env parsing.
+        _ => SafetyLevel::Strict,
+    }
+}
+
+#[inline]
+unsafe fn cstr_eq_ignore_ascii_case(ptr: *const c_char, expected: &[u8]) -> bool {
+    for (idx, want) in expected.iter().enumerate() {
+        // SAFETY: caller guarantees a valid NUL-terminated C string pointer.
+        let got = unsafe { *ptr.add(idx) as u8 };
+        if got == 0 || !got.eq_ignore_ascii_case(want) {
+            return false;
+        }
+    }
+    // SAFETY: same as above.
+    unsafe { *ptr.add(expected.len()) as u8 == 0 }
+}
+
+#[inline]
+unsafe fn cstr_has_byte_prefix(ptr: *const c_char, expected: &[u8]) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    for (idx, want) in expected.iter().enumerate() {
+        // SAFETY: caller guarantees a valid NUL-terminated C string pointer.
+        let got = unsafe { *ptr.add(idx) as u8 };
+        if got == 0 || got != *want {
+            return false;
+        }
+    }
+    true
+}
+
+fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_MODE=";
+    const MAX_SCAN: usize = 4096;
+
+    // SAFETY: process-owned env pointer table, expected to be NUL-terminated.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return Err(());
+    }
+
+    for _ in 0..MAX_SCAN {
+        // SAFETY: envp points to a readable pointer slot in env vector.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return Ok(None);
+        }
+
+        // SAFETY: entry points to a NUL-terminated env string.
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
+            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // Hardened aliases are accepted case-insensitively.
+            // SAFETY: value is a valid C string tail of entry.
+            if unsafe {
+                cstr_eq_ignore_ascii_case(value, b"hardened")
+                    || cstr_eq_ignore_ascii_case(value, b"repair")
+                    || cstr_eq_ignore_ascii_case(value, b"tsm")
+                    || cstr_eq_ignore_ascii_case(value, b"full")
+            } {
+                return Ok(Some(SafetyLevel::Hardened));
+            }
+            // Unrecognized values fall back to strict by contract.
+            return Ok(Some(SafetyLevel::Strict));
+        }
+
+        // SAFETY: advance to next env vector slot.
+        envp = unsafe { envp.add(1) };
+    }
+
+    Ok(None)
+}
+
+fn mode_name(level: SafetyLevel) -> &'static str {
+    match level {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+/// Seed `frankenlibc_membrane`'s mode and runtime-log caches directly from
+/// `environ` without `std::env::var` heap allocations during `.init_array`.
+pub(crate) fn seed_membrane_runtime_log_from_environ() {
+    const HEAL_LOG_KEY: &[u8] = b"FRANKENLIBC_HEAL_LOG=";
+    const LOG_PATH_KEY: &[u8] = b"FRANKENLIBC_LOG=";
+    const MAX_SCAN: usize = 4096;
+
+    // SAFETY: reading process-owned environment pointer table.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return;
+    }
+
+    frankenlibc_membrane::config::seed_safety_level_if_unset(mode());
+
+    let mut heal_log_enabled = true;
+    let mut has_log_path = false;
+    for _ in 0..MAX_SCAN {
+        // SAFETY: `envp` is a null-terminated vector of C string pointers.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            break;
+        }
+        // SAFETY: `entry` is a NUL-terminated C string.
+        if unsafe { cstr_has_byte_prefix(entry, HEAL_LOG_KEY) } {
+            let mut value = unsafe { entry.add(HEAL_LOG_KEY.len()) };
+            while unsafe { matches!(*value as u8, b' ' | b'\t' | b'\r' | b'\n') } {
+                value = unsafe { value.add(1) };
+            }
+            if unsafe {
+                cstr_eq_ignore_ascii_case(value, b"0")
+                    || cstr_eq_ignore_ascii_case(value, b"false")
+                    || cstr_eq_ignore_ascii_case(value, b"off")
+                    || cstr_eq_ignore_ascii_case(value, b"no")
+            } {
+                heal_log_enabled = false;
+            }
+        } else if unsafe { cstr_has_byte_prefix(entry, LOG_PATH_KEY) } {
+            let value = unsafe { entry.add(LOG_PATH_KEY.len()) };
+            if unsafe { *value != 0 } {
+                has_log_path = true;
+            }
+        }
+        envp = unsafe { envp.add(1) };
+    }
+
+    frankenlibc_membrane::heal::seed_runtime_log_if_unset(heal_log_enabled, !has_log_path);
+}
+
+/// Parse FRANKENLIBC_RUNTIME_MATH from environ (bd-06bxm.9).
+/// Returns Ok(true) for "on" or absent (default), Ok(false) for "off".
+/// Invalid values log a warning and fall back to on.
+fn parse_runtime_math_from_environ() -> bool {
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_RUNTIME_MATH=";
+    const MAX_SCAN: usize = 4096;
+
+    // SAFETY: process-owned env pointer table.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return true; // Default ON
+    }
+
+    for _ in 0..MAX_SCAN {
+        // SAFETY: envp points to a readable pointer slot.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return true; // Not found, default ON
+        }
+
+        // SAFETY: entry points to a NUL-terminated env string.
+        if unsafe { cstr_has_byte_prefix(entry, KEY_EQ) } {
+            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // SAFETY: value is a valid C string tail of entry.
+            if unsafe { cstr_eq_ignore_ascii_case(value, b"off") } {
+                return false;
+            }
+            if unsafe {
+                cstr_eq_ignore_ascii_case(value, b"on")
+                    || cstr_eq_ignore_ascii_case(value, b"1")
+                    || cstr_eq_ignore_ascii_case(value, b"true")
+            } {
+                return true;
+            }
+            // Invalid value - log warning and fall back to ON
+            push_mode_event("warn", "invalid_runtime_math_value", mode(), None);
+            return true;
+        }
+
+        // SAFETY: advance to next env vector slot.
+        envp = unsafe { envp.add(1) };
+    }
+
+    true // Default ON
+}
+
+/// Resolve runtime-math switch once at init (bd-06bxm.9).
+/// Returns true if runtime-math should be active.
+#[inline]
+fn runtime_math_enabled() -> bool {
+    let cached = RUNTIME_MATH_STATE.load(AtomicOrdering::Relaxed);
+    if cached == RUNTIME_MATH_ON {
+        return true;
+    }
+    if cached == RUNTIME_MATH_OFF {
+        return false;
+    }
+    // Interposed calls can arrive before the loader publishes environ. Do not
+    // permanently cache the default then: defer adaptive work until the actual
+    // process setting can be read, just as during recursive resolution below.
+    // SAFETY: reading the process-owned environment table pointer; no dereference.
+    if unsafe { environ.is_null() } {
+        return false;
+    }
+    // Need to resolve
+    if RUNTIME_MATH_STATE
+        .compare_exchange(
+            RUNTIME_MATH_UNRESOLVED,
+            RUNTIME_MATH_RESOLVING,
+            AtomicOrdering::AcqRel,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        // Another thread is resolving or already resolved
+        return RUNTIME_MATH_STATE.load(AtomicOrdering::Acquire) == RUNTIME_MATH_ON;
+    }
+
+    let enabled = parse_runtime_math_from_environ();
+    let state = if enabled {
+        RUNTIME_MATH_ON
+    } else {
+        RUNTIME_MATH_OFF
+    };
+    RUNTIME_MATH_STATE.store(state, AtomicOrdering::Release);
+
+    if !enabled {
+        push_mode_event("info", "runtime_math_disabled", mode(), None);
+    }
+
+    enabled
+}
+
+/// Check if runtime-math is disabled via FRANKENLIBC_RUNTIME_MATH=off (bd-06bxm.9).
+#[inline]
+pub(crate) fn runtime_math_disabled() -> bool {
+    !runtime_math_enabled()
+}
+
+/// Only latch a pipeline's immutable switch once process resolution has finished.
+/// Reentrant/concurrent resolution must defer pipeline creation, not freeze OFF.
+pub(crate) fn resolved_runtime_math_enabled() -> Option<bool> {
+    let _ = runtime_math_enabled();
+    match RUNTIME_MATH_STATE.load(AtomicOrdering::Acquire) {
+        RUNTIME_MATH_ON => Some(true),
+        RUNTIME_MATH_OFF => Some(false),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FfiPccCertificate {
+    symbol: &'static str,
+    family: ApiFamily,
+    policy_id: u32,
+    max_requested_bytes: usize,
+    allow_write: bool,
+    allow_bloom_negative: bool,
+    skip_stage_ordering: bool,
+    skip_pointer_validation: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FfiPccCertificateFlags {
+    allow_write: bool,
+    allow_bloom_negative: bool,
+    skip_stage_ordering: bool,
+    skip_pointer_validation: bool,
+}
+
+/// Opaque proof that the active entrypoint is the verified read-only `memcmp`
+/// certificate and that the runtime decision path is ready.
+///
+/// The token is intentionally neither constructible nor inspectable outside
+/// this module. It must be consumed within the same `entrypoint_scope` that
+/// produced it; production runtime readiness and mode are process-immutable.
+pub(crate) struct MemcmpPccToken(&'static FfiPccCertificate);
+
+impl FfiPccCertificate {
+    const fn new(
+        symbol: &'static str,
+        family: ApiFamily,
+        policy_offset: u32,
+        max_requested_bytes: usize,
+        flags: FfiPccCertificateFlags,
+    ) -> Self {
+        Self {
+            symbol,
+            family,
+            policy_id: FFI_PCC_POLICY_BASE + policy_offset,
+            max_requested_bytes,
+            allow_write: flags.allow_write,
+            allow_bloom_negative: flags.allow_bloom_negative,
+            skip_stage_ordering: flags.skip_stage_ordering,
+            skip_pointer_validation: flags.skip_pointer_validation,
+        }
+    }
+
+    #[inline(always)]
+    const fn matches_request(
+        self,
+        family: ApiFamily,
+        requested_bytes: usize,
+        is_write: bool,
+        bloom_negative: bool,
+    ) -> bool {
+        self.family as u8 == family as u8
+            && requested_bytes <= self.max_requested_bytes
+            && (!is_write || self.allow_write)
+            && (!bloom_negative || self.allow_bloom_negative)
+    }
+}
+
+const FFI_PCC_ALLOCATOR_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
+    allow_write: true,
+    allow_bloom_negative: false,
+    skip_stage_ordering: true,
+    skip_pointer_validation: false,
+};
+
+const FFI_PCC_READ_ONLY_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
+    allow_write: false,
+    allow_bloom_negative: true,
+    skip_stage_ordering: true,
+    skip_pointer_validation: true,
+};
+
+const FFI_PCC_COPY_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
+    allow_write: true,
+    allow_bloom_negative: true,
+    skip_stage_ordering: true,
+    skip_pointer_validation: false,
+};
+
+const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 24] = [
+    FfiPccCertificate::new(
+        "malloc",
+        ApiFamily::Allocator,
+        1,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "calloc",
+        ApiFamily::Allocator,
+        2,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "realloc",
+        ApiFamily::Allocator,
+        3,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "posix_memalign",
+        ApiFamily::Allocator,
+        4,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memalign",
+        ApiFamily::Allocator,
+        5,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "aligned_alloc",
+        ApiFamily::Allocator,
+        6,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "free",
+        ApiFamily::Allocator,
+        7,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memcmp",
+        ApiFamily::StringMemory,
+        8,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strlen",
+        ApiFamily::StringMemory,
+        9,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memcpy",
+        ApiFamily::StringMemory,
+        10,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "snprintf",
+        ApiFamily::Stdio,
+        11,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "vsnprintf",
+        ApiFamily::Stdio,
+        12,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    // bd-14baix: expand FFI-PCC coverage to reduce python3/heavy runtime overhead
+    FfiPccCertificate::new(
+        "strcmp",
+        ApiFamily::StringMemory,
+        13,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strncmp",
+        ApiFamily::StringMemory,
+        14,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strchr",
+        ApiFamily::StringMemory,
+        15,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strrchr",
+        ApiFamily::StringMemory,
+        16,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strstr",
+        ApiFamily::StringMemory,
+        17,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memchr",
+        ApiFamily::StringMemory,
+        18,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memrchr",
+        ApiFamily::StringMemory,
+        19,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strnlen",
+        ApiFamily::StringMemory,
+        20,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memmove",
+        ApiFamily::StringMemory,
+        21,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memset",
+        ApiFamily::StringMemory,
+        22,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strcpy",
+        ApiFamily::StringMemory,
+        23,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strncpy",
+        ApiFamily::StringMemory,
+        24,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+];
+
+/// First eight bytes of a symbol name as a little-endian `u64`, zero-padded.
+///
+/// `const fn`, so every `K_*` constant below is folded at compile time; only the caller's
+/// side runs at all, and it runs over at most eight bytes with no call out of the crate.
+#[inline]
+const fn ffi_pcc_symbol_key(s: &str) -> u64 {
+    let b = s.as_bytes();
+    let mut key = 0u64;
+    let mut i = 0;
+    while i < 8 && i < b.len() {
+        key |= (b[i] as u64) << (8 * i);
+        i += 1;
+    }
+    key
+}
+
+const K_MALLOC: u64 = ffi_pcc_symbol_key("malloc");
+const K_CALLOC: u64 = ffi_pcc_symbol_key("calloc");
+const K_REALLOC: u64 = ffi_pcc_symbol_key("realloc");
+const K_POSIX_MEMALIGN: u64 = ffi_pcc_symbol_key("posix_memalign");
+const K_MEMALIGN: u64 = ffi_pcc_symbol_key("memalign");
+const K_ALIGNED_ALLOC: u64 = ffi_pcc_symbol_key("aligned_alloc");
+const K_FREE: u64 = ffi_pcc_symbol_key("free");
+const K_MEMCMP: u64 = ffi_pcc_symbol_key("memcmp");
+const K_STRLEN: u64 = ffi_pcc_symbol_key("strlen");
+const K_MEMCPY: u64 = ffi_pcc_symbol_key("memcpy");
+const K_SNPRINTF: u64 = ffi_pcc_symbol_key("snprintf");
+const K_VSNPRINTF: u64 = ffi_pcc_symbol_key("vsnprintf");
+const K_STRCMP: u64 = ffi_pcc_symbol_key("strcmp");
+const K_STRNCMP: u64 = ffi_pcc_symbol_key("strncmp");
+const K_STRCHR: u64 = ffi_pcc_symbol_key("strchr");
+const K_STRRCHR: u64 = ffi_pcc_symbol_key("strrchr");
+const K_STRSTR: u64 = ffi_pcc_symbol_key("strstr");
+const K_MEMCHR: u64 = ffi_pcc_symbol_key("memchr");
+const K_MEMRCHR: u64 = ffi_pcc_symbol_key("memrchr");
+const K_STRNLEN: u64 = ffi_pcc_symbol_key("strnlen");
+const K_MEMMOVE: u64 = ffi_pcc_symbol_key("memmove");
+const K_MEMSET: u64 = ffi_pcc_symbol_key("memset");
+const K_STRCPY: u64 = ffi_pcc_symbol_key("strcpy");
+const K_STRNCPY: u64 = ffi_pcc_symbol_key("strncpy");
+
+#[inline]
+fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
+    // Keyed on `(first-eight-bytes, len)` instead of matching string literals. The literal
+    // `match` this replaces lowered to a chain of length tests and out-of-line calls into
+    // our OWN interposed `bcmp`, walked in table order — so `strlen`, at index 8, paid eight
+    // failed six-byte comparisons before reaching its arm, and `strncpy` at 23 paid
+    // twenty-three. This runs once per hardened ABI entry from `entrypoint_scope`;
+    // attribution of hardened `strlen` put this function at 43 Ir of self cost with `bcmp` at
+    // 193 Ir overall.
+    //
+    // The pair is injective over this table: the 24 names are distinct, and the only ones
+    // sharing all of their first eight bytes would have to share a length too, which none do
+    // (`strncmp`/`strncpy` already differ at byte 4). `ffi_pcc_verify_and_hash` proves it at
+    // startup for every row — it asserts `index_for_symbol(row.symbol) == idx`, which now
+    // exercises this key rather than the literal match.
+    //
+    // Deliberately NOT reordered by hotness. Putting the string/memory symbols first would
+    // shorten the old chain too, but it would only pay on whichever workload the benchmark
+    // happens to exercise; keying is order-independent.
+    match (ffi_pcc_symbol_key(symbol), symbol.len()) {
+        (K_MALLOC, 6) => 0,
+        (K_CALLOC, 6) => 1,
+        (K_REALLOC, 7) => 2,
+        (K_POSIX_MEMALIGN, 14) => 3,
+        (K_MEMALIGN, 8) => 4,
+        (K_ALIGNED_ALLOC, 13) => 5,
+        (K_FREE, 4) => 6,
+        (K_MEMCMP, 6) => FFI_PCC_MEMCMP_INDEX,
+        (K_STRLEN, 6) => FFI_PCC_STRLEN_INDEX,
+        (K_MEMCPY, 6) => FFI_PCC_MEMCPY_INDEX,
+        (K_SNPRINTF, 8) => 10,
+        (K_VSNPRINTF, 9) => 11,
+        // bd-14baix: expanded coverage
+        (K_STRCMP, 6) => FFI_PCC_STRCMP_INDEX,
+        (K_STRNCMP, 7) => FFI_PCC_STRNCMP_INDEX,
+        (K_STRCHR, 6) => FFI_PCC_STRCHR_INDEX,
+        (K_STRRCHR, 7) => FFI_PCC_STRRCHR_INDEX,
+        (K_STRSTR, 6) => FFI_PCC_STRSTR_INDEX,
+        (K_MEMCHR, 6) => FFI_PCC_MEMCHR_INDEX,
+        (K_MEMRCHR, 7) => FFI_PCC_MEMRCHR_INDEX,
+        (K_STRNLEN, 7) => FFI_PCC_STRNLEN_INDEX,
+        (K_MEMMOVE, 7) => FFI_PCC_MEMMOVE_INDEX,
+        (K_MEMSET, 6) => FFI_PCC_MEMSET_INDEX,
+        (K_STRCPY, 6) => FFI_PCC_STRCPY_INDEX,
+        (K_STRNCPY, 7) => FFI_PCC_STRNCPY_INDEX,
+        _ => FFI_PCC_NO_INDEX,
+    }
+}
+
+/// Row lookup by the index `ffi_pcc_certificate_index_for_symbol` produced.
+///
+/// No string compare. This used to end with `(row.symbol == symbol).then_some(row)`, which
+/// lowered to an out-of-line call into our own interposed `bcmp` to compare six bytes --
+/// and this function is reached THREE times per hardened ABI call, via
+/// `active_ffi_pcc_symbol_certificate` from `check_ordering`, `note_check_order_outcome`
+/// and `decide`. Attribution of hardened `strlen` put `bcmp` at 291 of 2,048 Ir (14.2%),
+/// concentrated in exactly those sites.
+///
+/// The check is not weakened, it is MOVED: `ffi_pcc_verify_and_hash` now proves at startup,
+/// for every row, that the symbol match and this table agree, so an index derived from a
+/// symbol cannot select a row with a different symbol. That covers all rows once instead of
+/// one row per call, and a disagreement now fails verification at init rather than silently
+/// returning `None` for that symbol at runtime.
+#[inline(always)]
+const fn ffi_pcc_certificate_by_index(index: u8) -> Option<&'static FfiPccCertificate> {
+    let idx = index as usize;
+    if idx < FFI_PCC_CERTIFICATES.len() {
+        Some(&FFI_PCC_CERTIFICATES[idx])
+    } else {
+        None
+    }
+}
+
+fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
+    if FFI_PCC_CERTIFICATES.is_empty() {
+        return Err("ffi_pcc: certificate table must not be empty");
+    }
+
+    let mut digest = Sha256::new();
+    for (idx, row) in FFI_PCC_CERTIFICATES.iter().copied().enumerate() {
+        if row.symbol.is_empty() {
+            return Err("ffi_pcc: symbol must not be empty");
+        }
+        if row.policy_id == 0 {
+            return Err("ffi_pcc: policy_id must be non-zero");
+        }
+        if row.skip_pointer_validation && (!row.skip_stage_ordering || row.allow_write) {
+            return Err("ffi_pcc: pointer-validation bypass must be read-only and stage-skipping");
+        }
+        // STARTUP PROOF that `ffi_pcc_certificate_index_for_symbol` and this table agree.
+        //
+        // This is what lets `ffi_pcc_certificate_by_index` drop its per-call
+        // `row.symbol == symbol` re-verification. The match arms are distinct literals mapped
+        // to distinct indices, so once every row satisfies `index_for_symbol(row.symbol) ==
+        // its own index`, an index obtained from a symbol necessarily selects the row whose
+        // symbol IS that symbol -- the per-call compare could not fail. Checked here for
+        // EVERY row, which is strictly more coverage than the old check gave: that one only
+        // ever examined the single row a call happened to hit.
+        if usize::from(ffi_pcc_certificate_index_for_symbol(row.symbol)) != idx {
+            return Err("ffi_pcc: symbol index match disagrees with certificate table");
+        }
+        for prior in &FFI_PCC_CERTIFICATES[..idx] {
+            if prior.symbol == row.symbol && prior.family == row.family {
+                return Err("ffi_pcc: duplicate symbol/family certificate");
+            }
+            if prior.policy_id == row.policy_id {
+                return Err("ffi_pcc: duplicate policy_id");
+            }
+        }
+
+        digest.update(row.symbol.as_bytes());
+        digest.update([0]);
+        digest.update([row.family as u8]);
+        digest.update(row.policy_id.to_le_bytes());
+        digest.update((row.max_requested_bytes as u64).to_le_bytes());
+        digest.update([
+            row.allow_write as u8,
+            row.allow_bloom_negative as u8,
+            row.skip_stage_ordering as u8,
+            row.skip_pointer_validation as u8,
+        ]);
+    }
+
+    let bytes = digest.finalize();
+    let mut prefix = [0u8; 8];
+    prefix.copy_from_slice(&bytes[..8]);
+    Ok(u64::from_le_bytes(prefix))
+}
+
+/// Steady-state gate check: is the FFI proof-carrying-certificate table verified?
+///
+/// PERF (cc-pcc-gate-split): the table is verified at most once per process, so
+/// after startup this is a single acquire byte load — but it sits on the deployed
+/// `malloc`/`free`/`str*`/`mem*` entrypoints via [`proof_carried_fast_path_active`],
+/// so its *shape* matters more than its logic. Previously the one-shot verifier
+/// (which inlines a SHA-256 over the whole certificate table) lived in this same
+/// function body, which forced LLVM to give every call a 376-byte stack frame and
+/// six callee-saved pushes before it could read one byte. On a deployed
+/// A matched no-call-graph malloc/free profile attributed **6.68% of process
+/// self-time** to this function. That reconciles with the shipped wall-time
+/// improvement of 5.4%. The earlier 22.18% DWARF-call-graph attribution was
+/// retracted because unwinding materially distorted flat self-time.
+///
+/// Splitting the verifier into a `#[cold]` out-of-line callee leaves this function
+/// small enough to inline into its callers, so the hot path is the load and the
+/// compare and nothing else.
+#[inline(always)]
+fn ensure_ffi_pcc_verified() -> bool {
+    if FFI_PCC_STATE.load(AtomicOrdering::Acquire) == FFI_PCC_STATE_VERIFIED {
+        return true;
+    }
+    ffi_pcc_verify_once()
+}
+
+/// One-shot verification half of [`ensure_ffi_pcc_verified`].
+///
+/// Reached only while the table is `UNVERIFIED`/`VERIFYING`, or permanently after
+/// a `REJECTED` verdict. Re-reads the state and then reproduces the original
+/// dispatch exactly: the extra load is benign because the state machine is
+/// monotonic (`UNVERIFIED -> VERIFYING -> VERIFIED|REJECTED`, both terminal; the
+/// only store back to `UNVERIFIED` is a `#[cfg(test)]` helper holding the runtime
+/// policy test lock). A concurrent completion observed between the two loads can
+/// only turn a `false` into a `true`, which is the answer the unsplit function
+/// would have produced had its single load happened a moment later.
+#[cold]
+#[inline(never)]
+fn ffi_pcc_verify_once() -> bool {
+    let state = FFI_PCC_STATE.load(AtomicOrdering::Acquire);
+    if state == FFI_PCC_STATE_VERIFIED {
+        return true;
+    }
+    if state == FFI_PCC_STATE_REJECTED || state == FFI_PCC_STATE_VERIFYING {
+        return false;
+    }
+
+    if FFI_PCC_STATE
+        .compare_exchange(
+            FFI_PCC_STATE_UNVERIFIED,
+            FFI_PCC_STATE_VERIFYING,
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        return FFI_PCC_STATE.load(AtomicOrdering::Acquire) == FFI_PCC_STATE_VERIFIED;
+    }
+
+    match ffi_pcc_verify_and_hash() {
+        Ok(hash_prefix) => {
+            FFI_PCC_HASH_PREFIX.store(hash_prefix, AtomicOrdering::Release);
+            FFI_PCC_ROW_COUNT.store(
+                u32::try_from(FFI_PCC_CERTIFICATES.len()).unwrap_or(u32::MAX),
+                AtomicOrdering::Release,
+            );
+            FFI_PCC_STATE.store(FFI_PCC_STATE_VERIFIED, AtomicOrdering::Release);
+            true
+        }
+        Err(_) => {
+            FFI_PCC_HASH_PREFIX.store(0, AtomicOrdering::Release);
+            FFI_PCC_ROW_COUNT.store(0, AtomicOrdering::Release);
+            FFI_PCC_STATE.store(FFI_PCC_STATE_REJECTED, AtomicOrdering::Release);
+            false
+        }
+    }
+}
+
+fn lookup_active_ffi_pcc_certificate(
+    family: ApiFamily,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> Option<&'static FfiPccCertificate> {
+    lookup_active_ffi_pcc_certificate_with_index(family, requested_bytes, is_write, bloom_negative)
+        .map(|(_, row)| row)
+}
+
+#[inline]
+fn lookup_active_ffi_pcc_certificate_with_index(
+    family: ApiFamily,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> Option<(u8, &'static FfiPccCertificate)> {
+    if strict_passthrough_active() || !ensure_ffi_pcc_verified() {
+        return None;
+    }
+    let pcc_index = peek_active_pcc_index()?;
+    let row = ffi_pcc_certificate_by_index(pcc_index)?;
+    row.matches_request(family, requested_bytes, is_write, bloom_negative)
+        .then_some((pcc_index, row))
+}
+
+#[inline]
+fn peek_active_pcc_index() -> Option<u8> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_runtime_policy_tls(|state| state.trace_context.map(|ctx| ctx.pcc_index))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                tls.trace_active
+                    .get()
+                    .then(|| tls.trace_context.get().pcc_index)
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+#[inline]
+fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
+    // A certificate is reached only through the trace context, and only
+    // `entrypoint_scope` sets one -- which it skips under strict passthrough.
+    // There the lookup can only find the fallback context (no certificate), but
+    // it paid a `__tls_get_addr` round-trip to learn that on every strict
+    // malloc/calloc/memcpy (bd-rc0923-epic-eeuy4f.26).
+    if strict_passthrough_active() {
+        return None;
+    }
+    if !ensure_ffi_pcc_verified() {
+        return None;
+    }
+    let pcc_index = peek_active_pcc_index()?;
+    ffi_pcc_certificate_by_index(pcc_index)
+}
+
+fn ffi_pcc_decision(cert: &FfiPccCertificate) -> RuntimeDecision {
+    RuntimeDecision {
+        action: MembraneAction::Allow,
+        profile: ValidationProfile::Fast,
+        policy_id: cert.policy_id,
+        risk_upper_bound_ppm: 0,
+        evidence_seqno: 0,
+    }
+}
+
+#[must_use]
+pub(crate) fn proof_carried_fast_path_active(
+    family: ApiFamily,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> bool {
+    lookup_active_ffi_pcc_certificate(family, requested_bytes, is_write, bloom_negative).is_some()
+}
+
+#[must_use]
+pub(crate) fn proof_carried_pointer_validation_active() -> bool {
+    active_ffi_pcc_symbol_certificate().is_some_and(|row| row.skip_pointer_validation)
+}
+
+/// Return an opaque token for the active, verified `memcmp` read certificate.
+///
+/// Unlike [`proof_carried_pointer_validation_active`], this also establishes
+/// runtime readiness so the token can carry the certificate through to the
+/// decision site without changing `decide`'s early-startup behavior.
+#[must_use]
+pub(crate) fn active_memcmp_pcc_token() -> Option<MemcmpPccToken> {
+    if !is_runtime_ready() {
+        return None;
+    }
+    let cert = active_ffi_pcc_symbol_certificate()?;
+    (cert.policy_id == FFI_PCC_POLICY_BASE + 8 && cert.skip_pointer_validation)
+        .then_some(MemcmpPccToken(cert))
+}
+
+#[must_use]
+pub(crate) fn export_ffi_pcc_manifest_json() -> String {
+    let verification = match FFI_PCC_STATE.load(AtomicOrdering::Relaxed) {
+        FFI_PCC_STATE_VERIFIED => "verified",
+        FFI_PCC_STATE_REJECTED => "rejected",
+        FFI_PCC_STATE_VERIFYING => "verifying",
+        _ => "unverified",
+    };
+    let rows = FFI_PCC_CERTIFICATES
+        .iter()
+        .map(|row| {
+            format!(
+                "{{\"symbol\":\"{}\",\"family\":\"{:?}\",\"policy_id\":{},\"max_requested_bytes\":{},\"allow_write\":{},\"allow_bloom_negative\":{},\"skip_stage_ordering\":{},\"skip_pointer_validation\":{}}}",
+                row.symbol,
+                row.family,
+                row.policy_id,
+                row.max_requested_bytes,
+                row.allow_write,
+                row.allow_bloom_negative,
+                row.skip_stage_ordering,
+                row.skip_pointer_validation,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"schema_version\":1,\"verification\":\"{verification}\",\"hash_prefix\":{},\"row_count\":{},\"artifact_refs\":[\"{FFI_PCC_ARTIFACT}\",\"{FFI_PCC_DOC_ARTIFACT}\"],\"rows\":[{rows}]}}",
+        FFI_PCC_HASH_PREFIX.load(AtomicOrdering::Relaxed),
+        FFI_PCC_ROW_COUNT.load(AtomicOrdering::Relaxed),
+    )
+}
+
+/// Deferred mode event log flag.  During early startup the heap may not be
+/// available (pre-TLS, bump allocator active).  `format!()` would trigger
+/// allocation → OOM → rust_oom → write(stderr) → runtime_policy::decide →
+/// mode() → push_mode_event → format!() → infinite recursion.
+///
+/// We suppress logging until the mode is fully resolved and stored.
+/// Events generated during resolution are dropped — an acceptable trade-off
+/// for preventing a startup crash.
+static MODE_LOG_READY: AtomicU8 = AtomicU8::new(0);
+
+#[derive(Clone, Copy)]
+struct ModeEventRecord {
+    decision_id: u64,
+    unix_secs: u64,
+    subsec_millis: u32,
+    level: Option<&'static str>,
+    event: Option<&'static str>,
+    resolved_mode: u8,
+    requested_mode: u8,
+}
+
+impl ModeEventRecord {
+    const EMPTY: Self = Self {
+        decision_id: 0,
+        unix_secs: 0,
+        subsec_millis: 0,
+        level: None,
+        event: None,
+        resolved_mode: 0,
+        requested_mode: 0,
+    };
+
+    #[inline]
+    fn encode_mode(mode: SafetyLevel) -> u8 {
+        match mode {
+            SafetyLevel::Strict => 1,
+            SafetyLevel::Hardened => 2,
+            SafetyLevel::Off => 3,
+        }
+    }
+
+    #[inline]
+    fn decode_mode(code: u8) -> Option<SafetyLevel> {
+        match code {
+            1 => Some(SafetyLevel::Strict),
+            2 => Some(SafetyLevel::Hardened),
+            3 => Some(SafetyLevel::Off),
+            _ => None,
+        }
+    }
+
+    fn format_jsonl(&self) -> String {
+        let days = (self.unix_secs / 86_400) as i64;
+        let seconds_of_day = self.unix_secs % 86_400;
+        let (year, month, day) = frankenlibc_membrane::util::civil_date_from_unix_days(days);
+        let timestamp = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            year,
+            month,
+            day,
+            seconds_of_day / 3_600,
+            (seconds_of_day % 3_600) / 60,
+            seconds_of_day % 60,
+            self.subsec_millis,
+        );
+        let decision_id = self.decision_id;
+        let trace_id = format!("runtime_policy::mode::{decision_id:016x}");
+        let resolved_mode = Self::decode_mode(self.resolved_mode).unwrap_or(SafetyLevel::Strict);
+        let requested_mode = Self::decode_mode(self.requested_mode)
+            .map(|mode| format!("\"{}\"", mode_name(mode)))
+            .unwrap_or_else(|| "null".to_string());
+        let level = self.level.unwrap_or("");
+        let event = self.event.unwrap_or("");
+        format!(
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{trace_id}\",\"decision_id\":{decision_id},\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"{CONTROLLER_ID_RUNTIME_MODE}\",\"decision_path\":\"mode->cache->immutable\",\"mode\":\"{}\",\"requested_mode\":{requested_mode},\"artifact_refs\":[\"{MODE_LOG_ARTIFACT}\"]}}",
+            mode_name(resolved_mode),
+        )
+    }
+}
+
+struct ModeEventRing {
+    entries: [ModeEventRecord; MODE_LOG_CAPACITY],
+    start: usize,
+    len: usize,
+}
+
+impl ModeEventRing {
+    const fn new() -> Self {
+        Self {
+            entries: [ModeEventRecord::EMPTY; MODE_LOG_CAPACITY],
+            start: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, record: ModeEventRecord) {
+        if self.len < MODE_LOG_CAPACITY {
+            let idx = (self.start + self.len) % MODE_LOG_CAPACITY;
+            self.entries[idx] = record;
+            self.len += 1;
+        } else {
+            self.entries[self.start] = record;
+            self.start = (self.start + 1) % MODE_LOG_CAPACITY;
+        }
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.start = 0;
+        self.len = 0;
+    }
+
+    fn export_jsonl(&self) -> String {
+        let mut lines = Vec::with_capacity(self.len);
+        for offset in 0..self.len {
+            let idx = (self.start + offset) % MODE_LOG_CAPACITY;
+            lines.push(self.entries[idx].format_jsonl());
+        }
+        lines.join("\n")
+    }
+}
+
+fn push_mode_event(
+    level: &'static str,
+    event: &'static str,
+    resolved_mode: SafetyLevel,
+    requested_mode: Option<SafetyLevel>,
+) {
+    // Suppress logging during early startup to prevent allocation recursion.
+    // MODE_LOG_READY is set to 1 after the first successful mode resolution.
+    if MODE_LOG_READY.load(AtomicOrdering::Relaxed) == 0 {
+        return;
+    }
+
+    // Record compact event metadata without allocating on the heap so `.init_array`
+    // (`try_signal_runtime_ready`) does not initialize the 306 MiB segment arena
+    // in processes that never call `malloc`.
+    let _floating_environment =
+        frankenlibc_membrane::runtime_math::RuntimeMathEnvironmentGuard::enter();
+    let decision_id = MODE_LOG_DECISION_SEQ.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let record = ModeEventRecord {
+        decision_id,
+        unix_secs: duration.as_secs(),
+        subsec_millis: duration.subsec_millis(),
+        level: Some(level),
+        event: Some(event),
+        resolved_mode: ModeEventRecord::encode_mode(resolved_mode),
+        requested_mode: requested_mode.map_or(0, ModeEventRecord::encode_mode),
+    };
+
+    if let Ok(mut logs) = MODE_EVENT_LOGS.lock() {
+        logs.push(record);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn check_mode_switch_attempt_slow(cached_mode: SafetyLevel) {
+    MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+    match parse_mode_from_environ() {
+        Ok(Some(requested_mode)) if requested_mode != cached_mode => {
+            push_mode_event(
+                "error",
+                "runtime_mode_switch_attempt",
+                cached_mode,
+                Some(requested_mode),
+            );
+        }
+        Ok(_) => {}
+        Err(_) => {
+            push_mode_event("warn", "runtime_mode_env_unavailable", cached_mode, None);
+        }
+    }
+}
+
+fn maybe_log_mode_switch_attempt(cached_mode: SafetyLevel) {
+    let should_check = with_mode_switch_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
+    })
+    .unwrap_or_else(|| {
+        let sequence = MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+        sequence.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
+    });
+    if should_check {
+        check_mode_switch_attempt_slow(cached_mode);
+    }
+}
+
+#[must_use]
+pub(crate) fn export_mode_event_log_jsonl() -> String {
+    MODE_EVENT_LOGS
+        .lock()
+        .ok()
+        .map(|logs| logs.export_jsonl())
+        .unwrap_or_default()
+}
+
+pub(crate) fn clear_mode_event_log() {
+    if let Ok(mut logs) = MODE_EVENT_LOGS.lock() {
+        logs.clear();
+    }
+}
+
+#[inline]
+fn load_thread_local_mode_and_tick_switch() -> Option<SafetyLevel> {
+    let (resolved, should_check) = {
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            with_runtime_policy_tls(|state| {
+                let cached = state.mode_cache;
+                if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+                    let next = state.mode_switch_counter.wrapping_add(1);
+                    state.mode_switch_counter = next;
+                    Some((
+                        u8_to_mode(cached),
+                        next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE),
+                    ))
+                } else {
+                    None
+                }
+            })?
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            RUNTIME_POLICY_TLS
+                .try_with(|tls| {
+                    let cached = tls.mode_cache.get();
+                    if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+                        let next = tls.mode_switch_counter.get().wrapping_add(1);
+                        tls.mode_switch_counter.set(next);
+                        Some((
+                            u8_to_mode(cached),
+                            next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .ok()
+                .flatten()?
+        }
+    };
+    if should_check {
+        check_mode_switch_attempt_slow(resolved);
+    }
+    Some(resolved)
+}
+
+fn store_thread_local_mode_cache(level: SafetyLevel) {
+    let mode = mode_to_u8(level);
+    let _ = with_mode_cache(|cache| *cache = mode);
+}
+
+fn clear_thread_local_mode_cache() {
+    let _ = with_mode_cache(|cache| *cache = MODE_UNRESOLVED);
+}
+
+/// The process mode for allocator hot paths: once resolved it is immutable, so
+/// read it straight from `MODE_STATE` and skip `mode()`'s thread-local cache and
+/// switch-attempt sampler (two `__tls_get_addr` round-trips in the cdylib, paid
+/// by every malloc/free). The sampler still runs on every other entrypoint.
+/// Before resolution this is exactly `mode()`.
+#[must_use]
+#[inline(always)]
+pub(crate) fn resolved_mode() -> SafetyLevel {
+    let cached = MODE_STATE.load(AtomicOrdering::Relaxed);
+    if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+        return u8_to_mode(cached);
+    }
+    resolved_mode_cold()
+}
+
+#[cold]
+#[inline(never)]
+fn resolved_mode_cold() -> SafetyLevel {
+    mode()
+}
+
+#[must_use]
+pub(crate) fn mode() -> SafetyLevel {
+    // Owned scratch storage grows through the allocator. Its first access can
+    // therefore call back into mode() while RUNTIME_POLICY_OWNED_TLS is locked,
+    // including before the process mode has been resolved. Consult only the
+    // immutable atomic in that context: trying the TLS cache again waits for
+    // this very frame. Unresolved/resolving retains the existing strict
+    // bootstrap behavior, without caching that temporary answer.
+    #[cfg(feature = "owned-tls-cache")]
+    if runtime_policy_tls_reentry_active() {
+        return u8_to_mode(MODE_STATE.load(AtomicOrdering::Acquire));
+    }
+    if let Some(resolved) = load_thread_local_mode_and_tick_switch() {
+        return resolved;
+    }
+
+    let cached = MODE_STATE.load(AtomicOrdering::Relaxed);
+
+    if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+        let resolved = u8_to_mode(cached);
+        store_thread_local_mode_cache(resolved);
+        maybe_log_mode_switch_attempt(resolved);
+        return resolved;
+    }
+
+    if cached == MODE_RESOLVING {
+        push_mode_event(
+            "warn",
+            "runtime_mode_resolution_reentrant",
+            SafetyLevel::Strict,
+            None,
+        );
+        return SafetyLevel::Strict;
+    }
+
+    if MODE_STATE
+        .compare_exchange(
+            MODE_UNRESOLVED,
+            MODE_RESOLVING,
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        let v = MODE_STATE.load(AtomicOrdering::Relaxed);
+        return if v != MODE_UNRESOLVED && v != MODE_RESOLVING {
+            let resolved = u8_to_mode(v);
+            store_thread_local_mode_cache(resolved);
+            maybe_log_mode_switch_attempt(resolved);
+            resolved
+        } else {
+            push_mode_event(
+                "warn",
+                "runtime_mode_resolution_race",
+                SafetyLevel::Strict,
+                None,
+            );
+            SafetyLevel::Strict
+        };
+    }
+
+    let result = match parse_mode_from_environ() {
+        Ok(Some(level)) => {
+            MODE_STATE.store(mode_to_u8(level), AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
+            store_thread_local_mode_cache(level);
+            level
+        }
+        Ok(None) => {
+            MODE_STATE.store(MODE_STRICT, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
+            store_thread_local_mode_cache(SafetyLevel::Strict);
+            SafetyLevel::Strict
+        }
+        Err(_) => {
+            MODE_STATE.store(MODE_UNRESOLVED, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
+            SafetyLevel::Strict
+        }
+    };
+    // Enable mode event logging on a LATER call, not this one.
+    // The first push_mode_event would allocate via format!(), which can
+    // trigger OOM → write(stderr) → runtime_policy::decide → mode() →
+    // push_mode_event → infinite recursion during early startup.
+    // MODE_LOG_READY is set to 1 by decide() once its first successful
+    // call completes, ensuring the heap is operational before logging.
+    result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TraceContext {
+    trace_seq: u64,
+    symbol: &'static str,
+    parent_span_seq: u64,
+    pcc_index: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DecisionExplainability {
+    pub trace_seq: u64,
+    pub span_seq: u64,
+    pub parent_span_seq: u64,
+    pub symbol: &'static str,
+    pub controller_id: &'static str,
+    pub decision_gate: &'static str,
+    pub mode: SafetyLevel,
+    pub family: ApiFamily,
+    pub profile: ValidationProfile,
+    pub action: MembraneAction,
+    pub contract_state: TsmState,
+    pub contract_event: DecisionContractEvent,
+    pub contract_action: DecisionContractAction,
+    pub policy_id: u32,
+    pub risk_upper_bound_ppm: u32,
+    pub requested_bytes: usize,
+    pub addr_hint: usize,
+    pub is_write: bool,
+    pub bloom_negative: bool,
+    pub contention_hint: u16,
+    pub evidence_seqno: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum RecordedDecisionGate {
+    RuntimePolicy,
+    FfiPcc,
+    HotCached,
+    MathOff,
+    Passthrough,
+}
+
+impl RecordedDecisionGate {
+    #[inline]
+    fn from_name(name: &'static str) -> Self {
+        if std::ptr::eq(name.as_ptr(), DECISION_GATE_FFI_PCC.as_ptr())
+            || name == DECISION_GATE_FFI_PCC
+        {
+            Self::FfiPcc
+        } else if std::ptr::eq(name.as_ptr(), DECISION_GATE_HOT_CACHED.as_ptr())
+            || name == DECISION_GATE_HOT_CACHED
+        {
+            Self::HotCached
+        } else if std::ptr::eq(name.as_ptr(), DECISION_GATE_MATH_OFF.as_ptr())
+            || name == DECISION_GATE_MATH_OFF
+        {
+            Self::MathOff
+        } else if std::ptr::eq(name.as_ptr(), DECISION_GATE_PASSTHROUGH.as_ptr())
+            || name == DECISION_GATE_PASSTHROUGH
+        {
+            Self::Passthrough
+        } else {
+            debug_assert_eq!(name, DECISION_GATE_RUNTIME_POLICY);
+            Self::RuntimePolicy
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimePolicy => DECISION_GATE_RUNTIME_POLICY,
+            Self::FfiPcc => DECISION_GATE_FFI_PCC,
+            Self::HotCached => DECISION_GATE_HOT_CACHED,
+            Self::MathOff => DECISION_GATE_MATH_OFF,
+            Self::Passthrough => DECISION_GATE_PASSTHROUGH,
+        }
+    }
+}
+
+/// Write-optimized TLS form of [`DecisionExplainability`].
+///
+/// The controller identifier is invariant and the decision gate has only two
+/// values. Reconstructing those fields on a diagnostic read avoids writing two
+/// fat string pointers on every deployed hardened decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordedDecisionExplainability {
+    trace_seq: u64,
+    span_seq: u64,
+    parent_span_seq: u64,
+    symbol: &'static str,
+    decision_gate: RecordedDecisionGate,
+    mode: SafetyLevel,
+    family: ApiFamily,
+    profile: ValidationProfile,
+    action: MembraneAction,
+    contract_state: TsmState,
+    contract_event: DecisionContractEvent,
+    contract_action: DecisionContractAction,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    requested_bytes: usize,
+    addr_hint: usize,
+    is_write: bool,
+    bloom_negative: bool,
+    contention_hint: u16,
+    evidence_seqno: u64,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<RecordedDecisionExplainability>()
+        < std::mem::size_of::<DecisionExplainability>()
+);
+
+impl RecordedDecisionExplainability {
+    fn expand(self) -> DecisionExplainability {
+        DecisionExplainability {
+            trace_seq: self.trace_seq,
+            span_seq: self.span_seq,
+            parent_span_seq: self.parent_span_seq,
+            symbol: self.symbol,
+            controller_id: CONTROLLER_ID_RUNTIME_MATH,
+            decision_gate: self.decision_gate.as_str(),
+            mode: self.mode,
+            family: self.family,
+            profile: self.profile,
+            action: self.action,
+            contract_state: self.contract_state,
+            contract_event: self.contract_event,
+            contract_action: self.contract_action,
+            policy_id: self.policy_id,
+            risk_upper_bound_ppm: self.risk_upper_bound_ppm,
+            requested_bytes: self.requested_bytes,
+            addr_hint: self.addr_hint,
+            is_write: self.is_write,
+            bloom_negative: self.bloom_negative,
+            contention_hint: self.contention_hint,
+            evidence_seqno: self.evidence_seqno,
+        }
+    }
+}
+
+impl From<DecisionExplainability> for RecordedDecisionExplainability {
+    fn from(value: DecisionExplainability) -> Self {
+        Self {
+            trace_seq: value.trace_seq,
+            span_seq: value.span_seq,
+            parent_span_seq: value.parent_span_seq,
+            symbol: value.symbol,
+            decision_gate: RecordedDecisionGate::from_name(value.decision_gate),
+            mode: value.mode,
+            family: value.family,
+            profile: value.profile,
+            action: value.action,
+            contract_state: value.contract_state,
+            contract_event: value.contract_event,
+            contract_action: value.contract_action,
+            policy_id: value.policy_id,
+            risk_upper_bound_ppm: value.risk_upper_bound_ppm,
+            requested_bytes: value.requested_bytes,
+            addr_hint: value.addr_hint,
+            is_write: value.is_write,
+            bloom_negative: value.bloom_negative,
+            contention_hint: value.contention_hint,
+            evidence_seqno: value.evidence_seqno,
+        }
+    }
+}
+
+impl DecisionExplainability {
+    #[must_use]
+    pub fn trace_id(self) -> String {
+        format!("abi::{}::{:016x}", self.symbol, self.trace_seq)
+    }
+
+    #[must_use]
+    pub fn span_id(self) -> String {
+        format!("abi::{}::decision::{:016x}", self.symbol, self.span_seq)
+    }
+
+    #[must_use]
+    pub fn parent_span_id(self) -> String {
+        format!("abi::{}::entry::{:016x}", self.symbol, self.parent_span_seq)
+    }
+
+    #[must_use]
+    pub const fn decision_action(self) -> &'static str {
+        match self.action {
+            MembraneAction::Allow => "Allow",
+            MembraneAction::FullValidate => "FullValidate",
+            MembraneAction::Repair(_) => "Repair",
+            MembraneAction::Deny => "Deny",
+        }
+    }
+}
+
+const EXPLAINABILITY_KIND_NONE: u8 = 0;
+const EXPLAINABILITY_KIND_PCC: u8 = 1;
+const EXPLAINABILITY_KIND_FULL: u8 = 2;
+
+/// Compact process-wide fallback for `try_decide_certified_string_pcc` in
+/// deployed builds (`cfg!(not(test))`).
+///
+/// Packs `((u16::from(mode_raw) << 8) | u16::from(pcc_index))` where `mode_raw`
+/// is non-zero (`MODE_STRICT`, `MODE_HARDENED`, or `MODE_OFF`). When non-zero,
+/// it represents a certified string fast-path PCC decision without touching
+/// `RUNTIME_POLICY_TLS` on every call. Any full or TLS-backed PCC explainability
+/// write clears this slot so TLS records take precedence, and `take_last_explainability`
+/// / `peek_last_explainability` expand it when present.
+static LAST_FAST_PCC_PACKED: AtomicU16 = AtomicU16::new(0);
+
+#[inline]
+fn expand_fast_pcc_packed(packed: u16) -> Option<DecisionExplainability> {
+    if packed == 0 {
+        return None;
+    }
+    let mode_raw = (packed >> 8) as u8;
+    let pcc_index = (packed & 0xFF) as u8;
+    if usize::from(pcc_index) >= FFI_PCC_CERTIFICATES.len() {
+        return None;
+    }
+    Some(
+        RecordedPccExplainability {
+            pcc_index,
+            mode: u8_to_mode(mode_raw),
+            ..RecordedPccExplainability::EMPTY
+        }
+        .expand(),
+    )
+}
+
+impl TraceContext {
+    const EMPTY: Self = Self {
+        trace_seq: 0,
+        symbol: TRACE_UNKNOWN_SYMBOL,
+        parent_span_seq: 0,
+        pcc_index: FFI_PCC_NO_INDEX,
+    };
+}
+
+/// Compact 48-byte explainability record for certified FFI-PCC decisions.
+///
+/// All static fields (`symbol`, `family`, `policy_id`, `decision_gate`,
+/// `profile = Fast`, `action = Allow`, `risk = 0`, `evidence_seqno = 0`) are
+/// reconstructed from `FFI_PCC_CERTIFICATES[pcc_index]` on diagnostic read,
+/// avoiding constructing/copying a 24-byte `MembraneAction` or 96-byte
+/// `RecordedDecisionExplainability` on the hot path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+struct RecordedPccExplainability {
+    trace_seq: u64,
+    span_seq: u64,
+    parent_span_seq: u64,
+    requested_bytes: usize,
+    addr_hint: usize,
+    pcc_index: u8,
+    mode: SafetyLevel,
+    is_write: bool,
+    bloom_negative: bool,
+    contract_state: TsmState,
+    contract_event: DecisionContractEvent,
+    contract_action: DecisionContractAction,
+    pad: u8,
+}
+
+impl RecordedPccExplainability {
+    const EMPTY: Self = Self {
+        trace_seq: 0,
+        span_seq: 0,
+        parent_span_seq: 0,
+        requested_bytes: 0,
+        addr_hint: 0,
+        pcc_index: 0,
+        mode: SafetyLevel::Strict,
+        is_write: false,
+        bloom_negative: false,
+        contract_state: TsmState::Safe,
+        contract_event: DecisionContractEvent::CheckPass,
+        contract_action: DecisionContractAction::Log,
+        pad: 0,
+    };
+
+    fn expand(self) -> DecisionExplainability {
+        let cert = &FFI_PCC_CERTIFICATES[usize::from(self.pcc_index)];
+        DecisionExplainability {
+            trace_seq: self.trace_seq,
+            span_seq: self.span_seq,
+            parent_span_seq: self.parent_span_seq,
+            symbol: cert.symbol,
+            controller_id: CONTROLLER_ID_RUNTIME_MATH,
+            decision_gate: DECISION_GATE_FFI_PCC,
+            mode: self.mode,
+            family: cert.family,
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            contract_state: self.contract_state,
+            contract_event: self.contract_event,
+            contract_action: self.contract_action,
+            policy_id: cert.policy_id,
+            risk_upper_bound_ppm: 0,
+            requested_bytes: self.requested_bytes,
+            addr_hint: self.addr_hint,
+            is_write: self.is_write,
+            bloom_negative: self.bloom_negative,
+            contention_hint: 0,
+            evidence_seqno: 0,
+        }
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+struct RuntimePolicyTls {
+    mode_cache: u8,
+    mode_switch_counter: u64,
+    trace_counter: u64,
+    decision_counter: u64,
+    trace_context: Option<TraceContext>,
+    last_explainability_kind: u8,
+    last_pcc_explainability: RecordedPccExplainability,
+    last_explainability: Option<RecordedDecisionExplainability>,
+    policy_reentry_depth: u32,
+    decision_contract_machine: DecisionContractMachine,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+const fn runtime_policy_tls_init() -> RuntimePolicyTls {
+    RuntimePolicyTls {
+        mode_cache: MODE_UNRESOLVED,
+        mode_switch_counter: 0,
+        trace_counter: 0,
+        decision_counter: 0,
+        trace_context: None,
+        last_explainability_kind: EXPLAINABILITY_KIND_NONE,
+        last_pcc_explainability: RecordedPccExplainability::EMPTY,
+        last_explainability: None,
+        policy_reentry_depth: 0,
+        decision_contract_machine: DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static RUNTIME_POLICY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RuntimePolicyTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(runtime_policy_tls_init);
+
+#[cfg(feature = "owned-tls-cache")]
+static RUNTIME_POLICY_TLS_ACCESS_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+struct RuntimePolicyTlsAccessGuard;
+
+#[cfg(feature = "owned-tls-cache")]
+impl Drop for RuntimePolicyTlsAccessGuard {
+    fn drop(&mut self) {
+        RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_sub(1, AtomicOrdering::Release);
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn with_runtime_policy_tls<R>(callback: impl FnOnce(&mut RuntimePolicyTls) -> R) -> R {
+    RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_add(1, AtomicOrdering::Acquire);
+    let _guard = RuntimePolicyTlsAccessGuard;
+    RUNTIME_POLICY_OWNED_TLS.with(callback)
+}
+
+#[cfg(feature = "owned-tls-cache")]
+pub(crate) fn runtime_policy_tls_access_active() -> bool {
+    RUNTIME_POLICY_TLS_ACCESS_DEPTH.load(AtomicOrdering::Acquire) != 0
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+pub(crate) const fn runtime_policy_tls_access_active() -> bool {
+    false
+}
+
+#[cfg(feature = "owned-tls-cache")]
+#[inline]
+pub(crate) fn runtime_policy_tls_reentry_active() -> bool {
+    RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread()
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[inline]
+pub(crate) const fn runtime_policy_tls_reentry_active() -> bool {
+    false
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+struct RuntimePolicyCells {
+    mode_cache: Cell<u8>,
+    mode_switch_counter: Cell<u64>,
+    trace_counter: Cell<u64>,
+    decision_counter: Cell<u64>,
+    trace_active: Cell<bool>,
+    trace_context: Cell<TraceContext>,
+    last_explainability_kind: Cell<u8>,
+    last_pcc_explainability: Cell<RecordedPccExplainability>,
+    last_explainability: RefCell<Option<RecordedDecisionExplainability>>,
+    policy_reentry_depth: Cell<u32>,
+    decision_contract_machine: Cell<DecisionContractMachine>,
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static RUNTIME_POLICY_TLS: RuntimePolicyCells = const {
+        RuntimePolicyCells {
+            mode_cache: Cell::new(MODE_UNRESOLVED),
+            mode_switch_counter: Cell::new(0),
+            trace_counter: Cell::new(0),
+            decision_counter: Cell::new(0),
+            trace_active: Cell::new(false),
+            trace_context: Cell::new(TraceContext::EMPTY),
+            last_explainability_kind: Cell::new(EXPLAINABILITY_KIND_NONE),
+            last_pcc_explainability: Cell::new(RecordedPccExplainability::EMPTY),
+            last_explainability: RefCell::new(None),
+            policy_reentry_depth: Cell::new(0),
+            decision_contract_machine: Cell::new(DecisionContractMachine::new(
+                DECISION_CONTRACT_CLEAR_THRESHOLD,
+            )),
+        }
+    };
+}
+
+fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.mode_cache)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut value = tls.mode_cache.get();
+                let result = callback(&mut value);
+                tls.mode_cache.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.mode_switch_counter)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut value = tls.mode_switch_counter.get();
+                let result = callback(&mut value);
+                tls.mode_switch_counter.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.trace_counter)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut value = tls.trace_counter.get();
+                let result = callback(&mut value);
+                tls.trace_counter.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.decision_counter)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut value = tls.decision_counter.get();
+                let result = callback(&mut value);
+                tls.decision_counter.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.trace_context)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut value = if tls.trace_active.get() {
+                    Some(tls.trace_context.get())
+                } else {
+                    None
+                };
+                let result = callback(&mut value);
+                match value {
+                    Some(ctx) => {
+                        tls.trace_context.set(ctx);
+                        tls.trace_active.set(true);
+                    }
+                    None => {
+                        tls.trace_active.set(false);
+                    }
+                }
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_last_explainability<R>(
+    callback: impl FnOnce(&mut Option<RecordedDecisionExplainability>) -> R,
+) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            let out = callback(&mut state.last_explainability);
+            state.last_explainability_kind = if state.last_explainability.is_some() {
+                EXPLAINABILITY_KIND_FULL
+            } else {
+                EXPLAINABILITY_KIND_NONE
+            };
+            out
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let Ok(mut value) = tls.last_explainability.try_borrow_mut() else {
+                    return None;
+                };
+                let out = callback(&mut value);
+                tls.last_explainability_kind.set(if value.is_some() {
+                    EXPLAINABILITY_KIND_FULL
+                } else {
+                    EXPLAINABILITY_KIND_NONE
+                });
+                Some(out)
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+fn with_policy_reentry_depth<R>(callback: impl FnOnce(&mut u32) -> R) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.policy_reentry_depth)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut value = tls.policy_reentry_depth.get();
+                let result = callback(&mut value);
+                tls.policy_reentry_depth.set(value);
+                result
+            })
+            .ok()
+    }
+}
+
+fn with_decision_contract_machine<R>(
+    callback: impl FnOnce(&mut DecisionContractMachine) -> R,
+) -> Option<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        Some(with_runtime_policy_tls(|state| {
+            callback(&mut state.decision_contract_machine)
+        }))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let mut machine = tls.decision_contract_machine.get();
+                let result = callback(&mut machine);
+                tls.decision_contract_machine.set(machine);
+                result
+            })
+            .ok()
+    }
+}
+
+pub(crate) struct EntrypointTraceGuard {
+    previous: Option<TraceContext>,
+    skipped: bool,
+}
+
+impl Drop for EntrypointTraceGuard {
+    fn drop(&mut self) {
+        if self.skipped {
+            return;
+        }
+        #[cfg(feature = "owned-tls-cache")]
+        let _ = with_trace_context(|slot| *slot = self.previous);
+        #[cfg(not(feature = "owned-tls-cache"))]
+        let _ = RUNTIME_POLICY_TLS.try_with(|tls| match self.previous {
+            Some(prev) => {
+                tls.trace_context.set(prev);
+                tls.trace_active.set(true);
+            }
+            None => {
+                tls.trace_active.set(false);
+            }
+        });
+    }
+}
+
+static ACTIVE_POLICY_REENTRY_CONTEXTS: AtomicU32 = AtomicU32::new(0);
+
+struct PolicyReentryGuard;
+
+impl Drop for PolicyReentryGuard {
+    fn drop(&mut self) {
+        let decremented_to_zero = with_policy_reentry_depth(|depth| {
+            let prev = *depth;
+            let next = prev.saturating_sub(1);
+            *depth = next;
+            prev > 0 && next == 0
+        })
+        .unwrap_or(false);
+        if decremented_to_zero {
+            ACTIVE_POLICY_REENTRY_CONTEXTS.fetch_sub(1, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::leave_alloc_slow_gate();
+        }
+    }
+}
+
+#[inline]
+fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
+    with_policy_reentry_depth(|depth| {
+        let current = *depth;
+        if current > 0 {
+            None
+        } else {
+            *depth = current + 1;
+            #[cfg(not(test))]
+            crate::malloc_abi::enter_alloc_slow_gate();
+            ACTIVE_POLICY_REENTRY_CONTEXTS.fetch_add(1, AtomicOrdering::Release);
+            Some(PolicyReentryGuard)
+        }
+    })
+    .flatten()
+}
+
+#[cold]
+#[inline(never)]
+fn in_policy_reentry_context_slow() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_runtime_policy_tls(|state| state.policy_reentry_depth > 0)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| tls.policy_reentry_depth.get() > 0)
+            .unwrap_or(false)
+    }
+}
+
+#[inline(always)]
+#[must_use]
+pub(crate) fn in_policy_reentry_context() -> bool {
+    if ACTIVE_POLICY_REENTRY_CONTEXTS.load(AtomicOrdering::Acquire) == 0 {
+        return false;
+    }
+    in_policy_reentry_context_slow()
+}
+
+#[must_use]
+pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
+    // Deployed strict-passthrough fast path: the trace context this sets is never
+    // consumed — `decide()` returns at the high-frequency-family fast-path BEFORE
+    // the FFI-PCC certificate lookup (the only load-bearing reader), and
+    // `record_last_explainability` runs only in hardened mode. So the per-call
+    // `next_trace_seq` + `ffi_pcc_certificate_index_for_symbol` lookup + TWO
+    // `thread_local!` trace-context accesses (set here, restore on drop) are pure
+    // overhead on EVERY ABI entry. `strict_passthrough_active()` is a cheap atomic
+    // and is `false` under `cfg(test)`, so unit tests keep the full trace path.
+    if strict_passthrough_active() {
+        return EntrypointTraceGuard {
+            previous: None,
+            skipped: true,
+        };
+    }
+
+    entrypoint_scope_active(symbol, ffi_pcc_certificate_index_for_symbol(symbol))
+}
+
+/// Install the trace scope for the certified `memcmp` entrypoint without
+/// recomputing its startup-verified certificate-table index on every call.
+#[must_use]
+pub(crate) fn entrypoint_scope_memcmp() -> EntrypointTraceGuard {
+    if strict_passthrough_active() {
+        return EntrypointTraceGuard {
+            previous: None,
+            skipped: true,
+        };
+    }
+
+    entrypoint_scope_active("memcmp", FFI_PCC_MEMCMP_INDEX)
+}
+
+#[inline(always)]
+fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTraceGuard {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        let trace_seq = next_trace_seq();
+        let context = TraceContext {
+            trace_seq,
+            symbol,
+            parent_span_seq: trace_seq,
+            pcc_index,
+        };
+        let previous = with_trace_context(|slot| {
+            let prev = *slot;
+            *slot = Some(context);
+            prev
+        })
+        .flatten();
+        EntrypointTraceGuard {
+            previous,
+            skipped: false,
+        }
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let previous = RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let trace_seq = tls.trace_counter.get().wrapping_add(1);
+                tls.trace_counter.set(trace_seq);
+                let prev = if tls.trace_active.get() {
+                    Some(tls.trace_context.get())
+                } else {
+                    None
+                };
+                tls.trace_context.set(TraceContext {
+                    trace_seq,
+                    symbol,
+                    parent_span_seq: trace_seq,
+                    pcc_index,
+                });
+                tls.trace_active.set(true);
+                prev
+            })
+            .ok()
+            .flatten();
+
+        EntrypointTraceGuard {
+            previous,
+            skipped: false,
+        }
+    }
+}
+
+#[must_use]
+pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
+    let fast_packed = LAST_FAST_PCC_PACKED.swap(0, AtomicOrdering::Relaxed);
+    let tls_record = {
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            with_runtime_policy_tls(|state| {
+                let kind = state.last_explainability_kind;
+                state.last_explainability_kind = EXPLAINABILITY_KIND_NONE;
+                match kind {
+                    EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
+                    EXPLAINABILITY_KIND_FULL => state
+                        .last_explainability
+                        .take()
+                        .map(RecordedDecisionExplainability::expand),
+                    _ => None,
+                }
+            })
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            RUNTIME_POLICY_TLS
+                .try_with(|tls| {
+                    let kind = tls.last_explainability_kind.get();
+                    tls.last_explainability_kind.set(EXPLAINABILITY_KIND_NONE);
+                    match kind {
+                        EXPLAINABILITY_KIND_PCC => Some(tls.last_pcc_explainability.get().expand()),
+                        EXPLAINABILITY_KIND_FULL => tls
+                            .last_explainability
+                            .try_borrow_mut()
+                            .ok()
+                            .and_then(|mut slot| slot.take())
+                            .map(RecordedDecisionExplainability::expand),
+                        _ => None,
+                    }
+                })
+                .ok()
+                .flatten()
+        }
+    };
+    expand_fast_pcc_packed(fast_packed).or(tls_record)
+}
+
+#[must_use]
+pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
+    if let Some(exp) = expand_fast_pcc_packed(LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed)) {
+        return Some(exp);
+    }
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_runtime_policy_tls(|state| match state.last_explainability_kind {
+            EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
+            EXPLAINABILITY_KIND_FULL => state
+                .last_explainability
+                .map(RecordedDecisionExplainability::expand),
+            _ => None,
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| match tls.last_explainability_kind.get() {
+                EXPLAINABILITY_KIND_PCC => Some(tls.last_pcc_explainability.get().expand()),
+                EXPLAINABILITY_KIND_FULL => tls
+                    .last_explainability
+                    .try_borrow()
+                    .ok()
+                    .and_then(|slot| *slot)
+                    .map(RecordedDecisionExplainability::expand),
+                _ => None,
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+/// Read-only projection of the calling thread's existing hardened decision.
+/// Evidence sequences are cadence-gated: zero does not establish whether the
+/// kernel ran. Family uses `ApiFamily` IDs (Socket = 13); profile is
+/// 0=Fast, 1=Full; action is 0=Allow, 1=FullValidate, 2=Repair, 3=Deny.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeDecisionSnapshot {
+    pub evidence_seqno: u64,
+    pub family: u32,
+    pub profile: u32,
+    pub action: u32,
+    pub risk_upper_bound_ppm: u32,
+    pub policy_id: u32,
+    pub reserved: u32,
+}
+
+/// # Safety
+/// A non-null `out` must be aligned and writable for one snapshot.
+pub(crate) unsafe fn read_decision_snapshot(out: *mut RuntimeDecisionSnapshot) -> c_int {
+    if out.is_null() {
+        // SAFETY: sets the calling thread's errno for an invalid output pointer.
+        unsafe { crate::errno_abi::set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    let Some(decision) = peek_last_explainability() else {
+        return 0;
+    };
+    let snapshot = RuntimeDecisionSnapshot {
+        evidence_seqno: decision.evidence_seqno,
+        family: u32::from(decision.family as u8),
+        profile: match decision.profile {
+            ValidationProfile::Fast => 0,
+            ValidationProfile::Full => 1,
+        },
+        action: match decision.action {
+            MembraneAction::Allow => 0,
+            MembraneAction::FullValidate => 1,
+            MembraneAction::Repair(_) => 2,
+            MembraneAction::Deny => 3,
+        },
+        risk_upper_bound_ppm: decision.risk_upper_bound_ppm,
+        policy_id: decision.policy_id,
+        reserved: 0,
+    };
+    // SAFETY: caller guarantees a properly aligned, writable output object.
+    unsafe { out.write(snapshot) };
+    1
+}
+
+/// Separated route-class counters for release-ABI liveness & causal-influence audits
+/// (`bd-reality-202609-lx578q.4`), distinguishing ABI `RuntimeMathKernel` consultations,
+/// `ValidationPipeline` `RuntimeMathKernel` consultations, independent bounds/pointer
+/// validations, FFI-PCC certificate exits, cached hot-family decisions, and math-off bypasses.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeRouteCountsSnapshot {
+    pub abi_kernel_decisions: u64,
+    pub pipeline_kernel_decisions: u64,
+    pub independent_bounds_validations: u64,
+    pub tls_cache_hits: u64,
+    pub canary_failures: u64,
+    pub fingerprint_failures: u64,
+    pub ffi_pcc_decisions: u64,
+    pub hot_cached_decisions: u64,
+    pub math_off_bypasses: u64,
+    pub warm_integrity_cadence_mask: u32,
+    pub hot_escalated_mask: u32,
+}
+
+static HOT_HARDENED_OBSERVE_TICKS: AtomicU64 = AtomicU64::new(0);
+static CACHED_HOT_HARDENED_DECISION: [AtomicU64; ApiFamily::COUNT] =
+    [const { AtomicU64::new(0) }; ApiFamily::COUNT];
+static HOT_FAMILY_ESCALATED_MASK: AtomicU32 = AtomicU32::new(0);
+static ROUTE_FFI_PCC_DECISIONS: AtomicU64 = AtomicU64::new(0);
+static ROUTE_HOT_CACHED_DECISIONS: AtomicU64 = AtomicU64::new(0);
+static ROUTE_MATH_OFF_BYPASSES: AtomicU64 = AtomicU64::new(0);
+
+#[inline(always)]
+const fn is_hardened_hot_cached_family(family: ApiFamily) -> bool {
+    matches!(
+        family,
+        ApiFamily::Allocator
+            | ApiFamily::StringMemory
+            | ApiFamily::Ctype
+            | ApiFamily::Loader
+            | ApiFamily::Stdlib
+            | ApiFamily::MathFenv
+            | ApiFamily::Stdio
+    )
+}
+
+#[inline(always)]
+fn is_family_escalated(family: ApiFamily) -> bool {
+    (HOT_FAMILY_ESCALATED_MASK.load(AtomicOrdering::Relaxed) & (1u32 << (family as u8))) != 0
+}
+
+#[inline]
+fn pack_hot_hardened_decision(decision: RuntimeDecision) -> u64 {
+    let profile_bit = match decision.profile {
+        ValidationProfile::Fast => 0u64,
+        ValidationProfile::Full => 1u64,
+    };
+    let action_code = match decision.action {
+        MembraneAction::Allow => 0u64,
+        MembraneAction::FullValidate => 1u64,
+        MembraneAction::Repair(HealingAction::UpgradeToSafeVariant) => 2u64,
+        MembraneAction::Repair(_) => 3u64,
+        MembraneAction::Deny => 4u64,
+    };
+    let risk_ppm = u64::from(decision.risk_upper_bound_ppm.min(1_000_000));
+    let policy_low = u64::from(decision.policy_id & 0xF_FFFF);
+    let seq_low = decision.evidence_seqno & 0x7_FFFF;
+    1u64 | (profile_bit << 1)
+        | (action_code << 2)
+        | (risk_ppm << 5)
+        | (policy_low << 25)
+        | (seq_low << 45)
+}
+
+#[inline(always)]
+fn unpack_hot_hardened_decision(packed: u64) -> RuntimeDecision {
+    if packed == 0 {
+        return RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Full,
+            policy_id: 0,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 0,
+        };
+    }
+    let profile = if (packed & (1 << 1)) != 0 {
+        ValidationProfile::Full
+    } else {
+        ValidationProfile::Fast
+    };
+    let action = match (packed >> 2) & 0x7 {
+        1 => MembraneAction::FullValidate,
+        2 => MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+        3 => MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+        4 => MembraneAction::Deny,
+        _ => MembraneAction::Allow,
+    };
+    let risk_upper_bound_ppm = ((packed >> 5) & 0xF_FFFF) as u32;
+    let policy_id = ((packed >> 25) & 0xF_FFFF) as u32;
+    let evidence_seqno = (packed >> 45) & 0x7_FFFF;
+    RuntimeDecision {
+        action,
+        profile,
+        policy_id,
+        risk_upper_bound_ppm,
+        evidence_seqno,
+    }
+}
+
+/// Conformal risk upper-bound threshold (in ppm) above which a family is marked
+/// escalated for adaptive integrity cadence tightening (`1-in-16 -> 1-in-1`),
+/// static FFI-PCC override, and synchronous syscall canary verification.
+/// Benign cold/warm startup traffic (`ConformalRiskEngine` 0-adverse envelope +
+/// `design_bonus`) stays in `~115_000..561_107` ppm, whereas sustained adverse
+/// observations (`RECOMPUTE_CADENCE = 64`) saturate above `750_000..1_000_000` ppm.
+pub(crate) const ESCALATED_RISK_THRESHOLD_PPM: u32 = 750_000;
+
+fn update_cached_hot_hardened_decision(family: ApiFamily, decision: RuntimeDecision) {
+    CACHED_HOT_HARDENED_DECISION[family as usize].store(
+        pack_hot_hardened_decision(decision),
+        AtomicOrdering::Relaxed,
+    );
+    let bit = 1u32 << (family as u8);
+    let escalated = decision.risk_upper_bound_ppm >= ESCALATED_RISK_THRESHOLD_PPM
+        || matches!(decision.action, MembraneAction::Deny);
+    let updated_mask = if escalated {
+        HOT_FAMILY_ESCALATED_MASK.fetch_or(bit, AtomicOrdering::Relaxed) | bit
+    } else {
+        HOT_FAMILY_ESCALATED_MASK.fetch_and(!bit, AtomicOrdering::Relaxed) & !bit
+    };
+    const INTEGRITY_FAMILIES_MASK: u32 = (1u32 << (ApiFamily::PointerValidation as u8))
+        | (1u32 << (ApiFamily::Allocator as u8))
+        | (1u32 << (ApiFamily::StringMemory as u8));
+    let target_cadence = if (updated_mask & INTEGRITY_FAMILIES_MASK) != 0 {
+        frankenlibc_membrane::tls_cache::ESCALATED_WARM_INTEGRITY_CADENCE_MASK
+    } else {
+        frankenlibc_membrane::tls_cache::DEFAULT_WARM_INTEGRITY_CADENCE_MASK
+    };
+    frankenlibc_membrane::tls_cache::set_warm_integrity_cadence_mask(target_cadence);
+}
+
+/// # Safety
+/// A non-null `out` must be aligned and writable for one [`RuntimeRouteCountsSnapshot`].
+pub(crate) unsafe fn read_route_counts_snapshot(out: *mut RuntimeRouteCountsSnapshot) -> c_int {
+    if out.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    let abi_kernel_decisions = if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
+        if ptr.is_null() {
+            0
+        } else {
+            // SAFETY: `KERNEL_STATE == STATE_READY` guarantees `KERNEL_PTR` points to the live kernel.
+            unsafe { (&*ptr).decision_count() }
+        }
+    } else {
+        0
+    };
+    let pipeline_kernel_decisions = crate::membrane_state::ready_pipeline()
+        .map_or(0, |pipeline| pipeline.runtime_math.decision_count());
+    let metrics = frankenlibc_membrane::metrics::global_metrics();
+    let snapshot = RuntimeRouteCountsSnapshot {
+        abi_kernel_decisions,
+        pipeline_kernel_decisions,
+        independent_bounds_validations: frankenlibc_membrane::metrics::MembraneMetrics::get(
+            &metrics.validations,
+        ),
+        tls_cache_hits: frankenlibc_membrane::metrics::MembraneMetrics::get(
+            &metrics.tls_cache_hits,
+        ),
+        canary_failures: frankenlibc_membrane::metrics::MembraneMetrics::get(
+            &metrics.canary_failures,
+        ),
+        fingerprint_failures: frankenlibc_membrane::metrics::MembraneMetrics::get(
+            &metrics.fingerprint_failures,
+        ),
+        ffi_pcc_decisions: ROUTE_FFI_PCC_DECISIONS.load(AtomicOrdering::Relaxed),
+        hot_cached_decisions: ROUTE_HOT_CACHED_DECISIONS.load(AtomicOrdering::Relaxed),
+        math_off_bypasses: ROUTE_MATH_OFF_BYPASSES.load(AtomicOrdering::Relaxed),
+        warm_integrity_cadence_mask: frankenlibc_membrane::tls_cache::warm_integrity_cadence_mask(),
+        hot_escalated_mask: HOT_FAMILY_ESCALATED_MASK.load(AtomicOrdering::Relaxed),
+    };
+    unsafe { out.write(snapshot) };
+    1
+}
+
+fn next_decision_span_seq() -> u64 {
+    with_decision_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next
+    })
+    .unwrap_or(0)
+}
+
+fn next_trace_seq() -> u64 {
+    with_trace_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next
+    })
+    .unwrap_or(0)
+}
+
+fn fallback_trace_context() -> TraceContext {
+    let trace_seq = with_trace_counter(|counter| {
+        let next = counter.wrapping_add(1);
+        *counter = next;
+        next
+    })
+    .unwrap_or(0);
+    TraceContext {
+        trace_seq,
+        symbol: TRACE_UNKNOWN_SYMBOL,
+        parent_span_seq: trace_seq,
+        pcc_index: FFI_PCC_NO_INDEX,
+    }
+}
+
+fn mark_kernel_broken() {
+    KERNEL_STATE.store(STATE_BROKEN, AtomicOrdering::Release);
+}
+
+#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+#[inline]
+fn runtime_policy_guard<T>(f: impl FnOnce() -> T) -> Result<T, ()> {
+    panic::catch_unwind(AssertUnwindSafe(f)).map_err(|_| ())
+}
+
+#[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+#[inline]
+fn runtime_policy_guard<T>(f: impl FnOnce() -> T) -> Result<T, ()> {
+    Ok(f())
+}
+
+fn ensure_minimal_panic_hook() {
+    // In test mode the standard test harness owns the panic hook. Installing our
+    // custom hook would poison the kernel on normal assertion failures, cascading
+    // into false failures in subsequent kernel-dependent tests.
+    #[cfg(all(
+        not(test),
+        not(all(feature = "standalone", feature = "owned-unwind-stub"))
+    ))]
+    {
+        if PANIC_HOOK_STATE
+            .compare_exchange(
+                PANIC_HOOK_UNSET,
+                PANIC_HOOK_INSTALLED,
+                AtomicOrdering::SeqCst,
+                AtomicOrdering::Relaxed,
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        panic::set_hook(Box::new(|info| {
+            const MSG: &[u8] = b"frankenlibc: runtime kernel panic (fallback)\n";
+            mark_kernel_broken();
+
+            let seen = PANIC_HOOK_LOG_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+            if seen >= PANIC_HOOK_LOG_LIMIT {
+                return;
+            }
+
+            if PANIC_HOOK_WRITE_STATE
+                .compare_exchange(
+                    PANIC_HOOK_WRITE_IDLE,
+                    PANIC_HOOK_WRITE_ACTIVE,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Relaxed,
+                )
+                .is_err()
+            {
+                return;
+            }
+
+            // SAFETY: direct raw syscall write avoids libc indirection and is
+            // async-signal-safe enough for panic reporting.
+            let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, MSG.as_ptr(), MSG.len()) };
+            if seen == 0 {
+                const PREFIX: &[u8] = b"frankenlibc: panic location: ";
+                let _ = unsafe {
+                    syscall::sys_write(libc::STDERR_FILENO, PREFIX.as_ptr(), PREFIX.len())
+                };
+                if let Some(location) = info.location() {
+                    let _ = unsafe {
+                        syscall::sys_write(
+                            libc::STDERR_FILENO,
+                            location.file().as_bytes().as_ptr(),
+                            location.file().len(),
+                        )
+                    };
+                    let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b":".as_ptr(), 1) };
+                    write_u32_stderr(location.line());
+                } else {
+                    let _ =
+                        unsafe { syscall::sys_write(libc::STDERR_FILENO, b"unknown".as_ptr(), 7) };
+                }
+                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+
+                const PAYLOAD_PREFIX: &[u8] = b"frankenlibc: panic payload: ";
+                let _ = unsafe {
+                    syscall::sys_write(
+                        libc::STDERR_FILENO,
+                        PAYLOAD_PREFIX.as_ptr(),
+                        PAYLOAD_PREFIX.len(),
+                    )
+                };
+                if let Some(payload) = info.payload().downcast_ref::<&str>() {
+                    let payload_bytes = payload.as_bytes();
+                    let payload_len = payload_bytes.len().min(512);
+                    let _ = unsafe {
+                        syscall::sys_write(libc::STDERR_FILENO, payload_bytes.as_ptr(), payload_len)
+                    };
+                } else if let Some(payload) = info.payload().downcast_ref::<String>() {
+                    let payload_bytes = payload.as_bytes();
+                    let payload_len = payload_bytes.len().min(512);
+                    let _ = unsafe {
+                        syscall::sys_write(libc::STDERR_FILENO, payload_bytes.as_ptr(), payload_len)
+                    };
+                } else {
+                    let _ = unsafe {
+                        syscall::sys_write(libc::STDERR_FILENO, b"<non-string>".as_ptr(), 12)
+                    };
+                }
+                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+                // The location is usually inside std (thread_local's `with`,
+                // RefCell borrow), so print the caller chain too, as
+                // `object(+offset)` lines: the process is about to abort, and
+                // without this a report names no fl function at all.
+                #[cfg(not(feature = "standalone"))]
+                {
+                    const TRACE: &[u8] = b"frankenlibc: panic backtrace:\n";
+                    let _ = unsafe {
+                        syscall::sys_write(libc::STDERR_FILENO, TRACE.as_ptr(), TRACE.len())
+                    };
+                    let mut frames = [std::ptr::null_mut::<std::ffi::c_void>(); 48];
+                    // SAFETY: `frames` holds 48 slots; both calls only read them.
+                    unsafe {
+                        let n = crate::unistd_abi::backtrace(frames.as_mut_ptr(), 48);
+                        crate::unistd_abi::backtrace_symbols_fd(
+                            frames.as_ptr(),
+                            n,
+                            libc::STDERR_FILENO,
+                        );
+                    }
+                }
+            }
+            PANIC_HOOK_WRITE_STATE.store(PANIC_HOOK_WRITE_IDLE, AtomicOrdering::Release);
+        }));
+    }
+}
+
+fn write_u32_stderr(mut value: u32) {
+    let mut buf = [0u8; 10];
+    let mut idx = buf.len();
+
+    if value == 0 {
+        let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"0".as_ptr(), 1) };
+        return;
+    }
+
+    while value > 0 {
+        idx -= 1;
+        buf[idx] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+
+    let _ = unsafe {
+        syscall::sys_write(
+            libc::STDERR_FILENO,
+            buf[idx..].as_ptr(),
+            buf.len().saturating_sub(idx),
+        )
+    };
+}
+
+fn active_trace_context() -> TraceContext {
+    with_trace_context(|slot| *slot)
+        .flatten()
+        .unwrap_or_else(fallback_trace_context)
+}
+
+fn decision_contract_event_for_runtime_decision(
+    decision: RuntimeDecision,
+) -> DecisionContractEvent {
+    match decision.action {
+        MembraneAction::Allow => {
+            if matches!(decision.profile, ValidationProfile::Full) {
+                DecisionContractEvent::SoftAnomaly
+            } else {
+                DecisionContractEvent::CheckPass
+            }
+        }
+        MembraneAction::FullValidate => DecisionContractEvent::SoftAnomaly,
+        MembraneAction::Repair(_) | MembraneAction::Deny => DecisionContractEvent::HardViolation,
+    }
+}
+
+fn apply_decision_contract(
+    mode: SafetyLevel,
+    decision: RuntimeDecision,
+) -> (TsmState, DecisionContractEvent, DecisionContractAction) {
+    let mut event = decision_contract_event_for_runtime_decision(decision);
+    with_decision_contract_machine(|machine| {
+        let mut transition = machine.observe(event, mode);
+
+        // Hardened repairs require an explicit completion edge from Unsafe -> Safe.
+        if matches!(decision.action, MembraneAction::Repair(_)) {
+            event = DecisionContractEvent::RepairComplete;
+            transition = machine.observe(event, mode);
+        }
+
+        (transition.to, event, transition.action)
+    })
+    .unwrap_or((
+        TsmState::Safe,
+        DecisionContractEvent::CheckPass,
+        DecisionContractAction::Log,
+    ))
+}
+
+fn record_last_explainability(
+    mode: SafetyLevel,
+    ctx: RuntimeContext,
+    decision: RuntimeDecision,
+    decision_gate: &'static str,
+) {
+    // Fast path: skip explainability recording in strict passthrough mode.
+    // The data is only useful for debugging/hardened mode analysis and creating
+    // it on every libc call is a significant perf cost (~300x overhead for python3).
+    if cfg!(not(test)) && matches!(mode, SafetyLevel::Strict) {
+        return;
+    }
+
+    let trace = active_trace_context();
+    let (contract_state, contract_event, contract_action) = apply_decision_contract(mode, decision);
+    let explainability = RecordedDecisionExplainability {
+        trace_seq: trace.trace_seq,
+        span_seq: next_decision_span_seq(),
+        parent_span_seq: trace.parent_span_seq,
+        symbol: trace.symbol,
+        decision_gate: RecordedDecisionGate::from_name(decision_gate),
+        mode,
+        family: ctx.family,
+        profile: decision.profile,
+        action: decision.action,
+        contract_state,
+        contract_event,
+        contract_action,
+        policy_id: decision.policy_id,
+        risk_upper_bound_ppm: decision.risk_upper_bound_ppm,
+        requested_bytes: ctx.requested_bytes,
+        addr_hint: ctx.addr_hint,
+        is_write: ctx.is_write,
+        bloom_negative: ctx.bloom_negative,
+        contention_hint: ctx.contention_hint,
+        evidence_seqno: decision.evidence_seqno,
+    };
+
+    LAST_FAST_PCC_PACKED.store(0, AtomicOrdering::Relaxed);
+    let _ = with_last_explainability(|slot| *slot = Some(explainability));
+}
+
+#[inline]
+fn record_pcc_explainability(
+    mode: SafetyLevel,
+    pcc_index: u8,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) {
+    if cfg!(not(test)) && matches!(mode, SafetyLevel::Strict) {
+        return;
+    }
+    LAST_FAST_PCC_PACKED.store(0, AtomicOrdering::Relaxed);
+
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_runtime_policy_tls(|state| {
+            let trace = state.trace_context.unwrap_or_else(|| {
+                let trace_seq = state.trace_counter.wrapping_add(1);
+                state.trace_counter = trace_seq;
+                TraceContext {
+                    trace_seq,
+                    symbol: TRACE_UNKNOWN_SYMBOL,
+                    parent_span_seq: trace_seq,
+                    pcc_index,
+                }
+            });
+            let span_seq = state.decision_counter.wrapping_add(1);
+            state.decision_counter = span_seq;
+            let (contract_state, contract_action) =
+                if matches!(state.decision_contract_machine.state(), TsmState::Safe) {
+                    (TsmState::Safe, DecisionContractAction::Log)
+                } else {
+                    let transition = state
+                        .decision_contract_machine
+                        .observe(DecisionContractEvent::CheckPass, mode);
+                    (transition.to, transition.action)
+                };
+            state.last_pcc_explainability = RecordedPccExplainability {
+                trace_seq: trace.trace_seq,
+                span_seq,
+                parent_span_seq: trace.parent_span_seq,
+                requested_bytes,
+                addr_hint,
+                pcc_index,
+                mode,
+                is_write,
+                bloom_negative,
+                contract_state,
+                contract_event: DecisionContractEvent::CheckPass,
+                contract_action,
+                pad: 0,
+            };
+            state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
+        });
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = RUNTIME_POLICY_TLS.try_with(|tls| {
+            let trace = if tls.trace_active.get() {
+                tls.trace_context.get()
+            } else {
+                let trace_seq = tls.trace_counter.get().wrapping_add(1);
+                tls.trace_counter.set(trace_seq);
+                TraceContext {
+                    trace_seq,
+                    symbol: TRACE_UNKNOWN_SYMBOL,
+                    parent_span_seq: trace_seq,
+                    pcc_index,
+                }
+            };
+            let span_seq = tls.decision_counter.get().wrapping_add(1);
+            tls.decision_counter.set(span_seq);
+            let mut machine = tls.decision_contract_machine.get();
+            let (contract_state, contract_action) = if matches!(machine.state(), TsmState::Safe) {
+                (TsmState::Safe, DecisionContractAction::Log)
+            } else {
+                let transition = machine.observe(DecisionContractEvent::CheckPass, mode);
+                tls.decision_contract_machine.set(machine);
+                (transition.to, transition.action)
+            };
+            tls.last_pcc_explainability.set(RecordedPccExplainability {
+                trace_seq: trace.trace_seq,
+                span_seq,
+                parent_span_seq: trace.parent_span_seq,
+                requested_bytes,
+                addr_hint,
+                pcc_index,
+                mode,
+                is_write,
+                bloom_negative,
+                contract_state,
+                contract_event: DecisionContractEvent::CheckPass,
+                contract_action,
+                pad: 0,
+            });
+            tls.last_explainability_kind.set(EXPLAINABILITY_KIND_PCC);
+        });
+    }
+}
+
+/// Build the runtime-math kernel now if no call has yet. Process startup does
+/// this before main: built lazily, the kernel's first use can come after the
+/// program has capped RLIMIT_AS, where its ~158 KiB construction frame cannot
+/// grow the stack and faults (gnulib test-dprintf-posix2 under strict).
+pub(crate) fn prewarm_kernel() {
+    let _ = kernel();
+}
+
+#[inline]
+fn kernel() -> Option<&'static RuntimeMathKernel> {
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        // Fast path: already initialized.
+        // SAFETY: once READY, KERNEL_PTR is valid and never changes.
+        let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
+        return Some(unsafe { &*ptr });
+    }
+    kernel_init()
+}
+
+/// [`kernel`]'s initialization path, kept out of line. With the kernel's
+/// constructor inlined, `kernel` had a ~158 KiB stack frame, and its prologue
+/// probed all 38 pages of it on EVERY call, fast path included. After a fork
+/// each probed page is copy-on-write shared, so a parent and child that
+/// merely looked up the kernel copied 38 stack pages each: ~76 of the ~170
+/// page faults that made fork+exit+wait ~3.5x glibc (bd-rc0923-epic-eeuy4f.25).
+#[cold]
+#[inline(never)]
+fn kernel_init() -> Option<&'static RuntimeMathKernel> {
+    let state = KERNEL_STATE.load(AtomicOrdering::Acquire);
+
+    if state == STATE_READY {
+        // SAFETY: once READY, KERNEL_PTR is valid and never changes.
+        let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
+        return Some(unsafe { &*ptr });
+    }
+
+    if state == STATE_BROKEN {
+        return None;
+    }
+
+    if state == STATE_INITIALIZING {
+        // Reentrant call during init — passthrough to raw C behavior.
+        return None;
+    }
+
+    // Try to claim the init slot.
+    if KERNEL_STATE
+        .compare_exchange(
+            STATE_UNINIT,
+            STATE_INITIALIZING,
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        // Another thread won the race. If it's still INITIALIZING, passthrough.
+        // If it transitioned to READY, retry.
+        return if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+            let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
+            Some(unsafe { &*ptr })
+        } else {
+            None
+        };
+    }
+
+    // We own the init. Allocate kernel on heap (leaked, lives forever).
+    // The constructor restores its own arithmetic, but moving/boxing its large
+    // result can call interposed memcpy after that scope ends. Keep initialization
+    // transparent through those hardened helper calls too.
+    let _floating_environment =
+        frankenlibc_membrane::runtime_math::RuntimeMathEnvironmentGuard::enter();
+    ensure_minimal_panic_hook();
+    let kernel = match runtime_policy_guard(RuntimeMathKernel::new) {
+        Ok(k) => Box::new(k),
+        Err(_) => {
+            mark_kernel_broken();
+            return None;
+        }
+    };
+    let ptr = Box::into_raw(kernel);
+    KERNEL_PTR.store(ptr, AtomicOrdering::Release);
+    KERNEL_STATE.store(STATE_READY, AtomicOrdering::Release);
+    // NOTE: Do NOT set RUNTIME_READY here.  The membrane's ValidationPipeline
+    // is not re-entrant and will deadlock if interposed functions (memmove,
+    // strlen) go through the full validation path while the pipeline's own
+    // internal operations hold locks.  RUNTIME_READY remains 0, keeping all
+    // interposed functions in passthrough mode under LD_PRELOAD.
+
+    Some(unsafe { &*ptr })
+}
+
+#[inline]
+fn kernel_with_retry(spins: usize) -> Option<&'static RuntimeMathKernel> {
+    for _ in 0..spins {
+        if let Some(k) = kernel() {
+            return Some(k);
+        }
+        if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_BROKEN {
+            return None;
+        }
+        kernel_retry_backoff();
+    }
+    kernel()
+}
+
+#[inline]
+fn kernel_retry_backoff() {
+    #[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
+    {
+        for _ in 0..64 {
+            std::hint::spin_loop();
+        }
+    }
+
+    #[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
+    {
+        std::hint::spin_loop();
+        std::thread::yield_now();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[must_use]
+pub(crate) fn runtime_kernel_snapshot(mode: SafetyLevel) -> Option<RuntimeKernelSnapshot> {
+    let _reentry_guard = enter_policy_reentry_guard()?;
+    ensure_minimal_panic_hook();
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
+    match runtime_policy_guard(|| k.snapshot(mode)) {
+        Ok(snapshot) => Some(snapshot),
+        Err(_) => {
+            mark_kernel_broken();
+            None
+        }
+    }
+}
+
+#[must_use]
+pub(crate) fn runtime_evidence_contract_snapshot() -> Option<RuntimeEvidenceContractSnapshot> {
+    let _reentry_guard = enter_policy_reentry_guard()?;
+    ensure_minimal_panic_hook();
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
+    match runtime_policy_guard(|| k.evidence_contract_snapshot()) {
+        Ok(snapshot) => Some(snapshot),
+        Err(_) => {
+            mark_kernel_broken();
+            None
+        }
+    }
+}
+
+#[must_use]
+pub(crate) fn export_runtime_decision_cards_json() -> Option<String> {
+    let _reentry_guard = enter_policy_reentry_guard()?;
+    ensure_minimal_panic_hook();
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
+    match runtime_policy_guard(|| k.export_decision_cards_json()) {
+        Ok(export) => Some(export),
+        Err(_) => {
+            mark_kernel_broken();
+            None
+        }
+    }
+}
+
+#[must_use]
+pub(crate) fn export_runtime_math_log_jsonl(
+    mode: SafetyLevel,
+    bead_id: &str,
+    run_id: &str,
+) -> Option<String> {
+    let _reentry_guard = enter_policy_reentry_guard()?;
+    ensure_minimal_panic_hook();
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
+    match runtime_policy_guard(|| k.export_runtime_math_log_jsonl(mode, bead_id, run_id)) {
+        Ok(export) => Some(export),
+        Err(_) => {
+            mark_kernel_broken();
+            None
+        }
+    }
+}
+
+/// Default passthrough decision used during kernel initialization (reentrant guard).
+fn passthrough_decision() -> RuntimeDecision {
+    RuntimeDecision {
+        action: frankenlibc_membrane::runtime_math::MembraneAction::Allow,
+        profile: ValidationProfile::Fast,
+        policy_id: 0,
+        risk_upper_bound_ppm: 0,
+        evidence_seqno: 0,
+    }
+}
+
+/// Default check ordering used during kernel initialization (reentrant guard).
+const PASSTHROUGH_ORDERING: [CheckStage; 7] = [
+    CheckStage::Null,
+    CheckStage::TlsCache,
+    CheckStage::Bloom,
+    CheckStage::Arena,
+    CheckStage::Fingerprint,
+    CheckStage::Canary,
+    CheckStage::Bounds,
+];
+
+// Last observed stage-outcome fingerprints by API family.
+// Used to connect cross-family overlap witnesses into the cohomology monitor.
+static COHOMOLOGY_STAGE_HASHES: [AtomicU64; ApiFamily::COUNT] =
+    [const { AtomicU64::new(0) }; ApiFamily::COUNT];
+
+#[inline]
+const fn cohomology_peer_family(family: ApiFamily) -> Option<ApiFamily> {
+    match family {
+        ApiFamily::StringMemory => Some(ApiFamily::Resolver),
+        ApiFamily::Resolver => Some(ApiFamily::StringMemory),
+        _ => None,
+    }
+}
+
+#[inline]
+fn compact_stage_hash(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) -> u64 {
+    // FNV-style rolling hash over ordering + compact context bits.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for stage in ordering {
+        hash ^= u64::from(*stage as u8) + 1;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash ^= if aligned {
+        0x9e3779b97f4a7c15
+    } else {
+        0x165667919e3779f9
+    };
+    hash = hash.wrapping_mul(0xff51afd7ed558ccd);
+    hash ^= if recent_page {
+        0xa24baed4963ee407
+    } else {
+        0x3c6ef372fe94f82b
+    };
+    let exit_component = exit_stage
+        .map(|idx| u64::from((idx.min(7) + 1) as u8))
+        .unwrap_or(0);
+    hash ^= exit_component.wrapping_mul(0xc2b2ae3d27d4eb4f);
+    if hash == 0 { 1 } else { hash }
+}
+
+#[inline]
+fn note_cross_family_overlap(
+    kernel: &RuntimeMathKernel,
+    family: ApiFamily,
+    ordering_used: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    let Some(peer) = cohomology_peer_family(family) else {
+        return;
+    };
+
+    let family_idx = usize::from(family as u8);
+    let peer_idx = usize::from(peer as u8);
+
+    let family_hash = compact_stage_hash(ordering_used, aligned, recent_page, exit_stage);
+    COHOMOLOGY_STAGE_HASHES[family_idx].store(family_hash, AtomicOrdering::Relaxed);
+    kernel.set_overlap_section_hash(family_idx, family_hash);
+
+    let peer_hash = COHOMOLOGY_STAGE_HASHES[peer_idx].load(AtomicOrdering::Relaxed);
+    if peer_hash == 0 {
+        return;
+    }
+
+    kernel.set_overlap_section_hash(peer_idx, peer_hash);
+    let witness = family_hash ^ peer_hash;
+    let _ = kernel.note_overlap(family_idx, peer_idx, witness);
+}
+
+const RUNTIME_STATE_BOOTSTRAP: u8 = 0;
+const RUNTIME_STATE_ARMING: u8 = 1;
+const RUNTIME_STATE_ACTIVE: u8 = 2;
+
+/// Global startup guard.  It remains in bootstrap passthrough until a caller
+/// observes the startup-sensitive window is closed, then moves through an
+/// explicit arming state before activation.  `decide()` treats both bootstrap
+/// and arming as passthrough so reentrant calls during the transition cannot
+/// deadlock inside the membrane.
+static RUNTIME_READY: AtomicU8 = AtomicU8::new(RUNTIME_STATE_BOOTSTRAP);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeReadyObservation {
+    StartupWindowOpen,
+    StartupWindowClosed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeReadyTransition {
+    DeferredStartupWindowOpen,
+    DeferredReentrantPolicyContext,
+    ArmingInProgress,
+    AlreadyActive,
+    Armed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AbiRuntimePhase {
+    BootstrapPassthrough,
+    Active,
+}
+
+/// Returns true when the runtime is fully initialized and membrane
+/// validation can safely use TLS, locks, and the heap.
+#[inline]
+pub(crate) fn is_runtime_ready() -> bool {
+    RUNTIME_READY.load(AtomicOrdering::Acquire) == RUNTIME_STATE_ACTIVE
+}
+
+/// Shared bootstrap/runtime contract for ABI families.
+#[inline]
+pub(crate) fn abi_runtime_phase() -> AbiRuntimePhase {
+    if is_runtime_ready() {
+        AbiRuntimePhase::Active
+    } else {
+        AbiRuntimePhase::BootstrapPassthrough
+    }
+}
+
+#[inline]
+pub(crate) fn bootstrap_passthrough_active() -> bool {
+    matches!(abi_runtime_phase(), AbiRuntimePhase::BootstrapPassthrough)
+}
+
+pub(crate) fn try_signal_runtime_ready(
+    observation: RuntimeReadyObservation,
+) -> RuntimeReadyTransition {
+    // The constrained-POMDP design collapses on the hot path to this observed
+    // bit: if the startup-sensitive window is still open, arming is forbidden.
+    if matches!(observation, RuntimeReadyObservation::StartupWindowOpen) {
+        return RuntimeReadyTransition::DeferredStartupWindowOpen;
+    }
+
+    if in_policy_reentry_context() {
+        return RuntimeReadyTransition::DeferredReentrantPolicyContext;
+    }
+
+    match RUNTIME_READY.compare_exchange(
+        RUNTIME_STATE_BOOTSTRAP,
+        RUNTIME_STATE_ARMING,
+        AtomicOrdering::AcqRel,
+        AtomicOrdering::Acquire,
+    ) {
+        Ok(_) => {
+            let _ = ensure_ffi_pcc_verified();
+            RUNTIME_READY.store(RUNTIME_STATE_ACTIVE, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
+            MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
+            push_mode_event("info", "runtime_ready_armed", mode(), None);
+            RuntimeReadyTransition::Armed
+        }
+        Err(RUNTIME_STATE_ACTIVE) => RuntimeReadyTransition::AlreadyActive,
+        Err(RUNTIME_STATE_ARMING) => RuntimeReadyTransition::ArmingInProgress,
+        Err(_) => RuntimeReadyTransition::ArmingInProgress,
+    }
+}
+
+/// Signal that the dynamic linker's init phase is complete and the
+/// membrane can safely use TLS, locks, and the heap.
+pub(crate) fn signal_runtime_ready() {
+    #[cfg(test)]
+    let _lock = runtime_policy_test_lock();
+    let _ = try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed);
+}
+
+/// Returns true when validation feedback is enabled in the runtime-math kernel.
+/// When enabled, observations feed the exotic cached_state atomics (bd-06bxm.2).
+#[must_use]
+pub(crate) fn is_validation_feedback_enabled() -> bool {
+    let Some(k) = kernel() else {
+        return false;
+    };
+    k.validation_feedback_enabled()
+}
+
+/// Returns the total decision count from the runtime-math kernel.
+/// Used by e2e tests to verify kernel is active (bd-06bxm.2).
+#[must_use]
+pub(crate) fn runtime_decision_count() -> Option<u64> {
+    let k = kernel()?;
+    let snapshot = k.decision_telemetry_snapshot();
+    Some(snapshot.decisions)
+}
+
+#[inline]
+fn strict_runtime_kernel_fast_path(mode: SafetyLevel) -> bool {
+    cfg!(not(test)) && matches!(mode, SafetyLevel::Strict)
+}
+
+/// Returns true if strict passthrough mode is active.
+/// Use this to skip expensive validation in strict mode where we delegate to host glibc.
+/// Uses direct atomic load to avoid TLS overhead in the hot path.
+/// Note: MODE_UNRESOLVED defaults to strict, so we treat both as passthrough.
+#[inline(always)]
+pub(crate) fn strict_passthrough_active() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    let state = MODE_STATE.load(AtomicOrdering::Relaxed);
+    // Both unresolved (default strict) and explicit strict are passthrough
+    state <= MODE_STRICT
+}
+
+#[inline]
+fn runtime_kernel_passthrough_family(family: ApiFamily) -> bool {
+    matches!(family, ApiFamily::Locale)
+}
+
+/// Cheap predicate gating the math ABI fast-path (bd-n40in2).
+///
+/// In deployed (non-test) builds `decide()` hard-returns `Allow`/`Full` for
+/// `ApiFamily::MathFenv` via the high-frequency-family fast-path BELOW, before
+/// any kernel consultation. So for math the membrane can never emit `Deny`, and
+/// because `Repair`/heal only ever originates from a kernel decision that math
+/// never reaches, it can never heal a math result either. The deployed math
+/// result is therefore *bit-identical* to the raw kernel result, which lets the
+/// `unary_entry`/`binary_entry` wrappers skip the entire `decide()` machinery
+/// (its `record_last_explainability` struct build is the measured ~8-11 ns/call
+/// math-membrane tax) and the no-op math `observe()` for the common finite case.
+///
+/// This is intentionally coupled to the SAME `cfg!(not(test))` gate the math
+/// family fast-path uses in `decide`: unit-test builds (`cfg(test)`) keep the
+/// full path so the membrane's deny/heal/observe logic stays exercised. If a
+/// future change makes deployed math denyable/healable (i.e. removes `MathFenv`
+/// from the `decide`/`observe` fast-path family sets), this predicate MUST be
+/// updated in lockstep.
+#[inline(always)]
+pub(crate) fn math_membrane_fastpath() -> bool {
+    cfg!(not(test))
+}
+
+/// Cheap predicate gating the ctype ABI fast-path (bd-n40in2 sibling). Same
+/// reasoning as [`math_membrane_fastpath`]: in deployed (non-test) builds
+/// `decide()` hard-returns `Allow`/`Full` for `ApiFamily::Ctype` via the
+/// high-frequency-family fast-path below, so a ctype classification/conversion
+/// can never be denied; and ctype produces no pointer/heap effect and has no
+/// heal/adverse path (its `observe()` is already a no-op for the `Ctype` family),
+/// so the whole `decide()`+`observe()` machinery cannot change the result of an
+/// `isalpha`/`tolower`-class table lookup. Unit-test builds keep the full path so
+/// the membrane's deny/observe logic stays exercised. Coupled to the same
+/// `cfg!(not(test))` `Ctype` family gate in `decide`/`observe`.
+#[inline(always)]
+pub(crate) fn ctype_membrane_fastpath() -> bool {
+    cfg!(not(test))
+}
+
+/// Cheap predicate gating the Stdlib numeric-parse fast-path (strtod/strtol
+/// family). Same reasoning as [`math_membrane_fastpath`]: `ApiFamily::Stdlib` is
+/// in the high-frequency-family fast-path set in `decide`/`observe`, so in
+/// deployed (non-test) builds `decide()` always returns `Allow` (never `Repair`,
+/// so the repair `bound` is always `None` and the scan is unbounded either way)
+/// and `observe()` for a non-adverse Stdlib call is a no-op. The parse reads the
+/// string regardless of the decision, so the per-call `decide()`+`observe()` (a
+/// non-inlined call with several atomics) cannot change the result and is skipped.
+/// Unit-test builds keep the full path so deny/observe stays exercised.
+#[inline(always)]
+pub(crate) fn stdlib_membrane_fastpath() -> bool {
+    cfg!(not(test))
+}
+
+/// Cheap predicate gating strict-mode inet conversion fast-paths.
+///
+/// `ApiFamily::Inet` is a strict-only no-op in `decide()` (forced `Allow`) and
+/// non-adverse `observe()` is telemetry-only. Hardened mode still needs the full
+/// decision path, so this is intentionally tied to strict passthrough rather
+/// than `cfg!(not(test))` alone.
+#[inline(always)]
+pub(crate) fn inet_strict_membrane_fastpath() -> bool {
+    strict_passthrough_active()
+}
+
+pub(crate) fn decide(
+    family: ApiFamily,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+    contention_hint: u16,
+) -> (SafetyLevel, RuntimeDecision) {
+    // Fast passthrough during early startup to prevent deadlocks.
+    // The full decide path is only available after kernel init completes.
+    if !is_runtime_ready() {
+        let mode = u8_to_mode(MODE_STATE.load(AtomicOrdering::Relaxed));
+        return (mode, passthrough_decision());
+    }
+
+    // Strict mode observation path (bd-06bxm.3): consult kernel for evidence
+    // but override to passthrough. High-frequency families still fast-path.
+    if strict_passthrough_active() {
+        // In deployed strict mode, never lazily construct the 50-controller
+        // RuntimeMathKernel (~158 KiB stack frame, ~2.5M instructions): normal
+        // strict processes never need it, and building it after a caller caps
+        // RLIMIT_AS faults growing the stack (gnulib test-dprintf-posix2,
+        // fixture_rlimit_as_first). Diagnostic and liveness probes that inspect
+        // kernel state (`__frankenlibc_decision_count`, `__frankenlibc_is_feedback_enabled`,
+        // `__frankenlibc_kernel_snapshot_json`) initialize the kernel first and
+        // then observe strict decisions on non-fast-path families below.
+        if cfg!(not(test)) && KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY {
+            return (SafetyLevel::Strict, passthrough_decision());
+        }
+        // High-frequency families skip kernel even when initialized for observation
+        // (Stdio added: strict mode forces Allow regardless — see
+        // decide_strict_observation which always returns action=Allow in strict —
+        // so for per-char fgetc/fputc/fread this only skips the kernel evidence
+        // call, no behavior change; the action is identical.)
+        if cfg!(not(test))
+            && matches!(
+                family,
+                ApiFamily::Allocator
+                    | ApiFamily::StringMemory
+                    | ApiFamily::Ctype
+                    | ApiFamily::Loader
+                    | ApiFamily::Stdlib
+                    | ApiFamily::MathFenv
+                    | ApiFamily::Stdio
+                    | ApiFamily::Time
+                    | ApiFamily::Inet
+                    | ApiFamily::Resolver
+                    | ApiFamily::Locale
+                    | ApiFamily::VirtualMemory
+            )
+        {
+            return (SafetyLevel::Strict, passthrough_decision());
+        }
+        // For other families (e.g. IoFd, Socket, Process), consult the already-ready
+        // kernel for observation then passthrough.
+        return decide_strict_observation(
+            family,
+            addr_hint,
+            requested_bytes,
+            is_write,
+            bloom_negative,
+            contention_hint,
+        );
+    }
+
+    let mode = mode();
+    let ctx = RuntimeContext {
+        family,
+        addr_hint,
+        requested_bytes,
+        is_write,
+        contention_hint,
+        bloom_negative,
+    };
+    if runtime_kernel_passthrough_family(family) {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_PASSTHROUGH);
+        return (mode, decision);
+    }
+    let allow_pcc_fast_exit = !(matches!(mode, SafetyLevel::Hardened)
+        && is_family_escalated(family)
+        && !runtime_math_disabled());
+    if allow_pcc_fast_exit
+        && let Some((pcc_index, cert)) = lookup_active_ffi_pcc_certificate_with_index(
+            family,
+            requested_bytes,
+            is_write,
+            bloom_negative,
+        )
+    {
+        if matches!(mode, SafetyLevel::Hardened) {
+            ROUTE_FFI_PCC_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        let decision = ffi_pcc_decision(cert);
+        if contention_hint == 0 {
+            record_pcc_explainability(
+                mode,
+                pcc_index,
+                addr_hint,
+                requested_bytes,
+                is_write,
+                bloom_negative,
+            );
+        } else {
+            record_last_explainability(mode, ctx, decision, DECISION_GATE_FFI_PCC);
+        }
+        return (mode, decision);
+    }
+    if strict_runtime_kernel_fast_path(mode) {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_PASSTHROUGH);
+        return (mode, decision);
+    }
+
+    // Runtime-math kill-switch (bd-06bxm.9): when FRANKENLIBC_RUNTIME_MATH=off,
+    // skip kernel consultation and adaptive cache overrides while basic membrane
+    // bounds/canary/quarantine validation remains active.
+    if runtime_math_disabled() {
+        MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
+        ROUTE_MATH_OFF_BYPASSES.fetch_add(1, AtomicOrdering::Relaxed);
+        let decision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Full,
+            policy_id: 0,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 0,
+        };
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_MATH_OFF);
+        return (mode, decision);
+    }
+
+    // Hardened mode O(1) adaptive cache path for high-frequency families:
+    // reads the per-family RuntimeMathKernel decision refreshed by `observe()`
+    // (100% of adverse events + sampled benign telemetry) without per-call mutex
+    // or ensemble latency on benign loops. Skip in `cfg(test)` so unit tests
+    // exercise synchronous `k.decide` directly.
+    if cfg!(not(test)) && is_hardened_hot_cached_family(family) {
+        ROUTE_HOT_CACHED_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
+        let packed = CACHED_HOT_HARDENED_DECISION[family as usize].load(AtomicOrdering::Relaxed);
+        let decision = unpack_hot_hardened_decision(packed);
+        if matches!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+        ) && let Some(policy) = frankenlibc_membrane::heal::initialized_healing_policy()
+        {
+            frankenlibc_membrane::metrics::MembraneMetrics::inc(&policy.variant_upgrades);
+        }
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_HOT_CACHED);
+        return (mode, decision);
+    }
+    MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
+
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_PASSTHROUGH);
+        return (mode, decision);
+    };
+
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
+    ensure_minimal_panic_hook();
+    let Some(k) = kernel() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_PASSTHROUGH);
+        return (mode, decision);
+    };
+    let decision = match runtime_policy_guard(|| k.decide(mode, ctx)) {
+        Ok(decision) => decision,
+        Err(_) => {
+            mark_kernel_broken();
+            let decision = passthrough_decision();
+            record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+            return (mode, decision);
+        }
+    };
+    record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_deny(mode, ctx, &decision);
+    }
+    (mode, decision)
+}
+
+/// Record the exact deployed PCC decision for a `memcmp` call whose active
+/// certificate was already resolved by [`active_memcmp_pcc_token`].
+///
+/// This is deliberately not a second decision implementation: the opaque
+/// token fixes the same certificate branch that generic [`decide`] would take,
+/// while [`record_last_explainability`] still performs the full trace/span and
+/// decision-contract transition. Carrying the proof avoids re-reading the
+/// trace TLS and re-entering the large generic decision frame.
+pub(crate) fn decide_certified_memcmp(
+    token: MemcmpPccToken,
+    addr_hint: usize,
+    requested_bytes: usize,
+    bloom_negative: bool,
+) -> (SafetyLevel, RuntimeDecision) {
+    let mode = mode();
+    let decision = ffi_pcc_decision(token.0);
+    record_pcc_explainability(
+        mode,
+        FFI_PCC_MEMCMP_INDEX,
+        addr_hint,
+        requested_bytes,
+        false,
+        bloom_negative,
+    );
+    (mode, decision)
+}
+
+/// Fast single-TLS PCC decision + explainability recording for certified
+/// `StringMemory` operations (`memcmp`, `memcpy`, `memmove`, `memset`,
+/// `memchr`, `memrchr`, `strlen`, `strnlen`, `strcmp`, `strncmp`, `strcpy`,
+/// `strncpy`, `strchr`, `strrchr`, `strstr`).
+///
+/// Within the deployed PCC envelope (`is_runtime_ready()`, verified table,
+/// and `cert.matches_request(...)`), this resolves `mode`, advances
+/// `mode_switch_counter`, `trace_counter`, `decision_counter`,
+/// `decision_contract_machine`, and writes `last_pcc_explainability` in a
+/// single `RUNTIME_POLICY_TLS` access without materializing `TraceContext`
+/// or `RuntimeDecision` on the stack.
+#[inline(always)]
+pub(crate) fn try_decide_certified_string_pcc(
+    pcc_index: u8,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> Option<SafetyLevel> {
+    if !is_runtime_ready() || !ensure_ffi_pcc_verified() {
+        return None;
+    }
+    let mode_raw = MODE_STATE.load(AtomicOrdering::Relaxed);
+    if mode_raw == MODE_UNRESOLVED || mode_raw == MODE_RESOLVING {
+        return None;
+    }
+    let cert = ffi_pcc_certificate_by_index(pcc_index)?;
+    if !cert.matches_request(
+        ApiFamily::StringMemory,
+        requested_bytes,
+        is_write,
+        bloom_negative,
+    ) {
+        return None;
+    }
+    let mode = u8_to_mode(mode_raw);
+    if cfg!(not(test)) {
+        if matches!(mode, SafetyLevel::Strict) {
+            return Some(mode);
+        }
+        if is_family_escalated(ApiFamily::StringMemory) && !runtime_math_disabled() {
+            return None;
+        }
+        let packed = (u16::from(mode_raw) << 8) | u16::from(pcc_index);
+        if LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed) != packed {
+            LAST_FAST_PCC_PACKED.store(packed, AtomicOrdering::Relaxed);
+        }
+        return Some(mode);
+    }
+
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        with_runtime_policy_tls(|state| {
+            let next_switch = state.mode_switch_counter.wrapping_add(1);
+            if next_switch.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
+                return None;
+            }
+            state.mode_cache = mode_raw;
+            state.mode_switch_counter = next_switch;
+            let trace_seq = state.trace_counter.wrapping_add(1);
+            state.trace_counter = trace_seq;
+            let span_seq = state.decision_counter.wrapping_add(1);
+            state.decision_counter = span_seq;
+            let (contract_state, contract_action) =
+                if matches!(state.decision_contract_machine.state(), TsmState::Safe) {
+                    (TsmState::Safe, DecisionContractAction::Log)
+                } else {
+                    let transition = state
+                        .decision_contract_machine
+                        .observe(DecisionContractEvent::CheckPass, mode);
+                    (transition.to, transition.action)
+                };
+            state.last_pcc_explainability = RecordedPccExplainability {
+                trace_seq,
+                span_seq,
+                parent_span_seq: trace_seq,
+                requested_bytes,
+                addr_hint,
+                pcc_index,
+                mode,
+                is_write,
+                bloom_negative,
+                contract_state,
+                contract_event: DecisionContractEvent::CheckPass,
+                contract_action,
+                pad: 0,
+            };
+            state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
+            Some(mode)
+        })
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let next_switch = tls.mode_switch_counter.get().wrapping_add(1);
+                if next_switch.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
+                    return None;
+                }
+                tls.mode_cache.set(mode_raw);
+                tls.mode_switch_counter.set(next_switch);
+                let trace_seq = tls.trace_counter.get().wrapping_add(1);
+                tls.trace_counter.set(trace_seq);
+                let span_seq = tls.decision_counter.get().wrapping_add(1);
+                tls.decision_counter.set(span_seq);
+                let mut machine = tls.decision_contract_machine.get();
+                let (contract_state, contract_action) = if matches!(machine.state(), TsmState::Safe)
+                {
+                    (TsmState::Safe, DecisionContractAction::Log)
+                } else {
+                    let transition = machine.observe(DecisionContractEvent::CheckPass, mode);
+                    tls.decision_contract_machine.set(machine);
+                    (transition.to, transition.action)
+                };
+                tls.last_pcc_explainability.set(RecordedPccExplainability {
+                    trace_seq,
+                    span_seq,
+                    parent_span_seq: trace_seq,
+                    requested_bytes,
+                    addr_hint,
+                    pcc_index,
+                    mode,
+                    is_write,
+                    bloom_negative,
+                    contract_state,
+                    contract_event: DecisionContractEvent::CheckPass,
+                    contract_action,
+                    pad: 0,
+                });
+                tls.last_explainability_kind.set(EXPLAINABILITY_KIND_PCC);
+                Some(mode)
+            })
+            .ok()
+            .flatten()
+    }
+}
+
+/// Membrane denials since process start.
+static DENIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count a denial and append its evidence record to `FRANKENLIBC_LOG` when the
+/// sink is configured. Denials are rare, but an unset sink still avoids record
+/// formatting and file initialization.
+#[cold]
+fn record_deny(mode: SafetyLevel, ctx: RuntimeContext, decision: &RuntimeDecision) {
+    let signal_context = frankenlibc_membrane::heal::runtime_log_signal_context();
+    let symbol = if signal_context.requires_signal_safe_path() {
+        "runtime_policy"
+    } else {
+        active_trace_context().symbol
+    };
+    append_deny_record(
+        mode,
+        symbol,
+        ctx,
+        decision.policy_id,
+        decision.risk_upper_bound_ppm,
+        decision.evidence_seqno,
+        0,
+        "runtime_policy",
+        signal_context,
+    );
+}
+
+/// Record a denial performed by an ABI-specific semantic check after the
+/// generic runtime policy allowed the call to reach that check.
+///
+/// These checks are part of the deployed membrane too: invalid signals,
+/// unsupported encodings, and similar domain errors must not disappear from
+/// `FRANKENLIBC_LOG` merely because they are more precise than the generic
+/// pointer/risk context available to [`decide`].
+#[cold]
+pub(crate) fn record_semantic_deny(
+    symbol: &'static str,
+    family: ApiFamily,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    errno_value: c_int,
+    reason: &'static str,
+) {
+    let signal_context = frankenlibc_membrane::heal::runtime_log_signal_context();
+    let signal_safe_path = signal_context.requires_signal_safe_path();
+    // Preserve errno before selecting the process mode.  The normal-path
+    // `mode()` call periodically re-reads the environment and may allocate or
+    // lock while reporting an attempted mode switch.  pthread-style APIs
+    // return their error number directly, so even that pre-formatting work must
+    // not leak an incidental errno change to the caller.  The signal path uses
+    // only the already-resolved atomic mode and must not touch either TLS errno
+    // slot.
+    let _errno_transparency = if signal_safe_path {
+        None
+    } else {
+        Some(ErrnoTransparencyGuard::capture())
+    };
+    let ctx = RuntimeContext {
+        family,
+        addr_hint,
+        requested_bytes,
+        is_write,
+        contention_hint: 0,
+        bloom_negative: true,
+    };
+    let mode = if signal_safe_path {
+        resolved_mode()
+    } else {
+        mode()
+    };
+    append_deny_record(
+        mode,
+        symbol,
+        ctx,
+        0,
+        0,
+        0,
+        errno_value,
+        reason,
+        signal_context,
+    );
+}
+
+#[cold]
+#[allow(clippy::too_many_arguments)]
+fn append_deny_record(
+    mode: SafetyLevel,
+    symbol: &'static str,
+    ctx: RuntimeContext,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    evidence_seqno: u64,
+    errno_value: c_int,
+    reason: &'static str,
+    signal_context: frankenlibc_membrane::heal::RuntimeSignalContext,
+) {
+    let signal_safe_path = signal_context.requires_signal_safe_path();
+    // Evidence is post-decision telemetry. The raw signal path does not call
+    // libc or mutate errno; capturing either errno slot there would touch TLS.
+    let _errno_transparency = if signal_safe_path {
+        None
+    } else {
+        Some(ErrnoTransparencyGuard::capture())
+    };
+    DENIALS.fetch_add(1, AtomicOrdering::Relaxed);
+    if !frankenlibc_membrane::heal::runtime_log_is_configured() {
+        return;
+    }
+    let seq = frankenlibc_membrane::heal::next_runtime_log_sequence();
+    let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
+    let formatted = write_deny_log_line(
+        &mut line,
+        seq,
+        mode,
+        symbol,
+        ctx,
+        policy_id,
+        risk_upper_bound_ppm,
+        evidence_seqno,
+        errno_value,
+        reason,
+        signal_context,
+    );
+    if formatted.is_err() {
+        frankenlibc_membrane::heal::note_runtime_log_drop();
+        return;
+    }
+    frankenlibc_membrane::heal::append_runtime_log_record(line.as_str());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_deny_log_line(
+    line: &mut frankenlibc_membrane::heal::RuntimeLogBuffer,
+    seq: u64,
+    mode: SafetyLevel,
+    symbol: &str,
+    ctx: RuntimeContext,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    evidence_seqno: u64,
+    errno_value: c_int,
+    reason: &str,
+    signal_context: frankenlibc_membrane::heal::RuntimeSignalContext,
+) -> std::fmt::Result {
+    write!(
+        line,
+        "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"deny\",\
+\"seq\":{seq},\"pid\":{},\"runtime_mode\":\"{}\",\"api_family\":\"{:?}\",\
+\"signal_context\":{},\"signal_context_known\":{},\"symbol\":",
+        frankenlibc_membrane::heal::runtime_log_process_id(),
+        runtime_mode_name(mode),
+        ctx.family,
+        matches!(
+            signal_context,
+            frankenlibc_membrane::heal::RuntimeSignalContext::Inside
+        ),
+        !matches!(
+            signal_context,
+            frankenlibc_membrane::heal::RuntimeSignalContext::Unknown
+        ),
+    )
+    .and_then(|()| frankenlibc_membrane::heal::write_runtime_log_json_string(line, symbol))
+    .and_then(|()| line.write_str(",\"action\":\"Deny\",\"outcome\":\"deny\",\"reason\":"))
+    .and_then(|()| frankenlibc_membrane::heal::write_runtime_log_json_string(line, reason))
+    .and_then(|()| {
+        write!(
+            line,
+            ",\"errno\":{errno_value},\"policy_id\":{policy_id},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\
+\"evidence_seqno\":{evidence_seqno}",
+        )
+    })
+    .and_then(|()| {
+        if mode == SafetyLevel::Hardened {
+            write!(line, ",\"addr_hint\":\"{:#x}\"", ctx.addr_hint)
+        } else {
+            Ok(())
+        }
+    })
+    .and_then(|()| {
+        write!(
+            line,
+            ",\"requested_bytes\":{},\"is_write\":{}}}",
+            ctx.requested_bytes, ctx.is_write,
+        )
+    })
+}
+
+fn runtime_mode_name(mode: SafetyLevel) -> &'static str {
+    match mode {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+/// At process exit, one `FRANKENLIBC_LOG` record with the heal and denial
+/// counters (bd-rc0923-epic-eeuy4f.16). A `.fini_array` entry rather than
+/// fl's `exit`: a program returning from `main` exits through the host's.
+#[used]
+#[unsafe(link_section = ".fini_array")]
+static RUNTIME_LOG_SUMMARY_AT_EXIT: extern "C" fn() = runtime_log_summary_at_exit;
+
+extern "C" fn runtime_log_summary_at_exit() {
+    if !frankenlibc_membrane::heal::runtime_log_is_configured() {
+        return;
+    }
+    let seq = frankenlibc_membrane::heal::next_runtime_log_sequence();
+    let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
+    let formatted = write!(
+        line,
+        "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"exit_summary\",\"seq\":{seq},\
+\"pid\":{},\"runtime_mode\":\"{}\",\"symbol\":\"process\",\"denials\":{},",
+        frankenlibc_membrane::heal::runtime_log_process_id(),
+        runtime_mode_name(resolved_mode()),
+        DENIALS.load(AtomicOrdering::Relaxed),
+    )
+    .and_then(|()| {
+        frankenlibc_membrane::heal::global_healing_policy().write_counters_json_fields(&mut line)
+    })
+    .and_then(|()| line.write_str("}"));
+    if formatted.is_err() {
+        frankenlibc_membrane::heal::note_runtime_log_drop();
+        return;
+    }
+    frankenlibc_membrane::heal::append_runtime_log_summary_record(line.as_str());
+}
+
+/// Strict mode observation path: consult kernel for evidence but return passthrough.
+/// This allows the kernel to record evidence and feed exotic state without
+/// performing any behavior rewrites (Repair actions are overridden to Allow).
+/// Part of bd-06bxm.3: strict-mode observation policy.
+#[cold]
+fn decide_strict_observation(
+    family: ApiFamily,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+    contention_hint: u16,
+) -> (SafetyLevel, RuntimeDecision) {
+    let mode = SafetyLevel::Strict;
+    let ctx = RuntimeContext {
+        family,
+        addr_hint,
+        requested_bytes,
+        is_write,
+        contention_hint,
+        bloom_negative,
+    };
+
+    // Strict observation is still a kernel consultation. Honor the same
+    // immutable switch as hardened routing before entering the kernel.
+    if runtime_math_disabled() {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    }
+
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    };
+
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
+    ensure_minimal_panic_hook();
+    let Some(k) = kernel() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    };
+
+    // Call kernel for observation (evidence recording, state updates)
+    let kernel_decision = match runtime_policy_guard(|| k.decide(mode, ctx)) {
+        Ok(decision) => decision,
+        Err(_) => {
+            mark_kernel_broken();
+            let decision = passthrough_decision();
+            record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+            return (mode, decision);
+        }
+    };
+
+    // Override to passthrough: strict mode must be ABI-faithful (no rewrites).
+    // Keep the profile and evidence_seqno for observation, but force Allow action.
+    let decision = RuntimeDecision {
+        action: MembraneAction::Allow,
+        profile: kernel_decision.profile,
+        policy_id: kernel_decision.policy_id,
+        risk_upper_bound_ppm: kernel_decision.risk_upper_bound_ppm,
+        evidence_seqno: kernel_decision.evidence_seqno,
+    };
+
+    record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+    (mode, decision)
+}
+
+/// Snapshots the caller's errno and puts it back when dropped.
+///
+/// Both slots matter and they are written by different code: fl keeps its own
+/// thread-local (`errno_abi::__errno_location`), and in interpose mode
+/// `set_abi_errno` mirrors into the HOST glibc slot as well, which is the one a
+/// C caller — or a differential test using `libc::__errno_location` — reads.
+/// Restoring only one would leave the two disagreeing, which is worse than the
+/// clobber it replaces.
+///
+/// Restores on unwind too: [`observe`] runs a panic-catching guard, and an errno
+/// left over from a caught panic is exactly as wrong as one left by a futex.
+pub(crate) struct ErrnoTransparencyGuard {
+    fl_slot: *mut std::ffi::c_int,
+    fl_value: std::ffi::c_int,
+    /// Null when the host `__errno_location` is not resolvable — in which case
+    /// `set_abi_errno` could not have written that slot either, so there is
+    /// nothing to protect.
+    host_slot: *mut std::ffi::c_int,
+    host_value: std::ffi::c_int,
+}
+
+impl ErrnoTransparencyGuard {
+    #[inline]
+    pub(crate) fn capture() -> Self {
+        // SAFETY: `__errno_location` returns this thread's slot, valid for the
+        // life of the thread and therefore for this guard's scope.
+        let fl_slot = unsafe { crate::errno_abi::__errno_location() };
+        let fl_value = if fl_slot.is_null() {
+            0
+        } else {
+            // SAFETY: non-null slot from our own thread-local errno.
+            unsafe { std::ptr::read_volatile(fl_slot) }
+        };
+
+        // CACHED ONLY, never resolving. `host_errno_location_raw` would attempt
+        // an ELF scan on a cold cache, and this guard runs on every adverse
+        // observe() — doing symbol resolution from inside telemetry is new work
+        // on a path that previously did none, and it showed up as a 1-in-10 red
+        // in `abi_argp_help_ignores_unterminated_literal_text` where HEAD was
+        // 10/10. A cold cache needs no protection anyway: `set_abi_errno` uses
+        // the same cache, so it could not have written the host slot either.
+        #[cfg(not(feature = "standalone"))]
+        let (host_slot, host_value) = match crate::host_resolve::host_errno_location_cached() {
+            // SAFETY: the resolved host `__errno_location` returns this thread's
+            // glibc errno slot.
+            Some(loc) => {
+                let slot = unsafe { loc() };
+                let value = if slot.is_null() {
+                    0
+                } else {
+                    // SAFETY: non-null slot returned by host `__errno_location`.
+                    unsafe { std::ptr::read_volatile(slot) }
+                };
+                (slot, value)
+            }
+            None => (std::ptr::null_mut(), 0),
+        };
+        #[cfg(feature = "standalone")]
+        let (host_slot, host_value) = (std::ptr::null_mut(), 0);
+
+        Self {
+            fl_slot,
+            fl_value,
+            host_slot,
+            host_value,
+        }
+    }
+}
+
+impl Drop for ErrnoTransparencyGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if !self.fl_slot.is_null() {
+            // SAFETY: captured from this thread's own errno slot, still live.
+            unsafe { std::ptr::write_volatile(self.fl_slot, self.fl_value) };
+        }
+        if !self.host_slot.is_null() {
+            // SAFETY: captured from the host errno slot for this thread.
+            unsafe { std::ptr::write_volatile(self.host_slot, self.host_value) };
+        }
+    }
+}
+
+/// Lock a `parking_lot::Mutex` without letting a contended futex wait clobber
+/// caller `errno` (e.g. `EAGAIN` when the lock word changes before sleeping).
+///
+/// The uncontended fast path is a pure user-space atomic CAS (`try_lock`) with
+/// zero TLS `errno` traffic; only the `#[cold]` contended fallback snapshots
+/// and restores `errno` around the blocking `lock()` acquisition.
+#[inline]
+pub(crate) fn lock_parking_lot_preserving_errno<T>(
+    mutex: &parking_lot::Mutex<T>,
+) -> parking_lot::MutexGuard<'_, T> {
+    if let Some(guard) = mutex.try_lock() {
+        return guard;
+    }
+    #[cold]
+    #[inline(never)]
+    fn lock_contended<T>(mutex: &parking_lot::Mutex<T>) -> parking_lot::MutexGuard<'_, T> {
+        let _errno_guard = ErrnoTransparencyGuard::capture();
+        mutex.lock()
+    }
+    lock_contended(mutex)
+}
+
+/// Lock a `std::sync::Mutex` (recovering from poison) without letting a
+/// contended futex wait clobber caller `errno`.
+#[inline]
+pub(crate) fn lock_std_mutex_preserving_errno<T>(
+    mutex: &std::sync::Mutex<T>,
+) -> std::sync::MutexGuard<'_, T> {
+    match mutex.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(err)) => err.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => {
+            #[cold]
+            #[inline(never)]
+            fn lock_contended<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+                let _errno_guard = ErrnoTransparencyGuard::capture();
+                mutex.lock().unwrap_or_else(|err| err.into_inner())
+            }
+            lock_contended(mutex)
+        }
+    }
+}
+
+/// `observe` into a kernel that already exists, never building one. For the
+/// observation `__libc_start_main` makes after `main` returns: constructing
+/// the kernel there, for a process about to exit, cost `/bin/true` 106 of its
+/// 918 startup page faults (bd-rc0923-epic-eeuy4f.25).
+pub(crate) fn observe_if_kernel_ready(
+    family: ApiFamily,
+    profile: ValidationProfile,
+    estimated_cost_ns: u64,
+    adverse: bool,
+) {
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        observe(family, profile, estimated_cost_ns, adverse);
+    }
+}
+
+pub(crate) fn observe(
+    family: ApiFamily,
+    profile: ValidationProfile,
+    estimated_cost_ns: u64,
+    adverse: bool,
+) {
+    // High-frequency families fast path: skip observation overhead.
+    // Hardened `Allocator` observations sample 1-in-64 non-adverse calls (plus
+    // 100% of adverse events) so `QuarantineController` and SOS allocator
+    // certificates (`FRAGMENTATION`, `THREAD_SAFETY`) receive live telemetry
+    // without perturbing strict passthrough or hot-loop latency.
+    let mut hot_hardened_sampled = false;
+    if cfg!(not(test)) && !adverse {
+        if matches!(family, ApiFamily::Allocator) {
+            if MODE_STATE.load(AtomicOrdering::Relaxed) != MODE_HARDENED
+                || (ALLOCATOR_OBSERVE_TICKS.fetch_add(1, AtomicOrdering::Relaxed) & 63) != 0
+            {
+                return;
+            }
+            hot_hardened_sampled = true;
+        } else if is_hardened_hot_cached_family(family) {
+            if MODE_STATE.load(AtomicOrdering::Relaxed) != MODE_HARDENED
+                || (HOT_HARDENED_OBSERVE_TICKS.fetch_add(1, AtomicOrdering::Relaxed) & 255) != 0
+            {
+                return;
+            }
+            hot_hardened_sampled = true;
+        } else if matches!(
+            family,
+            // IoFd added: `readdir` (hot directory-iteration loops, buffered —
+            // most calls don't hit getdents) paid the full observe() slow path
+            // (2x cert lookup + reentry guard) per entry. observe() is post-op
+            // telemetry (no validation), so this is safe for ALL IoFd ops; for
+            // syscall-dominated read/write it's harmless (~0-gain). NOTE: IoFd is
+            // intentionally NOT added to the HARDENED decide() list — read/write
+            // pass the USER BUFFER to decide() there and must keep validating it.
+            ApiFamily::IoFd
+                // Time added: `strftime`/`mktime` are hot (timestamp-formatting
+                // loops) and pure computation (no syscall), so the per-call observe()
+                // slow path is a meaningful fraction. Telemetry-only = safe. (Same as
+                // IoFd, Time is NOT added to the HARDENED decide() list — strftime's
+                // output buffer must stay validated there.)
+                | ApiFamily::Time
+                // Inet added: `inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr` are
+                // pure string<->address conversions (no syscall), looped when parsing
+                // IP lists / ACLs / configs. Telemetry-only = safe. (NOT in the
+                // HARDENED decide() list — inet_pton's `dst` output buffer must stay
+                // validated there.)
+                | ApiFamily::Inet
+                // Resolver added: `getaddrinfo`/`getnameinfo` per-call `observe()` was
+                // profiled at ~1334 ns/call — the dominant cost of the resolver membrane
+                // path (vs ~397 ns for `decide` + ~153 ns stage bookkeeping). observe()
+                // is post-op telemetry with no validation, so skipping it on non-adverse
+                // (success) resolver outcomes is behaviour-neutral in BOTH modes — same
+                // rationale as Inet/IoFd/Time. decide() is NOT touched: it still makes the
+                // Allow/Deny call and validates the node/service pointers. getnameinfo's
+                // own strict fast path already skips observe entirely; this covers
+                // getaddrinfo and the hardened-mode getnameinfo_full path.
+                | ApiFamily::Resolver
+                | ApiFamily::Locale
+                | ApiFamily::VirtualMemory
+        ) {
+            return;
+        }
+    }
+
+    // Observation is telemetry into an existing kernel; it never builds one.
+    // Building it allocates through the `malloc` symbol, which a program may
+    // define itself, and allocators call libc from inside their own
+    // initialization: mimalloc's first mmap re-entered mimalloc mid-init, got
+    // NULL, and fl aborted with "memory allocation of 408 bytes failed" (the
+    // Claude Code binary, `--version`); rustc's statically linked jemalloc
+    // calls readlink("/etc/malloc.conf") while holding its init lock, and the
+    // kernel build re-entered jemalloc's malloc and deadlocked (`rustc
+    // --version` hung). The kernel is prewarmed before main; observations made
+    // before it exists are dropped.
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY {
+        return;
+    }
+
+    // ERRNO TRANSPARENCY (bd-q1mkwh). Everything below this line is telemetry —
+    // certificate lookups, a reentry guard, a panic-hook install, and the
+    // kernel's own bookkeeping — and all of it takes locks. A futex wait whose
+    // word has already changed returns EAGAIN, which lands in the caller's errno
+    // slot. Callers reach here having ALREADY set the errno they intend to
+    // return, so without this their value is silently replaced by 11.
+    //
+    // MEASURED (bd-7dq39e): `nonexistent file should set ENOENT: left: 11,
+    // right: 2`, ~21% of runs of a 304-test binary. Fixing that one call site by
+    // reordering worked, but there are 440 more `set_abi_errno(..)` followed by
+    // `observe(.., true)` across 22 *_abi.rs files — 136 in unistd_abi.rs alone.
+    // The invariant is not "callers must order their statements"; it is that
+    // POST-OP TELEMETRY MUST NOT BE OBSERVABLE. Enforcing it here fixes all of
+    // them and cannot regress when a new call site is written.
+    //
+    // Placed AFTER the high-frequency fast path above, so the calls that skip
+    // observation entirely pay nothing.
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
+
+    if runtime_math_disabled() {
+        return;
+    }
+
+    let mode = mode();
+    if runtime_kernel_passthrough_family(family) {
+        let _ = (profile, estimated_cost_ns, adverse, mode);
+        return;
+    }
+    if !adverse
+        && !hot_hardened_sampled
+        && !matches!(family, ApiFamily::Allocator)
+        && (lookup_active_ffi_pcc_certificate(family, usize::MAX, true, false).is_some()
+            || lookup_active_ffi_pcc_certificate(family, usize::MAX, false, false).is_some())
+    {
+        let _ = (profile, estimated_cost_ns);
+        return;
+    }
+    // Note: strict mode observation is now enabled (bd-06bxm.3).
+    // The strict_runtime_kernel_fast_path check was removed here.
+    // High-frequency families already fast-path above.
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
+    if let Some(k) = kernel()
+        && runtime_policy_guard(|| {
+            k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
+            if cfg!(not(test))
+                && matches!(mode, SafetyLevel::Hardened)
+                && is_hardened_hot_cached_family(family)
+            {
+                let refreshed = k.decide(
+                    SafetyLevel::Hardened,
+                    RuntimeContext {
+                        family,
+                        addr_hint: 0x1000,
+                        requested_bytes: 64,
+                        is_write: true,
+                        contention_hint: 0,
+                        bloom_negative: false,
+                    },
+                );
+                update_cached_hot_hardened_decision(family, refreshed);
+            }
+        })
+        .is_err()
+    {
+        mark_kernel_broken();
+    }
+}
+
+pub(crate) fn observe_size_class_mapping(
+    requested_size: usize,
+    mapped_class_size: usize,
+    class_membership_valid: bool,
+) {
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY {
+        return;
+    }
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
+    if runtime_math_disabled() {
+        return;
+    }
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
+    if let Some(k) = kernel()
+        && runtime_policy_guard(|| {
+            k.observe_size_class_mapping(requested_size, mapped_class_size, class_membership_valid);
+        })
+        .is_err()
+    {
+        mark_kernel_broken();
+    }
+}
+
+#[must_use]
+pub(crate) fn check_ordering(
+    family: ApiFamily,
+    aligned: bool,
+    recent_page: bool,
+) -> [CheckStage; 7] {
+    if runtime_math_disabled() {
+        return PASSTHROUGH_ORDERING;
+    }
+    if runtime_kernel_passthrough_family(family) {
+        let _ = (aligned, recent_page);
+        return PASSTHROUGH_ORDERING;
+    }
+    // Deployed high-frequency families return this exact ordering regardless
+    // of certificate state. Keep the runtime-math switch resolution above,
+    // but do not re-read the active trace certificate merely to reach the same
+    // constant below. In particular, certified `memcmp` already proved its
+    // entrypoint once before taking its extent snapshots.
+    if cfg!(not(test))
+        && matches!(
+            family,
+            ApiFamily::Allocator
+                | ApiFamily::StringMemory
+                | ApiFamily::Ctype
+                | ApiFamily::Loader
+                | ApiFamily::Stdlib
+                | ApiFamily::MathFenv
+        )
+    {
+        let _ = (aligned, recent_page);
+        return PASSTHROUGH_ORDERING;
+    }
+    if active_ffi_pcc_symbol_certificate()
+        .is_some_and(|row| row.family == family && row.skip_stage_ordering)
+    {
+        let _ = (aligned, recent_page);
+        return PASSTHROUGH_ORDERING;
+    }
+    // Note: strict mode observation is enabled (bd-06bxm.3).
+    // High-frequency families still use passthrough ordering for perf.
+    // Hardened mode fast path for high-frequency operations.
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return PASSTHROUGH_ORDERING;
+    };
+    ensure_minimal_panic_hook();
+    let Some(k) = kernel() else {
+        return PASSTHROUGH_ORDERING;
+    };
+    match runtime_policy_guard(|| k.check_ordering(family, aligned, recent_page)) {
+        Ok(ordering) => ordering,
+        Err(_) => {
+            mark_kernel_broken();
+            PASSTHROUGH_ORDERING
+        }
+    }
+}
+
+pub(crate) fn note_check_order_outcome(
+    family: ApiFamily,
+    aligned: bool,
+    recent_page: bool,
+    ordering_used: &[CheckStage; 7],
+    exit_stage: Option<usize>,
+) {
+    if runtime_math_disabled() {
+        return;
+    }
+    if runtime_kernel_passthrough_family(family) {
+        let _ = (aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
+    // The deployed allocator/string outcome path is already an unconditional
+    // no-op below. Reach it before consulting the active trace certificate or
+    // resolving the mode; neither value can affect the result.
+    if matches!(family, ApiFamily::Allocator | ApiFamily::StringMemory) {
+        let _ = (aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
+    if active_ffi_pcc_symbol_certificate()
+        .is_some_and(|row| row.family == family && row.skip_stage_ordering)
+    {
+        let _ = (aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
+    let mode = mode();
+    if strict_runtime_kernel_fast_path(mode) {
+        let _ = (family, aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
+    if let Some(k) = kernel()
+        && runtime_policy_guard(|| {
+            k.note_check_order_outcome(
+                mode,
+                family,
+                aligned,
+                recent_page,
+                ordering_used,
+                exit_stage,
+            );
+            note_cross_family_overlap(k, family, ordering_used, aligned, recent_page, exit_stage);
+        })
+        .is_err()
+    {
+        mark_kernel_broken();
+    }
+}
+
+#[must_use]
+pub(crate) fn scaled_cost(base_ns: u64, bytes: usize) -> u64 {
+    // Smooth logarithmic-like proxy with integer ops for low overhead.
+    base_ns.saturating_add(((bytes as u64).saturating_add(63) / 64).min(8192))
+}
+
+#[cfg(feature = "conformance-testing")]
+pub mod conformance_testing {
+    //! Public helpers for conformance tests to control runtime mode.
+    //!
+    //! These are gated behind the `conformance-testing` feature and should
+    //! only be used in test contexts.
+
+    use super::{MODE_HARDENED, MODE_STATE, MODE_STRICT, MODE_UNRESOLVED, with_mode_cache};
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    pub struct ModeGuard {
+        previous_state: u8,
+        previous_tls: u8,
+    }
+
+    impl Drop for ModeGuard {
+        fn drop(&mut self) {
+            MODE_STATE.store(self.previous_state, AtomicOrdering::SeqCst);
+            let _ = with_mode_cache(|cache| *cache = self.previous_tls);
+        }
+    }
+
+    pub fn set_hardened_mode() -> ModeGuard {
+        let previous_tls = with_mode_cache(|cache| {
+            let prev = *cache;
+            *cache = MODE_UNRESOLVED;
+            prev
+        })
+        .unwrap_or(MODE_UNRESOLVED);
+        let previous_state = MODE_STATE.swap(MODE_HARDENED, AtomicOrdering::SeqCst);
+        ModeGuard {
+            previous_state,
+            previous_tls,
+        }
+    }
+
+    pub fn set_strict_mode() -> ModeGuard {
+        let previous_tls = with_mode_cache(|cache| {
+            let prev = *cache;
+            *cache = MODE_UNRESOLVED;
+            prev
+        })
+        .unwrap_or(MODE_UNRESOLVED);
+        let previous_state = MODE_STATE.swap(MODE_STRICT, AtomicOrdering::SeqCst);
+        ModeGuard {
+            previous_state,
+            previous_tls,
+        }
+    }
+
+    pub fn current_mode_debug() -> &'static str {
+        let mode = super::mode();
+        if mode.heals_enabled() {
+            "hardened"
+        } else {
+            "strict"
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::{CString, OsString};
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    /// The guard restores BOTH errno slots, including a value written inside its
+    /// scope (bd-q1mkwh).
+    ///
+    /// This asserts the mechanism directly rather than hoping to catch the race
+    /// it exists for. `observe`'s slow path clobbers errno only when one of its
+    /// locks is contended — measured at ~21% of runs of a 304-test binary — so a
+    /// test that merely calls `observe` and finds errno intact proves nothing at
+    /// all; it is green in exactly the case where the bug is absent. Here the
+    /// clobber is performed on purpose, so deleting either `write_volatile` in
+    /// `Drop` fails this immediately.
+    #[test]
+    fn errno_transparency_guard_restores_both_slots() {
+        const CALLER_VALUE: std::ffi::c_int = libc::ENOENT;
+        const CLOBBER: std::ffi::c_int = libc::EAGAIN; // what a futex wait leaves
+
+        // SAFETY: single-threaded test body writing this thread's own errno.
+        unsafe { crate::errno_abi::set_abi_errno(CALLER_VALUE) };
+
+        let fl_slot = unsafe { crate::errno_abi::__errno_location() };
+        assert!(!fl_slot.is_null(), "fl errno slot must exist");
+        let host_slot = crate::host_resolve::host_errno_location_raw().map(|loc| unsafe { loc() });
+
+        assert_eq!(
+            unsafe { std::ptr::read_volatile(fl_slot) },
+            CALLER_VALUE,
+            "precondition: the caller's value is in fl's slot"
+        );
+        if let Some(slot) = host_slot.filter(|s| !s.is_null()) {
+            assert_eq!(
+                unsafe { std::ptr::read_volatile(slot) },
+                CALLER_VALUE,
+                "precondition: set_abi_errno mirrors into the host slot"
+            );
+        }
+
+        {
+            let _guard = ErrnoTransparencyGuard::capture();
+            // Stand in for the futex/EAGAIN that observe's locks produce.
+            unsafe { std::ptr::write_volatile(fl_slot, CLOBBER) };
+            if let Some(slot) = host_slot.filter(|s| !s.is_null()) {
+                unsafe { std::ptr::write_volatile(slot, CLOBBER) };
+            }
+            assert_eq!(
+                unsafe { std::ptr::read_volatile(fl_slot) },
+                CLOBBER,
+                "the injected clobber must actually land, or this test is vacuous"
+            );
+        }
+
+        assert_eq!(
+            unsafe { std::ptr::read_volatile(fl_slot) },
+            CALLER_VALUE,
+            "fl's errno slot must survive telemetry"
+        );
+        if let Some(slot) = host_slot.filter(|s| !s.is_null()) {
+            assert_eq!(
+                unsafe { std::ptr::read_volatile(slot) },
+                CALLER_VALUE,
+                "the HOST errno slot must survive telemetry — that is the one a C \
+                 caller reads, and the one bd-7dq39e caught holding EAGAIN"
+            );
+        }
+    }
+
+    /// `observe`'s slow path is WIRED to the guard, asserted against the source.
+    ///
+    /// I wrote a behavioural version of this first — set errno, call
+    /// `observe(.., adverse = true)`, assert errno survived — and ablated the
+    /// guard's `Drop` to check it. It still PASSED. Of course it did: a
+    /// single-threaded test contends no lock, so nothing clobbers errno and the
+    /// assertion holds whether or not the guard exists. That is a hollow gate,
+    /// green in exactly the case where the bug is absent, and it would have gone
+    /// in claiming to pin something it could not.
+    ///
+    /// The real regression risk here is not that the guard stops working —
+    /// `errno_transparency_guard_restores_both_slots` covers that deterministically
+    /// — it is that someone deletes the one line in `observe` that installs it, or
+    /// moves it below the locks it protects against. That is a source property, so
+    /// it is asserted as one.
+    #[test]
+    fn observe_installs_the_errno_guard_before_taking_any_lock() {
+        let src = include_str!("runtime_policy.rs");
+        let start = src
+            .find("pub(crate) fn observe(")
+            .expect("observe() must exist");
+        let body = &src[start..];
+        let end = body.find("\n}\n").expect("observe() must have an end");
+        let body = &body[..end];
+
+        let guard_at = body.find("ErrnoTransparencyGuard::capture()").expect(
+            "observe() must install ErrnoTransparencyGuard — without it, every one of the \
+             440 `set_abi_errno(..); observe(.., true)` call sites can have its errno \
+             replaced by a futex EAGAIN (bd-q1mkwh)",
+        );
+
+        // Everything the guard protects against comes after it. `enter_policy_
+        // reentry_guard` is the first of them; the certificate lookups above it
+        // take locks too, so the guard must precede those as well.
+        for later in [
+            "lookup_active_ffi_pcc_certificate",
+            "enter_policy_reentry_guard",
+            "observe_validation_result",
+        ] {
+            assert!(body.contains(later), "observe() should still call {later}");
+            let at = body.find(later).unwrap();
+            assert!(
+                guard_at < at,
+                "the errno guard is installed AFTER {later}, so anything that call \
+                 leaves in errno survives into the caller"
+            );
+        }
+    }
+
+    /// Semantic-denial telemetry protects errno before `mode()` performs its
+    /// periodic environment check.  The guard mechanism itself is exercised by
+    /// `errno_transparency_guard_restores_both_slots`; this source-order gate
+    /// prevents a refactor from moving its capture below the work it protects.
+    #[test]
+    fn semantic_deny_installs_errno_guard_before_mode_selection() {
+        let src = include_str!("runtime_policy.rs");
+        let start = src
+            .find("pub(crate) fn record_semantic_deny(")
+            .expect("record_semantic_deny() must exist");
+        let body = &src[start..];
+        let end = body
+            .find("\n}\n\n#[cold]\n#[allow(clippy::too_many_arguments)]\nfn append_deny_record")
+            .or_else(|| body.find("\n}\n\n#[cold]\nfn append_deny_record"))
+            .expect("record_semantic_deny() must end before append_deny_record()");
+        let body = &body[..end];
+        let guard_at = body
+            .find("ErrnoTransparencyGuard::capture()")
+            .expect("semantic-denial telemetry must preserve caller errno");
+        let mode_at = body
+            .find("let mode = if signal_safe_path")
+            .expect("semantic-denial telemetry must select a runtime mode");
+
+        assert!(
+            guard_at < mode_at,
+            "record_semantic_deny() captures errno after mode(), so mode-switch \
+             sampling can clobber pthread-style caller errno"
+        );
+    }
+
+    #[test]
+    fn unknown_signal_context_is_encoded_without_claiming_outside() {
+        let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
+        write_deny_log_line(
+            &mut line,
+            7,
+            SafetyLevel::Hardened,
+            "pthread_kill",
+            RuntimeContext {
+                family: ApiFamily::Signal,
+                addr_hint: 0,
+                requested_bytes: 0,
+                is_write: false,
+                contention_hint: 0,
+                bloom_negative: true,
+            },
+            0,
+            0,
+            0,
+            libc::EINVAL,
+            "invalid_signal_number",
+            frankenlibc_membrane::heal::RuntimeSignalContext::Unknown,
+        )
+        .unwrap();
+
+        let row: serde_json::Value = serde_json::from_str(line.as_str()).unwrap();
+        assert_eq!(row["seq"], 7);
+        assert_eq!(row["symbol"], "pthread_kill");
+        assert_eq!(row["signal_context"], false);
+        assert_eq!(row["signal_context_known"], false);
+    }
+
+    struct ModeSwitchCounterGuard {
+        previous_global: u64,
+        previous_thread_local: Option<u64>,
+    }
+
+    impl Drop for ModeSwitchCounterGuard {
+        fn drop(&mut self) {
+            MODE_SWITCH_CHECK_COUNTER.store(self.previous_global, AtomicOrdering::SeqCst);
+            if let Some(previous) = self.previous_thread_local {
+                let _ = with_mode_switch_counter(|counter| *counter = previous);
+            }
+        }
+    }
+
+    fn set_mode_switch_counter_for_tests(value: u64) -> ModeSwitchCounterGuard {
+        let previous_global = MODE_SWITCH_CHECK_COUNTER.swap(value, AtomicOrdering::SeqCst);
+        let previous_thread_local = with_mode_switch_counter(|counter| {
+            let previous = *counter;
+            *counter = value;
+            previous
+        });
+        ModeSwitchCounterGuard {
+            previous_global,
+            previous_thread_local,
+        }
+    }
+
+    fn reset_cohomology_stage_hashes_for_tests() {
+        for slot in &COHOMOLOGY_STAGE_HASHES {
+            slot.store(0, AtomicOrdering::Relaxed);
+        }
+    }
+
+    struct ModeStateGuard {
+        _lock: RuntimePolicyTestGuard,
+        previous: u8,
+        previous_tls: u8,
+    }
+
+    impl Drop for ModeStateGuard {
+        fn drop(&mut self) {
+            MODE_STATE.store(self.previous, AtomicOrdering::SeqCst);
+            let _ = with_mode_cache(|cache| *cache = self.previous_tls);
+        }
+    }
+
+    fn set_mode_state_for_tests(state: u8) -> ModeStateGuard {
+        let lock = runtime_policy_test_lock();
+        let previous_tls = with_mode_cache(|cache| {
+            let previous = *cache;
+            *cache = MODE_UNRESOLVED;
+            previous
+        })
+        .unwrap_or(MODE_UNRESOLVED);
+        let previous = MODE_STATE.swap(state, AtomicOrdering::SeqCst);
+        ModeStateGuard {
+            _lock: lock,
+            previous,
+            previous_tls,
+        }
+    }
+
+    struct EnvVarGuard {
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(value: Option<&str>) -> Self {
+            let previous = std::env::var_os("FRANKENLIBC_MODE");
+            // SAFETY: test-only env mutation is serialized by `env_lock`.
+            unsafe {
+                if let Some(v) = value {
+                    std::env::set_var("FRANKENLIBC_MODE", v);
+                } else {
+                    std::env::remove_var("FRANKENLIBC_MODE");
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: test-only env mutation is serialized by `env_lock`.
+            unsafe {
+                if let Some(previous) = self.previous.as_ref() {
+                    std::env::set_var("FRANKENLIBC_MODE", previous);
+                } else {
+                    std::env::remove_var("FRANKENLIBC_MODE");
+                }
+            }
+        }
+    }
+
+    fn runtime_policy_test_lock() -> RuntimePolicyTestGuard {
+        super::runtime_policy_test_lock()
+    }
+
+    fn env_lock() -> RuntimePolicyTestGuard {
+        runtime_policy_test_lock()
+    }
+
+    fn ffi_pcc_lock() -> RuntimePolicyTestGuard {
+        runtime_policy_test_lock()
+    }
+
+    struct RuntimeReadyGuard {
+        _lock: RuntimePolicyTestGuard,
+        previous_ready: u8,
+        previous_mode_log_ready: u8,
+    }
+
+    #[test]
+    fn math_off_stops_strict_observation_and_feedback_without_hiding_counters() {
+        let _lock = runtime_policy_test_lock();
+        let _mode = set_mode_state_for_tests(MODE_STRICT);
+        let _ready = enable_runtime_kernel_for_tests();
+        struct RestoreMathState(u8);
+        impl Drop for RestoreMathState {
+            fn drop(&mut self) {
+                RUNTIME_MATH_STATE.store(self.0, AtomicOrdering::SeqCst);
+            }
+        }
+        let _restore =
+            RestoreMathState(RUNTIME_MATH_STATE.swap(RUNTIME_MATH_ON, AtomicOrdering::SeqCst));
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_RESOLVING, AtomicOrdering::SeqCst);
+        assert_eq!(resolved_runtime_math_enabled(), None);
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
+        assert_eq!(resolved_runtime_math_enabled(), Some(false));
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_ON, AtomicOrdering::SeqCst);
+        assert_eq!(resolved_runtime_math_enabled(), Some(true));
+        let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS).expect("kernel ready");
+        let before = k.decision_telemetry_snapshot().decisions;
+        let (_, decision) = decide_strict_observation(ApiFamily::Socket, 1, 0, false, true, 0);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert!(k.decision_telemetry_snapshot().decisions > before);
+
+        RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
+        let baseline = k.snapshot(SafetyLevel::Strict);
+        for _ in 0..32 {
+            let (_, decision) = decide_strict_observation(ApiFamily::Socket, 1, 0, false, true, 0);
+            assert_eq!(decision.action, MembraneAction::Allow);
+            assert_eq!(decision.evidence_seqno, 0);
+            observe(ApiFamily::Socket, ValidationProfile::Full, 1000, true);
+            assert_eq!(
+                check_ordering(ApiFamily::Socket, true, false),
+                PASSTHROUGH_ORDERING
+            );
+            note_check_order_outcome(
+                ApiFamily::Socket,
+                true,
+                false,
+                &PASSTHROUGH_ORDERING,
+                Some(0),
+            );
+        }
+        assert_eq!(k.snapshot(SafetyLevel::Strict), baseline);
+        // Diagnostics still expose the real, already initialized kernel.
+        assert_eq!(runtime_decision_count(), Some(baseline.decisions));
+    }
+
+    #[test]
+    fn decision_snapshot_reads_existing_tls_without_consuming_or_consulting() {
+        let _lock = runtime_policy_test_lock();
+        let previous = take_last_explainability();
+        struct RestoreRecord(Option<DecisionExplainability>);
+        impl Drop for RestoreRecord {
+            fn drop(&mut self) {
+                with_last_explainability(|slot| {
+                    *slot = self.0.map(RecordedDecisionExplainability::from);
+                });
+            }
+        }
+        let _restore = RestoreRecord(previous);
+        let mut out = RuntimeDecisionSnapshot {
+            evidence_seqno: u64::MAX,
+            ..RuntimeDecisionSnapshot::default()
+        };
+        let untouched = out;
+        let kernel_state = KERNEL_STATE.load(AtomicOrdering::Acquire);
+        // SAFETY: out is a live, aligned, writable snapshot object.
+        assert_eq!(unsafe { read_decision_snapshot(&mut out) }, 0);
+        assert_eq!(out, untouched);
+        assert_eq!(KERNEL_STATE.load(AtomicOrdering::Acquire), kernel_state);
+        // SAFETY: NULL is an explicitly supported error input.
+        assert_eq!(unsafe { read_decision_snapshot(std::ptr::null_mut()) }, -1);
+        // SAFETY: errno_location returns this thread's valid errno slot.
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EFAULT
+        );
+
+        let ctx = RuntimeContext {
+            family: ApiFamily::Socket,
+            addr_hint: 1,
+            requested_bytes: 0,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: true,
+        };
+        // Mapping-only unit test; release workloads separately prove the source
+        // of these fields is an actual runtime decision, not this test input.
+        for (action, action_id) in [
+            (MembraneAction::Allow, 0),
+            (MembraneAction::FullValidate, 1),
+            (
+                MembraneAction::Repair(frankenlibc_membrane::HealingAction::ReturnSafeDefault),
+                2,
+            ),
+            (MembraneAction::Deny, 3),
+        ] {
+            let decision = RuntimeDecision {
+                profile: ValidationProfile::Full,
+                action,
+                policy_id: 17,
+                risk_upper_bound_ppm: 123_456,
+                evidence_seqno: 42,
+            };
+            record_last_explainability(
+                SafetyLevel::Hardened,
+                ctx,
+                decision,
+                DECISION_GATE_RUNTIME_POLICY,
+            );
+            let record = peek_last_explainability();
+            // SAFETY: out is a live, aligned, writable snapshot object.
+            assert_eq!(unsafe { read_decision_snapshot(&mut out) }, 1);
+            assert_eq!(
+                out,
+                RuntimeDecisionSnapshot {
+                    evidence_seqno: 42,
+                    family: 13,
+                    profile: 1,
+                    action: action_id,
+                    risk_upper_bound_ppm: 123_456,
+                    policy_id: 17,
+                    reserved: 0,
+                }
+            );
+            assert_eq!(peek_last_explainability(), record);
+            assert_eq!(KERNEL_STATE.load(AtomicOrdering::Acquire), kernel_state);
+        }
+    }
+
+    impl Drop for RuntimeReadyGuard {
+        fn drop(&mut self) {
+            RUNTIME_READY.store(self.previous_ready, AtomicOrdering::SeqCst);
+            MODE_LOG_READY.store(self.previous_mode_log_ready, AtomicOrdering::SeqCst);
+        }
+    }
+
+    fn enable_runtime_kernel_for_tests() -> RuntimeReadyGuard {
+        set_runtime_ready_state_for_tests(RUNTIME_STATE_ACTIVE)
+    }
+
+    fn set_runtime_ready_state_for_tests(state: u8) -> RuntimeReadyGuard {
+        let lock = runtime_policy_test_lock();
+        let previous_ready = RUNTIME_READY.swap(state, AtomicOrdering::SeqCst);
+        let mode_log_ready = u8::from(state == RUNTIME_STATE_ACTIVE);
+        let previous_mode_log_ready = MODE_LOG_READY.swap(mode_log_ready, AtomicOrdering::SeqCst);
+        RuntimeReadyGuard {
+            _lock: lock,
+            previous_ready,
+            previous_mode_log_ready,
+        }
+    }
+
+    fn reset_ffi_pcc_state_for_tests() {
+        let _lock = runtime_policy_test_lock();
+        FFI_PCC_HASH_PREFIX.store(0, AtomicOrdering::SeqCst);
+        FFI_PCC_ROW_COUNT.store(0, AtomicOrdering::SeqCst);
+        FFI_PCC_STATE.store(FFI_PCC_STATE_UNVERIFIED, AtomicOrdering::SeqCst);
+    }
+
+    fn reset_decision_contract_machine_for_tests() {
+        let _lock = runtime_policy_test_lock();
+        let _ = with_decision_contract_machine(|machine| {
+            *machine = DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD);
+        });
+    }
+
+    fn drive_decisions_until_evidence(
+        family: ApiFamily,
+        base_addr: usize,
+        requested_bytes: usize,
+    ) -> u64 {
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        // Runtime evidence sampling is cadence-gated in both strict and hardened modes.
+        // Drive a bounded deterministic sequence until at least one sampled decision appears.
+        const MAX_ATTEMPTS: usize = 20_000;
+        for i in 0..MAX_ATTEMPTS {
+            let addr = base_addr.wrapping_add(i.wrapping_mul(64));
+            let bytes = requested_bytes.saturating_add(i % 23);
+            let (_, decision) = decide(
+                family,
+                addr,
+                bytes,
+                i.is_multiple_of(2),
+                false,
+                (i % usize::from(u16::MAX)) as u16,
+            );
+            observe(family, decision.profile, scaled_cost(9, bytes), false);
+            if decision.evidence_seqno > 0 {
+                return decision.evidence_seqno;
+            }
+        }
+        // Evidence emission is cadence-gated and can be deferred depending on
+        // runtime-mode/global counters shared across tests. Return the latest
+        // observed snapshot value instead of panicking to keep this wrapper
+        // contract test deterministic.
+        runtime_evidence_contract_snapshot()
+            .map(|snapshot| snapshot.evidence_seqno)
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn runtime_mode_value_parser_is_strict_or_hardened_only() {
+        assert_eq!(parse_mode_value("strict"), SafetyLevel::Strict);
+        assert_eq!(parse_mode_value("hardened"), SafetyLevel::Hardened);
+        assert_eq!(parse_mode_value("repair"), SafetyLevel::Hardened);
+        assert_eq!(parse_mode_value("off"), SafetyLevel::Strict);
+        assert_eq!(parse_mode_value("bogus"), SafetyLevel::Strict);
+    }
+
+    #[test]
+    fn mode_resolution_is_sticky_until_cache_reset() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "strict");
+        }
+        assert_eq!(
+            mode(),
+            SafetyLevel::Hardened,
+            "resolved mode must remain process-sticky until cache reset"
+        );
+    }
+
+    #[test]
+    fn cache_reset_reparses_mode_from_environment() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        MODE_STATE.store(MODE_UNRESOLVED, AtomicOrdering::SeqCst);
+        clear_thread_local_mode_cache();
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "strict");
+        }
+        assert_eq!(
+            mode(),
+            SafetyLevel::Strict,
+            "resetting cache should force environment re-parse"
+        );
+    }
+
+    #[test]
+    fn mode_populates_thread_local_cache_after_resolution() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+
+        let cached = with_mode_cache(|cache| *cache).unwrap_or(MODE_UNRESOLVED);
+        assert_eq!(
+            cached, MODE_HARDENED,
+            "resolved mode should be cached in thread-local state"
+        );
+    }
+
+    #[test]
+    fn mode_switch_sampler_stays_thread_local_between_rescans() {
+        let _lock = env_lock();
+        clear_mode_event_log();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_HARDENED);
+        let _counter = set_mode_switch_counter_for_tests(0);
+
+        for _ in 0..MODE_SWITCH_CHECK_STRIDE.saturating_sub(1) {
+            assert_eq!(mode(), SafetyLevel::Hardened);
+        }
+        assert_eq!(
+            MODE_SWITCH_CHECK_COUNTER.load(AtomicOrdering::SeqCst),
+            0,
+            "cached mode reads before the local stride must not bounce the global sampler"
+        );
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        assert_eq!(
+            MODE_SWITCH_CHECK_COUNTER.load(AtomicOrdering::SeqCst),
+            1,
+            "global sampler should advance only for a real environment rescan"
+        );
+    }
+
+    #[test]
+    fn mode_logging_captures_startup_selection_and_switch_attempt() {
+        let _lock = env_lock();
+        clear_mode_event_log();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+
+        // Simulate that the runtime is past early startup so mode events are logged.
+        MODE_LOG_READY.store(1, AtomicOrdering::SeqCst);
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "strict");
+        }
+
+        let _counter =
+            set_mode_switch_counter_for_tests(MODE_SWITCH_CHECK_STRIDE.saturating_sub(1));
+        assert_eq!(mode(), SafetyLevel::Hardened);
+
+        let jsonl = export_mode_event_log_jsonl();
+        assert!(
+            jsonl.contains("\"event\":\"runtime_mode_switch_attempt\""),
+            "mode switch attempts after startup must be logged"
+        );
+
+        for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+            assert!(
+                line.contains("\"trace_id\""),
+                "mode log row must include trace_id"
+            );
+            assert!(
+                line.contains("\"decision_id\""),
+                "mode log row must include decision_id"
+            );
+        }
+    }
+
+    #[test]
+    fn env_lock_recovers_after_guarded_panic() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _lock = env_lock();
+            std::panic::resume_unwind(Box::new("runtime_policy env lock recovery probe"));
+        }));
+
+        assert!(
+            result.is_err(),
+            "regression probe must panic while holding the env lock"
+        );
+
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("strict"));
+        assert_eq!(parse_mode_from_environ(), Ok(Some(SafetyLevel::Strict)));
+    }
+
+    #[test]
+    fn env_key_matcher_rejects_short_prefixes_without_reading_past_nul() {
+        let empty = CString::new("").expect("empty env row");
+        let partial = CString::new("FRANKENLIBC").expect("partial env row");
+        let wrong_suffix = CString::new("FRANKENLIBC_MOD").expect("short env row");
+        let exact_key = CString::new("FRANKENLIBC_MODE=").expect("exact key row");
+
+        // SAFETY: each CString is NUL-terminated and lives for the call.
+        unsafe {
+            assert!(!cstr_has_byte_prefix(empty.as_ptr(), b"FRANKENLIBC_MODE="));
+            assert!(!cstr_has_byte_prefix(
+                partial.as_ptr(),
+                b"FRANKENLIBC_MODE="
+            ));
+            assert!(!cstr_has_byte_prefix(
+                wrong_suffix.as_ptr(),
+                b"FRANKENLIBC_MODE="
+            ));
+            assert!(cstr_has_byte_prefix(
+                exact_key.as_ptr(),
+                b"FRANKENLIBC_MODE="
+            ));
+        }
+    }
+
+    #[test]
+    fn parse_mode_from_environ_accepts_case_insensitive_aliases() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("RePaIr"));
+
+        assert_eq!(parse_mode_from_environ(), Ok(Some(SafetyLevel::Hardened)));
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "bogus");
+        }
+        assert_eq!(parse_mode_from_environ(), Ok(Some(SafetyLevel::Strict)));
+    }
+
+    #[test]
+    fn locale_family_stays_on_passthrough_policy_in_hardened_mode() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+
+        let (mode, decision) = decide(ApiFamily::Locale, 0x1234, 2, true, false, 0);
+        assert_eq!(mode, SafetyLevel::Hardened);
+        assert_eq!(decision, passthrough_decision());
+
+        observe(ApiFamily::Locale, ValidationProfile::Full, 17, true);
+        assert_eq!(
+            check_ordering(ApiFamily::Locale, true, true),
+            PASSTHROUGH_ORDERING
+        );
+    }
+
+    #[test]
+    fn runtime_ready_arms_only_after_startup_window_closes() {
+        let _lock = runtime_policy_test_lock();
+        reset_ffi_pcc_state_for_tests();
+        clear_mode_event_log();
+        let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_BOOTSTRAP);
+
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowOpen),
+            RuntimeReadyTransition::DeferredStartupWindowOpen
+        );
+        assert!(
+            !is_runtime_ready(),
+            "open startup window must keep the runtime in passthrough"
+        );
+        assert!(
+            export_mode_event_log_jsonl().is_empty(),
+            "deferred startup arming must not emit a ready event"
+        );
+
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed),
+            RuntimeReadyTransition::Armed
+        );
+        assert!(
+            is_runtime_ready(),
+            "closed startup window should arm runtime"
+        );
+        assert!(
+            export_mode_event_log_jsonl().contains("\"event\":\"runtime_ready_armed\""),
+            "arming transition should be structured-log visible"
+        );
+    }
+
+    #[test]
+    fn runtime_ready_arming_keeps_decide_on_passthrough() {
+        let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_ARMING);
+
+        let (_, decision) = decide(ApiFamily::Process, 0x4444, 16, true, false, 0);
+        assert_eq!(
+            decision,
+            passthrough_decision(),
+            "calls made while the runtime is arming must not enter the kernel"
+        );
+        assert!(
+            !is_runtime_ready(),
+            "arming state is not active until the transition publishes active"
+        );
+    }
+
+    #[test]
+    fn runtime_ready_signal_defers_inside_policy_reentry_context() {
+        let _runtime_ready = set_runtime_ready_state_for_tests(RUNTIME_STATE_BOOTSTRAP);
+        let guard = enter_policy_reentry_guard().expect("outer policy guard should enter");
+
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed),
+            RuntimeReadyTransition::DeferredReentrantPolicyContext
+        );
+        assert!(
+            !is_runtime_ready(),
+            "reentrant arming attempt should stay in bootstrap passthrough"
+        );
+
+        drop(guard);
+        assert_eq!(
+            try_signal_runtime_ready(RuntimeReadyObservation::StartupWindowClosed),
+            RuntimeReadyTransition::Armed
+        );
+        assert!(is_runtime_ready());
+    }
+
+    #[test]
+    fn policy_reentry_guard_blocks_nested_entry() {
+        let outer = enter_policy_reentry_guard().expect("first entry should acquire guard");
+        assert!(
+            enter_policy_reentry_guard().is_none(),
+            "nested entry should be blocked"
+        );
+        drop(outer);
+        assert!(
+            enter_policy_reentry_guard().is_some(),
+            "guard should be reacquirable after drop"
+        );
+    }
+
+    #[test]
+    fn in_policy_reentry_context_tracks_guard_lifetime() {
+        assert!(!in_policy_reentry_context());
+        let outer = enter_policy_reentry_guard().expect("first entry should acquire guard");
+        assert!(in_policy_reentry_context());
+        drop(outer);
+        assert!(!in_policy_reentry_context());
+    }
+
+    #[test]
+    fn scoped_trace_context_carries_symbol_into_explainability() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("malloc");
+        let decision = RuntimeDecision {
+            action: MembraneAction::FullValidate,
+            profile: ValidationProfile::Full,
+            policy_id: 42,
+            risk_upper_bound_ppm: 123_456,
+            evidence_seqno: 9,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x1234,
+            requested_bytes: 64,
+            is_write: true,
+            contention_hint: 7,
+            bloom_negative: false,
+        };
+        record_last_explainability(
+            SafetyLevel::Strict,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(explain.symbol, "malloc");
+        assert_eq!(explain.family, ApiFamily::Allocator);
+        assert_eq!(explain.requested_bytes, 64);
+        assert_eq!(explain.contention_hint, 7);
+        assert_eq!(explain.policy_id, decision.policy_id);
+        assert_eq!(explain.risk_upper_bound_ppm, decision.risk_upper_bound_ppm);
+        assert_eq!(explain.evidence_seqno, decision.evidence_seqno);
+        assert!(explain.trace_id().starts_with("abi::malloc::"));
+        assert!(explain.parent_span_id().starts_with("abi::malloc::entry::"));
+    }
+
+    #[test]
+    fn bd_33p_2_completion_debt_unit_trace_ids_are_joinable() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("free");
+        let decision = RuntimeDecision {
+            action: MembraneAction::Deny,
+            profile: ValidationProfile::Full,
+            policy_id: 7,
+            risk_upper_bound_ppm: 900_001,
+            evidence_seqno: 11,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0xdead_beef,
+            requested_bytes: 0,
+            is_write: true,
+            contention_hint: 4,
+            bloom_negative: true,
+        };
+
+        record_last_explainability(
+            SafetyLevel::Hardened,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let explain = take_last_explainability().expect("decision explainability should exist");
+        let trace_id = explain.trace_id();
+        let span_id = explain.span_id();
+        let parent_span_id = explain.parent_span_id();
+
+        assert_eq!(explain.symbol, "free");
+        assert_eq!(explain.controller_id, CONTROLLER_ID_RUNTIME_MATH);
+        assert_eq!(explain.decision_gate, DECISION_GATE_RUNTIME_POLICY);
+        assert_eq!(explain.mode, SafetyLevel::Hardened);
+        assert_eq!(explain.family, ApiFamily::Allocator);
+        assert_eq!(explain.profile, ValidationProfile::Full);
+        assert_eq!(explain.decision_action(), "Deny");
+        assert_eq!(explain.policy_id, 7);
+        assert_eq!(explain.risk_upper_bound_ppm, 900_001);
+        assert_eq!(explain.requested_bytes, 0);
+        assert_eq!(explain.addr_hint, 0xdead_beef);
+        assert!(explain.is_write);
+        assert!(explain.bloom_negative);
+        assert_eq!(explain.contention_hint, 4);
+        assert_eq!(explain.evidence_seqno, 11);
+        assert!(trace_id.starts_with("abi::free::"));
+        assert!(span_id.starts_with("abi::free::decision::"));
+        assert!(parent_span_id.starts_with("abi::free::entry::"));
+        assert_ne!(span_id, parent_span_id);
+    }
+
+    #[test]
+    fn missing_scope_uses_fallback_context() {
+        reset_decision_contract_machine_for_tests();
+        let decision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Fast,
+            policy_id: 0,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 0,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::IoFd,
+            addr_hint: 0,
+            requested_bytes: 0,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: true,
+        };
+        record_last_explainability(
+            SafetyLevel::Strict,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let explain = take_last_explainability().expect("fallback explainability should exist");
+
+        assert_eq!(explain.symbol, TRACE_UNKNOWN_SYMBOL);
+        assert!(explain.trace_id().starts_with("abi::unknown::"));
+        assert_eq!(explain.decision_gate, DECISION_GATE_RUNTIME_POLICY);
+        assert_eq!(explain.controller_id, CONTROLLER_ID_RUNTIME_MATH);
+    }
+
+    #[test]
+    fn strict_mode_projects_contract_actions_to_log() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("memcmp");
+        let decision = RuntimeDecision {
+            action: MembraneAction::FullValidate,
+            profile: ValidationProfile::Full,
+            policy_id: 7,
+            risk_upper_bound_ppm: 42_000,
+            evidence_seqno: 11,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::StringMemory,
+            addr_hint: 0x2222,
+            requested_bytes: 256,
+            is_write: false,
+            contention_hint: 2,
+            bloom_negative: false,
+        };
+
+        record_last_explainability(
+            SafetyLevel::Strict,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(explain.contract_state, TsmState::Suspicious);
+        assert_eq!(explain.contract_event, DecisionContractEvent::SoftAnomaly);
+        assert_eq!(explain.contract_action, DecisionContractAction::Log);
+    }
+
+    #[test]
+    fn hardened_repair_completes_unsafe_to_safe_contract_edge() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("free");
+        let decision = RuntimeDecision {
+            action: MembraneAction::Repair(frankenlibc_membrane::HealingAction::IgnoreDoubleFree),
+            profile: ValidationProfile::Full,
+            policy_id: 9,
+            risk_upper_bound_ppm: 700_000,
+            evidence_seqno: 13,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x3333,
+            requested_bytes: 0,
+            is_write: true,
+            contention_hint: 9,
+            bloom_negative: true,
+        };
+
+        record_last_explainability(
+            SafetyLevel::Hardened,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(explain.contract_state, TsmState::Safe);
+        assert_eq!(
+            explain.contract_event,
+            DecisionContractEvent::RepairComplete
+        );
+        assert_eq!(
+            explain.contract_action,
+            DecisionContractAction::ClearSuspicion
+        );
+    }
+
+    #[test]
+    fn nested_scope_restores_previous_context() {
+        let _outer = entrypoint_scope("outer_symbol");
+        let outer_ctx = active_trace_context();
+        assert_eq!(outer_ctx.symbol, "outer_symbol");
+
+        {
+            let _inner = entrypoint_scope("inner_symbol");
+            let inner_ctx = active_trace_context();
+            assert_eq!(inner_ctx.symbol, "inner_symbol");
+        }
+
+        let restored_ctx = active_trace_context();
+        assert_eq!(restored_ctx.symbol, "outer_symbol");
+    }
+
+    #[test]
+    fn ffi_pcc_manifest_exports_verified_rows() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let manifest = export_ffi_pcc_manifest_json();
+        assert!(manifest.contains("\"verification\":\"verified\""));
+        assert!(manifest.contains("\"symbol\":\"malloc\""));
+        assert!(manifest.contains("\"symbol\":\"memcpy\""));
+        assert!(manifest.contains("\"symbol\":\"memcmp\""));
+        assert!(manifest.contains("\"symbol\":\"snprintf\""));
+        assert!(manifest.contains("\"symbol\":\"vsnprintf\""));
+        assert!(manifest.contains("\"skip_pointer_validation\":true"));
+        assert!(manifest.contains(FFI_PCC_DOC_ARTIFACT));
+        assert!(
+            FFI_PCC_HASH_PREFIX.load(AtomicOrdering::SeqCst) != 0,
+            "verified manifest should publish a non-zero hash prefix"
+        );
+    }
+
+    #[test]
+    fn ffi_pcc_trace_index_matches_certificate_table_order() {
+        for (idx, row) in FFI_PCC_CERTIFICATES.iter().enumerate() {
+            assert_eq!(
+                ffi_pcc_certificate_index_for_symbol(row.symbol),
+                idx as u8,
+                "trace index hint must match certificate table order for {}",
+                row.symbol
+            );
+        }
+        assert_eq!(
+            ffi_pcc_certificate_index_for_symbol("fputc"),
+            FFI_PCC_NO_INDEX,
+            "uncertified symbols must not receive PCC index hints"
+        );
+    }
+
+    #[test]
+    fn ffi_pcc_active_certificate_uses_trace_index_hint() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let _scope = entrypoint_scope("memcpy");
+        let trace = active_trace_context();
+        assert_eq!(trace.pcc_index, 9);
+
+        let cert =
+            active_ffi_pcc_symbol_certificate().expect("memcpy certificate should be active");
+        assert_eq!(cert.symbol, "memcpy");
+        assert_eq!(cert.policy_id, FFI_PCC_POLICY_BASE + 10);
+    }
+
+    #[test]
+    fn ffi_pcc_decide_uses_certificate_gate_for_malloc() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("malloc");
+
+        let (_, decision) = decide(ApiFamily::Allocator, 0x1000, 64, true, false, 0);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 1);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 1);
+    }
+
+    #[test]
+    fn ffi_pcc_decide_uses_certificate_gate_for_memcpy() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("memcpy");
+
+        let (_, decision) = decide(ApiFamily::StringMemory, 0x2000, 64, true, true, 0);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 10);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 10);
+    }
+
+    #[test]
+    fn ffi_pcc_memcmp_token_preserves_decision_and_explainability() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope_memcmp();
+
+        let token = active_memcmp_pcc_token().expect("memcmp certificate should be active");
+        let (_, decision) = decide_certified_memcmp(token, 0x2400, 96, true);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 8);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.symbol, "memcmp");
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.family, ApiFamily::StringMemory);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 8);
+        assert_eq!(explain.addr_hint, 0x2400);
+        assert_eq!(explain.requested_bytes, 96);
+        assert!(explain.bloom_negative);
+    }
+
+    #[test]
+    fn ffi_pcc_decide_uses_certificate_gate_for_snprintf() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("snprintf");
+
+        let (_, decision) = decide(ApiFamily::Stdio, 0x3000, 64, true, false, 0);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 11);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 11);
+    }
+
+    #[test]
+    fn ffi_pcc_pointer_validation_bypass_only_applies_to_certified_read_symbols() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let _memcmp = entrypoint_scope_memcmp();
+        assert!(proof_carried_pointer_validation_active());
+        drop(_memcmp);
+
+        let _malloc = entrypoint_scope("malloc");
+        assert!(!proof_carried_pointer_validation_active());
+    }
+
+    #[test]
+    fn ffi_pcc_stage_ordering_bypasses_kernel_for_certified_symbols() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let _scope = entrypoint_scope("strlen");
+        let ordering = check_ordering(ApiFamily::StringMemory, true, false);
+        assert_eq!(ordering, PASSTHROUGH_ORDERING);
+    }
+
+    #[test]
+    #[ignore = "microbenchmark for PCC fast-path regression evidence"]
+    fn ffi_pcc_memcpy_decide_observe_microbench() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("memcpy");
+
+        const WARMUP_ITERS: u64 = 10_000;
+        const MEASURE_ITERS: u64 = 250_000;
+
+        for _ in 0..WARMUP_ITERS {
+            let (_, decision) = decide(ApiFamily::StringMemory, 0x2000, 64, true, true, 0);
+            observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                scaled_cost(7, 64),
+                false,
+            );
+            black_box(decision.policy_id);
+        }
+
+        let start = Instant::now();
+        for _ in 0..MEASURE_ITERS {
+            let (_, decision) = decide(ApiFamily::StringMemory, 0x2000, 64, true, true, 0);
+            observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                scaled_cost(7, 64),
+                false,
+            );
+            black_box(decision.policy_id);
+        }
+        let elapsed = start.elapsed().as_nanos().max(1);
+        let ns_per_op = elapsed as f64 / MEASURE_ITERS as f64;
+
+        let explain = peek_last_explainability().expect("explainability should be recorded");
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 10);
+        println!(
+            "RUNTIME_POLICY_PCC_MICROBENCH bench=memcpy_decide_observe mode=hardened iters={MEASURE_ITERS} ns_op={ns_per_op:.3}"
+        );
+    }
+
+    #[test]
+    fn compact_stage_hash_is_deterministic_and_sensitive_to_context() {
+        let h1 = compact_stage_hash(&PASSTHROUGH_ORDERING, true, false, Some(2));
+        let h2 = compact_stage_hash(&PASSTHROUGH_ORDERING, true, false, Some(2));
+        let h3 = compact_stage_hash(&PASSTHROUGH_ORDERING, true, false, Some(3));
+
+        assert_ne!(h1, 0);
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn cross_family_overlap_tracks_string_resolver_consistently() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 0);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::Resolver,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 0);
+    }
+
+    #[test]
+    fn cross_family_overlap_tracks_string_resolver_consistently_hardened() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Hardened).consistency_faults, 0);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::Resolver,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Hardened).consistency_faults, 0);
+    }
+
+    #[test]
+    fn cohomology_overlap_replay_detects_corrupted_witness() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+        let ordering = PASSTHROUGH_ORDERING;
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &ordering,
+            true,
+            true,
+            Some(1),
+        );
+        note_cross_family_overlap(&kernel, ApiFamily::Resolver, &ordering, true, true, Some(1));
+
+        let string_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let resolver_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let corrupted_witness = (string_hash ^ resolver_hash) ^ 1;
+
+        let ok = kernel.note_overlap(
+            usize::from(ApiFamily::StringMemory as u8),
+            usize::from(ApiFamily::Resolver as u8),
+            corrupted_witness,
+        );
+        assert!(!ok);
+        assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 1);
+    }
+
+    #[test]
+    fn cohomology_overlap_replay_detects_corrupted_witness_hardened() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let ordering = PASSTHROUGH_ORDERING;
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &ordering,
+            true,
+            true,
+            Some(1),
+        );
+        note_cross_family_overlap(&kernel, ApiFamily::Resolver, &ordering, true, true, Some(1));
+
+        let string_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let resolver_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let corrupted_witness = (string_hash ^ resolver_hash) ^ 1;
+
+        let ok = kernel.note_overlap(
+            usize::from(ApiFamily::StringMemory as u8),
+            usize::from(ApiFamily::Resolver as u8),
+            corrupted_witness,
+        );
+        assert!(!ok);
+        assert_eq!(kernel.snapshot(SafetyLevel::Hardened).consistency_faults, 1);
+    }
+
+    #[test]
+    fn runtime_kernel_snapshot_wrapper_exposes_live_decision_state() {
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let baseline_decisions = runtime_kernel_snapshot(mode())
+            .map(|snapshot| snapshot.decisions)
+            .unwrap_or(0);
+
+        const MAX_ATTEMPTS: usize = 256;
+        for i in 0..MAX_ATTEMPTS {
+            let (_, decision) = decide(
+                ApiFamily::Allocator,
+                0xfeed_cafeusize.wrapping_add(i.wrapping_mul(32)),
+                96 + (i % 7),
+                true,
+                false,
+                7,
+            );
+            observe(ApiFamily::Allocator, decision.profile, 12, false);
+
+            let snapshot = runtime_kernel_snapshot(mode())
+                .expect("runtime kernel snapshot should be available after decide/observe");
+            if snapshot.decisions > baseline_decisions {
+                assert!(snapshot.schema_version > 0);
+                return;
+            }
+        }
+        let final_decisions = runtime_kernel_snapshot(mode())
+            .map(|snapshot| snapshot.decisions)
+            .unwrap_or(baseline_decisions);
+        assert!(
+            final_decisions > baseline_decisions,
+            "runtime kernel snapshot did not advance decisions within {MAX_ATTEMPTS} deterministic attempts"
+        );
+    }
+
+    #[test]
+    fn runtime_evidence_contract_wrapper_and_cards_export_are_available() {
+        let emitted_seqno = drive_decisions_until_evidence(ApiFamily::StringMemory, 0xabc0, 32);
+
+        let evidence = runtime_evidence_contract_snapshot()
+            .expect("evidence contract snapshot should be available");
+        assert!(evidence.evidence_seqno >= emitted_seqno);
+
+        let cards =
+            export_runtime_decision_cards_json().expect("decision-card export should be available");
+        assert!(cards.contains("\"schema\":\"decision_cards.v1\""));
+        assert!(cards.contains("\"count\":"));
+    }
+
+    #[test]
+    fn runtime_math_log_wrapper_includes_required_traceability_fields() {
+        const MAX_ATTEMPTS: usize = 8;
+        let mut jsonl = String::new();
+        for attempt in 0..MAX_ATTEMPTS {
+            let _ = drive_decisions_until_evidence(
+                ApiFamily::Resolver,
+                0x4242usize.wrapping_add(attempt * 0x100),
+                128 + attempt,
+            );
+            jsonl = export_runtime_math_log_jsonl(mode(), "bd-5vr.1", "runtime-policy-wrapper")
+                .expect("runtime-math jsonl export should be available");
+            if jsonl.contains("\"event\":\"runtime_decision\"") {
+                break;
+            }
+        }
+        assert!(jsonl.contains("\"event\":\"runtime_decision\""));
+        assert!(jsonl.contains("\"bead_id\":\"bd-5vr.1\""));
+        assert!(jsonl.contains("\"scenario_id\":\"runtime-policy-wrapper\""));
+    }
+
+    #[test]
+    fn try_decide_certified_string_pcc_matches_full_pcc_explainability() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _ = take_last_explainability();
+
+        let resolved =
+            try_decide_certified_string_pcc(FFI_PCC_MEMCMP_INDEX, 0x7fff_1234, 64, false, false)
+                .expect("certified memcmp fast path should succeed when runtime is ready");
+        assert_eq!(resolved, SafetyLevel::Hardened);
+
+        let explain = take_last_explainability()
+            .expect("certified string PCC fast path must record explainability");
+        assert_eq!(explain.symbol, "memcmp");
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.family, ApiFamily::StringMemory);
+        assert_eq!(explain.profile, ValidationProfile::Fast);
+        assert_eq!(explain.action, MembraneAction::Allow);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 8);
+        assert_eq!(explain.addr_hint, 0x7fff_1234);
+        assert_eq!(explain.requested_bytes, 64);
+        assert!(!explain.is_write);
+        assert!(!explain.bloom_negative);
+        assert_eq!(explain.trace_seq, explain.parent_span_seq);
+        assert!(explain.span_seq > 0);
+
+        let string_pcc_cases = [
+            (FFI_PCC_MEMCMP_INDEX, "memcmp", false, 8u32),
+            (FFI_PCC_STRLEN_INDEX, "strlen", false, 9),
+            (FFI_PCC_MEMCPY_INDEX, "memcpy", true, 10),
+            (FFI_PCC_STRCMP_INDEX, "strcmp", false, 13),
+            (FFI_PCC_STRNCMP_INDEX, "strncmp", false, 14),
+            (FFI_PCC_STRCHR_INDEX, "strchr", false, 15),
+            (FFI_PCC_STRRCHR_INDEX, "strrchr", false, 16),
+            (FFI_PCC_STRSTR_INDEX, "strstr", false, 17),
+            (FFI_PCC_MEMCHR_INDEX, "memchr", false, 18),
+            (FFI_PCC_MEMRCHR_INDEX, "memrchr", false, 19),
+            (FFI_PCC_STRNLEN_INDEX, "strnlen", false, 20),
+            (FFI_PCC_MEMMOVE_INDEX, "memmove", true, 21),
+            (FFI_PCC_MEMSET_INDEX, "memset", true, 22),
+            (FFI_PCC_STRCPY_INDEX, "strcpy", true, 23),
+            (FFI_PCC_STRNCPY_INDEX, "strncpy", true, 24),
+        ];
+        for (pcc_index, expected_symbol, is_write, policy_offset) in string_pcc_cases {
+            let mode = try_decide_certified_string_pcc(pcc_index, 0x7fff_4321, 32, is_write, false);
+            assert!(
+                mode.is_some(),
+                "{expected_symbol} PCC fast path should succeed"
+            );
+            assert_eq!(mode.unwrap(), SafetyLevel::Hardened);
+            let explain = take_last_explainability();
+            assert!(
+                explain.is_some(),
+                "{expected_symbol} must record explainability"
+            );
+            let explain = explain.unwrap();
+            assert_eq!(explain.symbol, expected_symbol);
+            assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+            assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + policy_offset);
+            assert_eq!(explain.is_write, is_write);
+        }
+    }
+
+    #[test]
+    fn hot_hardened_decision_pack_roundtrip_and_escalation_cadence_work() {
+        let _lock = runtime_policy_test_lock();
+        let cases = [
+            (
+                ValidationProfile::Fast,
+                MembraneAction::Allow,
+                20_000u32,
+                7u32,
+                11u64,
+            ),
+            (
+                ValidationProfile::Full,
+                MembraneAction::FullValidate,
+                180_000,
+                42,
+                99,
+            ),
+            (
+                ValidationProfile::Full,
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+                850_000,
+                1024,
+                512,
+            ),
+            (
+                ValidationProfile::Full,
+                MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+                920_000,
+                2048,
+                1023,
+            ),
+            (
+                ValidationProfile::Full,
+                MembraneAction::Deny,
+                1_000_000,
+                33,
+                77,
+            ),
+        ];
+        for (profile, action, risk_ppm, policy_id, seq) in cases {
+            let orig = RuntimeDecision {
+                profile,
+                action,
+                policy_id,
+                risk_upper_bound_ppm: risk_ppm,
+                evidence_seqno: seq,
+            };
+            let unpacked = unpack_hot_hardened_decision(pack_hot_hardened_decision(orig));
+            assert_eq!(unpacked.profile, profile);
+            assert_eq!(unpacked.action, action);
+            assert_eq!(unpacked.risk_upper_bound_ppm, risk_ppm);
+            assert_eq!(unpacked.policy_id, policy_id);
+            assert_eq!(unpacked.evidence_seqno, seq);
+        }
+
+        // Benign cold risk (< 750_000 ppm) must NOT tighten warm TLS cadence.
+        update_cached_hot_hardened_decision(
+            ApiFamily::StringMemory,
+            RuntimeDecision {
+                profile: ValidationProfile::Full,
+                action: MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+                policy_id: 9,
+                risk_upper_bound_ppm: 155_000,
+                evidence_seqno: 1,
+            },
+        );
+        assert!(!is_family_escalated(ApiFamily::StringMemory));
+        assert_eq!(
+            frankenlibc_membrane::tls_cache::warm_integrity_cadence_mask(),
+            frankenlibc_membrane::tls_cache::DEFAULT_WARM_INTEGRITY_CADENCE_MASK
+        );
+
+        // Adverse conformal risk (>= 750_000 ppm) MUST escalate and tighten cadence to 0 (1-in-1).
+        update_cached_hot_hardened_decision(
+            ApiFamily::StringMemory,
+            RuntimeDecision {
+                profile: ValidationProfile::Full,
+                action: MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+                policy_id: 9,
+                risk_upper_bound_ppm: 900_000,
+                evidence_seqno: 2,
+            },
+        );
+        assert!(is_family_escalated(ApiFamily::StringMemory));
+        assert_eq!(
+            frankenlibc_membrane::tls_cache::warm_integrity_cadence_mask(),
+            frankenlibc_membrane::tls_cache::ESCALATED_WARM_INTEGRITY_CADENCE_MASK
+        );
+
+        // Clearing StringMemory restores default 1-in-16 cadence.
+        update_cached_hot_hardened_decision(
+            ApiFamily::StringMemory,
+            RuntimeDecision {
+                profile: ValidationProfile::Fast,
+                action: MembraneAction::Allow,
+                policy_id: 0,
+                risk_upper_bound_ppm: 20_000,
+                evidence_seqno: 3,
+            },
+        );
+        assert!(!is_family_escalated(ApiFamily::StringMemory));
+        assert_eq!(
+            frankenlibc_membrane::tls_cache::warm_integrity_cadence_mask(),
+            frankenlibc_membrane::tls_cache::DEFAULT_WARM_INTEGRITY_CADENCE_MASK
+        );
+
+        assert_eq!(
+            unsafe { read_route_counts_snapshot(std::ptr::null_mut()) },
+            -1
+        );
+        let mut snap = RuntimeRouteCountsSnapshot::default();
+        assert_eq!(unsafe { read_route_counts_snapshot(&mut snap) }, 1);
+        assert_eq!(
+            snap.warm_integrity_cadence_mask,
+            frankenlibc_membrane::tls_cache::DEFAULT_WARM_INTEGRITY_CADENCE_MASK
+        );
+    }
+}

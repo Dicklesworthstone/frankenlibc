@@ -244,8 +244,27 @@ fn allocate_entries() -> Option<Box<[CacheEntry; CACHE_SIZE]>> {
 
 const HIT_METRICS_FLUSH_BATCH: u64 = 4096;
 
-/// Cadence mask (`1-in-16` warm hits) for bounded warm-`TLS_CACHE` header/canary re-verification.
-const WARM_INTEGRITY_CADENCE_MASK: u32 = 15;
+/// Default cadence mask (`1-in-16` warm hits) for bounded warm-`TLS_CACHE` header/canary re-verification.
+pub const DEFAULT_WARM_INTEGRITY_CADENCE_MASK: u32 = 15;
+/// Escalated cadence mask (`1-in-1` = every warm hit) activated when `RuntimeMathKernel`
+/// elevates `StringMemory`/`Allocator`/`PointerValidation` risk into `FullValidate`/`Repair`.
+pub const ESCALATED_WARM_INTEGRITY_CADENCE_MASK: u32 = 0;
+
+static ADAPTIVE_WARM_INTEGRITY_MASK: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
+
+/// Read the active warm-`TLS_CACHE` integrity verification cadence mask (`15` = 1-in-16, `0` = 1-in-1).
+#[inline(always)]
+#[must_use]
+pub fn warm_integrity_cadence_mask() -> u32 {
+    ADAPTIVE_WARM_INTEGRITY_MASK.load(Ordering::Relaxed)
+}
+
+/// Update the warm-`TLS_CACHE` integrity verification cadence mask from adaptive runtime-math policy.
+#[inline]
+pub fn set_warm_integrity_cadence_mask(mask: u32) {
+    ADAPTIVE_WARM_INTEGRITY_MASK.store(mask, Ordering::Relaxed);
+}
 
 /// Near-tail write threshold in bytes: any hardened write whose destination has
 /// `remaining <= WARM_WRITE_TAIL_THRESHOLD` (or `write_len >= remaining`) re-verifies
@@ -510,7 +529,7 @@ impl TlsValidationCache {
         {
             self.cadence_counter = self.cadence_counter.wrapping_add(1);
             let near_tail = is_write && rem.saturating_sub(write_len) <= WARM_WRITE_TAIL_THRESHOLD;
-            if near_tail || (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0 {
+            if near_tail || (self.cadence_counter & warm_integrity_cadence_mask()) == 0 {
                 return self.verify_entry_remaining_slow(entry, rem, arena);
             }
         }
@@ -536,7 +555,7 @@ impl TlsValidationCache {
                         && self.ranges[idx].has_integrity
                     {
                         self.cadence_counter = self.cadence_counter.wrapping_add(1);
-                        if (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0
+                        if (self.cadence_counter & warm_integrity_cadence_mask()) == 0
                             && !self.verify_range_validation_slow(idx, arena_ref)
                         {
                             return None;
@@ -599,7 +618,7 @@ impl TlsValidationCache {
                 && entry.has_integrity
             {
                 self.cadence_counter = self.cadence_counter.wrapping_add(1);
-                if (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0
+                if (self.cadence_counter & warm_integrity_cadence_mask()) == 0
                     && !self.verify_entry_validation_slow(entry, arena_ref)
                 {
                     self.misses += 1;
@@ -660,7 +679,7 @@ impl TlsValidationCache {
                 && entry.has_integrity
             {
                 self.cadence_counter = self.cadence_counter.wrapping_add(1);
-                if (self.cadence_counter & WARM_INTEGRITY_CADENCE_MASK) == 0
+                if (self.cadence_counter & warm_integrity_cadence_mask()) == 0
                     && !self.verify_entry_validation_slow(entry, arena_ref)
                 {
                     return None;
@@ -741,7 +760,7 @@ impl TlsValidationCache {
                         self.cadence_counter = c;
                         let near_tail =
                             IS_WRITE && rem.saturating_sub(write_len) <= WARM_WRITE_TAIL_THRESHOLD;
-                        if near_tail || (c & WARM_INTEGRITY_CADENCE_MASK) == 0 {
+                        if near_tail || (c & warm_integrity_cadence_mask()) == 0 {
                             return self.verify_range_remaining_slow(idx, rem, arena_ref);
                         }
                     }
@@ -858,7 +877,7 @@ impl TlsValidationCache {
                         stepped_cadence = Some(c);
                         let near_tail = LHS_IS_WRITE
                             && rem.saturating_sub(write_len) <= WARM_WRITE_TAIL_THRESHOLD;
-                        if near_tail || (c & WARM_INTEGRITY_CADENCE_MASK) == 0 {
+                        if near_tail || (c & warm_integrity_cadence_mask()) == 0 {
                             self.verify_range_remaining_slow(idx, rem, arena_ref)
                         } else {
                             CachedRemaining(rem)
@@ -903,8 +922,13 @@ impl TlsValidationCache {
                                 self.cadence_counter = next;
                                 next
                             });
-                            let phase = if stepped_cadence.is_some() { 8 } else { 0 };
-                            if (c & WARM_INTEGRITY_CADENCE_MASK) == phase {
+                            let mask = warm_integrity_cadence_mask();
+                            let phase = if stepped_cadence.is_some() {
+                                8 & mask
+                            } else {
+                                0
+                            };
+                            if (c & mask) == phase {
                                 self.verify_range_remaining_slow(idx, rem, arena_ref)
                             } else {
                                 CachedRemaining(rem)
@@ -2181,6 +2205,81 @@ mod tests {
 
         // Restore header before freeing.
         unsafe { *hdr_ptr = saved };
+        drop(epoch_guard);
+        let (_, drained) = arena.free(alloc.ptr);
+        unsafe { crate::arena::AllocationArena::deallocate_drained(&drained) };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn adaptive_warm_integrity_cadence_zero_catches_every_corrupted_read() {
+        set_warm_integrity_cadence_mask(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
+        let arena = crate::arena::AllocationArena::new();
+        let page_oracle = crate::page_oracle::PageOracle::new();
+
+        let alloc = arena.allocate(256).expect("allocate");
+        page_oracle.insert(alloc.raw_base, alloc.total_size);
+        let slot = arena.lookup(alloc.user_base).expect("slot");
+        let fp = crate::fingerprint::AllocationFingerprint::compute(
+            slot.user_base,
+            slot.user_size as u64,
+            slot.generation,
+        );
+        let canary = fp.canary_for(slot.user_base);
+
+        let epoch_guard = lock_tls_cache_epoch_for_tests();
+        let epochs = snapshot_shard_epochs();
+        let mut cache = TlsValidationCache::new();
+        cache.insert_with_integrity(
+            slot.user_base,
+            CachedValidation {
+                user_base: slot.user_base,
+                user_size: slot.user_size,
+                generation: slot.generation,
+                state: slot.state,
+            },
+            slot.slot_idx,
+            fp.hash,
+            canary.as_u64(),
+            &epochs,
+        );
+
+        // Advance cadence_counter to 1 (non-multiple of 16).
+        assert_eq!(
+            cache.lookup_hit_remaining_with_oracle(
+                slot.user_base,
+                &page_oracle,
+                Some((&arena, false, 0)),
+            ),
+            CachedRemaining(256)
+        );
+
+        // Corrupt trailing canary byte.
+        let canary_ptr = (slot.user_base + slot.user_size) as *mut u8;
+        let saved = unsafe { *canary_ptr };
+        unsafe { *canary_ptr = saved ^ 0xFF };
+
+        // Under default mask (15), tick #2 skips slow verification and returns warm 256.
+        assert_eq!(
+            cache.lookup_hit_remaining_with_oracle(
+                slot.user_base,
+                &page_oracle,
+                Some((&arena, false, 0)),
+            ),
+            CachedRemaining(256)
+        );
+
+        // Tighten adaptive mask to 0 (1-in-1): very next non-multiple-of-16 read catches corruption!
+        set_warm_integrity_cadence_mask(ESCALATED_WARM_INTEGRITY_CADENCE_MASK);
+        let res = cache.lookup_hit_remaining_with_oracle(
+            slot.user_base,
+            &page_oracle,
+            Some((&arena, false, 0)),
+        );
+        assert_eq!(res, CachedRemaining::CORRUPTED);
+        set_warm_integrity_cadence_mask(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
+
+        unsafe { *canary_ptr = saved };
         drop(epoch_guard);
         let (_, drained) = arena.free(alloc.ptr);
         unsafe { crate::arena::AllocationArena::deallocate_drained(&drained) };

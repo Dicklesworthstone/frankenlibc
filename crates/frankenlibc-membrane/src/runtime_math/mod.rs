@@ -459,11 +459,13 @@ fn emit_upgrade_to_safe_variant_log(
     }
     use core::fmt::Write as _;
     let seq = crate::heal::next_runtime_log_sequence();
+    let pid = crate::heal::runtime_log_process_id();
     let mut buf = crate::heal::RuntimeLogBuffer::new();
     if write!(
         &mut buf,
-        "{{\"event\":\"runtime_math_upgrade_to_safe_variant\",\"seq\":{seq},\
-\"family\":\"{}\",\"action\":\"Repair(UpgradeToSafeVariant)\",\"risk_ppm\":{risk_ppm},\
+        "{{\"schema_version\":\"1.0\",\"timestamp\":\"1970-01-01T00:00:00Z\",\"pid\":{pid},\
+\"event\":\"runtime_math_upgrade_to_safe_variant\",\"seq\":{seq},\
+\"family\":\"{}\",\"action\":\"UpgradeToSafeVariant\",\"membrane_action\":\"Repair(UpgradeToSafeVariant)\",\"risk_ppm\":{risk_ppm},\
 \"full_trigger_ppm\":{full_trigger_ppm},\"repair_trigger_ppm\":{repair_trigger_ppm},\
 \"evidence_seqno\":{evidence_seqno}}}",
         family.as_str()
@@ -492,10 +494,12 @@ fn emit_quarantine_depth_transition_log(
     }
     use core::fmt::Write as _;
     let seq = crate::heal::next_runtime_log_sequence();
+    let pid = crate::heal::runtime_log_process_id();
     let mut buf = crate::heal::RuntimeLogBuffer::new();
     if write!(
         &mut buf,
-        "{{\"event\":\"quarantine_depth_transition\",\"seq\":{seq},\
+        "{{\"schema_version\":\"1.0\",\"timestamp\":\"1970-01-01T00:00:00Z\",\"pid\":{pid},\
+\"event\":\"quarantine_depth_transition\",\"seq\":{seq},\
 \"from_depth\":{from_depth},\"to_depth\":{to_depth},\"contention\":{contention},\
 \"adverse_ppm\":{adverse_ppm},\"escape_rate_ppm\":{escape_rate_ppm},\
 \"epochs\":{epochs},\"total_hits\":{total_hits}}}"
@@ -2603,7 +2607,8 @@ impl RuntimeMathKernel {
             if matches!(
                 decision.action,
                 MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
-            ) {
+            ) && self.risk.upper_bound_ppm(ctx.family) >= limits.repair_trigger_ppm
+            {
                 emit_upgrade_to_safe_variant_log(
                     ctx.family,
                     risk_upper_bound_ppm,

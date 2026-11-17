@@ -1262,7 +1262,7 @@ fn e2e_hardened_upgrade_to_safe_variant_and_quarantine_adaptation_emit_jsonl() {
     let rows = parse_jsonl_rows(&log_text);
     let has_upgrade = rows.iter().any(|row| {
         row.get("event").and_then(Value::as_str) == Some("runtime_math_upgrade_to_safe_variant")
-            && row.get("action").and_then(Value::as_str) == Some("Repair(UpgradeToSafeVariant)")
+            && row.get("action").and_then(Value::as_str) == Some("UpgradeToSafeVariant")
             && row.get("risk_ppm").and_then(Value::as_u64).is_some()
             && row
                 .get("repair_trigger_ppm")

@@ -12,7 +12,7 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{check_ownership, known_remaining, known_remaining_for_decision};
 use crate::runtime_policy;
 
 // Share the file-vector importer rather than maintaining a second iovec validator.
@@ -25,6 +25,15 @@ mod sockaddr_snapshot;
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+fn tracked_region_fits_for_decision(
+    ptr: *const c_void,
+    len: usize,
+    decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
+) -> bool {
+    known_remaining_for_decision(ptr as usize, decision).is_none_or(|remaining| len <= remaining)
 }
 
 #[inline]
@@ -288,8 +297,14 @@ pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flag
         return -1;
     }
 
+    let addr_hint = if buf.is_null() {
+        sockfd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
     let (_, decision) =
-        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, false, true, 0);
+        runtime_policy::decide(ApiFamily::Socket, addr_hint, len, false, bloom_negative, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -301,7 +316,7 @@ pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flag
         return -1;
     }
 
-    if (buf.is_null() && len > 0) || !tracked_region_fits(buf, len) {
+    if (buf.is_null() && len > 0) || !tracked_region_fits_for_decision(buf, len, &decision) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -349,8 +364,14 @@ pub(crate) unsafe fn recv_cp(sockfd: c_int, buf: *mut c_void, len: usize, flags:
         return -1;
     }
 
+    let addr_hint = if buf.is_null() {
+        sockfd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
     let (_, decision) =
-        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
+        runtime_policy::decide(ApiFamily::Socket, addr_hint, len, true, bloom_negative, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -362,7 +383,9 @@ pub(crate) unsafe fn recv_cp(sockfd: c_int, buf: *mut c_void, len: usize, flags:
         return -1;
     }
 
-    if (buf.is_null() && len > 0) || !tracked_region_fits(buf.cast_const(), len) {
+    if (buf.is_null() && len > 0)
+        || !tracked_region_fits_for_decision(buf.cast_const(), len, &decision)
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -419,8 +442,14 @@ pub(crate) unsafe fn sendto_cp(
     dest_addr: *const libc::sockaddr,
     addrlen: u32,
 ) -> isize {
+    let addr_hint = if buf.is_null() {
+        sockfd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
     let (_, decision) =
-        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, false, true, 0);
+        runtime_policy::decide(ApiFamily::Socket, addr_hint, len, false, bloom_negative, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -433,9 +462,14 @@ pub(crate) unsafe fn sendto_cp(
     }
 
     if (buf.is_null() && len > 0)
-        || !tracked_region_fits(buf, len)
+        || !tracked_region_fits_for_decision(buf, len, &decision)
         || (addrlen > 0
-            && (dest_addr.is_null() || !tracked_region_fits(dest_addr.cast(), addrlen as usize)))
+            && (dest_addr.is_null()
+                || !tracked_region_fits_for_decision(
+                    dest_addr.cast(),
+                    addrlen as usize,
+                    &decision,
+                )))
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -495,8 +529,14 @@ pub(crate) unsafe fn recvfrom_cp(
     src_addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> isize {
+    let addr_hint = if buf.is_null() {
+        sockfd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
     let (mode, decision) =
-        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
+        runtime_policy::decide(ApiFamily::Socket, addr_hint, len, true, bloom_negative, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -508,7 +548,9 @@ pub(crate) unsafe fn recvfrom_cp(
         return -1;
     }
 
-    if (buf.is_null() && len > 0) || !tracked_region_fits(buf.cast_const(), len) {
+    if (buf.is_null() && len > 0)
+        || !tracked_region_fits_for_decision(buf.cast_const(), len, &decision)
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
