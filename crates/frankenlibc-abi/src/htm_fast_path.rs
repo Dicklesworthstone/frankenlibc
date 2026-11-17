@@ -67,13 +67,18 @@ static HTM_EPOCH_NS: AtomicU64 = AtomicU64::new(0);
 /// Swap the deterministic HTM test mode.
 #[doc(hidden)]
 pub fn htm_swap_test_mode_for_tests(mode: HtmTestMode) -> HtmTestMode {
-    decode_test_mode(HTM_TEST_MODE.swap(mode as u8, Ordering::AcqRel))
+    let prev = decode_test_mode(HTM_TEST_MODE.swap(mode as u8, Ordering::AcqRel));
+    #[cfg(not(test))]
+    crate::malloc_abi::refresh_strict_hot_mode();
+    prev
 }
 
 /// Restore the deterministic HTM test mode after a test override.
 #[doc(hidden)]
 pub fn htm_restore_test_mode_for_tests(previous: HtmTestMode) {
     HTM_TEST_MODE.store(previous as u8, Ordering::Release);
+    #[cfg(not(test))]
+    crate::malloc_abi::refresh_strict_hot_mode();
 }
 
 /// Swap the synthetic abort code used by [`HtmTestMode::ForceAbort`].

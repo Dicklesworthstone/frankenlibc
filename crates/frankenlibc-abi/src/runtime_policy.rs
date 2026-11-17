@@ -1377,16 +1377,22 @@ pub(crate) fn mode() -> SafetyLevel {
     let result = match parse_mode_from_environ() {
         Ok(Some(level)) => {
             MODE_STATE.store(mode_to_u8(level), AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
             store_thread_local_mode_cache(level);
             level
         }
         Ok(None) => {
             MODE_STATE.store(MODE_STRICT, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
             store_thread_local_mode_cache(SafetyLevel::Strict);
             SafetyLevel::Strict
         }
         Err(_) => {
             MODE_STATE.store(MODE_UNRESOLVED, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
             SafetyLevel::Strict
         }
     };
@@ -2029,6 +2035,8 @@ impl Drop for PolicyReentryGuard {
         .unwrap_or(false);
         if decremented_to_zero {
             ACTIVE_POLICY_REENTRY_CONTEXTS.fetch_sub(1, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::leave_alloc_slow_gate();
         }
     }
 }
@@ -2041,6 +2049,8 @@ fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
             None
         } else {
             *depth = current + 1;
+            #[cfg(not(test))]
+            crate::malloc_abi::enter_alloc_slow_gate();
             ACTIVE_POLICY_REENTRY_CONTEXTS.fetch_add(1, AtomicOrdering::Release);
             Some(PolicyReentryGuard)
         }
@@ -3018,6 +3028,8 @@ pub(crate) fn try_signal_runtime_ready(
         Ok(_) => {
             let _ = ensure_ffi_pcc_verified();
             RUNTIME_READY.store(RUNTIME_STATE_ACTIVE, AtomicOrdering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
             MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
             push_mode_event("info", "runtime_ready_armed", mode(), None);
             RuntimeReadyTransition::Armed

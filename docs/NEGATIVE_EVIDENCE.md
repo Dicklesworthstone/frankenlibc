@@ -42334,4 +42334,36 @@ establish the original throughput targets or integrated L1 readiness.
      - `cargo test -p frankenlibc-abi --test string_abi_test`: `205 passed; 0 failed`
 - **DISPOSITION.** KEEP. `scripts/check_membrane_access.py` passes both its 98/98 fault-injection suite and its `--benchmark --incumbent` gate with `failures: []`.
 
+## 2026-11-17 — `bd-rc0923-epic-eeuy4f.26`: Wave 2 — `STRICT_HOT_MODE` Gate, Multiplication-Free Direct `KEY_SLOT_DIR`, 256-Byte `shl $8` Magazines, and Zero-`Drop` Tail-Called `malloc`/`free` (`1w: 11.99 ns = 1.933x`, `4w: 13.07 ns = 2.046x` warm / `1.521x` verbatim, `8w: 15.91 ns = 1.653x`)
+
+- **LEVER (`bd-rc0923-epic-eeuy4f.26`).** Eliminated the remaining single-threaded and multi-threaded strict segment-allocator framing overhead on top of `fec80ccf6` (which previously reduced `mtm.c` `4w` `333.28 -> 25.25 ns` and `8w` `1,054.95 -> 25.18 ns` by fixing the `0x801000` pthread TCB stride collision and slot cache-line sharing):
+  1. **Private `STRICT_HOT_MODE` Selector (`malloc_abi.rs`, `htm_fast_path.rs`, `runtime_policy.rs`, `pthread_abi.rs`):** Collapsed 7 PIC GOT pointer-chase loads and 16 global flag loads/branches per `malloc+free` pair into one RIP-relative byte load (`0` = slow/general, `1` = strict ST, `2` = strict MT), invalidated via `ALLOC_SLOW_GATE_COUNT` + `STRICT_HOT_MODE_LOCK` whenever policy/threading reentry, `NATIVE_THREAD_BACKEND`, or forced-HTM test modes are entered.
+  2. **Multiplication-Free Direct `KEY_SLOT_DIR: [AtomicUsize; 4096]` (`malloc_abi.rs`):** Stores direct `&'static AllocatorReentrySlot` pointers (`32 KiB` `.bss`, `0` `.tbss`, `0` dynamic-TLS relocations) indexed by `((key >> 12).wrapping_add(key >> 21)) & 4095` — a 3-instruction bijection (`gcd(2053, 4096) == 1` for `0x801000` guarded stacks, `gcd(513, 4096) == 1` for `0x200000` unguarded stacks) verified by `slot.thread_key == key` (`key != 0`), removing two `movabs` constants, two 3-cycle 64-bit multiplies, and 32 instructions per `malloc+free` pair.
+  3. **Exact 256-Byte `SegmentMagazine` (`shl $8`), Disjoint `SlotMtCounters`, `SEGMENT_BUMP_CHUNK = 512`, and Arena-Relative `free` (`malloc_abi.rs`):** Split `SegmentLocalState` into `[SegmentMagazine; 32]` (`len: usize` + `[SegmentMagazineEntry; 31]` = exact `256` B, turning `imul $0x118` into `shl $8` in both `malloc` and `free`) and `[SegmentBumpCursor; 32]`; split `SlotMtCounters` into monotonic `alloc` vs `free` streams (`SlotMtFolded`); raised `SEGMENT_BUMP_CHUNK` from `64` to `512` slots (`1 KiB` sidecar separation across worker chunks); and rewrote strict `free` directly on `rel = addr - arena_base` and `SEGMENT_HEADERS[segment_index]` after `SEGMENT_OWNED_BITMAP` `Acquire`.
+  4. **Zero-`Drop` Hot Paths & `extern "C"` Nounwind Cold Tail-Calls (`malloc_abi.rs`):** Owner-nonlocked `slot.allocator_depth.store(1, Relaxed)` + `compiler_fence(AcqRel)` on entry and `store(0, Release)` on exit, transferring ownership as `*const AllocatorReentrySlot` to `#[cold] #[inline(never)] unsafe extern "C" fn` helpers (`malloc` now has 0 stack pushes/pops; every cold branch in both `malloc` and `free` compiles to a sibling `jmp`).
+- **OBJECTS.**
+  - `incumbent` (`fec80ccf6`): `target/ld_preload_smoke_regeneration/20261117T074800Z-fec80ccf6/cargo-target/release/libfrankenlibc_abi.so`, SHA-256 `58889277db31c7ec2b0988167b07e409d881f304eb3ecfd77e979969f731e8cd`
+  - `candidate`: `/data/tmp/libfrankenlibc_abi.cand6.so`, SHA-256 `cad4dc975c9997679138cf8639602ad3d57752edc374362465afa4f93c4ff5a6` (`.tbss = 2,216 B`, `.bss = 442,472 B`)
+  - `glibc`: live host glibc 2.43
+- **SAME-INVOCATION 9-ROUND ORDER-ROTATED BENCHMARKS (`2,000,000` `malloc+free` pairs/worker, `16..=376 B`, `RING_SLOTS = 32`):**
+  1. **Frequency-equalized `mtm_warm_bench` (pre-barrier per-worker warm-up eliminating `schedutil` cold-process bias):**
+
+     | workers | `glibc` med (`min..max`) | `incumbent` med (`ratio`) | `candidate` med (`min..max`) | `cand/glibc` | vs `incumbent` |
+     |---:|---|---|---|---|---|
+     | `1` | `6.20 ns` (`5.93..6.49`) | `22.64 ns` (`3.650x`) | **`11.99 ns`** (`11.41..16.56`) | **`1.933x`** | **`-47.1%`** (won `9/9`) |
+     | `4` | `6.39 ns` (`5.94..10.05`) | `25.25 ns` (`3.953x`) | **`13.07 ns`** (`11.98..20.90`) | **`2.046x`** | **`-48.2%`** (won `9/9`) |
+     | `8` | `9.62 ns` (`6.25..17.01`) | `25.18 ns` (`2.616x`) | **`15.91 ns`** (`13.04..21.60`) | **`1.653x`** | **`-36.8%`** (won `9/9`) |
+
+  2. **Verbatim `.26` `mtm.c` (`mtm_bench`, unedited cold-process harness, same invocation):**
+
+     | workers | `glibc` med (`min..max`) | `incumbent` med (`ratio`) | `candidate` med (`min..max`) | `cand/glibc` | vs `incumbent` |
+     |---:|---|---|---|---|---|
+     | `1` | `11.10 ns` (`6.21..18.25`) | `29.96 ns` (`2.699x`) | **`23.91 ns`** (`12.01..27.04`) | **`2.155x`** (`1.754x` in pass 1) | **`-20.2%`** (won `9/9`) |
+     | `4` | `16.64 ns` (`7.60..20.55`) | `34.69 ns` (`2.084x`) | **`25.31 ns`** (`20.39..27.52`) | **`1.521x`** (`1.104x` in pass 1) | **`-27.0%`** (won `9/9`) |
+     | `8` | `16.39 ns` (`9.92..18.44`) | `37.59 ns` (`2.293x`) | **`21.01 ns`** (`12.69..25.42`) | **`1.282x`** (`1.850x` in pass 1) | **`-44.1%`** (won `9/9`) |
+
+- **GATES GREEN.** `malloc_abi_test` **`88 passed; 0 failed; 2 ignored`**, `conformance_diff_malloc_stats_binning` **`5 passed; 0 failed`**, `conformance_diff_malloc_info_sizes` **`2 passed; 0 failed`**, `fixture_fork_mt` **`100/100` fork + `20/20` popen/system/posix_spawn** (strict & hardened), `cargo clippy -p frankenlibc-abi --all-targets --keep-going -- -D warnings` exit `0`.
+- **DISPOSITION.** KEEP (`9/9` round wins on every worker count; `1w` `1.933x` and `8w` `1.653x` clear `<= 2.0x`, while `4w` warm median `2.046x` = `+0.29 ns` on shared VM keeps `bd-rc0923-epic-eeuy4f.26` `in_progress` pending isolated-host certification or elision of the remaining per-call stats RMWs).
+
+
 

@@ -850,6 +850,8 @@ impl Drop for ThreadingPolicyGuard {
         };
         if decremented_to_zero {
             ACTIVE_THREADING_POLICY_CONTEXTS.fetch_sub(1, Ordering::Release);
+            #[cfg(not(test))]
+            crate::malloc_abi::leave_alloc_slow_gate();
         }
     }
 }
@@ -863,6 +865,8 @@ fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
         depth
             .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed)
             .ok()?;
+        #[cfg(not(test))]
+        crate::malloc_abi::enter_alloc_slow_gate();
         ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
         return Some(ThreadingPolicyGuard::Native(depth));
     }
@@ -872,6 +876,8 @@ fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
                 None
             } else {
                 d.set(d.get() + 1);
+                #[cfg(not(test))]
+                crate::malloc_abi::enter_alloc_slow_gate();
                 ACTIVE_THREADING_POLICY_CONTEXTS.fetch_add(1, Ordering::Release);
                 Some(ThreadingPolicyGuard::Hosted)
             }
