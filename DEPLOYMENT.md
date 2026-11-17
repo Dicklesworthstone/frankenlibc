@@ -5,7 +5,7 @@ FrankenLibC currently ships as an interposition-first artifact, not as a full st
 Current deployment status:
 
 - Shipping artifact: `target/release/libfrankenlibc_abi.so`
-- Current declared level: `L0` (interposition over host glibc). `L1` hardened-interpose promotion remains blocked by its zero-stub, workload and performance obligations.
+- Current declared level: `L1` (hardened interposition over host glibc; host glibc remains required, and `L2`/`L3` standalone replacement remains planned).
 - Hardened repairs apply to explicitly wired paths; strict compatibility paths frequently bypass full membrane validation.
 - Planned standalone artifact: `libfrankenlibc_replace.so` is not shipped yet (L2/L3)
 
@@ -16,7 +16,7 @@ Canonical source artifacts for deployment claims:
 - [`tests/conformance/runtime_env_inventory.v1.json`](tests/conformance/runtime_env_inventory.v1.json)
 - [`tests/conformance/ld_preload_smoke_summary.v1.json`](tests/conformance/ld_preload_smoke_summary.v1.json)
 
-The committed smoke summary (`tests/conformance/ld_preload_smoke_summary.v1.json`) is run `20261111T134243Z-2744068` at source commit `44a61541…` (`348 pass / 0 fail / 4 optional skips / 0 xfail`: `175` strict passes and `173` hardened passes), not an automatic qualification of arbitrary later commits. Read each report's source, artifact identity and blocked obligations before using it to justify deployment. A passing declaration/schema checker does not itself promote the replacement level.
+The committed smoke summary (`tests/conformance/ld_preload_smoke_summary.v1.json`) is run `20261117T074800Z-fec80ccf6` at source commit `fec80ccf…` (`360 pass / 0 fail / 4 optional skips / 0 xfail`: `178` strict passes and `182` hardened passes), not an automatic qualification of arbitrary later commits. Read each report's source, artifact identity and blocked obligations before using it to justify deployment. A passing declaration/schema checker does not itself promote the replacement level.
 
 ## Supported Deployment Model
 

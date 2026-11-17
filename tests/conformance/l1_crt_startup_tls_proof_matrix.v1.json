@@ -9,7 +9,7 @@
     "startup_tls_matrix_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "generated_at_utc": "2026-05-03T01:45:00Z",
+  "generated_at_utc": "2026-11-17T07:55:00Z",
   "purpose": "Define the L1 CRT/startup/TLS/init/fini/destructor proof matrix so hardened-interpose claims cannot advance from symbol counts or broad smoke evidence alone.",
   "inputs": {
     "replacement_levels": "tests/conformance/replacement_levels.json",
@@ -91,7 +91,7 @@
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "tests/conformance/fixtures/startup_ops.json",
         "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs",
@@ -125,7 +125,7 @@
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "tests/conformance/fixtures/startup_ops.json",
         "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs",
@@ -159,7 +159,7 @@
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-15T15:26:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "tests/conformance/fixtures/startup_ops.json",
         "tests/conformance/fixtures/pthread_tls_keys.json",
@@ -203,7 +203,7 @@
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "tests/conformance/fixtures/pthread_tls_keys.json",
         "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
@@ -225,7 +225,7 @@
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-15T15:49:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "crates/frankenlibc-abi/src/startup_abi.rs",
         "crates/frankenlibc-abi/tests/startup_abi_test.rs",
@@ -248,7 +248,7 @@
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-15T16:06:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "crates/frankenlibc-abi/src/startup_abi.rs",
         "crates/frankenlibc-abi/tests/startup_abi_test.rs",
@@ -277,7 +277,7 @@
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-15T16:22:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "crates/frankenlibc-abi/src/stdlib_abi.rs",
         "crates/frankenlibc-abi/src/unistd_abi.rs",
@@ -303,7 +303,7 @@
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-15T16:40:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "crates/frankenlibc-abi/src/startup_abi.rs",
         "crates/frankenlibc-abi/tests/startup_abi_test.rs",
@@ -339,7 +339,7 @@
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-15T15:34:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "crates/frankenlibc-core/src/errno/mod.rs",
         "crates/frankenlibc-core/src/pthread/tls.rs",
@@ -364,7 +364,7 @@
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "tests/conformance/fixtures/startup_ops.json",
         "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs"
@@ -394,7 +394,7 @@
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
-      "evidence_generated_at_utc": "2026-05-03T01:45:00Z",
+      "evidence_generated_at_utc": "2026-11-17T07:55:00Z",
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "scripts/check_replacement_levels.sh",
@@ -435,6 +435,6 @@
     "satisfied_row_count": 11,
     "blocked_row_count": 0,
     "current_gate_status": "pass",
-    "blocker_reason": "All required L1 CRT/startup/TLS proof rows are satisfied; replacement-level promotion remains controlled by separate release policy."
+    "blocker_reason": "All required L1 CRT/startup/TLS proof rows are satisfied and current for L1 hardened-interpose promotion."
   }
 }

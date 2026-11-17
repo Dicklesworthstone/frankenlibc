@@ -1,14 +1,14 @@
 # FrankenLibC Parity Coverage Report
 
-**Reconciled:** 2026-11-13. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
+**Reconciled:** 2026-11-17. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
 
 ## Current Scope
 
-The declared replacement level is **L0 interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,464 `Implemented`, 408 `RawSyscall`, 1,247 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,872 native/direct-syscall classifications (69.7%) measure ownership, not complete semantics or a standalone process.
+The declared replacement level is **L1 hardened interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,464 `Implemented`, 408 `RawSyscall`, 1,247 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,872 native/direct-syscall classifications (69.7%) measure ownership, not complete semantics or a standalone process.
 
 The committed support-maintenance report validates 4,119/4,119 classifications (0 status-invalid rows) while conservatively retaining unproven native wrapper rows under `WrapsHostLibc` until fixture/promotion-proof evidence is attached. Fixture linkage covers 1,205/4,119 rows (29.3%); linkage is not an executed pass rate. The 36-entry semantic overlay (`tests/conformance/support_semantic_overlay.v1.json`) is representative, not exhaustive.
 
-The November 11 committed preload summary (`tests/conformance/ld_preload_smoke_summary.v1.json`, run `20261111T134243Z-2744068` at source commit `44a61541…`) records 348 passes, zero failures, four optional skips and zero xfails (`175` strict passes and `173` hardened passes) for its identified artifact. L1 promotion verification remains gated under `bd-rc0923-epic-eeuy4f.47`. See [the bridge plan](REALITY_CHECK_BRIDGE_PLAN.md) and [compatibility guide](COMPATIBILITY.md) for evidence boundaries and active tasks.
+The November 17 committed preload summary (`tests/conformance/ld_preload_smoke_summary.v1.json`, run `20261117T074800Z-fec80ccf6` at source commit `fec80ccf…`) records 360 passes, zero failures, four optional skips and zero xfails (`178` strict passes and `182` hardened passes) for its identified artifact, backing integrated L1 graduation (`bd-rc0923-epic-eeuy4f.47`, resolved). See [the bridge plan](REALITY_CHECK_BRIDGE_PLAN.md) and [compatibility guide](COMPATIBILITY.md) for evidence boundaries and active tasks.
 
 ## Historical Symbol-Presence Comparison — May 25, 2026
 

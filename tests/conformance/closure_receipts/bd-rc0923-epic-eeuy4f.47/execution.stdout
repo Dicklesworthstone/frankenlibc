@@ -1,0 +1,27 @@
+
+running 22 tests
+test blocker_text_does_not_reference_resolved_numeric_counts ... ok
+test gate_script_exists_and_executable ... ok
+test gate_criteria_monotonically_tighten ... ok
+test all_four_levels_defined ... ok
+test claim_drift_guard_consistent_with_readme_and_release_policy ... ok
+test l1_crt_startup_tls_proof_matrix_rejects_contradictory_evidence ... ok
+test l1_crt_startup_tls_proof_matrix_rejects_missing_required_row ... ok
+test l1_crt_startup_tls_proof_matrix_rejects_policy_that_allows_stale_evidence ... ok
+test l1_crt_startup_tls_proof_matrix_validates_required_rows ... ok
+test l1_crt_startup_tls_proof_matrix_rejects_stale_recorded_source_commit ... ok
+test l1_crt_startup_tls_proof_matrix_rejects_missing_source_commit_policy ... ok
+test l1_crt_startup_tls_proof_matrix_rejects_stale_evidence ... ok
+test l1_objective_gate_consumes_current_crt_startup_tls_matrix ... ok
+test status_progression_consistent ... ok
+test percentages_consistent ... ok
+test levels_exists_and_valid ... ok
+test transition_requirements_reference_consecutive_levels ... ok
+test stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence ... ok
+test readme_smoke_claims_do_not_outrun_replacement_level_blockers ... ok
+test assessment_matches_support_matrix ... ok
+test gate_script_rejects_stale_l1_crt_startup_tls_source_commit ... ok
+test gate_script_refreshes_l1_objective_gate_artifacts ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+

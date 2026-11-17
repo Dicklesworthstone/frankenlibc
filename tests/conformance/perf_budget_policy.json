@@ -333,8 +333,8 @@
       "wchar_abi": 22
     },
     "strict_hotpath_by_status": {
-      "Implemented": 114,
-      "WrapsHostLibc": 38
+      "Implemented": 116,
+      "WrapsHostLibc": 36
     },
     "benchmark_coverage": {
       "internal_benches": ["runtime_math_bench", "membrane_bench", "runtime_math_kernels_bench"],
@@ -640,7 +640,7 @@
       {
         "symbol": "mtx_lock",
         "module": "c11threads_abi",
-        "status": "WrapsHostLibc"
+        "status": "Implemented"
       },
       {
         "symbol": "mtx_trylock",
@@ -650,7 +650,7 @@
       {
         "symbol": "mtx_unlock",
         "module": "c11threads_abi",
-        "status": "WrapsHostLibc"
+        "status": "Implemented"
       },
       {
         "symbol": "posix_memalign",
@@ -680,7 +680,7 @@
       {
         "symbol": "pthread_cond_wait",
         "module": "pthread_abi",
-        "status": "Implemented"
+        "status": "WrapsHostLibc"
       },
       {
         "symbol": "pthread_create",
@@ -990,7 +990,7 @@
       {
         "symbol": "timespec_get",
         "module": "time_abi",
-        "status": "WrapsHostLibc"
+        "status": "Implemented"
       },
       {
         "symbol": "tolower",

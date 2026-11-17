@@ -3,7 +3,7 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-13, and it records the same base ABI source commit as `support_matrix.json` (`b746ad149`).
+The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-17, and it records the same base ABI source commit as `support_matrix.json` (`fec80ccf6`).
 Reality snapshot: total_exported=4119, implemented=2464, raw_syscall=408, wraps_host_libc=1247, glibc_call_through=0, stub=0.
 Counts below reflect recorded support matrix labels validated against live source and host-delegation census v17 (`status_invalid = 0`; unproven native wrapper bodies remain conservatively classified under `WrapsHostLibc` until fixture or promotion-proof evidence is attached). Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; these labels do not establish complete unsupported or implemented behavior.
 Regenerate deterministically with:
@@ -21,7 +21,7 @@ The current support matrix contains **4119 symbols**, classified as:
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
-This means the checked taxonomy snapshot describes a **hybrid L0 interposition profile** (mixed Rust-owned behavior, raw syscalls, and explicit host-glibc delegation, with zero explicit `Stub` rows), not a full replacement profile. Source/proof reconciliation is enforced by `scripts/check_support_matrix_maintenance.sh --strict`; integrated L1 promotion verification remains gated under `bd-rc0923-epic-eeuy4f.47`. Taxonomy counts are not semantic-parity evidence.
+This means the checked taxonomy snapshot describes a **hybrid L1 hardened-interposition profile** (mixed Rust-owned behavior, raw syscalls, and explicit host-glibc delegation, with zero explicit `Stub` rows), not a full replacement profile. Source/proof reconciliation is enforced by `scripts/check_support_matrix_maintenance.sh --strict`, and integrated L1 interpose graduation was verified under `bd-rc0923-epic-eeuy4f.47` (resolved). Taxonomy counts are not semantic-parity evidence.
 
 Legend:
 - `Implemented`: Native Rust behavior, no host glibc dependency for that symbol
@@ -95,7 +95,7 @@ Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generat
 
 #### Native Thread TLS Limitation
 
-Native clone threads still omit `CLONE_SETTLS` and inherit their creator's compiler/host thread pointer, including in `owned-tls-cache` builds. The owned-cache feature substitutes selected internal state; it does not create a complete independent TCB or make arbitrary host allocator/TLS use safe. Concurrent native formatted allocation reproduced glibc heap corruption and a shared validation-cache borrow failure in the current default artifact. Heap corruption was also reproduced with the earlier deployed `5d96bf8` artifact. Receive qualification exposed intermittent allocator failures in the owned-cache configuration as well. The wait fixtures keep their thread-identity witness allocation-free, and the system fixture prepares commands before starting workers, so incidental formatting does not replace the contract being tested. These tests do not establish broad native-thread runtime safety. Full startup/TLS/allocator/unwind integration remains open under `bd-reality-202609-lx578q.6.1`; the replacement level remains L0.
+Native clone threads still omit `CLONE_SETTLS` and inherit their creator's compiler/host thread pointer, including in `owned-tls-cache` builds. The owned-cache feature substitutes selected internal state; it does not create a complete independent TCB or make arbitrary host allocator/TLS use safe. Concurrent native formatted allocation reproduced glibc heap corruption and a shared validation-cache borrow failure in the current default artifact. Heap corruption was also reproduced with the earlier deployed `5d96bf8` artifact. Receive qualification exposed intermittent allocator failures in the owned-cache configuration as well. The wait fixtures keep their thread-identity witness allocation-free, and the system fixture prepares commands before starting workers, so incidental formatting does not replace the contract being tested. These tests do not establish broad native-thread runtime safety. Full startup/TLS/allocator/unwind integration remains open under `bd-reality-202609-lx578q.6.1`; the replacement level is L1 (standalone L2/L3 remains gated under `bd-reality-202609-lx578q.6.1`).
 
 #### Earlier Additions
 
@@ -109,7 +109,7 @@ Native clone threads still omit `CLONE_SETTLS` and inherit their creator's compi
 ## Deterministic Stub Surface
 
 Current support-taxonomy `Stub` rows:
-- 14 SunRPC client/server/registration entrypoints and 4 printf registration entrypoints; the exact 18-symbol list is maintained in the README taxonomy section and `tests/conformance/reality_report.v1.json`.
+- None (`0` `Stub` rows in `support_matrix.json` and `tests/conformance/reality_report.v1.json`; the former 14 SunRPC and 4 printf-registration stubs are now classified in the README taxonomy section).
 
 Current semantic fallback/no-op/bootstrap contracts:
 - Representative, non-exhaustive overlay: `tests/conformance/support_semantic_overlay.v1.json`

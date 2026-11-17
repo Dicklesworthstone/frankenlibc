@@ -449,12 +449,12 @@ fn operator_guides_reject_planted_l1_and_stale_claims() {
         (
             "FLC_DOCS_SEMANTIC_DEPLOYMENT",
             "DEPLOYMENT.md",
-            "Current Level: L1 hardened interposition ready for production.",
+            "Current Level: L2 standalone replacement ready for production.",
         ),
         (
             "FLC_DOCS_SEMANTIC_COMPATIBILITY",
             "docs/planning/COMPATIBILITY.md",
-            "Canonical Declared Level: L1 hardened interpose.",
+            "Canonical Declared Level: L2 standalone replacement.",
         ),
         (
             "FLC_DOCS_SEMANTIC_PARITY_COVERAGE",
@@ -496,16 +496,16 @@ fn operator_guides_reject_missing_l0_scope_phrase() {
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("DEPLOYMENT.md")).unwrap();
     let mutated = source.replace(
-        "Current declared level: `L0`",
+        "Current declared level: `L1`",
         "Current declared scope: interpose",
     );
-    let temp = unique_temp_path("docs-semantic-deployment-missing-l0.md");
+    let temp = unique_temp_path("docs-semantic-deployment-missing-l1.md");
     std::fs::write(&temp, mutated).expect("failed to write DEPLOYMENT fixture");
 
     let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_DEPLOYMENT", &temp)]);
     assert!(
         !output.status.success(),
-        "missing L0 phrase in DEPLOYMENT.md should fail:\nstdout={}\nstderr={}",
+        "missing L1 phrase in DEPLOYMENT.md should fail:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

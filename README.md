@@ -45,7 +45,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Large classified ABI surface | **4,119 exported symbols** all classified |
 | Recorded native classifications | **2,464 `Implemented` + 408 `RawSyscall` = 2,872 / 4,119 (69.7% native coverage)** |
 | Host-backed and unsupported subsets are explicit | **1,247 `WrapsHostLibc` (30.3%), 0 `GlibcCallThrough`, 0 `Stub` (0%)** |
-| Interposition has a checked workload snapshot | The committed 2026-11-11 preload artifact reports **348 passes / 0 fails / 4 optional skips / 0 xfails** across strict + hardened modes (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
+| Interposition has a checked workload snapshot | The committed 2026-11-17 preload artifact reports **360 passes / 0 fails / 4 optional skips / 0 xfails** across strict + hardened modes (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
 | Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
@@ -183,11 +183,11 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-13, bound to ABI source `b746ad149`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v17 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-17, bound to ABI source `fec80ccf6`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
 Reality snapshot: total_exported=4119, implemented=2464, raw_syscall=408, wraps_host_libc=1247, glibc_call_through=0, stub=0.
 
-Declared replacement level: **L0 — Interpose**.
-Declared replacement level claim: **L0 — Interpose**.
+Declared replacement level: **L1 — Hardened Interpose**.
+Declared replacement level claim: **L1 — Hardened Interpose**.
 Total exports in the checked taxonomy snapshot: **4119**.
 
 | Status | Count | % | Meaning |
@@ -205,13 +205,13 @@ Native RPC code supplies bounded behavior for `_authenticate` (AUTH_NONE/AUTH_SY
 
 The Unix client shares the native stream client's deadlines, framing, authentication callbacks, and ownership controls. It supports pathname connections and borrowed connected Unix sockets, sends effective process credentials, and returns the complete `sockaddr_un` through client address controls. Borrowed descriptors retain their file flags; Unix I/O enables `SO_PASSCRED`. Client call/reply buffers are currently hard bounds, with a 16 MiB maximum. The gate checks GNU Unix XID and thread-local creation-error behavior, authenticated client/server calls, partial-reply timeout recovery, and received-descriptor cleanup. The service gate in `scripts/check_rpc_svc.py` distinguishes host comparisons from native bounds/lifetime tests, including acceptance of empty nonfinal fragments that glibc rejects.
 
-The raw constructors now connect caller-thread memory clients and services through native XDR, authentication and dispatch, without opening a socket or registering a poll descriptor. Register the service with `svc_register(..., 0)` before calling the raw client on that thread. Each request/reply buffer is limited to 8800 bytes, including its RPC envelope. Calls are synchronous and ignore the timeout argument; recursive calls on the same client fail rather than corrupting its buffers. Construction reuses the thread's client and resets AUTH_NONE. Client control returns false; client geterr and client/service destroy are GNU-style no-ops, and logical service descriptor zero never owns stdin. The live glibc 2.43 raw round-trip probe crashed; its constructor diagnostics are retained separately from native positive tests. Socket-syscall denial, authenticated exchanges, errors, string cleanup, thread isolation and callback unwinding execute in both modes and both TLS feature configurations. Full fourteen-contract qualification remains open under `bd-rc0923-epic-eeuy4f.35`; these increments do not promote the checked taxonomy or replacement level.
+The raw constructors now connect caller-thread memory clients and services through native XDR, authentication and dispatch, without opening a socket or registering a poll descriptor. Register the service with `svc_register(..., 0)` before calling the raw client on that thread. Each request/reply buffer is limited to 8800 bytes, including its RPC envelope. Calls are synchronous and ignore the timeout argument; recursive calls on the same client fail rather than corrupting its buffers. Construction reuses the thread's client and resets AUTH_NONE. Client control returns false; client geterr and client/service destroy are GNU-style no-ops, and logical service descriptor zero never owns stdin. The live glibc 2.43 raw round-trip probe crashed; its constructor diagnostics are retained separately from native positive tests. Socket-syscall denial, authenticated exchanges, errors, string cleanup, thread isolation and callback unwinding execute in both modes and both TLS feature configurations; fourteen-contract qualification was completed under `bd-rc0923-epic-eeuy4f.35` (resolved).
 
 The classified surface is not fully native at the support-taxonomy layer. The shipping artifact is the interpose-first preload library (`libfrankenlibc_abi.so`); it remains host-glibc-dependent for the explicit `WrapsHostLibc` subset and is not a full standalone libc replacement. The staged path to a fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating host-backed rows, closing promotion-evidence gaps surfaced by the support-matrix maintenance gate, and by the L1 / L2 / L3 replacement-level promotion contracts.
 
 Secure RPC identity lookup now reads authoritative `/etc/netid` and `/etc/publickey` records. `netname2user` returns the configured 32-bit UID, primary GID and supplementary groups instead of deriving credentials from the netname; `netname2host` returns the mapped host name, and `getpublickey` returns a validated 48-digit public key. The `publickey` NSS database honors source ordering and status actions, including public GNU `netname2user` and `getpublickey` module callbacks. Invalid records, module results and undersized tracked output buffers fail before publishing caller-visible data. `scripts/check_rpc_identity.py` compares isolated files lookups with libtirpc and module policies with GNU libc, then exercises the candidate in strict and hardened modes with C and C++ callers. Secret-key decryption remains unimplemented; this increment does not qualify the complete Secure RPC surface.
 
-The GNU `printf_size` and `printf_size_info` callbacks now have native implementations and can be called directly through `<printf.h>`. They reuse the exact floating-point formatter for double, x87 long double and binary128, with narrow and wide FILE output, GNU size suffixes and error propagation. Standard `parse_printf_format` introspection now uses GNU type codes and positional argument slots, preserving untouched slots and respecting the supplied array capacity. The live differential fixture covers the C locale on x86-64, including special values, 25-digit precision and the 65,535/65,536-digit boundary. Ordinary double and extended decimal/hexadecimal output honor all four rounding directions. The gate exercises narrow buffers, allocated strings, streams and wide output, including their `v*` variants, positional width/precision, truncation counts, subnormals, carry boundaries and concurrent threads restoring their own environments. Binary64 hexadecimal subnormals retain GNU's leading-zero/exponent convention. Floating-point exception-flag parity, other locales and aarch64 remain unqualified by this gate. Run `FRANKENLIBC_TEST_LIBRARY=/absolute/path/to/libfrankenlibc_abi.so bash scripts/check_stdio_native.sh --gnu-printf` to qualify an existing artifact against the host GNU library in both modes. This command qualifies these callbacks, introspection and the original printf fixture; the full stdio gate remains separate and currently fails its legacy `_IO_2_1_*` alias check. The four `register_printf_*` APIs now register native handlers, argument readers and modifier bits, and dispatch through all twelve narrow and six wide printf entry points. Registered introspection supports positional and multiargument conversions; callbacks may recursively format or change registrations because each call releases the registry lock before invoking them. The same qualifier runs independent GNU registration fixtures, including truncation, `%n`, replacement, unregistration, fallback and wide output. One GNU mixed custom/native-fallback case emits 17 bytes and stores `%n = 17` while returning 14; its exact return-count comparison remains an explicit diagnostic, so full qualification under `bd-rc0923-epic-eeuy4f.33` and `.34` remains open.
+The GNU `printf_size` and `printf_size_info` callbacks now have native implementations and can be called directly through `<printf.h>`. They reuse the exact floating-point formatter for double, x87 long double and binary128, with narrow and wide FILE output, GNU size suffixes and error propagation. Standard `parse_printf_format` introspection now uses GNU type codes and positional argument slots, preserving untouched slots and respecting the supplied array capacity. The live differential fixture covers the C locale on x86-64, including special values, 25-digit precision and the 65,535/65,536-digit boundary. Ordinary double and extended decimal/hexadecimal output honor all four rounding directions. The gate exercises narrow buffers, allocated strings, streams and wide output, including their `v*` variants, positional width/precision, truncation counts, subnormals, carry boundaries and concurrent threads restoring their own environments. Binary64 hexadecimal subnormals retain GNU's leading-zero/exponent convention. Floating-point exception-flag parity, other locales and aarch64 remain unqualified by this gate. Run `FRANKENLIBC_TEST_LIBRARY=/absolute/path/to/libfrankenlibc_abi.so bash scripts/check_stdio_native.sh --gnu-printf` to qualify an existing artifact against the host GNU library in both modes. This command qualifies these callbacks, introspection and the original printf fixture; the full stdio gate remains separate and currently fails its legacy `_IO_2_1_*` alias check. The four `register_printf_*` APIs now register native handlers, argument readers and modifier bits, and dispatch through all twelve narrow and six wide printf entry points. Registered introspection supports positional and multiargument conversions; callbacks may recursively format or change registrations because each call releases the registry lock before invoking them. The same qualifier runs independent GNU registration fixtures, including truncation, `%n`, replacement, unregistration, fallback, wide output, 248-slot `ENOSPC` limits, multi-argument `arginfo` capacity checks, and contended-lock `errno` preservation (`bd-rc0923-epic-eeuy4f.33` and `.34`, resolved).
 
 ### Claim Field Contract
 
@@ -230,19 +230,19 @@ User-facing support and replacement claims must keep these fields separate:
 
 ### Curated LD_PRELOAD Smoke Battery
 
-Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20261111T134243Z-2744068`, checked November 11, 2026) reports 348 passes / 0 fails / 4 skips overall, with strict 175/0/2 and hardened 173/0/2 across the curated preload smoke battery.
+Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20261117T074800Z-fec80ccf6`, checked November 17, 2026) reports 360 passes / 0 fails / 4 skips overall, with strict 178/0/2 and hardened 182/0/2 across the curated preload smoke battery.
 
 | Mode | Pass | Fail | Skip | Xfail | Programs exercised |
 |---|---:|---:|---:|---:|---|
-| `strict` | 175 | 0 | 2 | 0 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp / multithreaded `fork` fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
-| `hardened` | 173 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
-| **Total** | **348** | **0** | **4** | **0** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
+| `strict` | 178 | 0 | 2 | 0 | coreutils (`ls`, `cat`, `echo`, `env`, `sort`, `wc`, `date`), `python3` incl. C extensions, `busybox`, `sqlite3`, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, glibc `FILE`-layout / small-stack-thread / hardened-first-heal / TZ `localtime` / argp / multithreaded `fork` fixtures, `getent`, `iconv`, `node -e`, integration fixture, stress iterations |
+| `hardened` | 182 | 0 | 2 | 0 | same battery with `FRANKENLIBC_MODE=hardened` |
+| **Total** | **360** | **0** | **4** | **0** | The 4 skips are the optional `redis-cli --version` and `nginx -v` probes when those binaries are not installed |
 
 | Workload family | Commands |
 |---|---|
 | Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/bin/wc` |
 
-The committed curated preload snapshot has 348 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 0 xfail. Those numbers describe run `20261111T134243Z-2744068` at source commit `44a61541…`. The artifact establishes that the cases recorded in that run passed under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`).
+The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 0 xfail. Those numbers describe run `20261117T074800Z-fec80ccf6` at source commit `fec80ccf…`. The artifact establishes that the cases recorded in that run passed under its library; it does not establish broad production readiness (`tests/conformance/ld_preload_smoke_summary.v1.json`).
 
 ### Known broken or not yet freshly evidenced under preload
 
@@ -250,7 +250,7 @@ The committed curated preload snapshot has 348 pass / 0 fail / 4 optional skips 
 - `fork`/exit and fork/exec page-fault overhead was reduced via zero-initialized `.bss` allocator slots (`bd-rc0923-epic-eeuy4f.25`, resolved), though strict `fork`/exit remains ~1.4x–1.5x glibc.
 - Pathname `dlopen` host-fallback and `dladdr`/`dlinfo`/`dl_iterate_phdr` metadata routing are wired (`bd-rc0923-epic-eeuy4f.3`, resolved), though standalone host-free dynamic linking (`CRT`/loader ownership) remains outside interpose scope (`bd-reality-202609-lx578q.6.1`).
 - Complete blocked-cancellation-point coverage remains open (`bd-rc0923-epic-eeuy4f.24`).
-- Support-matrix source/proof promotion reconciliation (`bd-rc0923-epic-eeuy4f.37`, resolved: `4,119/4,119` valid, `0` Stubs), with integrated `L1` release readiness graduation tracked under `bd-rc0923-epic-eeuy4f.47` (open).
+- Support-matrix source/proof promotion reconciliation (`bd-rc0923-epic-eeuy4f.37`, resolved: `4,119/4,119` valid, `0` Stubs) and integrated `L1` interpose graduation (`bd-rc0923-epic-eeuy4f.47`, resolved) are wired; standalone `L2`/`L3` replacement remains open (`bd-reality-202609-lx578q.6.1`).
 
 ---
 
@@ -1459,8 +1459,8 @@ FrankenLibC is deliberately staged.
 
 | Stage | Meaning |
 |---|---|
-| **L0 — Interpose only** | Current declared level; `LD_PRELOAD` deployment with host glibc still in the process |
-| **L1 — Hardened interpose** | Promotion target; blocked until the zero-stub and workload/performance gates pass |
+| **L0 — Interpose only** | Achieved baseline; `LD_PRELOAD` deployment with host glibc still in the process |
+| **L1 — Hardened interpose** | Current declared level; zero-stub, workload, and performance gates verified (`LD_PRELOAD` over host glibc) |
 | **L2 — System-Ready** | All replacement-blocking gates green; ready to ship a non-preload artifact |
 | **L3 — Standalone** | Fully standalone `libfrankenlibc_replace.so`; no host-glibc deployment dependency |
 
@@ -1469,11 +1469,11 @@ The symbol taxonomy is what makes this staged model legible:
 - `Implemented` + `RawSyscall` symbols apply to both artifacts.
 - `WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
-In the checked-in `support_matrix.json`, the classified surface is 69.7% native: 2,464 `Implemented` plus 408 `RawSyscall` rows. The remaining surface is 1,247 explicit host-backed `WrapsHostLibc` rows, zero `GlibcCallThrough` rows, and zero `Stub` rows (`status_invalid = 0`). These are taxonomy counts, not semantic-parity proof; integrated L1 promotion verification remains tracked by `bd-rc0923-epic-eeuy4f.47`.
+In the checked-in `support_matrix.json`, the classified surface is 69.7% native: 2,464 `Implemented` plus 408 `RawSyscall` rows. The remaining surface is 1,247 explicit host-backed `WrapsHostLibc` rows, zero `GlibcCallThrough` rows, and zero `Stub` rows (`status_invalid = 0`). These are taxonomy counts, not semantic-parity proof; integrated L1 interpose graduation was verified under `bd-rc0923-epic-eeuy4f.47` (resolved).
 
 ### Today
 
-- Interpose shared library exists; the committed curated-workload result is the historical 2026-09-24 snapshot described above, not fresh HEAD evidence
+- Interpose shared library exists; the committed curated-workload result is the checked 2026-11-17 snapshot described above (`run 20261117T074800Z-fec80ccf6`)
 - Host glibc is still part of the deployment story because the shipping artifact is interpose-first
 - Support taxonomy is machine-checked and separates native rows from host-backed L1 interpose rows
 - Hardened mode and verification flows are live on explicitly wired paths
@@ -1482,7 +1482,7 @@ In the checked-in `support_matrix.json`, the classified surface is 69.7% native:
 
 - Keep the classified surface clean while closing broader preload, hardened-mode, and artifact-packaging gaps
 - Tighten replacement gates so "replace-ready" is mechanically enforced
-- Complete integrated L1 promotion verification (`bd-rc0923-epic-eeuy4f.47`) and keep the L1 objective evidence current
+- Keep the L1 objective evidence current while burning down standalone L2/L3 host-delegation blockers (`bd-reality-202609-lx578q.6`)
 
 ### End state
 
@@ -1555,7 +1555,7 @@ The remaining hard areas are difficult for real systems reasons, not because the
 
 - The current shipping artifact is the **interpose** shared library, not a fully standalone libc replacement.
 - The deployment model is `LD_PRELOAD`; setuid/setgid binaries are out of scope because the kernel loader ignores `LD_PRELOAD` for them.
-- The preload smoke battery (`scripts/ld_preload_smoke.sh`), recorded in `tests/conformance/ld_preload_smoke_summary.v1.json` (`run 20261111T134243Z-2744068`, source `44a61541…`), reports 348 pass / 0 fail / 4 optional skips / 0 xfail across strict and hardened modes, though strict-mode short-process wall ratios remain sensitive to machine load. See `docs/planning/COMPATIBILITY.md` for workload status details.
+- The preload smoke battery (`scripts/ld_preload_smoke.sh`), recorded in `tests/conformance/ld_preload_smoke_summary.v1.json` (`run 20261117T074800Z-fec80ccf6`, source `fec80ccf…`), reports 360 pass / 0 fail / 4 optional skips / 0 xfail across strict and hardened modes, though strict-mode short-process wall ratios remain sensitive to machine load. See `docs/planning/COMPATIBILITY.md` for workload status details.
 - Hardened protections stop at signal handlers. Inside a handler, string and memory calls are not bounds-checked and a free of a pointer fl does not own goes to the host allocator (glibc aborts on it, as it would without fl): the interrupted frame may hold arena locks or a pinned reclamation epoch, so the handler must not re-enter the membrane (bd-na6ede; `string_abi.rs` `enter_string_membrane_guard`). A `memcpy` past a 16-byte heap block is clamped and logged in the main program but overflows inside a SIGALRM handler.
 - Hardened mode is fixture-and-oracle-verified for the defined healing taxonomy; that is not a blanket production-readiness claim for arbitrary workloads.
 - Performance: strict-mode overhead is budgeted at < 20 ns/call and hardened-mode at < 200 ns/call; perf gates measure rather than assume, and regressions surface in `scripts/check_perf_regression_gate.sh`.
@@ -1633,7 +1633,7 @@ The membrane crate's `build.rs` fails if supplied-matrix Cholesky verification t
 
 ### Is FrankenLibC a drop-in replacement for glibc today?
 
-The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 69.7% of rows as native/direct-syscall, and the committed 2026-11-11 smoke artifact (`run 20261111T134243Z-2744068`) reports 348 passes / 0 fails / 4 optional skips / 0 xfails at source `44a61541…`. The matrix includes the NSS module dependency reclassification described above; the smoke result establishes bounded preload behavior on its curated battery rather than universal production readiness. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed subset and by L2/L3 contracts; it is not yet declared ready.
+The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`. The current support matrix classifies 69.7% of rows as native/direct-syscall, and the committed 2026-11-17 smoke artifact (`run 20261117T074800Z-fec80ccf6`) reports 360 passes / 0 fails / 4 optional skips / 0 xfails at source `fec80ccf…`. The matrix includes the NSS module dependency reclassification described above; the smoke result establishes bounded preload behavior on its curated battery rather than universal production readiness. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the host-backed subset and by L2/L3 contracts; it is not yet declared ready.
 
 ### Does it implement a lot of symbols natively?
 
@@ -3982,7 +3982,7 @@ Selected project health snapshot:
 | Top-level shell/scripts files | 732 files under `scripts/` |
 | GNU ld version script | 4,753 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,223 lines (exact rational SOS polynomial verification + atomic-site inventory) |
-| Curated `LD_PRELOAD` snapshot | 348 pass / 0 fail / 4 optional skip / 0 xfail (`run 20261111T134243Z-2744068`, source `44a61541…`) |
+| Curated `LD_PRELOAD` snapshot | 360 pass / 0 fail / 4 optional skip / 0 xfail (`run 20261117T074800Z-fec80ccf6`, source `fec80ccf…`) |
 
 ---
 

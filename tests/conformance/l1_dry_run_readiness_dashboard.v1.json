@@ -3,7 +3,7 @@
   "manifest_id": "l1-dry-run-readiness-dashboard",
   "bead": "bd-i90i2",
   "owner_bead": "bd-zyck1",
-  "generated_utc": "2026-05-05T05:30:00Z",
+  "generated_utc": "2026-11-17T07:55:00Z",
   "source_commit": "current",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",

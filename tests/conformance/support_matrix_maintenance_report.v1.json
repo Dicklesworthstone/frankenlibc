@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-17T05:05:55Z",
-  "source_commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
-  "source_generated_at_utc": "2026-11-13T00:40:00Z",
-  "newest_abi_commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
-  "newest_abi_commit_time": "2026-11-12T18:53:56-05:00",
+  "generated_at": "2026-11-17T08:12:09Z",
+  "source_commit": "fec80ccf63466a06a6459bd38dd122a4444fbeca",
+  "source_generated_at_utc": "2026-11-17T07:55:00Z",
+  "newest_abi_commit": "fec80ccf63466a06a6459bd38dd122a4444fbeca",
+  "newest_abi_commit_time": "2026-11-17T02:47:06-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "69f1cf4b541ab1c3db43c2b862ddebfb536cf8ee5d04bab6b384139e0dea5669",
+        "artifact_sha256": "937eb83181d05b9a595df7690247bbb740b1341624b98a6c69c036653cf088bc",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 18,
-        "source_tree_sha256": "5f59774dfd6d5262de2f2e8609fbdd4f480b876ca277f7072bfe158c60255e3a"
+        "source_tree_sha256": "cacf4ab3b75ba096d1f76db6ecca1ff02270e152a3904d894393d47d1475546d"
       }
     },
     "summary": {
@@ -2432,7 +2432,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1770",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1797",
             "host_symbols": [
               "__cxa_thread_atexit_impl"
             ],
@@ -2441,7 +2441,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "startup_abi:__cxa_thread_atexit_impl:1770:001"
+              "startup_abi:__cxa_thread_atexit_impl:1797:001"
             ]
           }
         }
@@ -5262,7 +5262,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1349",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1359",
             "host_symbols": [
               "__libc_start_main"
             ],
@@ -5272,10 +5272,10 @@
             ],
             "callsite_count": 4,
             "callsite_ids": [
-              "startup_abi:__libc_start_main:1349:001",
-              "startup_abi:__libc_start_main:1349:002",
-              "startup_abi:__libc_start_main:1349:003",
-              "startup_abi:__libc_start_main:1349:004"
+              "startup_abi:__libc_start_main:1359:001",
+              "startup_abi:__libc_start_main:1359:002",
+              "startup_abi:__libc_start_main:1359:003",
+              "startup_abi:__libc_start_main:1359:004"
             ]
           }
         }
@@ -12328,7 +12328,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:6997",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7303",
             "host_symbols": [
               "calloc"
             ],
@@ -12337,7 +12337,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:calloc:6997:001"
+              "malloc_abi:calloc:7303:001"
             ]
           }
         }
@@ -21114,7 +21114,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:6765",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7069",
             "host_symbols": [
               "free"
             ],
@@ -21123,7 +21123,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:free:6765:001"
+              "malloc_abi:free:7069:001"
             ]
           }
         }
@@ -28424,7 +28424,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:6605",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:6894",
             "host_symbols": [
               "malloc"
             ],
@@ -28433,7 +28433,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:malloc:6605:001"
+              "malloc_abi:malloc:6894:001"
             ]
           }
         }
@@ -34678,7 +34678,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7105",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7411",
             "host_symbols": [
               "realloc"
             ],
@@ -34687,7 +34687,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:realloc:7105:001"
+              "malloc_abi:realloc:7411:001"
             ]
           }
         }

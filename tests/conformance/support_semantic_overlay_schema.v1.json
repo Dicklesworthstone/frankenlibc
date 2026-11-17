@@ -75,9 +75,10 @@
     "strict",
     "hardened"
   ],
-  "default_replacement_level": "L0",
+  "default_replacement_level": "L1",
   "blocked_semantic_replacement_levels": [
-    "L0"
+    "L0",
+    "L1"
   ],
   "standalone_claim_guard_contract": {
     "required_guard_fields": [

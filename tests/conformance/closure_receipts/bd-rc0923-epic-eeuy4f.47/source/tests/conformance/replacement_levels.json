@@ -1,0 +1,405 @@
+{
+  "schema_version": 1,
+  "bead": "bd-2bu",
+  "generated_at_utc": "2026-11-17T07:55:00Z",
+  "source_commit": "fec80ccf63466a06a6459bd38dd122a4444fbeca",
+  "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
+  "levels": [
+    {
+      "level": "L0",
+      "name": "Interpose",
+      "description": "LD_PRELOAD interposition over host glibc. Call-throughs to host glibc allowed for all modules. Primary value: membrane validation + structured logging on top of host libc.",
+      "deployment": "LD_PRELOAD=libfrankenlibc_abi.so",
+      "host_glibc_required": true,
+      "gate_criteria": {
+        "max_callthrough_pct": 100,
+        "max_stub_pct": 100,
+        "min_implemented_pct": 0,
+        "e2e_smoke_required": true,
+        "perf_budget_strict_ns": 20,
+        "perf_budget_hardened_ns": 200,
+        "test_gate": "cargo test --workspace passes"
+      },
+      "current_state": {
+        "implemented_pct": 60,
+        "raw_syscall_pct": 10,
+        "callthrough_pct": 0,
+        "wraps_host_libc_pct": 30,
+        "glibc_callthrough_pct": 0,
+        "native_pct": 70,
+        "stub_pct": 0,
+        "callthrough_modules": [
+          "c11threads_abi",
+          "dirent_abi",
+          "dlfcn_abi",
+          "err_abi",
+          "glibc_internal_abi",
+          "grp_abi",
+          "inet_abi",
+          "io_abi",
+          "io_internal_abi",
+          "isoc_abi",
+          "malloc_abi",
+          "math_abi",
+          "process_abi",
+          "pthread_abi",
+          "pwd_abi",
+          "resolv_abi",
+          "rpc_abi",
+          "search_abi",
+          "setjmp_abi",
+          "signal_abi",
+          "startup_abi",
+          "stdio_abi",
+          "stdlib_abi",
+          "string_abi",
+          "time_abi",
+          "unistd_abi",
+          "wchar_abi"
+        ],
+        "stub_modules": []
+      },
+      "status": "achieved"
+    },
+    {
+      "level": "L1",
+      "name": "Hardened Interpose",
+      "description": "LD_PRELOAD with hardened mode active. Implemented plus RawSyscall is the native classified surface; WrapsHostLibc is the explicit host-backed interpose subset for startup, loader, threading, stdio, math, and related compatibility wrappers. L1 requires eliminating deterministic-failure stubs and opaque GlibcCallThrough rows; it remains host-glibc-dependent and is not a standalone replacement claim.",
+      "deployment": "FRANKENLIBC_MODE=hardened LD_PRELOAD=libfrankenlibc_abi.so",
+      "host_glibc_required": true,
+      "gate_criteria": {
+        "max_callthrough_pct": 35,
+        "max_stub_pct": 0,
+        "min_implemented_pct": 35,
+        "e2e_smoke_required": true,
+        "perf_budget_strict_ns": 20,
+        "perf_budget_hardened_ns": 200,
+        "test_gate": "cargo test --workspace + E2E smoke suite passes in both modes",
+        "additional": [
+          "All stubs eliminated",
+          "Hardened mode E2E validated",
+          "WrapsHostLibc rows remain explicit L1 host-backed interpose rows and block L2/L3 standalone claims"
+        ]
+      },
+      "objective_gate": {
+        "bead": "bd-gtf.4",
+        "status": "pass",
+        "status_reason": "All 8 L1 objective obligations pass (0 Stub, 60% Implemented, 30% explicit WrapsHostLibc interpose, 11/11 L1 CRT/startup/TLS proof rows satisfied, claim reconciliation 0 errors, perf budgets aligned, and curated preload smoke run 20261117T074800Z-fec80ccf6 passing 360/360 executed cases across strict and hardened modes with 0 fails, 0 perf_failures, 0 signature_guard_failures, 0 xfails, and deployed_overhead passed).",
+        "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
+        "generated_report": {
+          "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
+          "log_path": "target/conformance/replacement_levels_l1_gate.log.jsonl",
+          "gate_script": "scripts/check_replacement_levels.sh"
+        },
+        "obligations": [
+          {
+            "id": "stub_free_taxonomy",
+            "description": "Current assessment must carry zero Stub symbols before L1 promotion.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "stub": 0
+            },
+            "actual": {
+              "stub": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "callthrough_pct_within_l1_bound",
+            "description": "Current assessment keeps explicit host-backed interpose percentage (WrapsHostLibc plus GlibcCallThrough) within the L1 ceiling.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "max_callthrough_pct": 35
+            },
+            "actual": {
+              "callthrough_pct": 30
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "implemented_pct_meets_l1_floor",
+            "description": "Current assessment keeps implemented percentage above the L1 floor.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "min_implemented_pct": 35
+            },
+            "actual": {
+              "implemented_pct": 60
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "hardened_smoke_battery",
+            "description": "The checked curated preload smoke battery must be green in both strict and hardened modes with no perf or signature-guard failures before this objective gate can pass.",
+            "artifact_ref": "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "expected": {
+              "overall_failed": false,
+              "strict_status": "green",
+              "hardened_status": "green",
+              "perf_failures": 0,
+              "signature_guard_failures": 0,
+          "xfails": 0
+            },
+            "actual": {
+              "run_id": "20261117T074800Z-fec80ccf6",
+              "overall_failed": false,
+              "strict_status": "green",
+              "hardened_status": "green",
+              "perf_failures": 0,
+              "signature_guard_failures": 0,
+              "xfails": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "claim_reconciliation_clean",
+            "description": "Canonical claim reconciliation reports zero errors before any L1 claim promotion.",
+            "artifact_ref": "tests/conformance/claim_reconciliation_report.v1.json",
+            "expected": {
+              "status": "pass",
+              "errors": 0
+            },
+            "actual": {
+              "status": "pass",
+              "errors": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "perf_budget_alignment",
+            "description": "Performance-regression prevention artifacts remain aligned to the L1 strict/hardened latency ceilings.",
+            "artifact_ref": "tests/conformance/perf_regression_prevention.v1.json",
+            "expected": {
+              "strict_target_ns": 20,
+              "hardened_target_ns": 200,
+              "total_issues": 0
+            },
+            "actual": {
+              "strict_target_ns": 20,
+              "hardened_target_ns": 200,
+              "total_issues": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "promotion_claim_control",
+            "description": "Do not claim L1 until current_level and release_tag_policy.current_release_level are promoted together.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "current_level": "L1",
+              "release_tag_policy.current_release_level": "L1"
+            },
+            "actual": {
+              "current_level": "L1",
+              "release_tag_policy.current_release_level": "L1"
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "crt_startup_tls_proof_matrix",
+            "description": "Do not claim L1 until CRT startup, TLS initialization/destruction, init/fini ordering, errno isolation, secure-mode, and diagnostics obligations are represented and current in the L1 proof matrix.",
+            "artifact_ref": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+            "expected": {
+              "current_gate_status": "pass",
+              "blocked_row_count": 0
+            },
+            "actual": {
+              "current_gate_status": "pass",
+              "blocked_row_count": 0
+            },
+            "outcome": "pass"
+          }
+        ],
+        "evidence_bundle": {
+          "artifact_refs": [
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "tests/conformance/claim_reconciliation_report.v1.json",
+            "tests/conformance/perf_regression_prevention.v1.json",
+            "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+          ],
+          "required_commands": [
+            "scripts/check_replacement_levels.sh",
+            "bash scripts/check_replacement_guard.sh interpose",
+            "scripts/check_claim_reconciliation.sh",
+            "scripts/check_perf_budget.sh"
+          ]
+        }
+      },
+      "blockers": [],
+      "status": "achieved"
+    },
+    {
+      "level": "L2",
+      "name": "Partial Replacement",
+      "description": "Standalone for a declared core subset with no WrapsHostLibc or GlibcCallThrough symbols on that subset. Host-glibc-backed process environment and packaging evidence are still required before partial-replacement claims are credible.",
+      "deployment": "Direct link or LD_PRELOAD (host glibc for stdio/dlfcn only)",
+      "host_glibc_required": true,
+      "gate_criteria": {
+        "max_callthrough_pct": 15,
+        "max_stub_pct": 0,
+        "min_implemented_pct": 50,
+        "e2e_smoke_required": true,
+        "perf_budget_strict_ns": 20,
+        "perf_budget_hardened_ns": 200,
+        "test_gate": "Full test suite + C fixture suite + perf benchmarks",
+        "additional": [
+          "Declared standalone subset has zero WrapsHostLibc and GlibcCallThrough symbols",
+          "Standalone dependency policy documents any remaining host-environment assumptions",
+          "C compile/link/run fixtures pass"
+        ]
+      },
+      "blockers": [
+        "Standalone artifact packaging/deployment proof remains pending after standalone policy enforcement completion",
+        "C fixture suite (bd-3jh) not yet built",
+        "Perf benchmarks (bd-2r0) not yet enforced"
+      ],
+      "status": "planned"
+    },
+    {
+      "level": "L3",
+      "name": "Full Replacement",
+      "description": "Complete standalone glibc replacement. Zero host glibc dependency. All symbols either Implemented or RawSyscall. Requires custom CRT, rtld, and NSS/locale/resolver backends.",
+      "deployment": "Direct link as system libc (replaces /lib/x86_64-linux-gnu/libc.so.6)",
+      "host_glibc_required": false,
+      "gate_criteria": {
+        "max_callthrough_pct": 0,
+        "max_stub_pct": 0,
+        "min_implemented_pct": 60,
+        "e2e_smoke_required": true,
+        "perf_budget_strict_ns": 20,
+        "perf_budget_hardened_ns": 200,
+        "test_gate": "Full test suite + C fixtures + real binary workload matrix + perf parity",
+        "additional": [
+          "Zero WrapsHostLibc or GlibcCallThrough symbols",
+          "pthread implemented via futex (no host pthread)",
+          "stdio implemented (no host FILE*)",
+          "Custom _start/CRT bootstrap",
+          "NSS files backend operational",
+          "Resolver UDP backend operational"
+        ]
+      },
+      "blockers": [
+        "CRT bootstrap (bd-qwm) not started",
+        "rtld (bd-3rn) not started",
+        "NSS backend (bd-1rf) not started",
+        "Resolver backend (bd-1y7) not started",
+        "System-libc deployment battery and host-independence evidence are not yet complete"
+      ],
+      "status": "roadmap"
+    }
+  ],
+  "current_level": "L1",
+  "current_assessment": {
+    "total_symbols": 4119,
+    "implemented": 2464,
+    "raw_syscall": 408,
+    "native": 2872,
+    "wraps_host_libc": 1247,
+    "glibc_callthrough": 0,
+    "callthrough": 1247,
+    "stub": 0,
+    "implemented_pct": 60,
+    "raw_syscall_pct": 10,
+    "native_pct": 70,
+    "wraps_host_libc_pct": 30,
+    "glibc_callthrough_pct": 0,
+    "callthrough_pct": 30,
+    "stub_pct": 0,
+    "callthrough_breakdown": {
+      "c11threads_abi": 5,
+      "dirent_abi": 5,
+      "dlfcn_abi": 6,
+      "err_abi": 12,
+      "glibc_internal_abi": 209,
+      "grp_abi": 3,
+      "inet_abi": 10,
+      "io_abi": 1,
+      "io_internal_abi": 63,
+      "isoc_abi": 3,
+      "malloc_abi": 11,
+      "math_abi": 507,
+      "process_abi": 2,
+      "pthread_abi": 30,
+      "pwd_abi": 8,
+      "resolv_abi": 7,
+      "rpc_abi": 28,
+      "search_abi": 1,
+      "setjmp_abi": 4,
+      "signal_abi": 8,
+      "startup_abi": 3,
+      "stdio_abi": 113,
+      "stdlib_abi": 60,
+      "string_abi": 34,
+      "time_abi": 1,
+      "unistd_abi": 70,
+      "wchar_abi": 43
+    },
+    "wraps_host_libc_breakdown": {
+      "c11threads_abi": 5,
+      "dirent_abi": 5,
+      "dlfcn_abi": 6,
+      "err_abi": 12,
+      "glibc_internal_abi": 209,
+      "grp_abi": 3,
+      "inet_abi": 10,
+      "io_abi": 1,
+      "io_internal_abi": 63,
+      "isoc_abi": 3,
+      "malloc_abi": 11,
+      "math_abi": 507,
+      "process_abi": 2,
+      "pthread_abi": 30,
+      "pwd_abi": 8,
+      "resolv_abi": 7,
+      "rpc_abi": 28,
+      "search_abi": 1,
+      "setjmp_abi": 4,
+      "signal_abi": 8,
+      "startup_abi": 3,
+      "stdio_abi": 113,
+      "stdlib_abi": 60,
+      "string_abi": 34,
+      "time_abi": 1,
+      "unistd_abi": 70,
+      "wchar_abi": 43
+    },
+    "glibc_callthrough_breakdown": {},
+    "stub_breakdown": {}
+  },
+  "release_tag_policy": {
+    "description": "Release tags must encode exactly one replacement maturity level and must not claim a level above current_level.",
+    "tag_format": "v<semver>-L<level>",
+    "level_tag_suffix": {
+      "L0": "-L0",
+      "L1": "-L1",
+      "L2": "-L2",
+      "L3": "-L3"
+    },
+    "current_release_level": "L1",
+    "current_release_tag_example": "v0.1.0-L1"
+  },
+  "transition_requirements": {
+    "L0_to_L1": [
+      "Maintain zero-stub taxonomy coverage in the replacement-level gate",
+      "Validate hardened mode E2E",
+      "Complete E2E smoke harness",
+      "Complete the L1 CRT/startup/TLS proof matrix for startup, TLS, init/fini, destructors, errno isolation, secure mode, and diagnostics"
+    ],
+    "L1_to_L2": [
+      "Maintain zero WrapsHostLibc and GlibcCallThrough symbols for the declared standalone subset",
+      "Build C compile/link/run fixture suite",
+      "Enforce perf budgets in CI",
+      "Prove standalone dependency policy with compile-time and runtime guards"
+    ],
+    "L2_to_L3": [
+      "Maintain zero WrapsHostLibc and GlibcCallThrough symbols across the full replacement surface",
+      "Build custom CRT bootstrap",
+      "Build minimal rtld",
+      "Build NSS files backend",
+      "Build resolver UDP backend",
+      "Pass real binary workload matrix"
+    ]
+  }
+}

@@ -2,19 +2,19 @@
 
 > **Evidence source**: `tests/conformance/ld_preload_smoke_summary.v1.json`
 >
-> **Guide reconciled**: 2026-11-11. The committed workload run is November 11, 2026 (`run_id`: `20261111T134243Z-2744068`) at `44a61541664180227df61c46d491ef024d2b4536`.
+> **Guide reconciled**: 2026-11-17. The committed workload run is November 17, 2026 (`run_id`: `20261117T074800Z-fec80ccf6`) at `fec80ccf63466a06a6459bd38dd122a4444fbeca`.
 
-FrankenLibC currently declares **L0 interposition over host glibc**. This guide describes the committed workload snapshot and its limitations. A recorded pass on the curated battery does not establish that an arbitrary later commit or unqualified workload passes.
+FrankenLibC currently declares **L1 hardened interposition over host glibc**. This guide describes the committed workload snapshot and its limitations. A recorded pass on the curated battery does not establish that an arbitrary later commit or unqualified workload passes.
 
-## Recorded Smoke Status — November 11, 2026
+## Recorded Smoke Status — November 17, 2026
 
 | Mode | Pass | Fail | Skip | Xfail |
 |------|------|------|------|-------|
-| **Strict** | 175 | 0 | 2 | 0 |
-| **Hardened** | 173 | 0 | 2 | 0 |
-| **Total** | 348 | 0 | 4 | 0 |
+| **Strict** | 178 | 0 | 2 | 0 |
+| **Hardened** | 182 | 0 | 2 | 0 |
+| **Total** | 360 | 0 | 4 | 0 |
 
-These mode assignments come from `tests/conformance/ld_preload_smoke_summary.v1.json` (`run_id`: `20261111T134243Z-2744068`, source commit `44a61541…`). Historical snapshots (June 3 and September 24) covered smaller batteries and are superseded by this recorded corpus.
+These mode assignments come from `tests/conformance/ld_preload_smoke_summary.v1.json` (`run_id`: `20261117T074800Z-fec80ccf6`, source commit `fec80ccf…`). Historical snapshots (June 3 and September 24) covered smaller batteries and are superseded by this recorded corpus.
 
 The 4 skips are the optional `redis-cli --version` and `nginx -v` probes (2 per mode), skipped only when those binaries are not installed. They are tracked separately from failures.
 
@@ -32,31 +32,31 @@ The corpus includes the following workload families; consult the per-case transc
 
 ## What Works (Hardened Mode)
 
-The structured snapshot records 173 hardened-mode passes (`0` failures, `2` optional skips, `0` xfails). Hardened mode can repair or deny invalid operations on explicitly wired paths; valid-program smoke cases do not establish universal memory safety.
+The structured snapshot records 182 hardened-mode passes (`0` failures, `2` optional skips, `0` xfails). Hardened mode can repair or deny invalid operations on explicitly wired paths; valid-program smoke cases do not establish universal memory safety.
 
 ## Known Issues
 
 ### Signature Guard Failures (0 cases in the checked run)
 
-No signature-guard failures are recorded in the November 11 artifact (`20261111T134243Z-2744068`). This is a statement about that run, not a blanket guarantee for unverified commits.
+No signature-guard failures are recorded in the November 17 artifact (`20261117T074800Z-fec80ccf6`). This is a statement about that run, not a blanket guarantee for unverified commits.
 
 ### Performance Failures (0 cases in the checked run)
 
-The November 11 artifact records zero `perf_failures` in both modes (`deployed_overhead_passed: true`). Workload-specific allocator, hardened-sort and startup performance must still be measured against a live incumbent in the same invocation when evaluating new workloads.
+The November 17 artifact records zero `perf_failures` in both modes (`deployed_overhead_passed: true`). Workload-specific allocator, hardened-sort and startup performance must still be measured against a live incumbent in the same invocation when evaluating new workloads.
 
 ### Optional/Skipped Binaries
 
-The following binaries are optional and skipped when not present (four of 352 cases in the recorded run):
+The following binaries are optional and skipped when not present (four of 364 cases in the recorded run):
 
 - `redis-cli` (network service)
 - `nginx` (web server)
 
 ## Maturity Level
 
-The canonical `tests/conformance/replacement_levels.json` declares **L0**:
+The canonical `tests/conformance/replacement_levels.json` declares **L1**:
 
-- **L0 (Current)**: Interposition over host glibc with native, host-backed and unsupported subsets explicitly tracked
-- L1 (Promotion target): Hardened interposition satisfying zero-stub, workload and performance requirements; host glibc remains required
+- L0 (Achieved): Interposition over host glibc with native, host-backed and unsupported subsets explicitly tracked
+- **L1 (Current)**: Hardened interposition over host glibc satisfying zero-stub, workload and performance requirements; host glibc remains required
 - L2 (Future): Standalone-ready qualification
 - L3 (Future): Standalone replacement artifact
 

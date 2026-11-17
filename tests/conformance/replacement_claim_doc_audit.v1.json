@@ -3,8 +3,8 @@
   "manifest_id": "replacement-claim-doc-audit",
   "bead": "bd-5unc9",
   "owner_bead": "bd-zyck1",
-  "generated_utc": "2026-05-05T05:50:00Z",
-  "source_commit": "12b9868dee9aeca5dba54293f3dc076bab39cac3",
+  "generated_utc": "2026-11-17T07:55:00Z",
+  "source_commit": "fec80ccf63466a06a6459bd38dd122a4444fbeca",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",

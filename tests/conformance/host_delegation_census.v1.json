@@ -3292,7 +3292,7 @@
         "source_unique_export_symbol_count": 4604,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "5eb1a01826a13b350dd522aa65f4628f590d75e15d4265ae0853c181a7758d13",
+        "support_matrix_sha256": "949402f660d386cb84a16d993f607cca2afd4218da15c8da44a3a6956c65ac31",
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [
@@ -17776,7 +17776,7 @@
         "source_unique_export_symbol_count": 4605,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "5eb1a01826a13b350dd522aa65f4628f590d75e15d4265ae0853c181a7758d13",
+        "support_matrix_sha256": "949402f660d386cb84a16d993f607cca2afd4218da15c8da44a3a6956c65ac31",
         "support_matrix_unique_symbol_count": 4119
       },
       "exported_symbols_with_unknown_call_edges": [

@@ -83,7 +83,7 @@
       "path": "DEPLOYMENT.md",
       "required_section": "## Supported Deployment Model",
       "required_phrases": [
-        "Current declared level: `L0`",
+        "Current declared level: `L1`",
         "not as a full standalone replacement for glibc",
         "tests/conformance/replacement_levels.json"
       ]
@@ -103,8 +103,8 @@
       "path": "docs/planning/COMPATIBILITY.md",
       "required_section": "## Maturity Level",
       "required_phrases": [
-        "FrankenLibC currently declares **L0 interposition over host glibc**.",
-        "**L0 (Current)**: Interposition over host glibc",
+        "FrankenLibC currently declares **L1 hardened interposition over host glibc**.",
+        "**L1 (Current)**: Hardened interposition over host glibc",
         "tests/conformance/ld_preload_smoke_summary.v1.json"
       ]
     },
@@ -113,7 +113,7 @@
       "path": "docs/planning/PARITY-COVERAGE.md",
       "required_section": "## Support Matrix Breakdown",
       "required_phrases": [
-        "The declared replacement level is **L0 interposition over host glibc**.",
+        "The declared replacement level is **L1 hardened interposition over host glibc**.",
         "tests/conformance/support_semantic_overlay.v1.json",
         "Qualifies an explicit linked AArch64 release library"
       ]
@@ -137,7 +137,7 @@
     },
     {
       "id": "operator_current_level_l1",
-      "pattern": "(?:Current|Canonical\\s+Declared)\\s+Level:\\s*`?\\*{0,2}L[123]\\b",
+      "pattern": "(?:Current|Canonical\\s+Declared)\\s+Level:\\s*`?\\*{0,2}L[23]\\b",
       "allowed_if_line_contains": ["not ", "target", "future", "historical"]
     },
     {

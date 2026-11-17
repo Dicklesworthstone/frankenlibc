@@ -1,0 +1,1117 @@
+{
+  "schema_version": 1,
+  "bead": "bd-2r0",
+  "description": "Performance budget enforcement policy for frankenlibc. Defines latency budgets by perf_class, variance guardrails, repeat-run policy, and temporary waiver mechanism. Cross-references support_matrix.json perf_class assignments.",
+  "budgets": {
+    "strict_hotpath": {
+      "description": "Called >= 1M/sec in typical workloads. Membrane overhead must not dominate.",
+      "strict_mode_ns": 20,
+      "hardened_mode_ns": 200,
+      "applies_to": "All symbols with perf_class=strict_hotpath in support_matrix.json"
+    },
+    "hardened_hotpath": {
+      "description": "Called >= 1M/sec in hardened mode only. Strict mode has no budget constraint.",
+      "strict_mode_ns": null,
+      "hardened_mode_ns": 200,
+      "applies_to": "All symbols with perf_class=hardened_hotpath in support_matrix.json"
+    },
+    "coldpath": {
+      "description": "Called < 1K/sec. No latency budget enforced.",
+      "strict_mode_ns": null,
+      "hardened_mode_ns": null,
+      "applies_to": "All symbols with perf_class=coldpath in support_matrix.json"
+    }
+  },
+  "variance_guardrails": {
+    "min_repeat_runs": 3,
+    "max_repeat_runs": 10,
+    "outlier_policy": "Drop highest and lowest of N>=3 runs, report median of remaining",
+    "max_coefficient_of_variation_pct": 15,
+    "high_cv_action": "Warn and increase repeat runs to max_repeat_runs before failing",
+    "cpu_pinning": "Recommended via FRANKENLIBC_BENCH_PIN=1 for reproducibility",
+    "load_guard": {
+      "enabled": true,
+      "max_load_factor": 0.85,
+      "action": "Skip perf gate with warning on overloaded machines"
+    }
+  },
+  "regression_policy": {
+    "max_regression_pct": 15,
+    "baseline_file": "scripts/perf_baseline.json",
+    "baseline_update_policy": "Manual update only. New baselines require review comment explaining improvement source."
+  },
+  "tail_statistics_contract": {
+    "bead": "bd-juvqm.11",
+    "purpose": "Lock down the deterministic tail-statistics computation that any future high-core baseline (bd-juvqm.1), evidence-loss accounting (bd-juvqm.7), or timing side-channel budget (bd-juvqm.12) must use when surfacing tail claims. Reports MUST emit every required_tail_stats_field below alongside any p95/p99/p999 claim; a tail claim arriving without these fields fails the consuming gate closed (no silent extrapolation from too-few samples).",
+    "module": "frankenlibc_harness::tail_stats",
+    "min_samples_for_p99": 100,
+    "min_samples_for_p999": 1000,
+    "default_bootstrap_iters": 1000,
+    "default_alpha": 0.05,
+    "overload_cv_threshold": 1.0,
+    "required_tail_stats_fields": [
+      "n",
+      "p50",
+      "p95",
+      "p99",
+      "p999",
+      "p99_ci_low",
+      "p99_ci_high",
+      "sufficient_for_p99",
+      "sufficient_for_p999",
+      "overloaded_host",
+      "seed",
+      "bootstrap_iters"
+    ],
+    "fail_closed_when_missing": [
+      "sufficient_for_p99",
+      "sufficient_for_p999",
+      "p99_ci_low",
+      "p99_ci_high",
+      "seed"
+    ]
+  },
+  "workload_budget_extension": {
+    "bead": "bd-bp8fl.8.6",
+    "purpose": "Attach performance budgets to representative user workloads and membrane hot-path evidence without allowing performance claims to outrun parity or baseline proof.",
+    "parity_first": true,
+    "baseline_first": true,
+    "performance_claims_require_current_behavior_proof": true,
+    "microbench_only_cannot_support_user_claims": true,
+    "report_path": "target/conformance/perf_budget_policy.report.json",
+    "log_path": "target/conformance/perf_budget_policy.log.jsonl",
+    "required_log_fields": [
+      "trace_id",
+      "bead_id",
+      "benchmark_id",
+      "workload_id",
+      "api_family",
+      "symbol",
+      "runtime_mode",
+      "replacement_level",
+      "environment_id",
+      "baseline_value",
+      "actual_value",
+      "variance",
+      "threshold",
+      "decision",
+      "latency_ns",
+      "artifact_refs",
+      "source_commit",
+      "target_dir",
+      "failure_signature"
+    ]
+  },
+  "workload_performance_budgets": [
+    {
+      "budget_id": "user-shell-coreutils-sort-pipeline-l0-strict",
+      "benchmark_id": "bench-user-shell-coreutils-sort-pipeline",
+      "benchmark_kind": "user_workload_e2e",
+      "workload_id": "uwm-shell-coreutils",
+      "api_family": "stdio",
+      "symbol": "sort_pipeline",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "environment_id": "linux-x86_64-localhost",
+      "environment_metadata": {
+        "source": "tests/conformance/user_environment_coverage_matrix.v1.json",
+        "architecture": "x86_64",
+        "os_family": "linux",
+        "runner": "rch-compatible",
+        "target_dir_policy": "isolated CARGO_TARGET_DIR per bead"
+      },
+      "host_baseline": {
+        "capture_state": "missing_current_machine_sample",
+        "baseline_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/user_workload_vertical_slice.v1.json",
+          "tests/conformance/real_program_smoke_suite.v1.json"
+        ]
+      },
+      "current_result": {
+        "capture_state": "blocked_missing_interpose_artifact",
+        "actual_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/user_workload_vertical_slice.v1.json",
+          "target/conformance/user_workload_vertical_slice.report.json",
+          "target/conformance/user_workload_vertical_slice.log.jsonl"
+        ]
+      },
+      "variance_policy": {
+        "sample_count": 5,
+        "min_repeat_runs": 3,
+        "max_coefficient_of_variation_pct": 15,
+        "required_stable_samples": 3
+      },
+      "sample_count": 5,
+      "warmup_policy": {
+        "warmup_runs": 2,
+        "discard_first_run": true,
+        "pinning_recommended": true
+      },
+      "latency_threshold_ns": 200000000,
+      "throughput_threshold_ops_per_sec": 5,
+      "regression_severity": "blocking",
+      "benchmark_script": "scripts/check_user_workload_vertical_slice.sh",
+      "artifact_refs": [
+        "tests/conformance/user_workload_vertical_slice.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/user_compatibility_report.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "scripts/check_user_workload_vertical_slice.sh"
+      ],
+      "parity_evidence_refs": [
+        "tests/conformance/user_workload_vertical_slice.v1.json",
+        "tests/conformance/user_compatibility_report.v1.json",
+        "tests/conformance/feature_parity_claim_evidence_gate.v1.json"
+      ],
+      "required_evidence": [
+        "current host baseline sample",
+        "strict-mode user workload timing",
+        "passing user workload behavior proof",
+        "fresh compatibility report"
+      ],
+      "present_evidence": ["workload selection", "smoke-suite binding", "claim-block policy"],
+      "missing_evidence": [
+        "current host baseline sample",
+        "strict-mode timing sample",
+        "load-guarded repeat sample set",
+        "fresh passing interpose artifact"
+      ],
+      "blocking_decision": "claim_blocked",
+      "decision": "claim_blocked",
+      "failure_signature": "workload_perf_missing_current_baseline"
+    },
+    {
+      "budget_id": "membrane-validation-hotpath-strict",
+      "benchmark_id": "bench-membrane-validation-hotpath",
+      "benchmark_kind": "membrane_hot_path_microbenchmark",
+      "workload_id": "membrane-pointer-validation-hotpath",
+      "api_family": "membrane",
+      "symbol": "ptr_validator.validate_region",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "environment_id": "linux-x86_64-localhost",
+      "environment_metadata": {
+        "source": "tests/conformance/user_environment_coverage_matrix.v1.json",
+        "architecture": "x86_64",
+        "os_family": "linux",
+        "runner": "rch-compatible",
+        "target_dir_policy": "isolated CARGO_TARGET_DIR per bead"
+      },
+      "host_baseline": {
+        "capture_state": "pending_membrane_baseline_refresh",
+        "baseline_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/membrane_overhead_baseline.v1.json",
+          "tests/conformance/hot_path_profile_report.v1.json"
+        ]
+      },
+      "current_result": {
+        "capture_state": "pending_membrane_benchmark_refresh",
+        "actual_value_ns": null,
+        "throughput_ops_per_sec": null,
+        "artifact_refs": [
+          "tests/conformance/membrane_overhead_baseline.v1.json",
+          "tests/conformance/hot_path_profile_report.v1.json",
+          "target/conformance/benchmark_gate.report.json"
+        ]
+      },
+      "variance_policy": {
+        "sample_count": 10,
+        "min_repeat_runs": 3,
+        "max_coefficient_of_variation_pct": 15,
+        "required_stable_samples": 5
+      },
+      "sample_count": 10,
+      "warmup_policy": {
+        "warmup_runs": 5,
+        "discard_first_run": true,
+        "pinning_recommended": true
+      },
+      "latency_threshold_ns": 20,
+      "throughput_threshold_ops_per_sec": 50000000,
+      "regression_severity": "blocking",
+      "benchmark_script": "scripts/check_benchmark_gate.sh",
+      "artifact_refs": [
+        "tests/conformance/membrane_overhead_baseline.v1.json",
+        "tests/conformance/hot_path_profile_report.v1.json",
+        "scripts/check_benchmark_gate.sh",
+        "scripts/perf_gate.sh"
+      ],
+      "parity_evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "support_matrix.json"
+      ],
+      "required_evidence": [
+        "current membrane baseline sample",
+        "strict-mode membrane timing",
+        "stable variance sample set",
+        "current support semantic overlay"
+      ],
+      "present_evidence": ["budget threshold", "benchmark script binding", "artifact inventory"],
+      "missing_evidence": [
+        "current membrane baseline sample",
+        "strict-mode membrane timing",
+        "stable variance sample set"
+      ],
+      "blocking_decision": "claim_blocked",
+      "decision": "claim_blocked",
+      "failure_signature": "membrane_perf_missing_current_baseline"
+    }
+  ],
+  "performance_claim_blocking_tests": [
+    {
+      "id": "stale_baseline_blocks_no_regression_claim",
+      "condition": "host_baseline.source_commit is stale or capture_state is not current",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_stale_baseline"
+    },
+    {
+      "id": "missing_parity_proof_blocks_performance_claim",
+      "condition": "parity_evidence_refs missing or behavior proof is not passing",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_missing_parity_proof"
+    },
+    {
+      "id": "microbench_only_blocks_user_workload_claim",
+      "condition": "only membrane_hot_path_microbenchmark evidence exists for a user workload claim",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_microbench_only"
+    },
+    {
+      "id": "parity_failing_evidence_blocks_speedup_claim",
+      "condition": "behavior proof is failing even when timing is under threshold",
+      "claim_surface": "README release compatibility_report",
+      "expected_decision": "claim_blocked",
+      "failure_signature": "perf_claim_parity_failing"
+    }
+  ],
+  "waiver_policy": {
+    "description": "Budget exceptions require explicit temporary waiver beads. Each waiver must specify affected symbols, justification, and expiry.",
+    "required_fields": ["bead_id", "symbols", "justification", "expires_at"],
+    "max_waiver_duration_days": 90,
+    "review_cadence": "Monthly review of all active waivers"
+  },
+  "active_waivers": [
+    {
+      "bead_id": "bd-242",
+      "owner": "bd-b92jd.5",
+      "suite_ids": ["string", "malloc"],
+      "symbols": ["string::*", "malloc::*"],
+      "justification": "Reviewed on 2026-06-02 during the gauntlet pass. ABI-level string and malloc benchmarks are present but still not wired to perf_gate.sh enforcement (see perf_regression_prevention.v1.json#bench_file_inventory: enforced_in_gate=false for both). Narrowed from symbols=[*] (bd-b92jd.2.3) to the two enforced=false suite_ids only; runtime_math, membrane, and errno suites remain enforced.",
+      "expires_at": "2026-08-31",
+      "scope": "target_violation_only",
+      "failure_signature": "perf_gate::target_violation_within_threshold",
+      "note": "perf_gate.sh runs with FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION=1 by default for the two waived suites; remove this entry when string/malloc bench_file_inventory.enforced_in_gate flips to true."
+    }
+  ],
+  "current_assessment": {
+    "total_symbols": 4119,
+    "strict_hotpath_count": 152,
+    "hardened_hotpath_count": 0,
+    "coldpath_count": 2156,
+    "strict_hotpath_by_module": {
+      "c11threads_abi": 6,
+      "ctype_abi": 14,
+      "errno_abi": 1,
+      "malloc_abi": 11,
+      "pthread_abi": 20,
+      "resolv_abi": 1,
+      "search_abi": 2,
+      "stdio_abi": 11,
+      "stdlib_abi": 4,
+      "string_abi": 59,
+      "time_abi": 1,
+      "wchar_abi": 22
+    },
+    "strict_hotpath_by_status": {
+      "Implemented": 116,
+      "WrapsHostLibc": 36
+    },
+    "benchmark_coverage": {
+      "internal_benches": ["runtime_math_bench", "membrane_bench", "runtime_math_kernels_bench"],
+      "abi_symbol_benches": ["string_bench", "malloc_bench"],
+      "not_yet_benched": ["ctype_abi", "errno_abi", "wchar_abi", "pthread_abi"],
+      "note": "ABI-level symbol benchmarks exist for string/malloc but are not yet wired to perf_gate.sh enforcement"
+    }
+  },
+  "enforcement": {
+    "ci_gate_script": "scripts/check_perf_budget.sh",
+    "perf_gate_script": "scripts/perf_gate.sh",
+    "enforcement_mode": "policy_validated",
+    "description": "check_perf_budget.sh validates policy consistency. perf_gate.sh runs actual benchmarks (when available). Full enforcement requires ABI-level benchmarks wired to perf_gate.",
+    "breach_action": "Fail CI with hotspot attribution report listing breached symbol, measured ns, budget ns, and regression pct"
+  },
+  "hotpath_symbols": {
+    "strict_hotpath": [
+      {
+        "symbol": "__ctype_b_loc",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "__ctype_tolower_loc",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "__ctype_toupper_loc",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "__errno_location",
+        "module": "errno_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "__h_errno_location",
+        "module": "resolv_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "aligned_alloc",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "argz_count",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "argz_next",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "bcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "bcopy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "btowc",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "bzero",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "calloc",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "cfree",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "consttime_bcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "consttime_memequal",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "explicit_bzero",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "explicit_memset",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "feof_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "ferror_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "fflush_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "fgets_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "fputs_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "fread_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "free",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "fwrite_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "getc",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "getchar_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "hsearch",
+        "module": "search_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "hsearch_r",
+        "module": "search_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "index",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isalnum",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isalpha",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isdigit",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "islower",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isprint",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "ispunct",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isspace",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isupper",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "isxdigit",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "lfind",
+        "module": "stdlib_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "lsearch",
+        "module": "stdlib_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "malloc",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "malloc_usable_size",
+        "module": "malloc_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "mbrtowc",
+        "module": "wchar_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "mbsrtowcs",
+        "module": "wchar_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "memalign",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "memccpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memchr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memcpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memmem",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memmove",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "mempcpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memrchr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memset",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memset_explicit",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "mtx_lock",
+        "module": "c11threads_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "mtx_trylock",
+        "module": "c11threads_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "mtx_unlock",
+        "module": "c11threads_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "posix_memalign",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_cond_broadcast",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_cond_destroy",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_cond_init",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_cond_signal",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_cond_wait",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_create",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_detach",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_equal",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_join",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_mutex_destroy",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_mutex_init",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_mutex_lock",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_mutex_trylock",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_mutex_unlock",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_rwlock_destroy",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_rwlock_init",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "pthread_rwlock_rdlock",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_rwlock_unlock",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_rwlock_wrlock",
+        "module": "pthread_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pthread_self",
+        "module": "pthread_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "putc",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "putchar_unlocked",
+        "module": "stdio_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "pvalloc",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "realloc",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "rindex",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "stpcpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "stpncpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcasecmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcasestr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcat",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strchr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strchrnul",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcoll",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strcspn",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strdup",
+        "module": "string_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "strerrordesc_np",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strerrorname_np",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strfromd",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strfromf",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strfroml",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strlcat",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strlcpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strlen",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strncasecmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strncat",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strncmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strncpy",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strndup",
+        "module": "string_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "strnlen",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strnstr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strpbrk",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strrchr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strsep",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strspn",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strstr",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strtok",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strtok_r",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "strxfrm",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "swab",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "tfind",
+        "module": "stdlib_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "thrd_current",
+        "module": "c11threads_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "thrd_equal",
+        "module": "c11threads_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "timingsafe_bcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "timingsafe_memcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "timespec_get",
+        "module": "time_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "tolower",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "toupper",
+        "module": "ctype_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "tsearch",
+        "module": "stdlib_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "tss_get",
+        "module": "c11threads_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "valloc",
+        "module": "malloc_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "wcrtomb",
+        "module": "wchar_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "wcscat",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcschr",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcscmp",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcscpy",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcslen",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcsncmp",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcsncpy",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcsnlen",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcsrchr",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcsrtombs",
+        "module": "wchar_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "wcsstr",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wcswidth",
+        "module": "wchar_abi",
+        "status": "WrapsHostLibc"
+      },
+      {
+        "symbol": "wctob",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wmemchr",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wmemcmp",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wmemcpy",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wmemmove",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "wmemset",
+        "module": "wchar_abi",
+        "status": "Implemented"
+      }
+    ]
+  }
+}

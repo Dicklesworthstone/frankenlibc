@@ -31786,6 +31786,227 @@
         ],
         "notes": "Auto-backfilled row for bd-z84; refine commands/artifacts as implementation evidence lands."
       }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.47",
+      "title": "[RC-1020 acceptance] Execute integrated L1 readiness against the actual release artifact",
+      "priority": 1,
+      "status": "in_progress",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Integrated L1 hardened-interpose readiness and structured 8-obligation objective gate verification across 360/0/4 preload smoke, 0 Stubs, CRT/TLS proofs, claim reconciliation, and perf budgets"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_replacement_levels.sh; bash scripts/check_docs_semantic_claims.sh; bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": true,
+          "scope": "tests/conformance/ld_preload_smoke_summary.v1.json; tests/conformance/perf_budget_policy.json"
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test replacement_levels_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_replacement_levels.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "complete",
+          "artifacts": "tests/conformance/ld_preload_smoke_summary.v1.json"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 5,
+        "complete": 5,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.47",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test replacement_levels_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_replacement_levels.sh",
+          "bash scripts/check_docs_semantic_claims.sh",
+          "bash scripts/check_closure_gate.sh"
+        ],
+        "expected_assertions": [
+          "Integrated L1 hardened-interpose readiness and structured 8-obligation objective gate verification across 360/0/4 preload smoke, 0 Stubs, CRT/TLS proofs, claim reconciliation, and perf budgets"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "README.md",
+          "FEATURE_PARITY.md",
+          "DEPLOYMENT.md",
+          "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "docs/planning/COMPATIBILITY.md",
+          "docs/planning/PARITY-COVERAGE.md",
+          "support_matrix.json",
+          "tests/conformance/replacement_levels.json",
+          "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+          "tests/conformance/claim_reconciliation_report.v1.json",
+          "tests/conformance/perf_budget_policy.json",
+          "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json"
+        ],
+        "perf_proof_refs": [
+          "scripts/check_perf_budget.sh",
+          "tests/conformance/ld_preload_smoke_summary.v1.json"
+        ],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh against fresh release SHA256 58889277db31c7ec2b0988167b07e409d881f304eb3ecfd77e979969f731e8cd at commit fec80ccf63466a06a6459bd38dd122a4444fbeca.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Integrated L1 hardened-interpose readiness and structured 8-obligation objective gate verification across 360/0/4 preload smoke, 0 Stubs, CRT/TLS proofs, claim reconciliation, and perf budgets",
+          "acceptance_sha256": "21d8b8270fe034a42097db11a79fd1b59650d40e5b25b843cca02db548bf6a5e",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "README.md",
+            "FEATURE_PARITY.md",
+            "DEPLOYMENT.md",
+            "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+            "docs/planning/COMPATIBILITY.md",
+            "docs/planning/PARITY-COVERAGE.md",
+            "support_matrix.json",
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+            "tests/conformance/claim_reconciliation_report.v1.json",
+            "tests/conformance/perf_budget_policy.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/replacement_levels_test.rs"
+          ],
+          "source": {
+            "commit": "fec80ccf63466a06a6459bd38dd122a4444fbeca",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "DEPLOYMENT.md": "789eff393be3f5383a2faba877fe73c334d2a45d3d8bbd1542b1779285eea01e",
+              "FEATURE_PARITY.md": "2c24f2902a0801714ecf0d7853cb6025e2312d96e4e71071aaddad196cf94fd2",
+              "PLAN_TO_PORT_GLIBC_TO_RUST.md": "e56d9d073cb4497c8df9ff240a2f202538f24a7aca9023326ca8162659421a31",
+              "README.md": "643e8a5636fd6a7ea5d5ac7f716af00c8016615487a8645e48475d2515df2ce3",
+              "crates/frankenlibc-harness/tests/replacement_levels_test.rs": "0f2b5cc6dca0ff050354a61a8b1241c875c25c99759c7ac3f263c1904121015e",
+              "docs/planning/COMPATIBILITY.md": "f50f1698cf5e00493a08218395b45bdf25f9fd56a2b1a7338f6fab5328d604b2",
+              "docs/planning/PARITY-COVERAGE.md": "958ea797e2f43da4463d2c5273ee6a843000797d0df15a41950e6d910a68f801",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "support_matrix.json": "949402f660d386cb84a16d993f607cca2afd4218da15c8da44a3a6956c65ac31",
+              "tests/conformance/claim_reconciliation_report.v1.json": "5dfca1fa3a473d1321b4befafda22c0cbd9810d0dc678578c83a8cb6be3b9be1",
+              "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json": "0663697c551db868a5aa1dfe317fb5e59da950169df6c51b1ee8ee4533cfc858",
+              "tests/conformance/ld_preload_smoke_summary.v1.json": "c6a2a96cf8376034a661e8e277553b703795fac69d33488a9c64a5fadeb3b313",
+              "tests/conformance/perf_budget_policy.json": "8fcaaf53683b27ea9ba3f95cb0086f4b1ee0288e67013df29cf4b006ff4996c2",
+              "tests/conformance/replacement_levels.json": "c3d3c2dd79830c0f37943707a5d7103a97c84517a7afe53ac5e5add79f04ecf5"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:21:01Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1152480-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/2da8bd82b3915b17/out/replacement_levels_test-2da8bd82b3915b17"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1152480-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "replacement_levels_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1152480-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/2da8bd82b3915b17/out/replacement_levels_test-2da8bd82b3915b17"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "levels_exists_and_valid",
+              "all_four_levels_defined",
+              "assessment_matches_support_matrix",
+              "status_progression_consistent",
+              "gate_criteria_monotonically_tighten",
+              "transition_requirements_reference_consecutive_levels",
+              "percentages_consistent",
+              "claim_drift_guard_consistent_with_readme_and_release_policy",
+              "readme_smoke_claims_do_not_outrun_replacement_level_blockers",
+              "blocker_text_does_not_reference_resolved_numeric_counts",
+              "gate_script_exists_and_executable",
+              "l1_objective_gate_consumes_current_crt_startup_tls_matrix",
+              "l1_crt_startup_tls_proof_matrix_validates_required_rows",
+              "l1_crt_startup_tls_proof_matrix_rejects_missing_required_row",
+              "l1_crt_startup_tls_proof_matrix_rejects_stale_evidence",
+              "l1_crt_startup_tls_proof_matrix_rejects_contradictory_evidence",
+              "l1_crt_startup_tls_proof_matrix_rejects_missing_source_commit_policy",
+              "l1_crt_startup_tls_proof_matrix_rejects_policy_that_allows_stale_evidence",
+              "stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence",
+              "l1_crt_startup_tls_proof_matrix_rejects_stale_recorded_source_commit",
+              "gate_script_rejects_stale_l1_crt_startup_tls_source_commit",
+              "gate_script_refreshes_l1_objective_gate_artifacts"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {
