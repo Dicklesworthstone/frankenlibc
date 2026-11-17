@@ -103,20 +103,28 @@ const NATIVE_REENTRY_MEMALIGN: u8 = 1 << 4;
 #[allow(dead_code)]
 const NATIVE_REENTRY_MALLOC_USABLE_SIZE: u8 = 1 << 5;
 
+#[repr(C, align(64))]
 struct AllocatorReentrySlot {
+    // Cache line 0 (offset 0..64): write-once identity fields read on lookup.
+    // Isolated from `allocator_depth` / `mt_unfolded_events` so any probe of a
+    // non-owned slot hits a shared (`S`) cache line and never snoops or
+    // invalidates the owner's hot mutable line.
     tid: AtomicI32,
     thread_key: AtomicUsize,
-    native_guard_bits: AtomicU8,
+    _identity_pad: [u8; 48],
+
+    // Cache line 1 (offset 64..128): hot owner-mutable control state.
     allocator_depth: AtomicU32,
-    fallback_cache_index: AtomicUsize,
-    segment_local: UnsafeCell<SegmentLocalState>,
-    /// Multi-threaded stats: cumulative counters only this slot's thread
-    /// writes, and the values already folded into the global stats (touched
-    /// only under the global combiner lock); see `record_slot_mt_stats`.
-    mt_counts: SlotMtCounters,
-    mt_folded: UnsafeCell<MallocStatsState>,
     /// Events this slot's thread recorded since it last tried to fold.
     mt_unfolded_events: AtomicU32,
+    /// Stack address of the innermost user signal handler frame entered on
+    /// this thread through signal_abi's trampolines, 0 when none; see
+    /// `in_signal_handler`.
+    signal_handler_sp: AtomicUsize,
+    /// True when `(*segment_local.get()).stats` holds unflushed single-threaded
+    /// deltas that must be merged once `MULTI_THREADED` latches or a snapshot runs.
+    st_stats_dirty: AtomicBool,
+    native_guard_bits: AtomicU8,
     /// Set (by this thread only) from just before it takes the native-fallback
     /// table lock until just after it releases it; see
     /// `fallback_table_entered_on_this_thread`.
@@ -125,11 +133,17 @@ struct AllocatorReentrySlot {
     /// thread, avoiding a separate TLS macro lookup on entry and drop.
     #[cfg(not(feature = "owned-tls-cache"))]
     string_membrane_active: AtomicBool,
-    /// Stack address of the innermost user signal handler frame entered on
-    /// this thread through signal_abi's trampolines, 0 when none; see
-    /// `in_signal_handler`.
-    signal_handler_sp: AtomicUsize,
+    fallback_cache_index: AtomicUsize,
+
+    /// Multi-threaded stats: cumulative counters only this slot's thread
+    /// writes, and the values already folded into the global stats (touched
+    /// only under the global combiner lock); see `record_slot_mt_stats`.
+    mt_counts: SlotMtCounters,
+    mt_folded: UnsafeCell<MallocStatsState>,
+    segment_local: UnsafeCell<SegmentLocalState>,
 }
+
+const _: () = assert!(std::mem::offset_of!(AllocatorReentrySlot, allocator_depth) == 64);
 
 // SAFETY: a live thread owns exactly one reentry slot: keyed by its TCB self
 // pointer, or (tid path) by its kernel tid; both are unique among live threads.  The outer allocator
@@ -144,20 +158,22 @@ impl AllocatorReentrySlot {
         Self {
             tid: AtomicI32::new(0),
             thread_key: AtomicUsize::new(0),
-            native_guard_bits: AtomicU8::new(0),
+            _identity_pad: [0; 48],
             allocator_depth: AtomicU32::new(0),
-            // Stored as `index + 1` so `0` means "empty" and the entire
-            // 14.75 MiB `ALLOCATOR_REENTRY_SLOTS` table is zero-initialized in `.bss`
-            // (bd-rc0923-epic-eeuy4f.25).
-            fallback_cache_index: AtomicUsize::new(0),
-            segment_local: UnsafeCell::new(SegmentLocalState::new()),
-            mt_counts: SlotMtCounters::new(),
-            mt_folded: UnsafeCell::new(MallocStatsState::new()),
             mt_unfolded_events: AtomicU32::new(0),
+            signal_handler_sp: AtomicUsize::new(0),
+            st_stats_dirty: AtomicBool::new(false),
+            native_guard_bits: AtomicU8::new(0),
             in_fallback_table: AtomicBool::new(false),
             #[cfg(not(feature = "owned-tls-cache"))]
             string_membrane_active: AtomicBool::new(false),
-            signal_handler_sp: AtomicUsize::new(0),
+            // Stored as `index + 1` so `0` means "empty" and the entire
+            // reentry-slot table is zero-initialized in `.bss` / demand-zero slab
+            // (bd-rc0923-epic-eeuy4f.25).
+            fallback_cache_index: AtomicUsize::new(0),
+            mt_counts: SlotMtCounters::new(),
+            mt_folded: UnsafeCell::new(MallocStatsState::new()),
+            segment_local: UnsafeCell::new(SegmentLocalState::new()),
         }
     }
 }
@@ -175,12 +191,18 @@ fn current_stack_address() -> usize {
 /// that leaves by `siglongjmp` never runs its exit code, and a depth would then
 /// stay raised forever. A stack address goes stale harmlessly -- once control
 /// is back above the trampoline's frame, the current stack address is above it.
-#[inline]
+#[inline(always)]
 fn in_signal_handler(slot: &AllocatorReentrySlot) -> bool {
     let handler_sp = slot.signal_handler_sp.load(Ordering::Relaxed);
     if handler_sp == 0 {
         return false;
     }
+    in_signal_handler_slow(slot, handler_sp)
+}
+
+#[cold]
+#[inline(never)]
+fn in_signal_handler_slow(slot: &AllocatorReentrySlot, handler_sp: usize) -> bool {
     if current_stack_address() <= handler_sp {
         return true;
     }
@@ -373,26 +395,90 @@ const REENTRY_SLOTS_BYTES: usize =
     REENTRY_SLAB_SLOT_COUNT * std::mem::size_of::<AllocatorReentrySlot>();
 const _: () = assert!(
     REENTRY_COMPACT_GRANULE_SLOTS * std::mem::size_of::<AllocatorReentrySlot>()
-        <= segment_mapping::GRANULE
+        <= 3 * segment_mapping::GRANULE
 );
 
-/// Primary inline reentry slots (`16 * 3,808 B = 59.5 KiB` `.bss`, demand-paged at 4 KiB)
+/// Primary inline reentry slots (`16 * 9,952 B = 155.5 KiB` `.bss`, demand-paged at 4 KiB)
 /// so processes with <= 16 concurrent threads claim a slot with zero `mmap`/`mprotect`
 /// syscalls and zero dynamic-TLS (`__tls_get_addr`) relocations under `dlopen`.
 static PRIMARY_REENTRY_SLOTS: [AllocatorReentrySlot; REENTRY_COMPACT_GRANULE_SLOTS] =
     [const { AllocatorReentrySlot::new() }; REENTRY_COMPACT_GRANULE_SLOTS];
-static REENTRY_SLOTS_SLAB: DemandSlab<6> = DemandSlab::new(REENTRY_SLOTS_BYTES);
+static REENTRY_SLOTS_SLAB: DemandSlab<11> = DemandSlab::new(REENTRY_SLOTS_BYTES);
 /// Single static fallback slot used only if `REENTRY_SLOTS_SLAB` cannot map under
 /// extreme pre-existing `RLIMIT_AS` exhaustion.
 static BOOTSTRAP_REENTRY_SLOT: AllocatorReentrySlot = AllocatorReentrySlot::new();
 static BOOTSTRAP_SLOT_CLAIMED: AtomicBool = AtomicBool::new(false);
 
-#[inline]
-fn reentry_slot_if_ready(index: usize) -> Option<&'static AllocatorReentrySlot> {
-    if let Some(slot) = PRIMARY_REENTRY_SLOTS.get(index) {
+const KEY_SLOT_DIR_LEN: usize = 2048;
+/// Compact 2-way associative `(thread_key -> slot_index + 1)` hint directory
+/// (`4 KiB` `.bss`, 0 `.tbss` / 0 dynamic-TLS relocations). Written once when a
+/// thread claims its slot so steady-state lookups stay entirely in shared (`S`)
+/// L1 cache across all cores; every candidate is verified against `slot.tid` and
+/// `slot.thread_key` on the slot's dedicated read-only identity cache line.
+static KEY_SLOT_DIR: [AtomicU16; KEY_SLOT_DIR_LEN] =
+    [const { AtomicU16::new(0) }; KEY_SLOT_DIR_LEN];
+
+#[inline(always)]
+fn mix_thread_key(key: usize) -> u64 {
+    // glibc pthread stacks step by `0x801000` (`(1 << 23) + (1 << 12)`), so fold
+    // bits 23, 12, and 4 into the low word before the 64-bit Fibonacci multiply.
+    let k = key as u64;
+    (k ^ (k >> 23) ^ (k >> 12) ^ (k >> 4)).wrapping_mul(0x9e37_79b1_85eb_ca87)
+}
+
+#[inline(always)]
+fn key_slot_dir_base(key: usize) -> usize {
+    ((mix_thread_key(key) >> 53) as usize) & (KEY_SLOT_DIR_LEN - 2)
+}
+
+#[inline(always)]
+fn lookup_key_slot_dir(key: usize) -> Option<&'static AllocatorReentrySlot> {
+    let base = key_slot_dir_base(key);
+    let raw0 = KEY_SLOT_DIR[base].load(Ordering::Relaxed) as usize;
+    if let Some(idx) = raw0.checked_sub(1) {
+        if let Some(slot) = PRIMARY_REENTRY_SLOTS.get(idx) {
+            if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+                && slot.thread_key.load(Ordering::Acquire) == key
+            {
+                return Some(slot);
+            }
+        } else if let Some(slot) = reentry_slot_if_ready_slab(idx)
+            && slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+            && slot.thread_key.load(Ordering::Acquire) == key
+        {
+            return Some(slot);
+        }
+    }
+    let raw1 = KEY_SLOT_DIR[base | 1].load(Ordering::Relaxed) as usize;
+    if let Some(idx) = raw1.checked_sub(1)
+        && let Some(slot) = reentry_slot_if_ready(idx)
+        && slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
+        && slot.thread_key.load(Ordering::Acquire) == key
+    {
         return Some(slot);
     }
-    if index >= ALLOCATOR_REENTRY_SLOT_COUNT {
+    None
+}
+
+#[inline]
+fn record_key_slot_dir(key: usize, slot_idx: usize) {
+    if slot_idx >= ALLOCATOR_REENTRY_SLOT_COUNT {
+        return;
+    }
+    let encoded = (slot_idx + 1) as u16;
+    let base = key_slot_dir_base(key);
+    let e0 = KEY_SLOT_DIR[base].load(Ordering::Relaxed);
+    if e0 == 0 || e0 == encoded {
+        KEY_SLOT_DIR[base].store(encoded, Ordering::Relaxed);
+    } else {
+        KEY_SLOT_DIR[base | 1].store(encoded, Ordering::Relaxed);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn reentry_slot_if_ready_slab(index: usize) -> Option<&'static AllocatorReentrySlot> {
+    if !(REENTRY_COMPACT_GRANULE_SLOTS..ALLOCATOR_REENTRY_SLOT_COUNT).contains(&index) {
         return None;
     }
     let slab_index = index - REENTRY_COMPACT_GRANULE_SLOTS;
@@ -401,6 +487,14 @@ fn reentry_slot_if_ready(index: usize) -> Option<&'static AllocatorReentrySlot> 
     let base = REENTRY_SLOTS_SLAB.writable_base_if_ready(start, end)?;
     // SAFETY: `start..end` is verified writable and zero-initialized (`AllocatorReentrySlot::new()`).
     Some(unsafe { &*((base + start) as *const AllocatorReentrySlot) })
+}
+
+#[inline]
+fn reentry_slot_if_ready(index: usize) -> Option<&'static AllocatorReentrySlot> {
+    if let Some(slot) = PRIMARY_REENTRY_SLOTS.get(index) {
+        return Some(slot);
+    }
+    reentry_slot_if_ready_slab(index)
 }
 
 #[inline]
@@ -565,11 +659,11 @@ fn note_thread_key(key: usize) {
 /// thread that inherits a dead thread's TCB inherits its idle slot and local caches.
 /// Unlike tids, TCBs are recycled by thread churn, which keeps the table from filling.
 fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentrySlot> {
-    let hash = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87);
-    // Probe Granule 0 (first 16 slots = 60,928 B <= 64 KiB) first so processes
-    // with <= 16 concurrent threads only ever promote a single 64 KiB granule
-    // while still recycling dead TCB addresses deterministically.
-    let compact_start = (hash >> 60) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+    let hash = mix_thread_key(key);
+    // Probe `PRIMARY_REENTRY_SLOTS` (16 inline `.bss` slots) first so processes
+    // with <= 16 concurrent threads claim a slot with zero `mmap`/`mprotect`
+    // syscalls while scattering 8 MiB-strided pthread TCBs evenly.
+    let compact_start = ((hash >> 60) as usize) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
     for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
         let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
         let Some(slot) = ensure_reentry_slot(idx) else {
@@ -592,7 +686,7 @@ fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentr
         }
     }
 
-    let start = hash >> 52;
+    let start = (hash >> 52) as usize;
     for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
         let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
         let Some(slot) = ensure_reentry_slot(idx) else {
@@ -802,23 +896,20 @@ fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
     let keyed = thread_key.is_some() && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
 
-    // Direct RIP-relative `.bss` probe of the primary 16-slot compact table:
-    // 0 dynamic-TLS (`__tls_get_addr`) relocations under `dlopen`, 0 `.tbss`
-    // bytes, safe before relocation and throughout pthread TLS teardown.
-    if keyed && let Some(key) = thread_key {
-        let idx = ((key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 60)
-            & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
-        let slot = &PRIMARY_REENTRY_SLOTS[idx];
-        if slot.tid.load(Ordering::Acquire) == KEY_CLAIMED_TID
-            && slot.thread_key.load(Ordering::Acquire) == key
-        {
-            return Some(slot);
-        }
+    // Direct RIP-relative `.bss` probe through the read-only `KEY_SLOT_DIR`
+    // directory: 0 dynamic-TLS (`__tls_get_addr`) relocations under `dlopen`,
+    // 0 `.tbss` bytes, and 0 cross-thread probes of non-owned slots.
+    if keyed
+        && let Some(key) = thread_key
+        && let Some(slot) = lookup_key_slot_dir(key)
+    {
+        return Some(slot);
     }
 
     current_allocator_reentry_slot_slow(thread_key, keyed)
 }
 
+#[cold]
 #[inline(never)]
 fn current_allocator_reentry_slot_slow(
     thread_key: Option<usize>,
@@ -847,7 +938,9 @@ fn current_allocator_reentry_slot_slow(
 
     let slot = if let (true, Some(key)) = (keyed, thread_key) {
         note_thread_key(key);
-        allocator_reentry_slot_for_key(key)?
+        let claimed = allocator_reentry_slot_for_key(key)?;
+        record_key_slot_dir(key, reentry_slot_index(claimed));
+        claimed
     } else {
         let tid = raw_syscall::sys_gettid();
         if tid <= 0 {
@@ -1037,7 +1130,8 @@ static SEGMENT_SIDECAR_WRITABLE: AtomicU64 = AtomicU64::new(0);
 // This counter is deliberately absent from the warmed allocation/free cycle.
 static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
 
-const SEGMENT_MAGAZINE_CAPACITY: usize = 8;
+const SEGMENT_MAGAZINE_CAPACITY: usize = 32;
+const SEGMENT_MAGAZINE_BATCH: usize = SEGMENT_MAGAZINE_CAPACITY / 2;
 const SEGMENT_BUMP_CHUNK: u32 = 64;
 const SEGMENT_NO_ACTIVE: u16 = 0;
 const SEGMENT_SLOT_FREE: u16 = u16::MAX;
@@ -1215,21 +1309,20 @@ impl SegmentMagazine {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn pop(&mut self) -> Option<SegmentMagazineEntry> {
         let next_len = self.len.checked_sub(1)?;
         self.len = next_len;
         let entry = self.entries[next_len as usize];
-        self.entries[next_len as usize] = SegmentMagazineEntry::EMPTY;
-        // Plain branch rather than `.then_some`, for the reason documented on
-        // `segment_arena_base_if_ready`.
+        // Entries at `self.len..` are never read; skipping the dead clear saves
+        // a store on every warmed malloc.
         if entry.0 == SegmentMagazineEntry::EMPTY.0 {
             return None;
         }
         Some(entry)
     }
 
-    #[inline]
+    #[inline(always)]
     fn push(&mut self, entry: SegmentMagazineEntry) -> bool {
         let index = self.len as usize;
         if index >= SEGMENT_MAGAZINE_CAPACITY {
@@ -1575,7 +1668,18 @@ fn segment_slot_view_in_owned_segment(
     if addr >= user_base + class_size {
         return None;
     }
-    let meta = segment_slot_meta(segment_index, slot_index as u32, header.slot_count)?;
+    // `segment_owned_location` acquired this segment's published ownership bit,
+    // which is stored only after `initialize_segment` upgrades the sidecar RW
+    // and records `meta_base` at this exact fixed offset from `arena_base`.
+    let arena_base = base - (segment_index << SEGMENT_SHIFT);
+    let meta_base = arena_base + SEGMENT_ARENA_SIZE + segment_index * SEGMENT_SIDECAR_STRIDE;
+    debug_assert_eq!(
+        Some(meta_base),
+        segment_descriptor(segment_index).map(|d| d.meta_base.load(Ordering::Acquire))
+    );
+    // SAFETY: `slot_index < header.slot_count` inside an owned, published segment's
+    // immortal allocator-private sidecar.
+    let meta = unsafe { &*((meta_base as *const SegmentSlotMeta).add(slot_index)) };
     Some(SegmentSlotView {
         segment_index,
         class_index: header.class_index as usize,
@@ -1858,16 +1962,15 @@ fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<Segment
 }
 
 #[cold]
-fn spill_segment_slot(view: SegmentSlotView) {
-    let Some(descriptor) = segment_descriptor(view.segment_index) else {
-        return;
-    };
-    let word_index = view.slot_index as usize >> 6;
-    if word_index >= SEGMENT_SPILL_WORDS {
+fn spill_segment_bits(segment_index: usize, word_index: usize, mask: u64) {
+    if mask == 0 || word_index >= SEGMENT_SPILL_WORDS {
         return;
     }
-    let byte_offset = view.segment_index * SEGMENT_SPILL_SEGMENT_BYTES
-        + word_index * std::mem::size_of::<AtomicU64>();
+    let Some(descriptor) = segment_descriptor(segment_index) else {
+        return;
+    };
+    let byte_offset =
+        segment_index * SEGMENT_SPILL_SEGMENT_BYTES + word_index * std::mem::size_of::<AtomicU64>();
     let Some(base) = SEGMENT_SPILL_SLAB
         .ensure_writable(byte_offset, byte_offset + std::mem::size_of::<AtomicU64>())
     else {
@@ -1875,13 +1978,90 @@ fn spill_segment_slot(view: SegmentSlotView) {
     };
     // SAFETY: `byte_offset..+8` is aligned and promoted RW in `SEGMENT_SPILL_SLAB`.
     let word = unsafe { &*((base + byte_offset) as *const AtomicU64) };
-    word.fetch_or(1u64 << (view.slot_index & 63), Ordering::Release);
-    descriptor.has_spills.store(1, Ordering::Release);
+    word.fetch_or(mask, Ordering::Release);
+    if descriptor.has_spills.load(Ordering::Relaxed) == 0 {
+        descriptor.has_spills.store(1, Ordering::Release);
+    }
 }
 
 #[cold]
-fn allocate_from_spill(class_index: usize, requested: usize, zeroed: bool) -> Option<*mut c_void> {
+fn spill_segment_slot(view: SegmentSlotView) {
+    let word_index = view.slot_index as usize >> 6;
+    spill_segment_bits(
+        view.segment_index,
+        word_index,
+        1u64 << (view.slot_index & 63),
+    );
+}
+
+#[cold]
+fn flush_half_magazine_and_push(magazine: &mut SegmentMagazine, new_entry: SegmentMagazineEntry) {
+    debug_assert_eq!(magazine.len as usize, SEGMENT_MAGAZINE_CAPACITY);
+    let mut batches = [(u16::MAX, 0u16, 0u64); 4];
+    for entry in &magazine.entries[..SEGMENT_MAGAZINE_BATCH] {
+        if entry.0 == SegmentMagazineEntry::EMPTY.0 {
+            continue;
+        }
+        let user_offset = (entry.0 as u32) as usize;
+        let segment_index = user_offset >> SEGMENT_SHIFT;
+        let Some(header) = segment_header(segment_index) else {
+            continue;
+        };
+        let in_segment = user_offset & (SEGMENT_SIZE - 1);
+        let Some(payload_relative) = in_segment.checked_sub(SEGMENT_HEADER_BYTES) else {
+            continue;
+        };
+        let slot_index = slot_index_from_reciprocal(header.slot_reciprocal, payload_relative);
+        if slot_index >= header.slot_count as usize {
+            continue;
+        }
+        let word_index = slot_index >> 6;
+        if word_index >= SEGMENT_SPILL_WORDS {
+            continue;
+        }
+        let bit = 1u64 << (slot_index & 63);
+        let seg_u16 = segment_index as u16;
+        let word_u16 = word_index as u16;
+        let mut merged = false;
+        for slot in &mut batches {
+            if slot.0 == seg_u16 && slot.1 == word_u16 {
+                slot.2 |= bit;
+                merged = true;
+                break;
+            }
+            if slot.0 == u16::MAX {
+                *slot = (seg_u16, word_u16, bit);
+                merged = true;
+                break;
+            }
+        }
+        if !merged {
+            spill_segment_bits(segment_index, word_index, bit);
+        }
+    }
+    for (seg, word, mask) in batches {
+        if seg != u16::MAX && mask != 0 {
+            spill_segment_bits(seg as usize, word as usize, mask);
+        }
+    }
+    // Keep the newest (L1-warmest) half of the magazine at `0..SEGMENT_MAGAZINE_BATCH`
+    // and append `new_entry`, providing `±16` hysteresis against spill/refill thrashing.
+    magazine
+        .entries
+        .copy_within(SEGMENT_MAGAZINE_BATCH..SEGMENT_MAGAZINE_CAPACITY, 0);
+    magazine.entries[SEGMENT_MAGAZINE_BATCH] = new_entry;
+    magazine.len = (SEGMENT_MAGAZINE_BATCH + 1) as u8;
+}
+
+#[cold]
+fn allocate_from_spill(
+    local: &mut SegmentLocalClass,
+    class_index: usize,
+    requested: usize,
+    zeroed: bool,
+) -> Option<*mut c_void> {
     let owned = SEGMENT_OWNED_BITMAP.load(Ordering::Acquire);
+    let arena_base = segment_arena_base_if_ready()?;
     for segment_index in 0..SEGMENT_COUNT {
         if owned & (1u64 << segment_index) == 0 {
             continue;
@@ -1915,12 +2095,22 @@ fn allocate_from_spill(class_index: usize, requested: usize, zeroed: bool) -> Op
                 if observed == 0 {
                     break;
                 }
-                let bit_index = observed.trailing_zeros();
-                let bit = 1u64 << bit_index;
+                let max_claim =
+                    1 + SEGMENT_MAGAZINE_BATCH.saturating_sub(local.magazine.len as usize);
+                let mut claim_mask = 0u64;
+                let mut rem = observed;
+                for _ in 0..max_claim {
+                    if rem == 0 {
+                        break;
+                    }
+                    let lsb = rem.isolate_lowest_one();
+                    claim_mask |= lsb;
+                    rem &= !lsb;
+                }
                 if word
                     .compare_exchange_weak(
                         observed,
-                        observed & !bit,
+                        observed & !claim_mask,
                         Ordering::AcqRel,
                         Ordering::Acquire,
                     )
@@ -1928,13 +2118,33 @@ fn allocate_from_spill(class_index: usize, requested: usize, zeroed: bool) -> Op
                 {
                     continue;
                 }
-                let slot_index = (word_index as u32) * 64 + bit_index;
-                let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
-                    break;
-                };
-                if let Some(ptr) =
-                    activate_segment_slot(view, requested, zeroed, SegmentSlotOrigin::Recycled)
-                {
+                let mut result: Option<*mut c_void> = None;
+                let mut claimed = claim_mask;
+                while claimed != 0 {
+                    let bit_index = claimed.trailing_zeros();
+                    claimed &= claimed - 1;
+                    let slot_index = (word_index as u32) * 64 + bit_index;
+                    let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
+                        continue;
+                    };
+                    if result.is_none() {
+                        result = activate_segment_slot(
+                            view,
+                            requested,
+                            zeroed,
+                            SegmentSlotOrigin::Recycled,
+                        );
+                        if result.is_none() {
+                            spill_segment_slot(view);
+                        }
+                    } else if !local
+                        .magazine
+                        .push(SegmentMagazineEntry::from_view(view, arena_base))
+                    {
+                        spill_segment_slot(view);
+                    }
+                }
+                if let Some(ptr) = result {
                     return Some(ptr);
                 }
                 break;
@@ -2006,7 +2216,7 @@ fn allocate_from_local_class(
 /// `allocate_from_local_class` skips any slot whose `class_index` differs, so the
 /// returned pointer is always in the class named here and never promoted to a
 /// larger one.
-#[inline]
+#[inline(always)]
 fn segment_allocate(
     slot: &'static AllocatorReentrySlot,
     requested: usize,
@@ -2017,8 +2227,36 @@ fn segment_allocate(
     // SAFETY: all callers hold the successful outer allocator guard associated
     // with this slot; reentrant paths never call `segment_allocate`.
     let local_state = unsafe { &mut *slot.segment_local.get() };
-    let local = local_state.classes.get_mut(class_index)?;
+    let local = &mut local_state.classes[class_index];
 
+    if let Some(arena_base) = segment_arena_base_if_ready()
+        && let Some(entry) = local.magazine.pop()
+    {
+        let (user_base, meta) = entry.decode(arena_base);
+        debug_assert!(requested <= bin_size(class_index));
+        if let Some(ptr) = activate_segment_slot_parts(
+            user_base,
+            meta,
+            MAX_SMALL_SIZE,
+            requested,
+            zeroed,
+            SegmentSlotOrigin::Recycled,
+        ) {
+            return Some((ptr, class_index));
+        }
+    }
+
+    segment_allocate_slow(local, class_index, requested, zeroed)
+}
+
+#[cold]
+#[inline(never)]
+fn segment_allocate_slow(
+    local: &mut SegmentLocalClass,
+    class_index: usize,
+    requested: usize,
+    zeroed: bool,
+) -> Option<(*mut c_void, usize)> {
     if let Some(ptr) = allocate_from_local_class(local, class_index, requested, zeroed) {
         return Some((ptr, class_index));
     }
@@ -2028,7 +2266,7 @@ fn segment_allocate(
             .map(|ptr| (ptr, class_index));
     }
 
-    if let Some(ptr) = allocate_from_spill(class_index, requested, zeroed) {
+    if let Some(ptr) = allocate_from_spill(local, class_index, requested, zeroed) {
         return Some((ptr, class_index));
     }
 
@@ -2040,7 +2278,7 @@ fn segment_allocate(
     allocate_from_local_class(local, class_index, requested, zeroed).map(|ptr| (ptr, class_index))
 }
 
-#[inline]
+#[inline(always)]
 fn segment_free(
     slot: Option<&'static AllocatorReentrySlot>,
     ptr: *mut c_void,
@@ -2130,9 +2368,10 @@ fn segment_free(
         // that value without another global load or a slot-geometry rebuild.
         let arena_base = base - (segment_index << SEGMENT_SHIFT);
         let entry = SegmentMagazineEntry::from_view(view, arena_base);
-        if let Some(local) = local_state.classes.get_mut(view.class_index)
-            && local.magazine.push(entry)
-        {
+        if let Some(local) = local_state.classes.get_mut(view.class_index) {
+            if !local.magazine.push(entry) {
+                flush_half_magazine_and_push(&mut local.magazine, entry);
+            }
             return SegmentFreeResult::Freed {
                 size: previous,
                 bin: view.class_index as u8,
@@ -3893,10 +4132,11 @@ impl FlatCombiningStats {
     /// [`fold_slot_locked`](Self::fold_slot_locked) unless another thread holds
     /// the combiner lock (the slot keeps counting; a later fold catches up).
     fn try_fold_slot(&self, slot: &AllocatorReentrySlot) -> bool {
-        if self
-            .combiner_lock
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
+        if self.combiner_lock.load(Ordering::Relaxed)
+            || self
+                .combiner_lock
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
         {
             return false;
         }
@@ -4117,6 +4357,9 @@ impl MallocForkGuard {
         let surviving = self.surviving_slot_addr;
         let child_tid = raw_syscall::sys_gettid().max(1);
         LAST_THREAD_CACHE.store(0, Ordering::Relaxed);
+        for entry in &KEY_SLOT_DIR {
+            entry.store(0, Ordering::Relaxed);
+        }
         for_each_claimed_slot(|slot| {
             let addr = slot as *const AllocatorReentrySlot as usize;
             if addr == surviving {
@@ -4128,6 +4371,7 @@ impl MallocForkGuard {
                 slot.allocator_depth.store(0, Ordering::Relaxed);
                 slot.fallback_cache_index.store(0, Ordering::Relaxed);
                 slot.in_fallback_table.store(false, Ordering::Relaxed);
+                slot.st_stats_dirty.store(false, Ordering::Relaxed);
                 #[cfg(not(feature = "owned-tls-cache"))]
                 slot.string_membrane_active.store(false, Ordering::Relaxed);
                 slot.signal_handler_sp.store(0, Ordering::Relaxed);
@@ -4195,8 +4439,12 @@ impl SlotMtCounters {
 }
 
 /// Events a thread records before it tries to fold its counters into the
-/// global stats (which is when `peak_usage` is sampled).
-const MT_STATS_MERGE_EVENTS: u32 = 256;
+/// global stats (which is when `peak_usage` is sampled). Readers sweep all
+/// claimed slots via `merge_all_slot_mt_stats`, so exact counts do not depend
+/// on this cadence; keeping it coarse prevents `combiner_lock` cache-line
+/// bouncing across concurrent allocating cores.
+const MT_STATS_MERGE_EVENTS: u32 = 65_536;
+const MT_STATS_CONTENDED_BACKOFF: u32 = 4_096;
 
 /// Multi-threaded stats recording (bd-rc0923-epic-eeuy4f.26).
 ///
@@ -4214,6 +4462,7 @@ const MT_STATS_MERGE_EVENTS: u32 = 256;
 /// deltas. Readers fold every slot first (`merge_all_slot_mt_stats`), so the
 /// counts of threads that are not mid-operation are exact; `peak_usage` is
 /// sampled at folds and can miss a peak shorter than one batch.
+#[inline(always)]
 fn record_slot_mt_stats(
     slot: &AllocatorReentrySlot,
     global: &FlatCombiningStats,
@@ -4250,11 +4499,26 @@ fn record_slot_mt_stats(
         _ => return,
     }
     let unfolded = slot.mt_unfolded_events.load(Ordering::Relaxed) + 1;
-    // Never wait for the combiner here: while another thread folds, keep counting.
-    if unfolded >= MT_STATS_MERGE_EVENTS && global.try_fold_slot(slot) {
-        slot.mt_unfolded_events.store(0, Ordering::Relaxed);
+    if unfolded >= MT_STATS_MERGE_EVENTS {
+        fold_slot_mt_stats_on_threshold(slot, global);
     } else {
         slot.mt_unfolded_events.store(unfolded, Ordering::Relaxed);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn fold_slot_mt_stats_on_threshold(slot: &AllocatorReentrySlot, global: &FlatCombiningStats) {
+    // Never wait for the combiner here: if contended, back off for
+    // `MT_STATS_CONTENDED_BACKOFF` thread-local ops rather than re-probing
+    // `combiner_lock` on every subsequent malloc/free.
+    if global.try_fold_slot(slot) {
+        slot.mt_unfolded_events.store(0, Ordering::Relaxed);
+    } else {
+        slot.mt_unfolded_events.store(
+            MT_STATS_MERGE_EVENTS - MT_STATS_CONTENDED_BACKOFF,
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -4267,8 +4531,19 @@ fn merge_all_slot_mt_stats(global: &FlatCombiningStats) {
 ///
 /// # Safety
 /// The caller must hold the allocator reentry guard for `slot` (exclusive access to `segment_local`).
-#[inline]
+#[inline(always)]
 unsafe fn flush_slot_stats(slot: &AllocatorReentrySlot, global: &FlatCombiningStats) {
+    if !slot.st_stats_dirty.load(Ordering::Relaxed) {
+        return;
+    }
+    // SAFETY: caller holds the outer allocator reentry guard for `slot`.
+    unsafe { flush_slot_stats_slow(slot, global) };
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn flush_slot_stats_slow(slot: &AllocatorReentrySlot, global: &FlatCombiningStats) {
+    slot.st_stats_dirty.store(false, Ordering::Relaxed);
     // SAFETY: exclusive per-thread access to `segment_local` per the contract above.
     let pending = unsafe { &mut (*slot.segment_local.get()).stats };
     global.merge_and_reset(pending);
@@ -4364,6 +4639,9 @@ fn record_stats_binned(slot: Option<&AllocatorReentrySlot>, op: usize, size: usi
                 && pending.live_bytes >= size
                 && pending.per_size_class[bin] > 0;
             if op != FC_OP_FREE || free_representable_locally {
+                if !slot.st_stats_dirty.load(Ordering::Relaxed) {
+                    slot.st_stats_dirty.store(true, Ordering::Relaxed);
+                }
                 FlatCombiningStats::apply_locked(pending, op, size, bin);
                 return;
             }
@@ -5555,50 +5833,61 @@ impl Drop for AllocatorReentryGuard {
     }
 }
 
-#[inline]
-fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
-    let slot = current_allocator_reentry_slot()?;
+#[inline(always)]
+fn enter_allocator_reentry_guard_with_state() -> (Option<AllocatorReentryGuard>, bool, bool) {
+    let Some(slot) = current_allocator_reentry_slot() else {
+        return (None, false, false);
+    };
     if in_signal_handler(slot) {
-        return None;
+        return (None, false, false);
     }
-    let guard = slot
+    let Ok(_) = slot
         .allocator_depth
         .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
-        .ok()
-        .map(|_| AllocatorReentryGuard { slot })?;
+    else {
+        return (None, false, false);
+    };
+    let guard = AllocatorReentryGuard { slot };
 
     // Creating a fresh owned runtime-policy slot allocates while its mutex is
     // held. Both the policy-reentry query below and hardened trace setup would
     // lock that same cache again. Use the tracked internal allocation path,
     // but only for the owning thread; ordinary contenders retain their policy.
     if runtime_policy::runtime_policy_tls_reentry_active() {
-        return None;
+        return (None, false, false);
     }
 
-    if runtime_policy::is_runtime_ready() {
-        if runtime_policy::in_policy_reentry_context() {
-            return None;
-        }
-        if !crate::pthread_abi::pthread_tls_access_active()
-            && crate::pthread_abi::in_threading_policy_context()
-        {
-            return None;
-        }
-        // Hardened: an allocation made while this thread is inside membrane
-        // pointer validation -- typically a signal handler that interrupted a
-        // memcpy/strlen check -- must not enter the membrane allocator, whose
-        // arena shard / page-oracle locks the interrupted frame may hold:
-        // waiting on them never ends (bd-na6ede). Take the reentrant path.
-        // (Only per-thread depth answers this; the owned-TLS lane's depth is
-        // process-wide.)
-        #[cfg(not(feature = "owned-tls-cache"))]
-        if !strict_allocator_host_path_active()
-            && frankenlibc_membrane::ptr_validator::in_validation_context()
-        {
-            return None;
-        }
+    let runtime_ready = runtime_policy::is_runtime_ready();
+    if !runtime_ready {
+        return (Some(guard), false, true);
     }
-    Some(guard)
+
+    if runtime_policy::in_policy_reentry_context() {
+        return (None, true, false);
+    }
+    if !crate::pthread_abi::pthread_tls_access_active()
+        && crate::pthread_abi::in_threading_policy_context()
+    {
+        return (None, true, false);
+    }
+    let strict_host_path = strict_allocator_host_path_active();
+    // Hardened: an allocation made while this thread is inside membrane
+    // pointer validation -- typically a signal handler that interrupted a
+    // memcpy/strlen check -- must not enter the membrane allocator, whose
+    // arena shard / page-oracle locks the interrupted frame may hold:
+    // waiting on them never ends (bd-na6ede). Take the reentrant path.
+    // (Only per-thread depth answers this; the owned-TLS lane's depth is
+    // process-wide.)
+    #[cfg(not(feature = "owned-tls-cache"))]
+    if !strict_host_path && frankenlibc_membrane::ptr_validator::in_validation_context() {
+        return (None, true, false);
+    }
+    (Some(guard), true, strict_host_path)
+}
+
+#[inline(always)]
+fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
+    enter_allocator_reentry_guard_with_state().0
 }
 
 /// Test hook: force allocator entrypoints down the reentrant fallback path and
@@ -6606,22 +6895,23 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     if reject_oversize_request(size) {
         return std::ptr::null_mut();
     }
-    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+    let (Some(reentry_guard), runtime_ready, strict_host_path) =
+        enter_allocator_reentry_guard_with_state()
+    else {
         bump_path_counter(&BOOTSTRAP_PATH_ALLOCS);
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_malloc_passthrough(size) };
     };
 
-    if allocator_bootstrap_passthrough_active() {
+    if !runtime_ready {
         bump_path_counter(&BOOTSTRAP_PATH_ALLOCS);
         return unsafe { bootstrap_malloc_passthrough(size) };
     }
 
     let req = size.max(1);
-    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
-    if strict_allocator_host_path_active() {
+    if strict_host_path {
         if cfg!(not(test))
-            && runtime_policy::is_runtime_ready()
+            && !runtime_policy::strict_passthrough_active()
             && runtime_policy::proof_carried_fast_path_active(
                 ApiFamily::Allocator,
                 req,
@@ -6629,32 +6919,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
                 false,
             )
         {
-            let (_, decision) =
-                runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
-            // SAFETY: strict-mode preload delegates allocator semantics to host libc
-            // to preserve compatibility while the PCC gate records explainability.
-            let (out, segment_class) =
-                unsafe { strict_small_or_host_allocate(reentry_guard.slot, req, false) };
-            if !out.is_null() {
-                match segment_class {
-                    Some(class_index) => {
-                        bump_path_counter(&SEGMENT_PATH_ALLOCS);
-                        record_alloc_stats_binned(Some(reentry_guard.slot), req, class_index)
-                    }
-                    None => {
-                        bump_path_counter(&FALLBACK_PATH_ALLOCS);
-                        fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
-                        record_alloc_stats(Some(reentry_guard.slot), req);
-                    }
-                }
-            }
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(8, req),
-                out.is_null(),
-            );
-            return out;
+            return unsafe { malloc_strict_pcc_path(reentry_guard.slot, req) };
         }
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
         // to preserve process compatibility while hardened mode exercises the
@@ -6680,6 +6945,45 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         }
         return out;
     }
+    // SAFETY: `reentry_guard` is live and its slot is exclusively ours. Kept out
+    // of line (matching `free_membrane_path`) so the hardened membrane frame is
+    // not charged to strict `malloc`'s prologue/epilogue.
+    unsafe { malloc_membrane_path(&reentry_guard, req) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn malloc_strict_pcc_path(slot: &'static AllocatorReentrySlot, req: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+    // SAFETY: strict-mode preload delegates allocator semantics to host libc
+    // to preserve compatibility while the PCC gate records explainability.
+    let (out, segment_class) = unsafe { strict_small_or_host_allocate(slot, req, false) };
+    if !out.is_null() {
+        match segment_class {
+            Some(class_index) => {
+                bump_path_counter(&SEGMENT_PATH_ALLOCS);
+                record_alloc_stats_binned(Some(slot), req, class_index);
+            }
+            None => {
+                bump_path_counter(&FALLBACK_PATH_ALLOCS);
+                fallback_insert_sized_for_slot(slot, out, req);
+                record_alloc_stats(Some(slot), req);
+            }
+        }
+    }
+    runtime_policy::observe(
+        ApiFamily::Allocator,
+        decision.profile,
+        runtime_policy::scaled_cost(8, req),
+        out.is_null(),
+    );
+    out
+}
+
+#[inline(never)]
+unsafe fn malloc_membrane_path(reentry_guard: &AllocatorReentryGuard, req: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
@@ -6767,13 +7071,15 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
-    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+    let (Some(reentry_guard), runtime_ready, strict_host_path) =
+        enter_allocator_reentry_guard_with_state()
+    else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         unsafe { bootstrap_free_passthrough(ptr) };
         return;
     };
 
-    if allocator_bootstrap_passthrough_active() {
+    if !runtime_ready {
         unsafe { bootstrap_free_passthrough(ptr) };
         return;
     }
@@ -6798,7 +7104,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         let _ = fallback_remove(ptr);
         return;
     }
-    if strict_allocator_host_path_active() {
+    if strict_host_path {
         // Fast path (bd-f874go): a pointer present in the native-fallback table
         // is by construction a host-allocator allocation (it was inserted by the
         // strict malloc/calloc/bootstrap path), and arena allocations are never

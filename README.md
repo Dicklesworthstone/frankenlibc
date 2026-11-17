@@ -262,7 +262,7 @@ The committed curated preload snapshot has 348 pass / 0 fail / 4 optional skips 
                                             ▼
               ┌────────────────────────────────────────────────────────┐
               │ glibc-shaped extern "C" ABI                            │
-              │ crates/frankenlibc-abi  (125 Rust files, ~243 kLOC)    │
+              │ crates/frankenlibc-abi  (125 Rust files, ~246 kLOC)    │
               │ libc.map version script  (4,753 lines, GLIBC_2.2.5)    │
               └────────────────────────────────────────────────────────┘
                                             │
@@ -3968,7 +3968,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,872 native/direct-syscall rows (69.7%), 1,247 host-backed wrapper rows (30.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,902 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 246,111 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 246,424 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 86,661 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,994 lines including generated codec tables |
 | Runtime math controllers | 71 modules |

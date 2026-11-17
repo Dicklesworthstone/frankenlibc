@@ -1298,12 +1298,18 @@ fn clear_thread_local_mode_cache() {
 /// by every malloc/free). The sampler still runs on every other entrypoint.
 /// Before resolution this is exactly `mode()`.
 #[must_use]
-#[inline]
+#[inline(always)]
 pub(crate) fn resolved_mode() -> SafetyLevel {
     let cached = MODE_STATE.load(AtomicOrdering::Relaxed);
     if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
         return u8_to_mode(cached);
     }
+    resolved_mode_cold()
+}
+
+#[cold]
+#[inline(never)]
+fn resolved_mode_cold() -> SafetyLevel {
     mode()
 }
 

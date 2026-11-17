@@ -96,9 +96,10 @@ fn current_test_mode() -> HtmTestMode {
 }
 
 #[doc(hidden)]
+#[inline(always)]
 #[must_use]
 pub fn htm_forced_mode_active_for_tests() -> bool {
-    !matches!(current_test_mode(), HtmTestMode::Real)
+    matches!(HTM_TEST_MODE.load(Ordering::Relaxed), 1..=3)
 }
 
 fn now_ms() -> u64 {
