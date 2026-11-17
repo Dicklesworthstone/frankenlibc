@@ -397,7 +397,7 @@ fn causal_consumers_and_gate_script_are_wired_in_source() {
         .expect("tls_cache.rs must exist");
     assert!(tls_src.contains("pub fn warm_integrity_cadence_mask() -> u32"));
     assert!(tls_src.contains("pub fn set_warm_integrity_cadence_mask(mask: u32)"));
-    assert!(tls_src.contains("ESCALATED_INTEGRITY_SOURCES"));
+    assert!(tls_src.contains("SHARD_EPOCHS.escalated_sources"));
     assert!(tls_src.contains("pub fn pipeline_runtime_math_disabled() -> bool"));
 
     let arena_src = fs::read_to_string(root.join("crates/frankenlibc-membrane/src/arena.rs"))
