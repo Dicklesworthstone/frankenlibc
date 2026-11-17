@@ -65,9 +65,77 @@ impl StringSimdDispatch {
     }
 }
 
+#[derive(Clone, Copy)]
+struct StringMembraneToken {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    slot: crate::malloc_abi::StringMembraneSlot,
+}
+
+impl StringMembraneToken {
+    #[inline(always)]
+    fn try_decide_pcc(
+        self,
+        pcc_index: u8,
+        addr_hint: usize,
+        requested_bytes: usize,
+        is_write: bool,
+        bloom_negative: bool,
+    ) -> Option<frankenlibc_membrane::SafetyLevel> {
+        #[cfg(all(not(test), not(feature = "owned-tls-cache")))]
+        {
+            let _ = addr_hint;
+            runtime_policy::try_decide_certified_string_pcc_for_slot(
+                self.slot,
+                pcc_index,
+                requested_bytes,
+                is_write,
+                bloom_negative,
+            )
+        }
+        #[cfg(any(test, feature = "owned-tls-cache"))]
+        {
+            runtime_policy::try_decide_certified_string_pcc(
+                pcc_index,
+                addr_hint,
+                requested_bytes,
+                is_write,
+                bloom_negative,
+            )
+        }
+    }
+}
+
 struct StringMembraneGuard {
     #[cfg(not(feature = "owned-tls-cache"))]
-    flag: &'static std::sync::atomic::AtomicBool,
+    slot: crate::malloc_abi::StringMembraneSlot,
+}
+
+impl StringMembraneGuard {
+    #[inline(always)]
+    fn token(&self) -> StringMembraneToken {
+        StringMembraneToken {
+            #[cfg(not(feature = "owned-tls-cache"))]
+            slot: self.slot,
+        }
+    }
+
+    #[inline(always)]
+    fn try_decide_pcc(
+        &self,
+        pcc_index: u8,
+        addr_hint: usize,
+        requested_bytes: usize,
+        is_write: bool,
+        bloom_negative: bool,
+    ) -> Option<frankenlibc_membrane::SafetyLevel> {
+        self.token().try_decide_pcc(
+            pcc_index,
+            addr_hint,
+            requested_bytes,
+            is_write,
+            bloom_negative,
+        )
+    }
 }
 
 impl Drop for StringMembraneGuard {
@@ -81,7 +149,9 @@ impl Drop for StringMembraneGuard {
         }
         #[cfg(not(feature = "owned-tls-cache"))]
         {
-            self.flag.store(false, AtomicOrdering::Relaxed);
+            self.slot
+                .active_flag()
+                .store(false, AtomicOrdering::Relaxed);
         }
     }
 }
@@ -120,7 +190,8 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        let flag = crate::malloc_abi::try_string_membrane_slot_flag()?;
+        let slot = crate::malloc_abi::try_string_membrane_slot()?;
+        let flag = slot.active_flag();
         // A signal handler must not re-enter the membrane/policy state the frame
         // it interrupted on this thread may be in the middle of (bd-na6ede).
         if flag.load(AtomicOrdering::Relaxed)
@@ -131,7 +202,7 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
             return None;
         }
         flag.store(true, AtomicOrdering::Relaxed);
-        Some(StringMembraneGuard { flag })
+        Some(StringMembraneGuard { slot })
     }
 }
 
@@ -4708,7 +4779,7 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
 
 #[inline(never)]
 unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+    let Some(membrane_guard) = enter_string_membrane_guard() else {
         if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
         {
@@ -4753,7 +4824,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
         );
     let bloom_negative = dst_rem_fast.is_none() && src_rem_fast.is_none();
     if cfg!(not(test))
-        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+        && let Some(mode) = membrane_guard.try_decide_pcc(
             runtime_policy::FFI_PCC_MEMCPY_INDEX,
             dst as usize,
             n,
@@ -4826,7 +4897,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
             ApiFamily::StringMemory,
             decision.profile,
             runtime_policy::scaled_cost(7, n),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }
@@ -4992,7 +5063,7 @@ unsafe fn memmove_validating(dst: *mut c_void, src: *const c_void, n: usize) -> 
             ApiFamily::StringMemory,
             decision.profile,
             runtime_policy::scaled_cost(8, n),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }
@@ -5244,7 +5315,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
         return 0;
     }
 
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+    let Some(membrane_guard) = enter_string_membrane_guard() else {
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     };
     // Resolve `known_remaining` BEFORE entering the memcmp PCC scope. The
@@ -5260,7 +5331,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     let _ = crate::malloc_abi::known_remaining_for_certified_read;
     let bloom_negative = lhs_fast.is_none() && rhs_fast.is_none();
     if cfg!(not(test))
-        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+        && let Some(mode) = membrane_guard.try_decide_pcc(
             runtime_policy::FFI_PCC_MEMCMP_INDEX,
             s1 as usize,
             n,
@@ -6129,7 +6200,7 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // Hardened mode only: acquire the complete membrane guard here before the cold
     // validating boundary (matching `memcmp`), so `strlen_validating` can use
     // `known_remaining_in_guarded_string` without repeating reentry/TLS checks.
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+    let Some(membrane_guard) = enter_string_membrane_guard() else {
         return unsafe { scan_c_string(s, None).0 };
     };
 
@@ -6141,16 +6212,16 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // #[inline(never)]` boundary. Everything from the trace scope down is ordinary
     // validating work and moves safely. Worth 17 Ir on the entry (measured on an
     // isolated split; `memrchr`/`memchr` measured 14.0 Ir for the same shape).
-    unsafe { strlen_validating(s) }
+    unsafe { strlen_validating(s, membrane_guard.token()) }
 }
 
 #[inline(never)]
-unsafe fn strlen_validating(s: *const c_char) -> usize {
+unsafe fn strlen_validating(s: *const c_char, membrane_token: StringMembraneToken) -> usize {
     // BOUND LOOKUP BEFORE THE TRACE SCOPE, and the order is the whole fix (bd-k3skh6).
     let rem = crate::malloc_abi::known_remaining_in_guarded_string(s as usize);
     let bloom_negative = rem.is_none();
     if cfg!(not(test))
-        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+        && let Some(mode) = membrane_token.try_decide_pcc(
             runtime_policy::FFI_PCC_STRLEN_INDEX,
             s as usize,
             0,
@@ -6504,7 +6575,7 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
         return 0;
     }
 
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+    let Some(membrane_guard) = enter_string_membrane_guard() else {
         let (i, _hit_limit) = unsafe { scan_strcmp::<false>(s1, s2, usize::MAX) };
         let a = unsafe { *s1.add(i) } as u8;
         let b = unsafe { *s2.add(i) } as u8;
@@ -6515,7 +6586,7 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
         crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
     let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
     if cfg!(not(test))
-        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+        && let Some(mode) = membrane_guard.try_decide_pcc(
             runtime_policy::FFI_PCC_STRCMP_INDEX,
             s1 as usize,
             0,
@@ -10472,7 +10543,7 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
             ApiFamily::StringMemory,
             decision.profile,
             runtime_policy::scaled_cost(7, n),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }
@@ -10890,7 +10961,7 @@ pub unsafe extern "C" fn memccpy(
             ApiFamily::StringMemory,
             decision.profile,
             runtime_policy::scaled_cost(7, n),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }

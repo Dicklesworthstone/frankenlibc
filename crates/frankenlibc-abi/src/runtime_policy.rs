@@ -333,7 +333,7 @@ fn parse_runtime_math_from_environ() -> bool {
 
 /// Resolve runtime-math switch once at init (bd-06bxm.9).
 /// Returns true if runtime-math should be active.
-#[inline]
+#[inline(always)]
 fn runtime_math_enabled() -> bool {
     let cached = RUNTIME_MATH_STATE.load(AtomicOrdering::Relaxed);
     if cached == RUNTIME_MATH_ON {
@@ -342,6 +342,12 @@ fn runtime_math_enabled() -> bool {
     if cached == RUNTIME_MATH_OFF {
         return false;
     }
+    runtime_math_enabled_slow()
+}
+
+#[cold]
+#[inline(never)]
+fn runtime_math_enabled_slow() -> bool {
     // Interposed calls can arrive before the loader publishes environ. Do not
     // permanently cache the default then: defer adaptive work until the actual
     // process setting can be read, just as during recursive resolution below.
@@ -370,7 +376,7 @@ fn runtime_math_enabled() -> bool {
         RUNTIME_MATH_OFF
     };
     RUNTIME_MATH_STATE.store(state, AtomicOrdering::Release);
-
+    sync_pipeline_runtime_math_state(!enabled);
     if !enabled {
         push_mode_event("info", "runtime_math_disabled", mode(), None);
     }
@@ -379,7 +385,7 @@ fn runtime_math_enabled() -> bool {
 }
 
 /// Check if runtime-math is disabled via FRANKENLIBC_RUNTIME_MATH=off (bd-06bxm.9).
-#[inline]
+#[inline(always)]
 pub(crate) fn runtime_math_disabled() -> bool {
     !runtime_math_enabled()
 }
@@ -919,7 +925,7 @@ fn lookup_active_ffi_pcc_certificate_with_index(
         return None;
     }
     let pcc_index = peek_active_pcc_index()?;
-    let row = ffi_pcc_certificate_by_index(pcc_index)?;
+    let row = active_unescalated_ffi_pcc_by_index(pcc_index)?;
     row.matches_request(family, requested_bytes, is_write, bloom_negative)
         .then_some((pcc_index, row))
 }
@@ -957,7 +963,7 @@ fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
         return None;
     }
     let pcc_index = peek_active_pcc_index()?;
-    ffi_pcc_certificate_by_index(pcc_index)
+    active_unescalated_ffi_pcc_by_index(pcc_index)
 }
 
 fn ffi_pcc_decision(cert: &FfiPccCertificate) -> RuntimeDecision {
@@ -2105,6 +2111,15 @@ pub(crate) fn in_policy_reentry_context() -> bool {
     in_policy_reentry_context_slow()
 }
 
+/// Recompute `ACTIVE_POLICY_REENTRY_CONTEXTS` in a single-threaded `fork()` child
+/// so dead sibling threads' un-dropped `PolicyReentryGuard`s do not stay counted.
+#[cfg(not(test))]
+pub(crate) fn reset_policy_reentry_in_fork_child() -> u64 {
+    let active = u32::from(in_policy_reentry_context_slow());
+    ACTIVE_POLICY_REENTRY_CONTEXTS.store(active, AtomicOrdering::Release);
+    u64::from(active)
+}
+
 #[must_use]
 pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
     // Deployed strict-passthrough fast path: the trace context this sets is never
@@ -2191,9 +2206,45 @@ fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTra
     }
 }
 
+#[inline]
+fn set_fast_pcc_packed(packed: u16) {
+    #[cfg(not(test))]
+    if crate::malloc_abi::set_current_thread_fast_pcc_packed(packed) {
+        return;
+    }
+    if LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed) != packed {
+        LAST_FAST_PCC_PACKED.store(packed, AtomicOrdering::Relaxed);
+    }
+}
+
+#[inline]
+fn peek_fast_pcc_packed() -> u16 {
+    #[cfg(not(test))]
+    {
+        let per_thread = crate::malloc_abi::peek_current_thread_fast_pcc_packed();
+        if per_thread != 0 {
+            return per_thread;
+        }
+    }
+    LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed)
+}
+
+#[inline]
+fn take_fast_pcc_packed() -> u16 {
+    #[cfg(not(test))]
+    {
+        let per_thread = crate::malloc_abi::take_current_thread_fast_pcc_packed();
+        if per_thread != 0 {
+            let _ = LAST_FAST_PCC_PACKED.swap(0, AtomicOrdering::Relaxed);
+            return per_thread;
+        }
+    }
+    LAST_FAST_PCC_PACKED.swap(0, AtomicOrdering::Relaxed)
+}
+
 #[must_use]
 pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
-    let fast_packed = LAST_FAST_PCC_PACKED.swap(0, AtomicOrdering::Relaxed);
+    let fast_packed = take_fast_pcc_packed();
     let tls_record = {
         #[cfg(feature = "owned-tls-cache")]
         {
@@ -2236,7 +2287,7 @@ pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
 
 #[must_use]
 pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
-    if let Some(exp) = expand_fast_pcc_packed(LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed)) {
+    if let Some(exp) = expand_fast_pcc_packed(peek_fast_pcc_packed()) {
         return Some(exp);
     }
     #[cfg(feature = "owned-tls-cache")]
@@ -2311,8 +2362,9 @@ pub(crate) unsafe fn read_decision_snapshot(out: *mut RuntimeDecisionSnapshot) -
         policy_id: decision.policy_id,
         reserved: 0,
     };
-    // SAFETY: caller guarantees a properly aligned, writable output object.
-    unsafe { out.write(snapshot) };
+    // SAFETY: caller guarantees a writable output object; `write_unaligned` avoids
+    // Rust alignment UB if an external C caller passes an unaligned buffer.
+    unsafe { out.write_unaligned(snapshot) };
     1
 }
 
@@ -2358,9 +2410,26 @@ const fn is_hardened_hot_cached_family(family: ApiFamily) -> bool {
     )
 }
 
+#[inline]
+fn sync_pipeline_runtime_math_state(disabled: bool) {
+    frankenlibc_membrane::tls_cache::set_pipeline_runtime_math_disabled(disabled);
+}
+
 #[inline(always)]
-fn is_family_escalated(family: ApiFamily) -> bool {
+#[must_use]
+pub(crate) fn is_family_escalated(family: ApiFamily) -> bool {
     (HOT_FAMILY_ESCALATED_MASK.load(AtomicOrdering::Relaxed) & (1u32 << (family as u8))) != 0
+}
+
+#[inline]
+fn active_unescalated_ffi_pcc_by_index(pcc_index: u8) -> Option<&'static FfiPccCertificate> {
+    let row = ffi_pcc_certificate_by_index(pcc_index)?;
+    if matches!(resolved_mode(), SafetyLevel::Hardened)
+        && (runtime_math_disabled() || is_family_escalated(row.family))
+    {
+        return None;
+    }
+    Some(row)
 }
 
 #[inline]
@@ -2421,40 +2490,48 @@ fn unpack_hot_hardened_decision(packed: u64) -> RuntimeDecision {
     }
 }
 
-/// Conformal risk upper-bound threshold (in ppm) above which a family is marked
-/// escalated for adaptive integrity cadence tightening (`1-in-16 -> 1-in-1`),
-/// static FFI-PCC override, and synchronous syscall canary verification.
-/// Benign cold/warm startup traffic (`ConformalRiskEngine` 0-adverse envelope +
-/// `design_bonus`) stays in `~115_000..561_107` ppm, whereas sustained adverse
-/// observations (`RECOMPUTE_CADENCE = 64`) saturate above `750_000..1_000_000` ppm.
+/// Per-family conformal risk upper-bound threshold (in ppm) above which a family
+/// is marked escalated (`HOT_FAMILY_ESCALATED_MASK`) for adaptive integrity cadence
+/// tightening (`1-in-16 -> 1-in-1`), static FFI-PCC override, and synchronous
+/// syscall canary verification. Evaluated on `RuntimeMathKernel::family_conformal_risk_ppm`
+/// so zero-adverse benign traffic stays in `~20_000..40_000` ppm without global
+/// controller-bonus contamination, while sustained adverse observations (`>= 64`)
+/// climb into `750_000..1_000_000` ppm.
 pub(crate) const ESCALATED_RISK_THRESHOLD_PPM: u32 = 750_000;
 
-fn update_cached_hot_hardened_decision(family: ApiFamily, decision: RuntimeDecision) {
-    CACHED_HOT_HARDENED_DECISION[family as usize].store(
-        pack_hot_hardened_decision(decision),
-        AtomicOrdering::Relaxed,
-    );
+#[inline]
+fn set_family_escalated_state(family: ApiFamily, escalated: bool) {
     let bit = 1u32 << (family as u8);
-    let escalated = decision.risk_upper_bound_ppm >= ESCALATED_RISK_THRESHOLD_PPM
-        || matches!(decision.action, MembraneAction::Deny);
     let updated_mask = if escalated {
         HOT_FAMILY_ESCALATED_MASK.fetch_or(bit, AtomicOrdering::Relaxed) | bit
     } else {
         HOT_FAMILY_ESCALATED_MASK.fetch_and(!bit, AtomicOrdering::Relaxed) & !bit
     };
-    const INTEGRITY_FAMILIES_MASK: u32 = (1u32 << (ApiFamily::PointerValidation as u8))
-        | (1u32 << (ApiFamily::Allocator as u8))
-        | (1u32 << (ApiFamily::StringMemory as u8));
-    let target_cadence = if (updated_mask & INTEGRITY_FAMILIES_MASK) != 0 {
-        frankenlibc_membrane::tls_cache::ESCALATED_WARM_INTEGRITY_CADENCE_MASK
-    } else {
-        frankenlibc_membrane::tls_cache::DEFAULT_WARM_INTEGRITY_CADENCE_MASK
-    };
-    frankenlibc_membrane::tls_cache::set_warm_integrity_cadence_mask(target_cadence);
+    const INTEGRITY_FAMILIES_MASK: u32 = (1u32 << (ApiFamily::Allocator as u8))
+        | (1u32 << (ApiFamily::StringMemory as u8))
+        | (1u32 << (ApiFamily::Stdio as u8));
+    frankenlibc_membrane::tls_cache::set_warm_integrity_source_escalated(
+        frankenlibc_membrane::tls_cache::INTEGRITY_SOURCE_ABI_HOT_FAMILIES,
+        (updated_mask & INTEGRITY_FAMILIES_MASK) != 0,
+    );
+}
+
+fn update_cached_hot_hardened_decision(
+    family: ApiFamily,
+    decision: RuntimeDecision,
+    conformal_risk_ppm: u32,
+) {
+    CACHED_HOT_HARDENED_DECISION[family as usize].store(
+        pack_hot_hardened_decision(decision),
+        AtomicOrdering::Relaxed,
+    );
+    let escalated = conformal_risk_ppm >= ESCALATED_RISK_THRESHOLD_PPM
+        || matches!(decision.action, MembraneAction::Deny);
+    set_family_escalated_state(family, escalated);
 }
 
 /// # Safety
-/// A non-null `out` must be aligned and writable for one [`RuntimeRouteCountsSnapshot`].
+/// A non-null `out` must be writable for one [`RuntimeRouteCountsSnapshot`].
 pub(crate) unsafe fn read_route_counts_snapshot(out: *mut RuntimeRouteCountsSnapshot) -> c_int {
     if out.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EFAULT) };
@@ -2473,6 +2550,16 @@ pub(crate) unsafe fn read_route_counts_snapshot(out: *mut RuntimeRouteCountsSnap
     };
     let pipeline_kernel_decisions = crate::membrane_state::ready_pipeline()
         .map_or(0, |pipeline| pipeline.runtime_math.decision_count());
+    let slot_ffi_pcc_decisions = {
+        #[cfg(not(test))]
+        {
+            crate::malloc_abi::sum_claimed_slot_fast_pcc_decisions()
+        }
+        #[cfg(test)]
+        {
+            0
+        }
+    };
     let metrics = frankenlibc_membrane::metrics::global_metrics();
     let snapshot = RuntimeRouteCountsSnapshot {
         abi_kernel_decisions,
@@ -2489,13 +2576,15 @@ pub(crate) unsafe fn read_route_counts_snapshot(out: *mut RuntimeRouteCountsSnap
         fingerprint_failures: frankenlibc_membrane::metrics::MembraneMetrics::get(
             &metrics.fingerprint_failures,
         ),
-        ffi_pcc_decisions: ROUTE_FFI_PCC_DECISIONS.load(AtomicOrdering::Relaxed),
+        ffi_pcc_decisions: ROUTE_FFI_PCC_DECISIONS
+            .load(AtomicOrdering::Relaxed)
+            .wrapping_add(slot_ffi_pcc_decisions),
         hot_cached_decisions: ROUTE_HOT_CACHED_DECISIONS.load(AtomicOrdering::Relaxed),
         math_off_bypasses: ROUTE_MATH_OFF_BYPASSES.load(AtomicOrdering::Relaxed),
         warm_integrity_cadence_mask: frankenlibc_membrane::tls_cache::warm_integrity_cadence_mask(),
         hot_escalated_mask: HOT_FAMILY_ESCALATED_MASK.load(AtomicOrdering::Relaxed),
     };
-    unsafe { out.write(snapshot) };
+    unsafe { out.write_unaligned(snapshot) };
     1
 }
 
@@ -2774,7 +2863,14 @@ fn record_last_explainability(
         evidence_seqno: decision.evidence_seqno,
     };
 
-    LAST_FAST_PCC_PACKED.store(0, AtomicOrdering::Relaxed);
+    #[cfg(not(test))]
+    if matches!(ctx.family, ApiFamily::Allocator)
+        && crate::malloc_abi::in_string_membrane_or_validation_now()
+    {
+        return;
+    }
+
+    set_fast_pcc_packed(0);
     let _ = with_last_explainability(|slot| *slot = Some(explainability));
 }
 
@@ -2790,7 +2886,14 @@ fn record_pcc_explainability(
     if cfg!(not(test)) && matches!(mode, SafetyLevel::Strict) {
         return;
     }
-    LAST_FAST_PCC_PACKED.store(0, AtomicOrdering::Relaxed);
+    #[cfg(not(test))]
+    if ffi_pcc_certificate_by_index(pcc_index)
+        .is_some_and(|row| matches!(row.family, ApiFamily::Allocator))
+        && crate::malloc_abi::in_string_membrane_or_validation_now()
+    {
+        return;
+    }
+    set_fast_pcc_packed(0);
 
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -3233,11 +3336,14 @@ pub(crate) fn try_signal_runtime_ready(
     ) {
         Ok(_) => {
             let _ = ensure_ffi_pcc_verified();
+            let current_mode = mode();
+            let math_off = runtime_math_disabled();
+            sync_pipeline_runtime_math_state(math_off);
             RUNTIME_READY.store(RUNTIME_STATE_ACTIVE, AtomicOrdering::Release);
             #[cfg(not(test))]
             crate::malloc_abi::refresh_strict_hot_mode();
             MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
-            push_mode_event("info", "runtime_ready_armed", mode(), None);
+            push_mode_event("info", "runtime_ready_armed", current_mode, None);
             RuntimeReadyTransition::Armed
         }
         Err(RUNTIME_STATE_ACTIVE) => RuntimeReadyTransition::AlreadyActive,
@@ -3292,61 +3398,48 @@ pub(crate) fn strict_passthrough_active() -> bool {
     state <= MODE_STRICT
 }
 
+/// Returns true **only** when `MODE_STATE` has been explicitly resolved to
+/// `MODE_STRICT` (never `MODE_UNRESOLVED`), preventing `STRICT_HOT_MODE` in
+/// `malloc_abi` from bypassing `FRANKENLIBC_MODE=hardened` before resolution.
+#[inline(always)]
+#[must_use]
+pub(crate) fn explicit_strict_passthrough_resolved() -> bool {
+    !cfg!(test) && MODE_STATE.load(AtomicOrdering::Acquire) == MODE_STRICT
+}
+
 #[inline]
 fn runtime_kernel_passthrough_family(family: ApiFamily) -> bool {
     matches!(family, ApiFamily::Locale)
 }
 
 /// Cheap predicate gating the math ABI fast-path (bd-n40in2).
-///
-/// In deployed (non-test) builds `decide()` hard-returns `Allow`/`Full` for
-/// `ApiFamily::MathFenv` via the high-frequency-family fast-path BELOW, before
-/// any kernel consultation. So for math the membrane can never emit `Deny`, and
-/// because `Repair`/heal only ever originates from a kernel decision that math
-/// never reaches, it can never heal a math result either. The deployed math
-/// result is therefore *bit-identical* to the raw kernel result, which lets the
-/// `unary_entry`/`binary_entry` wrappers skip the entire `decide()` machinery
-/// (its `record_last_explainability` struct build is the measured ~8-11 ns/call
-/// math-membrane tax) and the no-op math `observe()` for the common finite case.
-///
-/// This is intentionally coupled to the SAME `cfg!(not(test))` gate the math
-/// family fast-path uses in `decide`: unit-test builds (`cfg(test)`) keep the
-/// full path so the membrane's deny/heal/observe logic stays exercised. If a
-/// future change makes deployed math denyable/healable (i.e. removes `MathFenv`
-/// from the `decide`/`observe` fast-path family sets), this predicate MUST be
-/// updated in lockstep.
+/// Automatically yields to `decide()` in hardened mode if `MathFenv` is escalated.
 #[inline(always)]
 pub(crate) fn math_membrane_fastpath() -> bool {
     cfg!(not(test))
+        && !(MODE_STATE.load(AtomicOrdering::Relaxed) == MODE_HARDENED
+            && is_family_escalated(ApiFamily::MathFenv)
+            && !runtime_math_disabled())
 }
 
-/// Cheap predicate gating the ctype ABI fast-path (bd-n40in2 sibling). Same
-/// reasoning as [`math_membrane_fastpath`]: in deployed (non-test) builds
-/// `decide()` hard-returns `Allow`/`Full` for `ApiFamily::Ctype` via the
-/// high-frequency-family fast-path below, so a ctype classification/conversion
-/// can never be denied; and ctype produces no pointer/heap effect and has no
-/// heal/adverse path (its `observe()` is already a no-op for the `Ctype` family),
-/// so the whole `decide()`+`observe()` machinery cannot change the result of an
-/// `isalpha`/`tolower`-class table lookup. Unit-test builds keep the full path so
-/// the membrane's deny/observe logic stays exercised. Coupled to the same
-/// `cfg!(not(test))` `Ctype` family gate in `decide`/`observe`.
+/// Cheap predicate gating the ctype ABI fast-path (bd-n40in2 sibling).
+/// Automatically yields to `decide()` in hardened mode if `Ctype` is escalated.
 #[inline(always)]
 pub(crate) fn ctype_membrane_fastpath() -> bool {
     cfg!(not(test))
+        && !(MODE_STATE.load(AtomicOrdering::Relaxed) == MODE_HARDENED
+            && is_family_escalated(ApiFamily::Ctype)
+            && !runtime_math_disabled())
 }
 
-/// Cheap predicate gating the Stdlib numeric-parse fast-path (strtod/strtol
-/// family). Same reasoning as [`math_membrane_fastpath`]: `ApiFamily::Stdlib` is
-/// in the high-frequency-family fast-path set in `decide`/`observe`, so in
-/// deployed (non-test) builds `decide()` always returns `Allow` (never `Repair`,
-/// so the repair `bound` is always `None` and the scan is unbounded either way)
-/// and `observe()` for a non-adverse Stdlib call is a no-op. The parse reads the
-/// string regardless of the decision, so the per-call `decide()`+`observe()` (a
-/// non-inlined call with several atomics) cannot change the result and is skipped.
-/// Unit-test builds keep the full path so deny/observe stays exercised.
+/// Cheap predicate gating the Stdlib numeric-parse fast-path (`strtod`/`strtol`).
+/// Automatically yields to `decide()` in hardened mode if `Stdlib` is escalated.
 #[inline(always)]
 pub(crate) fn stdlib_membrane_fastpath() -> bool {
     cfg!(not(test))
+        && !(MODE_STATE.load(AtomicOrdering::Relaxed) == MODE_HARDENED
+            && is_family_escalated(ApiFamily::Stdlib)
+            && !runtime_math_disabled())
 }
 
 /// Cheap predicate gating strict-mode inet conversion fast-paths.
@@ -3439,9 +3532,25 @@ pub(crate) fn decide(
         record_last_explainability(mode, ctx, decision, DECISION_GATE_PASSTHROUGH);
         return (mode, decision);
     }
-    let allow_pcc_fast_exit = !(matches!(mode, SafetyLevel::Hardened)
-        && is_family_escalated(family)
-        && !runtime_math_disabled());
+    // Runtime-math kill-switch (bd-06bxm.9): in Hardened mode, bypass static
+    // FFI-PCC, adaptive hot caches, and RuntimeMathKernel consultation so all
+    // math-off calls increment ROUTE_MATH_OFF_BYPASSES while independent
+    // membrane bounds/canary/quarantine validation remains active.
+    if matches!(mode, SafetyLevel::Hardened) && runtime_math_disabled() {
+        MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
+        ROUTE_MATH_OFF_BYPASSES.fetch_add(1, AtomicOrdering::Relaxed);
+        let decision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Full,
+            policy_id: 0,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 0,
+        };
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_MATH_OFF);
+        return (mode, decision);
+    }
+    let allow_pcc_fast_exit =
+        !(matches!(mode, SafetyLevel::Hardened) && is_family_escalated(family));
     if allow_pcc_fast_exit
         && let Some((pcc_index, cert)) = lookup_active_ffi_pcc_certificate_with_index(
             family,
@@ -3473,10 +3582,6 @@ pub(crate) fn decide(
         record_last_explainability(mode, ctx, decision, DECISION_GATE_PASSTHROUGH);
         return (mode, decision);
     }
-
-    // Runtime-math kill-switch (bd-06bxm.9): when FRANKENLIBC_RUNTIME_MATH=off,
-    // skip kernel consultation and adaptive cache overrides while basic membrane
-    // bounds/canary/quarantine validation remains active.
     if runtime_math_disabled() {
         MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
         ROUTE_MATH_OFF_BYPASSES.fetch_add(1, AtomicOrdering::Relaxed);
@@ -3494,21 +3599,24 @@ pub(crate) fn decide(
     // Hardened mode O(1) adaptive cache path for high-frequency families:
     // reads the per-family RuntimeMathKernel decision refreshed by `observe()`
     // (100% of adverse events + sampled benign telemetry) without per-call mutex
-    // or ensemble latency on benign loops. Skip in `cfg(test)` so unit tests
-    // exercise synchronous `k.decide` directly.
+    // or ensemble latency on benign loops. If a cached probe latched `Deny`,
+    // fall through to synchronous `k.decide` so `Deny` is evaluated against the
+    // exact request context, audited via `record_deny`, and allowed to decay.
     if cfg!(not(test)) && is_hardened_hot_cached_family(family) {
-        ROUTE_HOT_CACHED_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
         let packed = CACHED_HOT_HARDENED_DECISION[family as usize].load(AtomicOrdering::Relaxed);
         let decision = unpack_hot_hardened_decision(packed);
-        if matches!(
-            decision.action,
-            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
-        ) && let Some(policy) = frankenlibc_membrane::heal::initialized_healing_policy()
-        {
-            frankenlibc_membrane::metrics::MembraneMetrics::inc(&policy.variant_upgrades);
+        if !matches!(decision.action, MembraneAction::Deny) {
+            ROUTE_HOT_CACHED_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
+            if matches!(
+                decision.action,
+                MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
+            ) && let Some(policy) = frankenlibc_membrane::heal::initialized_healing_policy()
+            {
+                frankenlibc_membrane::metrics::MembraneMetrics::inc(&policy.variant_upgrades);
+            }
+            record_last_explainability(mode, ctx, decision, DECISION_GATE_HOT_CACHED);
+            return (mode, decision);
         }
-        record_last_explainability(mode, ctx, decision, DECISION_GATE_HOT_CACHED);
-        return (mode, decision);
     }
     MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
 
@@ -3534,6 +3642,18 @@ pub(crate) fn decide(
             return (mode, decision);
         }
     };
+    if matches!(mode, SafetyLevel::Hardened) {
+        let conformal_risk_ppm = k.family_conformal_risk_ppm(family);
+        if is_hardened_hot_cached_family(family) {
+            update_cached_hot_hardened_decision(family, decision, conformal_risk_ppm);
+        } else {
+            set_family_escalated_state(
+                family,
+                conformal_risk_ppm >= ESCALATED_RISK_THRESHOLD_PPM
+                    || matches!(decision.action, MembraneAction::Deny),
+            );
+        }
+    }
     record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
     if matches!(decision.action, MembraneAction::Deny) {
         record_deny(mode, ctx, &decision);
@@ -3556,6 +3676,9 @@ pub(crate) fn decide_certified_memcmp(
     bloom_negative: bool,
 ) -> (SafetyLevel, RuntimeDecision) {
     let mode = mode();
+    if matches!(mode, SafetyLevel::Hardened) {
+        ROUTE_FFI_PCC_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
+    }
     let decision = ffi_pcc_decision(token.0);
     record_pcc_explainability(
         mode,
@@ -3579,6 +3702,47 @@ pub(crate) fn decide_certified_memcmp(
 /// `decision_contract_machine`, and writes `last_pcc_explainability` in a
 /// single `RUNTIME_POLICY_TLS` access without materializing `TraceContext`
 /// or `RuntimeDecision` on the stack.
+#[cfg(all(not(test), not(feature = "owned-tls-cache")))]
+#[inline(always)]
+pub(crate) fn try_decide_certified_string_pcc_for_slot(
+    slot: crate::malloc_abi::StringMembraneSlot,
+    pcc_index: u8,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> Option<SafetyLevel> {
+    if !is_runtime_ready() || !ensure_ffi_pcc_verified() {
+        return None;
+    }
+    let mode_raw = MODE_STATE.load(AtomicOrdering::Relaxed);
+    if mode_raw == MODE_UNRESOLVED || mode_raw == MODE_RESOLVING {
+        return None;
+    }
+    let cert = ffi_pcc_certificate_by_index(pcc_index)?;
+    if !cert.matches_request(
+        ApiFamily::StringMemory,
+        requested_bytes,
+        is_write,
+        bloom_negative,
+    ) {
+        return None;
+    }
+    let mode = u8_to_mode(mode_raw);
+    if matches!(mode, SafetyLevel::Strict) {
+        return Some(mode);
+    }
+    if runtime_math_disabled() {
+        ROUTE_MATH_OFF_BYPASSES.fetch_add(1, AtomicOrdering::Relaxed);
+        return Some(mode);
+    }
+    if is_family_escalated(ApiFamily::StringMemory) {
+        return None;
+    }
+    let packed = (u16::from(mode_raw) << 8) | u16::from(pcc_index);
+    slot.record_fast_pcc_decision(packed);
+    Some(mode)
+}
+
 #[inline(always)]
 pub(crate) fn try_decide_certified_string_pcc(
     pcc_index: u8,
@@ -3604,18 +3768,34 @@ pub(crate) fn try_decide_certified_string_pcc(
         return None;
     }
     let mode = u8_to_mode(mode_raw);
+    if matches!(mode, SafetyLevel::Hardened)
+        && !runtime_math_disabled()
+        && is_family_escalated(ApiFamily::StringMemory)
+    {
+        return None;
+    }
     if cfg!(not(test)) {
         if matches!(mode, SafetyLevel::Strict) {
             return Some(mode);
         }
-        if is_family_escalated(ApiFamily::StringMemory) && !runtime_math_disabled() {
-            return None;
+        if runtime_math_disabled() {
+            ROUTE_MATH_OFF_BYPASSES.fetch_add(1, AtomicOrdering::Relaxed);
+            return Some(mode);
         }
         let packed = (u16::from(mode_raw) << 8) | u16::from(pcc_index);
-        if LAST_FAST_PCC_PACKED.load(AtomicOrdering::Relaxed) != packed {
-            LAST_FAST_PCC_PACKED.store(packed, AtomicOrdering::Relaxed);
+        #[cfg(not(test))]
+        if crate::malloc_abi::record_current_thread_fast_pcc_decision(packed) {
+            return Some(mode);
         }
+        ROUTE_FFI_PCC_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
+        set_fast_pcc_packed(packed);
         return Some(mode);
+    }
+    if matches!(mode, SafetyLevel::Hardened) {
+        if runtime_math_disabled() {
+            return None;
+        }
+        ROUTE_FFI_PCC_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
     }
 
     #[cfg(feature = "owned-tls-cache")]
@@ -4164,7 +4344,7 @@ pub(crate) fn observe(
                 return;
             }
             hot_hardened_sampled = true;
-        } else if is_hardened_hot_cached_family(family) {
+        } else if is_hardened_hot_cached_family(family) || matches!(family, ApiFamily::IoFd) {
             if MODE_STATE.load(AtomicOrdering::Relaxed) != MODE_HARDENED
                 || (HOT_HARDENED_OBSERVE_TICKS.fetch_add(1, AtomicOrdering::Relaxed) & 255) != 0
             {
@@ -4173,35 +4353,11 @@ pub(crate) fn observe(
             hot_hardened_sampled = true;
         } else if matches!(
             family,
-            // IoFd added: `readdir` (hot directory-iteration loops, buffered —
-            // most calls don't hit getdents) paid the full observe() slow path
-            // (2x cert lookup + reentry guard) per entry. observe() is post-op
-            // telemetry (no validation), so this is safe for ALL IoFd ops; for
-            // syscall-dominated read/write it's harmless (~0-gain). NOTE: IoFd is
-            // intentionally NOT added to the HARDENED decide() list — read/write
-            // pass the USER BUFFER to decide() there and must keep validating it.
-            ApiFamily::IoFd
-                // Time added: `strftime`/`mktime` are hot (timestamp-formatting
-                // loops) and pure computation (no syscall), so the per-call observe()
-                // slow path is a meaningful fraction. Telemetry-only = safe. (Same as
-                // IoFd, Time is NOT added to the HARDENED decide() list — strftime's
-                // output buffer must stay validated there.)
-                | ApiFamily::Time
-                // Inet added: `inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr` are
-                // pure string<->address conversions (no syscall), looped when parsing
-                // IP lists / ACLs / configs. Telemetry-only = safe. (NOT in the
-                // HARDENED decide() list — inet_pton's `dst` output buffer must stay
-                // validated there.)
+            // Time added: `strftime`/`mktime` are hot (timestamp-formatting
+            // loops) and pure computation (no syscall), so the per-call observe()
+            // slow path is a meaningful fraction. Telemetry-only = safe.
+            ApiFamily::Time
                 | ApiFamily::Inet
-                // Resolver added: `getaddrinfo`/`getnameinfo` per-call `observe()` was
-                // profiled at ~1334 ns/call — the dominant cost of the resolver membrane
-                // path (vs ~397 ns for `decide` + ~153 ns stage bookkeeping). observe()
-                // is post-op telemetry with no validation, so skipping it on non-adverse
-                // (success) resolver outcomes is behaviour-neutral in BOTH modes — same
-                // rationale as Inet/IoFd/Time. decide() is NOT touched: it still makes the
-                // Allow/Deny call and validates the node/service pointers. getnameinfo's
-                // own strict fast path already skips observe entirely; this covers
-                // getaddrinfo and the hardened-mode getnameinfo_full path.
                 | ApiFamily::Resolver
                 | ApiFamily::Locale
                 | ApiFamily::VirtualMemory
@@ -4271,22 +4427,27 @@ pub(crate) fn observe(
     if let Some(k) = kernel()
         && runtime_policy_guard(|| {
             k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
-            if cfg!(not(test))
-                && matches!(mode, SafetyLevel::Hardened)
-                && is_hardened_hot_cached_family(family)
-            {
-                let refreshed = k.decide(
-                    SafetyLevel::Hardened,
-                    RuntimeContext {
+            if matches!(mode, SafetyLevel::Hardened) {
+                let conformal_risk_ppm = k.family_conformal_risk_ppm(family);
+                if cfg!(not(test)) && is_hardened_hot_cached_family(family) {
+                    let refreshed = k.decide(
+                        SafetyLevel::Hardened,
+                        RuntimeContext {
+                            family,
+                            addr_hint: 0x1000,
+                            requested_bytes: 64,
+                            is_write: true,
+                            contention_hint: 0,
+                            bloom_negative: false,
+                        },
+                    );
+                    update_cached_hot_hardened_decision(family, refreshed, conformal_risk_ppm);
+                } else {
+                    set_family_escalated_state(
                         family,
-                        addr_hint: 0x1000,
-                        requested_bytes: 64,
-                        is_write: true,
-                        contention_hint: 0,
-                        bloom_negative: false,
-                    },
-                );
-                update_cached_hot_hardened_decision(family, refreshed);
+                        conformal_risk_ppm >= ESCALATED_RISK_THRESHOLD_PPM,
+                    );
+                }
             }
         })
         .is_err()
@@ -4457,6 +4618,8 @@ pub mod conformance_testing {
         fn drop(&mut self) {
             MODE_STATE.store(self.previous_state, AtomicOrdering::SeqCst);
             let _ = with_mode_cache(|cache| *cache = self.previous_tls);
+            #[cfg(not(test))]
+            crate::malloc_abi::refresh_strict_hot_mode();
         }
     }
 
@@ -4468,6 +4631,8 @@ pub mod conformance_testing {
         })
         .unwrap_or(MODE_UNRESOLVED);
         let previous_state = MODE_STATE.swap(MODE_HARDENED, AtomicOrdering::SeqCst);
+        #[cfg(not(test))]
+        crate::malloc_abi::refresh_strict_hot_mode();
         ModeGuard {
             previous_state,
             previous_tls,
@@ -4482,6 +4647,8 @@ pub mod conformance_testing {
         })
         .unwrap_or(MODE_UNRESOLVED);
         let previous_state = MODE_STATE.swap(MODE_STRICT, AtomicOrdering::SeqCst);
+        #[cfg(not(test))]
+        crate::malloc_abi::refresh_strict_hot_mode();
         ModeGuard {
             previous_state,
             previous_tls,
@@ -4801,15 +4968,20 @@ mod tests {
         impl Drop for RestoreMathState {
             fn drop(&mut self) {
                 RUNTIME_MATH_STATE.store(self.0, AtomicOrdering::SeqCst);
+                sync_pipeline_runtime_math_state(self.0 == RUNTIME_MATH_OFF);
             }
         }
         let _restore =
             RestoreMathState(RUNTIME_MATH_STATE.swap(RUNTIME_MATH_ON, AtomicOrdering::SeqCst));
+        sync_pipeline_runtime_math_state(false);
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_RESOLVING, AtomicOrdering::SeqCst);
+        sync_pipeline_runtime_math_state(false);
         assert_eq!(resolved_runtime_math_enabled(), None);
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
+        sync_pipeline_runtime_math_state(true);
         assert_eq!(resolved_runtime_math_enabled(), Some(false));
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_ON, AtomicOrdering::SeqCst);
+        sync_pipeline_runtime_math_state(false);
         assert_eq!(resolved_runtime_math_enabled(), Some(true));
         let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS).expect("kernel ready");
         let before = k.decision_telemetry_snapshot().decisions;
@@ -4818,6 +4990,7 @@ mod tests {
         assert!(k.decision_telemetry_snapshot().decisions > before);
 
         RUNTIME_MATH_STATE.store(RUNTIME_MATH_OFF, AtomicOrdering::SeqCst);
+        sync_pipeline_runtime_math_state(true);
         let baseline = k.snapshot(SafetyLevel::Strict);
         for _ in 0..32 {
             let (_, decision) = decide_strict_observation(ApiFamily::Socket, 1, 0, false, true, 0);
@@ -6018,16 +6191,33 @@ mod tests {
             assert_eq!(unpacked.evidence_seqno, seq);
         }
 
-        // Benign cold risk (< 750_000 ppm) must NOT tighten warm TLS cadence.
+        // Benign conformal risk (< 750_000 ppm) must NOT tighten warm TLS cadence even if
+        // total controller-bonus risk_upper_bound_ppm exceeds 750_000 ppm!
+        struct EscalationResetGuard;
+        impl Drop for EscalationResetGuard {
+            fn drop(&mut self) {
+                HOT_FAMILY_ESCALATED_MASK.store(0, AtomicOrdering::Relaxed);
+                frankenlibc_membrane::tls_cache::set_warm_integrity_source_escalated(
+                    frankenlibc_membrane::tls_cache::INTEGRITY_SOURCE_ABI_HOT_FAMILIES,
+                    false,
+                );
+                frankenlibc_membrane::tls_cache::set_warm_integrity_cadence_mask(
+                    frankenlibc_membrane::tls_cache::DEFAULT_WARM_INTEGRITY_CADENCE_MASK,
+                );
+            }
+        }
+        let _reset_guard = EscalationResetGuard;
+
         update_cached_hot_hardened_decision(
             ApiFamily::StringMemory,
             RuntimeDecision {
                 profile: ValidationProfile::Full,
                 action: MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
                 policy_id: 9,
-                risk_upper_bound_ppm: 155_000,
+                risk_upper_bound_ppm: 850_000,
                 evidence_seqno: 1,
             },
+            35_000,
         );
         assert!(!is_family_escalated(ApiFamily::StringMemory));
         assert_eq!(
@@ -6045,6 +6235,7 @@ mod tests {
                 risk_upper_bound_ppm: 900_000,
                 evidence_seqno: 2,
             },
+            900_000,
         );
         assert!(is_family_escalated(ApiFamily::StringMemory));
         assert_eq!(
@@ -6062,6 +6253,7 @@ mod tests {
                 risk_upper_bound_ppm: 20_000,
                 evidence_seqno: 3,
             },
+            20_000,
         );
         assert!(!is_family_escalated(ApiFamily::StringMemory));
         assert_eq!(

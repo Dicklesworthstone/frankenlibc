@@ -51,6 +51,7 @@ fn baseline_isa_gate_script_and_cpu_guard_contract_are_complete() {
         .expect("scripts/check_baseline_isa.sh readable");
     assert!(gate.contains("QEMU_CPUS=\"${QEMU_CPUS-Nehalem qemu64}\""));
     assert!(gate.contains("functions_with_extensions="));
+    assert!(gate.contains("non_math_abi_math_calls="));
     assert!(gate.contains("stdout.txt"));
     assert!(gate.contains("stderr.txt"));
     assert!(gate.contains("__frankenlibc_cpu_guard_resolve"));

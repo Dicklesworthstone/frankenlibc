@@ -12,7 +12,10 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
-use crate::malloc_abi::{check_ownership, known_remaining, known_remaining_for_decision};
+use crate::malloc_abi::{
+    check_ownership, known_remaining,
+    tracked_region_fits_for_decision as malloc_tracked_region_fits_for_decision,
+};
 use crate::runtime_policy;
 
 // Share the file-vector importer rather than maintaining a second iovec validator.
@@ -33,7 +36,7 @@ fn tracked_region_fits_for_decision(
     len: usize,
     decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
 ) -> bool {
-    known_remaining_for_decision(ptr as usize, decision).is_none_or(|remaining| len <= remaining)
+    malloc_tracked_region_fits_for_decision(ptr, len, ApiFamily::Socket, decision)
 }
 
 #[inline]
@@ -48,6 +51,28 @@ unsafe fn tracked_sockaddr_output_fits(addr: *mut libc::sockaddr, addrlen: *mut 
     }
     let requested = unsafe { *addrlen as usize };
     tracked_region_fits(addr.cast_const().cast(), requested)
+}
+
+#[inline]
+unsafe fn tracked_sockaddr_output_fits_for_decision(
+    addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+    decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
+) -> bool {
+    if addr.is_null() {
+        return true;
+    }
+    if addrlen.is_null()
+        || !tracked_region_fits_for_decision(
+            addrlen.cast_const().cast(),
+            std::mem::size_of::<u32>(),
+            decision,
+        )
+    {
+        return false;
+    }
+    let requested = unsafe { *addrlen as usize };
+    tracked_region_fits_for_decision(addr.cast_const().cast(), requested, decision)
 }
 
 // ---------------------------------------------------------------------------
@@ -240,25 +265,44 @@ pub unsafe extern "C-unwind" fn connect(
 /// Body of [`connect`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn connect_cp(sockfd: c_int, addr: *const libc::sockaddr, addrlen: u32) -> c_int {
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
+    let addr_hint = if addr.is_null() {
+        sockfd as usize
+    } else {
+        addr as usize
+    };
+    let bloom_negative = addr.is_null() || !check_ownership(addr as usize);
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Socket,
-        sockfd as usize,
+        addr_hint,
         addrlen as usize,
-        true,
-        true,
+        false,
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, false);
+        return -1;
+    }
+
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !addr.is_null()
+        && !tracked_region_fits_for_decision(addr.cast(), addrlen as usize, &decision)
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
 
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
-            if !addr.is_null() && !tracked_region_fits(addr.cast(), addrlen as usize) {
-                return Err(errno::EFAULT);
-            }
             match raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) {
                 Err(errno::EINVAL) if addr.is_null() => Err(errno::EFAULT),
                 other => other,
@@ -292,10 +336,7 @@ pub unsafe extern "C-unwind" fn send(
 /// Body of [`send`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flags: c_int) -> isize {
-    if sockfd < 0 {
-        unsafe { set_abi_errno(errno::EBADF) };
-        return -1;
-    }
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
 
     let addr_hint = if buf.is_null() {
         sockfd as usize
@@ -311,8 +352,14 @@ pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flag
             ApiFamily::Socket,
             decision.profile,
             runtime_policy::scaled_cost(8, len),
-            true,
+            false,
         );
+        return -1;
+    }
+
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
 
@@ -359,10 +406,7 @@ pub unsafe extern "C-unwind" fn recv(
 /// Body of [`recv`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn recv_cp(sockfd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize {
-    if sockfd < 0 {
-        unsafe { set_abi_errno(errno::EBADF) };
-        return -1;
-    }
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
 
     let addr_hint = if buf.is_null() {
         sockfd as usize
@@ -378,8 +422,14 @@ pub(crate) unsafe fn recv_cp(sockfd: c_int, buf: *mut c_void, len: usize, flags:
             ApiFamily::Socket,
             decision.profile,
             runtime_policy::scaled_cost(8, len),
-            true,
+            false,
         );
+        return -1;
+    }
+
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
 
@@ -442,6 +492,8 @@ pub(crate) unsafe fn sendto_cp(
     dest_addr: *const libc::sockaddr,
     addrlen: u32,
 ) -> isize {
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
     let addr_hint = if buf.is_null() {
         sockfd as usize
     } else {
@@ -456,20 +508,21 @@ pub(crate) unsafe fn sendto_cp(
             ApiFamily::Socket,
             decision.profile,
             runtime_policy::scaled_cost(8, len),
-            true,
+            false,
         );
+        return -1;
+    }
+
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
 
     if (buf.is_null() && len > 0)
         || !tracked_region_fits_for_decision(buf, len, &decision)
-        || (addrlen > 0
-            && (dest_addr.is_null()
-                || !tracked_region_fits_for_decision(
-                    dest_addr.cast(),
-                    addrlen as usize,
-                    &decision,
-                )))
+        || (!dest_addr.is_null()
+            && !tracked_region_fits_for_decision(dest_addr.cast(), addrlen as usize, &decision))
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -529,6 +582,8 @@ pub(crate) unsafe fn recvfrom_cp(
     src_addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> isize {
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
     let addr_hint = if buf.is_null() {
         sockfd as usize
     } else {
@@ -543,13 +598,20 @@ pub(crate) unsafe fn recvfrom_cp(
             ApiFamily::Socket,
             decision.profile,
             runtime_policy::scaled_cost(8, len),
-            true,
+            false,
         );
+        return -1;
+    }
+
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
 
     if (buf.is_null() && len > 0)
         || !tracked_region_fits_for_decision(buf.cast_const(), len, &decision)
+        || !unsafe { tracked_sockaddr_output_fits_for_decision(src_addr, addrlen, &decision) }
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -566,11 +628,6 @@ pub(crate) unsafe fn recvfrom_cp(
             }
         }
     } else {
-        if !unsafe { tracked_sockaddr_output_fits(src_addr, addrlen) } {
-            unsafe { set_abi_errno(errno::EFAULT) };
-            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-            return -1;
-        }
         sockaddr_snapshot::PreparedSockaddr::original(addrlen)
     };
     let submitted_length = output.as_mut_ptr();

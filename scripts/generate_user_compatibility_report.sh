@@ -429,7 +429,7 @@ for workload in workloads:
     freshness_state = "current"
     user_recommendation = "try_l0_strict_or_hardened_with_limitations"
     known_limitations = [
-        "Full standalone replacement is not supported by current L0 evidence.",
+        "Full standalone replacement is not supported by current L1 interpose evidence.",
         f"{semantic_blockers} semantic parity blockers remain visible in semantic_contract_symbol_join.",
     ]
     if workload.get("negative_claim_tests"):

@@ -587,7 +587,7 @@ fn loader_builds_real_dossier_from_canonical_paths() -> TestResult {
     require(dossier.source_commit == commit, "source_commit")?;
     require(dossier.evidence_rows.len() == 5, "5 loaded rows")?;
     require(
-        dossier.replacement_level == "L0",
+        dossier.replacement_level == "L1",
         format!("replacement level: {}", dossier.replacement_level),
     )?;
     require(

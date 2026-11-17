@@ -888,6 +888,151 @@ impl AllocationArena {
         self.verify_canary_for_slot(slot)
     }
 
+    /// Resolve an interior or base pointer `addr` to its owning arena slot and,
+    /// under the **same** single shard-lock acquisition, verify its 24-byte
+    /// `AllocationFingerprint` header and 8-byte trailing `Canary` if live.
+    ///
+    /// Returns:
+    /// - `None` if `addr` does not belong to any live/quarantined arena allocation;
+    /// - `Some((user_base, 0, CachedIntegrityVerdict::EpochStale))` if `addr` points
+    ///   into a quarantined/freed slot or out-of-bounds redzone;
+    /// - `Some((user_base, remaining, verdict))` for a live slot (`Intact`,
+    ///   `HeaderCorrupted`, or `CanaryCorrupted`), eliminating double-lock TOCTOU
+    ///   between `remaining_from` and canary verification.
+    #[must_use]
+    pub fn verify_live_integrity_from(
+        &self,
+        addr: usize,
+    ) -> Option<(usize, usize, CachedIntegrityVerdict)> {
+        let page = 1usize << 12;
+        let exact_shard_idx = self.shard_for(addr);
+        if let Some(res) = self.verify_slot_integrity_in_shard(exact_shard_idx, addr) {
+            return Some(res);
+        }
+        for neighbour in [addr.wrapping_sub(page), addr.wrapping_add(page)] {
+            let idx = self.shard_for(neighbour);
+            if idx != exact_shard_idx
+                && let Some(res) = self.verify_slot_integrity_in_shard(idx, addr)
+            {
+                return Some(res);
+            }
+        }
+        let candidates = {
+            let large = self.large.lock();
+            [
+                large.range(..=addr).next_back().copied(),
+                large.range(addr..).next().copied(),
+            ]
+        };
+        candidates
+            .into_iter()
+            .flatten()
+            .find_map(|base| self.verify_slot_integrity_in_shard(self.shard_for(base), addr))
+    }
+
+    fn verify_slot_integrity_in_shard(
+        &self,
+        shard_idx: usize,
+        user_ptr: usize,
+    ) -> Option<(usize, usize, CachedIntegrityVerdict)> {
+        let shard = self.shards[shard_idx].lock();
+
+        let matched_slot = if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
+            let slot = &shard.slots[slot_idx];
+            (slot.state.is_live() || slot.state == SafetyState::Quarantined).then_some(slot)
+        } else {
+            None
+        }
+        .or_else(|| {
+            if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(..=user_ptr).next_back() {
+                let slot = &shard.slots[slot_idx];
+                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                    let end = slot
+                        .user_base
+                        .saturating_add(slot.user_size)
+                        .saturating_add(TRAILING_REDZONE_SIZE);
+                    if user_ptr >= slot.raw_base && user_ptr < end {
+                        return Some(slot);
+                    }
+                }
+            }
+            if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(user_ptr..).next() {
+                let slot = &shard.slots[slot_idx];
+                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                    let end = slot
+                        .user_base
+                        .saturating_add(slot.user_size)
+                        .saturating_add(TRAILING_REDZONE_SIZE);
+                    if user_ptr >= slot.raw_base && user_ptr < end {
+                        return Some(slot);
+                    }
+                }
+            }
+            None
+        })?;
+
+        let user_base = matched_slot.user_base;
+        let user_size = matched_slot.user_size;
+        let generation = matched_slot.generation;
+        if !matched_slot.state.is_live() {
+            return Some((user_base, 0, CachedIntegrityVerdict::EpochStale));
+        }
+        let user_end = user_base.saturating_add(user_size);
+        let remaining = if user_ptr >= user_base && user_ptr <= user_end {
+            user_end - user_ptr
+        } else {
+            return Some((user_base, 0, CachedIntegrityVerdict::EpochStale));
+        };
+
+        let Some(header_addr) = user_base.checked_sub(FINGERPRINT_SIZE) else {
+            return Some((user_base, 0, CachedIntegrityVerdict::HeaderCorrupted));
+        };
+        let mut header_bytes = [0u8; FINGERPRINT_SIZE];
+        let mut canary_bytes = [0u8; CANARY_SIZE];
+        // SAFETY: `matched_slot` is verified `is_live()` while `shard` lock is held, so
+        // `[user_base - FINGERPRINT_SIZE .. user_base]` and `[user_base + user_size .. + CANARY_SIZE]`
+        // cannot be concurrently retired or deallocated.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header_addr as *const u8,
+                header_bytes.as_mut_ptr(),
+                FINGERPRINT_SIZE,
+            );
+            std::ptr::copy_nonoverlapping(
+                user_end as *const u8,
+                canary_bytes.as_mut_ptr(),
+                CANARY_SIZE,
+            );
+        }
+        drop(shard);
+
+        let header = AllocationFingerprint::from_bytes(&header_bytes);
+        if header.generation != generation
+            || header.size != user_size as u64
+            || !header.verify(user_base)
+        {
+            return Some((
+                user_base,
+                remaining,
+                CachedIntegrityVerdict::HeaderCorrupted,
+            ));
+        }
+        let expected_canary = crate::fingerprint::Canary::derive(
+            user_base,
+            user_size as u64,
+            generation,
+            header.hash,
+        );
+        if !expected_canary.verify(&canary_bytes) {
+            return Some((
+                user_base,
+                remaining,
+                CachedIntegrityVerdict::CanaryCorrupted,
+            ));
+        }
+        Some((user_base, remaining, CachedIntegrityVerdict::Intact))
+    }
+
     /// Re-verify both the 24-byte `AllocationFingerprint` header and the 8-byte
     /// trailing `Canary` of a warm `TLS_CACHE` entry while holding the owning
     /// shard lock so concurrent `free()` + quarantine drain cannot reclaim the
@@ -1063,9 +1208,9 @@ impl Default for AllocationArena {
     }
 }
 
-/// Result of re-verifying a warm `TLS_CACHE` slot's 24B header and 8B trailing canary.
+/// Result of re-verifying a warm `TLS_CACHE` or live arena slot's 24B header and 8B trailing canary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CachedIntegrityVerdict {
+pub enum CachedIntegrityVerdict {
     /// Header fingerprint and trailing canary match cached tags.
     Intact,
     /// Shard epoch or slot liveness changed concurrently; treat as cache miss.

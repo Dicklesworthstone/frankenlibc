@@ -343,8 +343,8 @@ fn checker_replays_docs_claim_gates_and_preserves_current_scope() -> TestResult 
     assert_eq!(claim_report["summary"]["errors"].as_u64(), Some(0));
     assert_eq!(claim_report["summary"]["warnings"].as_u64(), Some(0));
     assert_eq!(levels_report["status"].as_str(), Some("pass"));
-    assert_eq!(levels_report["current_level"].as_str(), Some("L0"));
-    assert_eq!(report["docs_summary"]["current_level"].as_str(), Some("L0"));
+    assert_eq!(levels_report["current_level"].as_str(), Some("L1"));
+    assert_eq!(report["docs_summary"]["current_level"].as_str(), Some("L1"));
     Ok(())
 }
 

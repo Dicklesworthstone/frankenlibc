@@ -922,6 +922,25 @@ pub(crate) fn in_threading_policy_context() -> bool {
     in_threading_policy_context_slow()
 }
 
+/// Reset `ACTIVE_THREADING_POLICY_CONTEXTS` in a single-threaded `fork()` child
+/// to match the surviving thread's actual `threading_policy_depth` (`0` or `1`),
+/// returning the surviving thread's active slow-gate count.
+#[cfg(not(test))]
+pub(crate) fn reset_threading_policy_in_fork_child() -> u64 {
+    let active = if let Some(handle) = core_current_thread_handle() {
+        // SAFETY: surviving native thread owns its handle across fork.
+        u64::from(unsafe { (*handle).threading_policy_depth.load(Ordering::Relaxed) != 0 })
+    } else {
+        u64::from(
+            THREADING_POLICY_DEPTH
+                .try_with(|d| d.get() > 0)
+                .unwrap_or(false),
+        )
+    };
+    ACTIVE_THREADING_POLICY_CONTEXTS.store(active as u32, Ordering::Release);
+    active
+}
+
 /// Exercise the production reentry guard without exporting a C ABI symbol.
 #[doc(hidden)]
 pub fn __test_with_threading_policy_context<R>(work: impl FnOnce() -> R) -> Option<R> {
@@ -7836,6 +7855,38 @@ unsafe fn cancellation_futex_window(
         cancellation_window(caller, || {
             raw_syscall::sys_futex(word, operation, expected, timeout, 0, bitset)
         })
+    }
+}
+
+/// Act on an already-pending cancellation request before an exported
+/// cancellation point rejects invalid arguments (`EBADF`, `EFAULT`, `EINVAL`)
+/// in user space without reaching the syscall cancellation window.
+///
+/// Always inlined so `core::intrinsics::return_address()` observes the caller
+/// of the exported `extern "C-unwind"` entrypoint, and single-threaded calls
+/// short-circuit on two relaxed atomic loads.
+#[inline(always)]
+pub(crate) unsafe fn preflight_cancellation_point() {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { preflight_cancellation_point_for_caller(caller) };
+}
+
+#[inline(always)]
+unsafe fn preflight_cancellation_point_for_caller(caller: usize) {
+    if caller == 0 {
+        return;
+    }
+    if core_current_thread_handle().is_some() {
+        if !address_is_inside_this_object(caller) {
+            unsafe { pthread_testcancel() };
+        }
+        return;
+    }
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && !address_is_inside_this_object(caller)
+    {
+        unsafe { pthread_testcancel() };
     }
 }
 

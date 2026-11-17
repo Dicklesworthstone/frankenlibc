@@ -284,6 +284,9 @@ def concrete_refs(refs: list[str]) -> list[str]:
     return [ref for ref in refs if ref not in PROSE_REFS and not ref.endswith(".md")]
 
 
+LEVEL_RANK = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
+
+
 def recommendation_and_failure(
     row: dict[str, Any],
     strict_status: str,
@@ -298,7 +301,7 @@ def recommendation_and_failure(
         return ("stale_evidence", "dossier_ready_from_stale_evidence", "Refresh workload evidence before making a compatibility recommendation.")
     if string_field(row, "unsupported") == "true" or string_field(row, "failure_signature") == "unsupported_workload":
         return ("unsupported_workload", "unsupported_workload", "Keep the workload unsupported until a concrete reproducer and support row exist.")
-    if replacement_level != current_replacement:
+    if LEVEL_RANK.get(replacement_level, 99) > LEVEL_RANK.get(current_replacement, -1):
         return ("replacement_blocked", "replacement_level_blocked", "Do not recommend a replacement level above the current claim-control level.")
     if perf == "blocked":
         return ("replacement_blocked", "workload_latency_over_budget", "Resolve latency-budget blockers before recommending this workload.")

@@ -84,8 +84,27 @@ const _: () = assert!(
 /// The array is sized off `NUM_TLS_CACHE_SHARDS` and initialised via an inline
 /// `const` block so changing the shard count requires only updating the
 /// constant — no need to maintain a hand-listed array literal in lock-step.
-static SHARD_EPOCHS: [AtomicU64; NUM_TLS_CACHE_SHARDS] =
-    [const { AtomicU64::new(1) }; NUM_TLS_CACHE_SHARDS];
+#[repr(C)]
+struct ShardEpochTable {
+    epochs: [AtomicU64; NUM_TLS_CACHE_SHARDS],
+    escalated_sources: std::sync::atomic::AtomicU32,
+    pipeline_runtime_math_disabled: std::sync::atomic::AtomicBool,
+}
+
+impl core::ops::Deref for ShardEpochTable {
+    type Target = [AtomicU64; NUM_TLS_CACHE_SHARDS];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.epochs
+    }
+}
+
+static SHARD_EPOCHS: ShardEpochTable = ShardEpochTable {
+    epochs: [const { AtomicU64::new(1) }; NUM_TLS_CACHE_SHARDS],
+    escalated_sources: std::sync::atomic::AtomicU32::new(0),
+    pipeline_runtime_math_disabled: std::sync::atomic::AtomicBool::new(false),
+};
 
 // Test-only synchronization to avoid flaky cache-hit expectations when other
 // concurrently-running tests bump shard epochs (via allocator free paths).
@@ -247,23 +266,65 @@ const HIT_METRICS_FLUSH_BATCH: u64 = 4096;
 /// Default cadence mask (`1-in-16` warm hits) for bounded warm-`TLS_CACHE` header/canary re-verification.
 pub const DEFAULT_WARM_INTEGRITY_CADENCE_MASK: u32 = 15;
 /// Escalated cadence mask (`1-in-1` = every warm hit) activated when `RuntimeMathKernel`
-/// elevates `StringMemory`/`Allocator`/`PointerValidation` risk into `FullValidate`/`Repair`.
+/// elevates `StringMemory`/`Allocator`/`PointerValidation` conformal risk.
 pub const ESCALATED_WARM_INTEGRITY_CADENCE_MASK: u32 = 0;
 
-static ADAPTIVE_WARM_INTEGRITY_MASK: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
+/// Bitmask source: `ValidationPipeline::runtime_math` `PointerValidation` conformal risk escalation.
+pub const INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR: u32 = 1 << 0;
+/// Bitmask source: ABI `RuntimeMathKernel` hot-family conformal risk escalation (`Allocator`/`StringMemory`/`Stdio`).
+pub const INTEGRITY_SOURCE_ABI_HOT_FAMILIES: u32 = 1 << 1;
+/// Bitmask source: explicit override via [`set_warm_integrity_cadence_mask`].
+pub const INTEGRITY_SOURCE_TEST_OVERRIDE: u32 = 1 << 2;
 
 /// Read the active warm-`TLS_CACHE` integrity verification cadence mask (`15` = 1-in-16, `0` = 1-in-1).
 #[inline(always)]
 #[must_use]
 pub fn warm_integrity_cadence_mask() -> u32 {
-    ADAPTIVE_WARM_INTEGRITY_MASK.load(Ordering::Relaxed)
+    if SHARD_EPOCHS.escalated_sources.load(Ordering::Relaxed) != 0 {
+        ESCALATED_WARM_INTEGRITY_CADENCE_MASK
+    } else {
+        DEFAULT_WARM_INTEGRITY_CADENCE_MASK
+    }
 }
 
-/// Update the warm-`TLS_CACHE` integrity verification cadence mask from adaptive runtime-math policy.
+/// Atomically set or clear an independent escalation source bit without racing sibling sources.
+#[inline]
+pub fn set_warm_integrity_source_escalated(source_bit: u32, escalated: bool) {
+    if escalated {
+        SHARD_EPOCHS
+            .escalated_sources
+            .fetch_or(source_bit, Ordering::Relaxed);
+    } else {
+        SHARD_EPOCHS
+            .escalated_sources
+            .fetch_and(!source_bit, Ordering::Relaxed);
+    }
+}
+
+/// Update the explicit warm-`TLS_CACHE` integrity verification cadence override (`0` escalates, non-zero clears).
 #[inline]
 pub fn set_warm_integrity_cadence_mask(mask: u32) {
-    ADAPTIVE_WARM_INTEGRITY_MASK.store(mask, Ordering::Relaxed);
+    set_warm_integrity_source_escalated(
+        INTEGRITY_SOURCE_TEST_OVERRIDE,
+        mask == ESCALATED_WARM_INTEGRITY_CADENCE_MASK,
+    );
+}
+
+/// Read whether `FRANKENLIBC_RUNTIME_MATH=off` has disabled `ValidationPipeline::runtime_math`.
+#[inline(always)]
+#[must_use]
+pub fn pipeline_runtime_math_disabled() -> bool {
+    SHARD_EPOCHS
+        .pipeline_runtime_math_disabled
+        .load(Ordering::Relaxed)
+}
+
+/// Synchronize `FRANKENLIBC_RUNTIME_MATH=off` kill-switch into `ValidationPipeline`.
+#[inline]
+pub fn set_pipeline_runtime_math_disabled(disabled: bool) {
+    SHARD_EPOCHS
+        .pipeline_runtime_math_disabled
+        .store(disabled, Ordering::Relaxed);
 }
 
 /// Near-tail write threshold in bytes: any hardened write whose destination has
@@ -1390,6 +1451,66 @@ where
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn lookup_tls_cache_hit_remaining<const IS_WRITE: bool>(
+    addr: usize,
+    page_oracle: &crate::page_oracle::PageOracle,
+    arena: Option<&crate::arena::AllocationArena>,
+    write_len: usize,
+) -> CachedRemaining {
+    let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
+    if cache_ptr.is_null() {
+        cache_ptr = init_tls_cache_fast_ptr_slow();
+        if cache_ptr.is_null() {
+            return CachedRemaining::MISS;
+        }
+    }
+    // SAFETY: same invariant as `try_with_tls_cache_hit`.
+    let cache = unsafe { &*cache_ptr };
+    match cache.try_borrow_mut() {
+        Ok(mut borrowed) => borrowed.lookup_hit_remaining_with_oracle_const::<IS_WRITE>(
+            addr,
+            page_oracle,
+            arena,
+            write_len,
+        ),
+        Err(_) => CachedRemaining::MISS,
+    }
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn lookup_tls_cache_hit_remaining_pair<const LHS_IS_WRITE: bool>(
+    lhs: usize,
+    rhs: usize,
+    page_oracle: &crate::page_oracle::PageOracle,
+    arena: Option<&crate::arena::AllocationArena>,
+    write_len: usize,
+) -> (CachedRemaining, CachedRemaining) {
+    let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
+    if cache_ptr.is_null() {
+        cache_ptr = init_tls_cache_fast_ptr_slow();
+        if cache_ptr.is_null() {
+            return (CachedRemaining::MISS, CachedRemaining::MISS);
+        }
+    }
+    // SAFETY: same invariant as `try_with_tls_cache_hit`.
+    let cache = unsafe { &*cache_ptr };
+    match cache.try_borrow_mut() {
+        Ok(mut borrowed) => borrowed.lookup_hit_remaining_pair_with_oracle::<LHS_IS_WRITE>(
+            lhs,
+            rhs,
+            page_oracle,
+            arena,
+            write_len,
+        ),
+        Err(_) => (CachedRemaining::MISS, CachedRemaining::MISS),
+    }
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
 #[cold]
 #[inline(never)]
 fn init_tls_cache_fast_ptr_slow() -> *const std::cell::RefCell<TlsValidationCache> {
@@ -1444,6 +1565,29 @@ where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
     default
+}
+
+#[cfg(feature = "owned-tls-cache")]
+#[inline(always)]
+pub(crate) fn lookup_tls_cache_hit_remaining<const IS_WRITE: bool>(
+    _addr: usize,
+    _page_oracle: &crate::page_oracle::PageOracle,
+    _arena: Option<&crate::arena::AllocationArena>,
+    _write_len: usize,
+) -> CachedRemaining {
+    CachedRemaining::MISS
+}
+
+#[cfg(feature = "owned-tls-cache")]
+#[inline(always)]
+pub(crate) fn lookup_tls_cache_hit_remaining_pair<const LHS_IS_WRITE: bool>(
+    _lhs: usize,
+    _rhs: usize,
+    _page_oracle: &crate::page_oracle::PageOracle,
+    _arena: Option<&crate::arena::AllocationArena>,
+    _write_len: usize,
+) -> (CachedRemaining, CachedRemaining) {
+    (CachedRemaining::MISS, CachedRemaining::MISS)
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -2213,7 +2357,11 @@ mod tests {
     #[test]
     #[allow(unsafe_code)]
     fn adaptive_warm_integrity_cadence_zero_catches_every_corrupted_read() {
+        let epoch_guard = lock_tls_cache_epoch_for_tests();
+        set_warm_integrity_source_escalated(INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR, false);
+        set_warm_integrity_source_escalated(INTEGRITY_SOURCE_ABI_HOT_FAMILIES, false);
         set_warm_integrity_cadence_mask(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
+
         let arena = crate::arena::AllocationArena::new();
         let page_oracle = crate::page_oracle::PageOracle::new();
 
@@ -2227,7 +2375,6 @@ mod tests {
         );
         let canary = fp.canary_for(slot.user_base);
 
-        let epoch_guard = lock_tls_cache_epoch_for_tests();
         let epochs = snapshot_shard_epochs();
         let mut cache = TlsValidationCache::new();
         cache.insert_with_integrity(
@@ -2254,9 +2401,22 @@ mod tests {
             CachedRemaining(256)
         );
 
-        // Corrupt trailing canary byte.
+        // Corrupt trailing canary byte with a panic-safe restoration guard.
         let canary_ptr = (slot.user_base + slot.user_size) as *mut u8;
         let saved = unsafe { *canary_ptr };
+        struct TestResetGuard {
+            canary_ptr: *mut u8,
+            saved: u8,
+        }
+        impl Drop for TestResetGuard {
+            fn drop(&mut self) {
+                unsafe { *self.canary_ptr = self.saved };
+                set_warm_integrity_source_escalated(INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR, false);
+                set_warm_integrity_source_escalated(INTEGRITY_SOURCE_ABI_HOT_FAMILIES, false);
+                set_warm_integrity_cadence_mask(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
+            }
+        }
+        let reset_guard = TestResetGuard { canary_ptr, saved };
         unsafe { *canary_ptr = saved ^ 0xFF };
 
         // Under default mask (15), tick #2 skips slow verification and returns warm 256.
@@ -2277,9 +2437,8 @@ mod tests {
             Some((&arena, false, 0)),
         );
         assert_eq!(res, CachedRemaining::CORRUPTED);
-        set_warm_integrity_cadence_mask(DEFAULT_WARM_INTEGRITY_CADENCE_MASK);
 
-        unsafe { *canary_ptr = saved };
+        drop(reset_guard);
         drop(epoch_guard);
         let (_, drained) = arena.free(alloc.ptr);
         unsafe { crate::arena::AllocationArena::deallocate_drained(&drained) };

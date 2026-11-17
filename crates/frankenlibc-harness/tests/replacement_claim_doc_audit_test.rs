@@ -344,26 +344,9 @@ fn replacement_claim_phrases_match_current_level_policy() -> TestResult {
 
     if current_level == "L1" {
         l1_promotion_evidence_is_complete(&levels)?;
-        for entry in as_array(
-            &audit["forbidden_phrases_unless_l1_promoted"],
-            "forbidden_phrases_unless_l1_promoted",
-        )? {
-            let phrase_id = as_str(&entry["phrase_id"], "entry.phrase_id")?;
-            match as_str(&entry["phrase_kind"], "entry.phrase_kind")? {
-                "case_insensitive_substring" | "case_insensitive_substring_unless_disclaimed" => {}
-                other => {
-                    return Err(test_error(format!(
-                        "phrase {phrase_id}: unsupported phrase_kind {other}"
-                    )));
-                }
-            }
-        }
-        return Ok(());
-    }
-
-    if current_level != "L0" {
+    } else if current_level != "L0" {
         return Err(test_error(format!(
-            "current_level={current_level}; update replacement_claim_doc_audit_test.rs before relaxing L2/L3 claim semantics"
+            "current_level={current_level}; update replacement_claim_doc_audit_test.rs before relaxing L2/L3 standalone claim semantics"
         )));
     }
 

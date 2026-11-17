@@ -10,7 +10,10 @@ use frankenlibc_core::syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
-use crate::malloc_abi::{known_remaining, known_remaining_for_decision};
+use crate::malloc_abi::{
+    check_ownership, known_remaining,
+    tracked_region_fits_for_decision as malloc_tracked_region_fits_for_decision,
+};
 use crate::runtime_policy;
 
 #[path = "iov_snapshot.rs"]
@@ -27,7 +30,7 @@ fn tracked_region_fits_for_decision(
     len: usize,
     decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
 ) -> bool {
-    known_remaining_for_decision(ptr as usize, decision).is_none_or(|remaining| len <= remaining)
+    malloc_tracked_region_fits_for_decision(ptr, len, ApiFamily::IoFd, decision)
 }
 
 #[inline]
@@ -372,9 +375,28 @@ pub(crate) unsafe fn pread_cp(
     count: usize,
     offset: i64,
 ) -> libc::ssize_t {
-    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, buf as usize, count, true, true, 0);
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
+    let addr_hint = if buf.is_null() {
+        fd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, addr_hint, count, true, bloom_negative, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return -1;
+    }
+    if offset < 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -421,10 +443,28 @@ pub(crate) unsafe fn pwrite_cp(
     count: usize,
     offset: i64,
 ) -> libc::ssize_t {
+    unsafe { crate::pthread_abi::preflight_cancellation_point() };
+
+    let addr_hint = if buf.is_null() {
+        fd as usize
+    } else {
+        buf as usize
+    };
+    let bloom_negative = buf.is_null() || !check_ownership(buf as usize);
     let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, buf as usize, count, false, true, 0);
+        runtime_policy::decide(ApiFamily::IoFd, addr_hint, count, false, bloom_negative, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return -1;
+    }
+    if offset < 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }

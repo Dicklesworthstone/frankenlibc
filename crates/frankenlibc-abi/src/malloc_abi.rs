@@ -22,7 +22,7 @@ use frankenlibc_core::malloc::size_class::{
     slot_index_reciprocal, small_bin_index,
 };
 use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
-use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
+use frankenlibc_membrane::arena::{AllocationArena, CachedIntegrityVerdict, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use frankenlibc_membrane::galois::PointerAbstraction;
@@ -106,17 +106,14 @@ const NATIVE_REENTRY_MALLOC_USABLE_SIZE: u8 = 1 << 5;
 #[repr(C, align(64))]
 struct AllocatorReentrySlot {
     // Cache line 0 (offset 0..64): write-once identity fields read on lookup.
-    // Isolated from `allocator_depth` / `mt_unfolded_events` so any probe of a
-    // non-owned slot hits a shared (`S`) cache line and never snoops or
-    // invalidates the owner's hot mutable line.
+    // Isolated from `allocator_depth` so any probe of a non-owned slot hits a
+    // shared (`S`) cache line and never snoops or invalidates the owner's hot mutable line.
     tid: AtomicI32,
     thread_key: AtomicUsize,
     _identity_pad: [u8; 48],
 
     // Cache line 1 (offset 64..128): hot owner-mutable control state.
     allocator_depth: AtomicU32,
-    /// Events this slot's thread recorded since it last tried to fold.
-    mt_unfolded_events: AtomicU32,
     /// Stack address of the innermost user signal handler frame entered on
     /// this thread through signal_abi's trampolines, 0 when none; see
     /// `in_signal_handler`.
@@ -133,7 +130,12 @@ struct AllocatorReentrySlot {
     /// thread, avoiding a separate TLS macro lookup on entry and drop.
     #[cfg(not(feature = "owned-tls-cache"))]
     string_membrane_active: AtomicBool,
+    /// Per-thread compact fast-PCC explainability word (`(mode_raw << 8) | pcc_index`).
+    last_fast_pcc_packed: AtomicU16,
     fallback_cache_index: AtomicUsize,
+    /// Cumulative owner-only fast-PCC decisions (`Relaxed` load + `wrapping_add(1)` + `store`,
+    /// zero `LOCK` prefix on x86_64), summed into `RuntimeRouteCountsSnapshot::ffi_pcc_decisions`.
+    fast_pcc_decisions: AtomicU64,
 
     /// Multi-threaded stats: cumulative counters only this slot's thread
     /// writes, and the values already folded into the global stats (touched
@@ -160,17 +162,18 @@ impl AllocatorReentrySlot {
             thread_key: AtomicUsize::new(0),
             _identity_pad: [0; 48],
             allocator_depth: AtomicU32::new(0),
-            mt_unfolded_events: AtomicU32::new(0),
             signal_handler_sp: AtomicUsize::new(0),
             st_stats_dirty: AtomicBool::new(false),
             native_guard_bits: AtomicU8::new(0),
             in_fallback_table: AtomicBool::new(false),
             #[cfg(not(feature = "owned-tls-cache"))]
             string_membrane_active: AtomicBool::new(false),
+            last_fast_pcc_packed: AtomicU16::new(0),
             // Stored as `index + 1` so `0` means "empty" and the entire
             // reentry-slot table is zero-initialized in `.bss` / demand-zero slab
             // (bd-rc0923-epic-eeuy4f.25).
             fallback_cache_index: AtomicUsize::new(0),
+            fast_pcc_decisions: AtomicU64::new(0),
             mt_counts: SlotMtCounters::new(),
             mt_folded: UnsafeCell::new(SlotMtFolded::new()),
             segment_local: UnsafeCell::new(SegmentLocalState::new()),
@@ -422,13 +425,15 @@ static KEY_SLOT_DIR: [AtomicUsize; KEY_SLOT_DIR_LEN] =
 const STRICT_HOT_MODE_SLOW: u8 = 0;
 const STRICT_HOT_MODE_ST: u8 = 1;
 const STRICT_HOT_MODE_MT: u8 = 2;
+const STRICT_HOT_SLOW_GATE_STEP: u64 = 4;
 
-/// Combined steady-state strict-passthrough fast-path selector (`0` = slow/general,
-/// `1` = strict ST, `2` = strict MT), kept private to `malloc_abi` so PIC code emits
-/// a single RIP-relative byte load instead of eight separate global/GOT flag loads.
-static STRICT_HOT_MODE: AtomicU8 = AtomicU8::new(STRICT_HOT_MODE_SLOW);
-static ALLOC_SLOW_GATE_COUNT: AtomicU32 = AtomicU32::new(0);
-static STRICT_HOT_MODE_LOCK: AtomicBool = AtomicBool::new(false);
+/// Lock-free combined strict-passthrough selector + active slow-gate counter:
+/// bits `0..2` store the desired strict mode (`0` = slow/general, `1` = strict ST,
+/// `2` = strict MT); bits `2..64` count active `PolicyReentryGuard` /
+/// `ThreadingPolicyGuard` slow gates (`STRICT_HOT_SLOW_GATE_STEP` per gate).
+/// `state.wrapping_sub(1) < 2` holds **iff** `slow_gate_count == 0` and mode is
+/// `1` or `2` — async-signal-safe and spinlock-free across `fork()`.
+static STRICT_HOT_MODE_STATE: AtomicU64 = AtomicU64::new(STRICT_HOT_MODE_SLOW as u64);
 
 const LOCAL_SMALL_BIN_LUT_LEN: usize = MAX_SMALL_SIZE >> 4;
 const LOCAL_SIZE_TABLE: [usize; frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES] = [
@@ -466,66 +471,51 @@ fn local_small_bin_index_unchecked(size: usize) -> usize {
 #[cold]
 #[inline(never)]
 pub(crate) fn enter_alloc_slow_gate() {
-    while STRICT_HOT_MODE_LOCK
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        std::hint::spin_loop();
-    }
-    ALLOC_SLOW_GATE_COUNT.fetch_add(1, Ordering::Relaxed);
-    STRICT_HOT_MODE.store(STRICT_HOT_MODE_SLOW, Ordering::Release);
-    STRICT_HOT_MODE_LOCK.store(false, Ordering::Release);
+    STRICT_HOT_MODE_STATE.fetch_add(STRICT_HOT_SLOW_GATE_STEP, Ordering::AcqRel);
 }
 
 #[cold]
 #[inline(never)]
 pub(crate) fn leave_alloc_slow_gate() {
-    while STRICT_HOT_MODE_LOCK
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        std::hint::spin_loop();
+    let prev = STRICT_HOT_MODE_STATE.fetch_sub(STRICT_HOT_SLOW_GATE_STEP, Ordering::AcqRel);
+    if (prev >> 2) == 1 {
+        refresh_strict_hot_mode();
     }
-    let prev = ALLOC_SLOW_GATE_COUNT.fetch_sub(1, Ordering::Relaxed);
-    if prev == 1 {
-        refresh_strict_hot_mode_locked();
-    }
-    STRICT_HOT_MODE_LOCK.store(false, Ordering::Release);
 }
 
 #[inline]
-fn refresh_strict_hot_mode_locked() {
+fn compute_desired_strict_hot_mode() -> u64 {
     if cfg!(test)
         || cfg!(feature = "owned-tls-cache")
-        || ALLOC_SLOW_GATE_COUNT.load(Ordering::Relaxed) != 0
+        || cfg!(feature = "standalone")
         || NATIVE_THREAD_BACKEND.load(Ordering::Acquire)
         || !runtime_policy::is_runtime_ready()
-        || !runtime_policy::strict_passthrough_active()
+        || !runtime_policy::explicit_strict_passthrough_resolved()
         || GLOBAL_ALLOC_STATS.get().is_none()
         || crate::htm_fast_path::htm_forced_mode_active_for_tests()
     {
-        STRICT_HOT_MODE.store(STRICT_HOT_MODE_SLOW, Ordering::Release);
-        return;
+        return STRICT_HOT_MODE_SLOW as u64;
     }
-    let next = if MULTI_THREADED.load(Ordering::Acquire) {
-        STRICT_HOT_MODE_MT
+    if MULTI_THREADED.load(Ordering::Acquire) {
+        STRICT_HOT_MODE_MT as u64
     } else {
-        STRICT_HOT_MODE_ST
-    };
-    STRICT_HOT_MODE.store(next, Ordering::Release);
+        STRICT_HOT_MODE_ST as u64
+    }
 }
 
 #[cold]
 #[inline(never)]
 pub(crate) fn refresh_strict_hot_mode() {
-    while STRICT_HOT_MODE_LOCK
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        std::hint::spin_loop();
+    let desired = compute_desired_strict_hot_mode();
+    let mut cur = STRICT_HOT_MODE_STATE.load(Ordering::Acquire);
+    while let Err(actual) = STRICT_HOT_MODE_STATE.compare_exchange_weak(
+        cur,
+        (cur & !3) | desired,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        cur = actual;
     }
-    refresh_strict_hot_mode_locked();
-    STRICT_HOT_MODE_LOCK.store(false, Ordering::Release);
 }
 
 #[inline(always)]
@@ -563,7 +553,12 @@ fn record_key_slot_dir(key: usize, slot: &'static AllocatorReentrySlot) {
         return;
     }
     let encoded = slot as *const AllocatorReentrySlot as usize;
-    KEY_SLOT_DIR[key_slot_dir_index(key)].store(encoded, Ordering::Release);
+    let _ = KEY_SLOT_DIR[key_slot_dir_index(key)].compare_exchange(
+        0,
+        encoded,
+        Ordering::Release,
+        Ordering::Relaxed,
+    );
 }
 
 #[cold]
@@ -725,8 +720,9 @@ static FIRST_OBSERVED_KEY: AtomicUsize = AtomicUsize::new(0);
 /// Called by the native `pthread_create` before it clones.
 pub(crate) fn note_native_thread_backend() {
     MULTI_THREADED.store(true, Ordering::SeqCst);
-    NATIVE_THREAD_BACKEND.store(true, Ordering::SeqCst);
-    enter_alloc_slow_gate();
+    if !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst) {
+        refresh_strict_hot_mode();
+    }
 }
 
 /// `note_thread_tid` for the keyed path: a second distinct live key is a second thread.
@@ -2437,7 +2433,12 @@ fn segment_free(
     let requested = previous as usize;
     if previous == 0 || previous == SEGMENT_SLOT_FREE || requested > view.class_size {
         if previous == 0 || (previous != SEGMENT_SLOT_FREE && requested > view.class_size) {
-            view.meta.requested_size.store(previous, Ordering::Release);
+            let _ = view.meta.requested_size.compare_exchange(
+                SEGMENT_SLOT_FREE,
+                previous,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
         }
         return SegmentFreeResult::OwnedInvalid(if previous == SEGMENT_SLOT_FREE {
             InvalidFree::DoubleFree {
@@ -3472,6 +3473,10 @@ pub fn malloc_stats_init_for_tests() {
 #[doc(hidden)]
 pub fn malloc_stats_reset_for_harness() {
     let stats = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
+    if let Some(guard) = enter_allocator_reentry_guard() {
+        // SAFETY: `guard` holds exclusive ownership of `guard.slot.segment_local`.
+        unsafe { flush_slot_stats(guard.slot, stats) };
+    }
     merge_all_slot_mt_stats(stats);
     stats.reset();
 }
@@ -4481,8 +4486,11 @@ impl MallocForkGuard {
         for_each_claimed_slot(|slot| {
             let addr = slot as *const AllocatorReentrySlot as usize;
             if addr == surviving {
-                if slot.tid.load(Ordering::Relaxed) > 0 {
+                let slot_tid = slot.tid.load(Ordering::Relaxed);
+                if slot_tid > 0 {
                     slot.tid.store(child_tid, Ordering::Release);
+                } else if slot_tid == KEY_CLAIMED_TID {
+                    record_key_slot_dir(slot.thread_key.load(Ordering::Relaxed), slot);
                 }
             } else {
                 slot.native_guard_bits.store(0, Ordering::Relaxed);
@@ -4492,15 +4500,26 @@ impl MallocForkGuard {
                 slot.st_stats_dirty.store(false, Ordering::Relaxed);
                 #[cfg(not(feature = "owned-tls-cache"))]
                 slot.string_membrane_active.store(false, Ordering::Relaxed);
+                slot.last_fast_pcc_packed.store(0, Ordering::Relaxed);
                 slot.signal_handler_sp.store(0, Ordering::Relaxed);
-                // SAFETY: single-threaded fork child; dead sibling thread no longer exists.
+                slot.mt_counts.reset_relaxed();
+                // SAFETY: single-threaded fork child holds `combiner_lock` via `MallocForkGuard`,
+                // and dead sibling threads no longer exist; zero torn MT deltas and magazines.
                 unsafe {
+                    *slot.mt_folded.get() = SlotMtFolded::new();
                     *slot.segment_local.get() = SegmentLocalState::new();
                 }
                 slot.thread_key.store(0, Ordering::Relaxed);
                 slot.tid.store(0, Ordering::Release);
             }
         });
+        #[cfg(not(test))]
+        {
+            let active_gates = crate::runtime_policy::reset_policy_reentry_in_fork_child()
+                + crate::pthread_abi::reset_threading_policy_in_fork_child();
+            let desired = compute_desired_strict_hot_mode();
+            STRICT_HOT_MODE_STATE.store((active_gates << 2) | desired, Ordering::Release);
+        }
     }
 }
 
@@ -4556,6 +4575,19 @@ impl SlotMtCounters {
             free_per_class: [const { AtomicUsize::new(0) }; MALLOC_STATS_BIN_COUNT],
         }
     }
+
+    fn reset_relaxed(&self) {
+        self.allocation_events.store(0, Ordering::Relaxed);
+        self.total_allocated.store(0, Ordering::Relaxed);
+        for entry in &self.alloc_per_class {
+            entry.store(0, Ordering::Relaxed);
+        }
+        self.free_events.store(0, Ordering::Relaxed);
+        self.total_freed.store(0, Ordering::Relaxed);
+        for entry in &self.free_per_class {
+            entry.store(0, Ordering::Relaxed);
+        }
+    }
 }
 
 struct SlotMtFolded {
@@ -4582,8 +4614,6 @@ impl SlotMtFolded {
 
 /// Power-of-two allocation-event mask for periodic background combiner folds.
 const MT_STATS_MERGE_MASK: usize = 65_535;
-const MT_STATS_MERGE_EVENTS: u32 = 65_536;
-const MT_STATS_CONTENDED_BACKOFF: u32 = 4_096;
 
 #[inline(always)]
 fn record_slot_mt_stats(
@@ -4624,17 +4654,9 @@ fn record_slot_mt_stats(
 #[cold]
 #[inline(never)]
 fn fold_slot_mt_stats_on_threshold(slot: &AllocatorReentrySlot, global: &FlatCombiningStats) {
-    // Never wait for the combiner here: if contended, back off for
-    // `MT_STATS_CONTENDED_BACKOFF` thread-local ops rather than re-probing
-    // `combiner_lock` on every subsequent malloc/free.
-    if global.try_fold_slot(slot) {
-        slot.mt_unfolded_events.store(0, Ordering::Relaxed);
-    } else {
-        slot.mt_unfolded_events.store(
-            MT_STATS_MERGE_EVENTS - MT_STATS_CONTENDED_BACKOFF,
-            Ordering::Relaxed,
-        );
-    }
+    // Never wait for the combiner here: if contended, keep counting locally until
+    // the next `MT_STATS_MERGE_MASK` rollover or reader fold (`fold_all_slots`).
+    let _ = global.try_fold_slot(slot);
 }
 
 /// Fold every thread's multi-threaded counters into `global`.
@@ -6130,16 +6152,121 @@ pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {
 }
 
 /// Combined slot check for `enter_string_membrane_guard`: verifies this thread
+#[cfg(not(feature = "owned-tls-cache"))]
+#[derive(Clone, Copy)]
+pub(crate) struct StringMembraneSlot(&'static AllocatorReentrySlot);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+impl StringMembraneSlot {
+    #[inline(always)]
+    pub(crate) fn active_flag(self) -> &'static AtomicBool {
+        &self.0.string_membrane_active
+    }
+
+    #[inline(always)]
+    pub(crate) fn record_fast_pcc_decision(self, packed: u16) {
+        let next = self
+            .0
+            .fast_pcc_decisions
+            .load(Ordering::Relaxed)
+            .wrapping_add(1);
+        self.0.fast_pcc_decisions.store(next, Ordering::Relaxed);
+        if self.0.last_fast_pcc_packed.load(Ordering::Relaxed) != packed {
+            self.0.last_fast_pcc_packed.store(packed, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Resolves the current thread's reentry slot, verifies that this thread
 /// is not in allocator reentry or a signal handler, and returns its per-slot
-/// `string_membrane_active` flag in a single slot lookup.
+/// handle in a single slot lookup.
 #[cfg(not(feature = "owned-tls-cache"))]
 #[inline(always)]
-pub(crate) fn try_string_membrane_slot_flag() -> Option<&'static AtomicBool> {
+pub(crate) fn try_string_membrane_slot() -> Option<StringMembraneSlot> {
     let slot = current_allocator_reentry_slot()?;
     if slot.allocator_depth.load(Ordering::Acquire) > 0 || in_signal_handler(slot) {
         return None;
     }
-    Some(&slot.string_membrane_active)
+    Some(StringMembraneSlot(slot))
+}
+
+/// Returns true when the calling thread is inside a `StringMemory` membrane scope
+/// or `ValidationPipeline` check, used by `runtime_policy` so internal heal-log
+/// `malloc`/`free` calls do not overwrite the caller's recorded explainability.
+#[inline]
+#[must_use]
+pub(crate) fn in_string_membrane_or_validation_now() -> bool {
+    if frankenlibc_membrane::ptr_validator::in_validation_context() {
+        return true;
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if let Some(slot) = current_allocator_reentry_slot()
+            && slot.string_membrane_active.load(Ordering::Relaxed)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Clear `signal_handler_sp` and per-thread fast-PCC explainability on thread exit
+/// so a recycled TCB (`stack_cache`) never inherits stale stack-pointer state.
+#[inline]
+pub(crate) fn clear_current_thread_exit_slot_state() {
+    if let Some(slot) = current_allocator_reentry_slot() {
+        slot.signal_handler_sp.store(0, Ordering::Relaxed);
+        slot.last_fast_pcc_packed.store(0, Ordering::Relaxed);
+    }
+}
+
+#[inline(always)]
+pub(crate) fn set_current_thread_fast_pcc_packed(packed: u16) -> bool {
+    let Some(slot) = current_allocator_reentry_slot() else {
+        return false;
+    };
+    if slot.last_fast_pcc_packed.load(Ordering::Relaxed) != packed {
+        slot.last_fast_pcc_packed.store(packed, Ordering::Relaxed);
+    }
+    true
+}
+
+#[inline(always)]
+pub(crate) fn record_current_thread_fast_pcc_decision(packed: u16) -> bool {
+    let Some(slot) = current_allocator_reentry_slot() else {
+        return false;
+    };
+    let next = slot
+        .fast_pcc_decisions
+        .load(Ordering::Relaxed)
+        .wrapping_add(1);
+    slot.fast_pcc_decisions.store(next, Ordering::Relaxed);
+    if slot.last_fast_pcc_packed.load(Ordering::Relaxed) != packed {
+        slot.last_fast_pcc_packed.store(packed, Ordering::Relaxed);
+    }
+    true
+}
+
+pub(crate) fn sum_claimed_slot_fast_pcc_decisions() -> u64 {
+    let mut total = 0u64;
+    for_each_claimed_slot(|slot| {
+        total = total.wrapping_add(slot.fast_pcc_decisions.load(Ordering::Relaxed));
+    });
+    total
+}
+
+#[inline]
+#[must_use]
+pub(crate) fn peek_current_thread_fast_pcc_packed() -> u16 {
+    current_allocator_reentry_slot()
+        .map_or(0, |slot| slot.last_fast_pcc_packed.load(Ordering::Relaxed))
+}
+
+#[inline]
+pub(crate) fn take_current_thread_fast_pcc_packed() -> u16 {
+    current_allocator_reentry_slot().map_or(0, |slot| {
+        slot.last_fast_pcc_packed.swap(0, Ordering::Relaxed)
+    })
 }
 
 struct AllocatorReentryGuard {
@@ -7190,36 +7317,75 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         })
 }
 
-/// Decision-sensitive remaining-bytes check for synchronously kernel-routed
-/// hardened ABI entrypoints (`Socket`, `IoFd`). When `RuntimeMathKernel::decide`
-/// escalates a family (`risk_upper_bound_ppm >= ESCALATED_RISK_THRESHOLD_PPM`
-/// or `Deny`), forces synchronous SipHash header + trailing canary verification
-/// on live arena allocations instead of relying on the warm `1-in-16`
-/// `TLS_CACHE` cadence.
+/// Decision-sensitive region-fit + integrity check for synchronously kernel-routed
+/// hardened ABI entrypoints (`Socket`, `IoFd`).
+///
+/// - Short-circuits `ptr == NULL` (`len == 0` -> `true`, `len > 0` -> `false`)
+///   without polluting `ValidationPipeline::validate(0)`.
+/// - When `family` is escalated (`HOT_FAMILY_ESCALATED_MASK` from per-family
+///   conformal risk `>= ESCALATED_RISK_THRESHOLD_PPM` or `Deny`) and this thread
+///   is not in an async-signal or reentrant context, runs single-lock
+///   `AllocationArena::verify_live_integrity_from(addr)` to attribute header vs
+///   canary corruption accurately, evict warm `TLS_CACHE` shard entries, and
+///   reject corrupted live buffers even when `len == 0`.
 #[inline]
-pub(crate) fn known_remaining_for_decision(
-    addr: usize,
+pub(crate) fn tracked_region_fits_for_decision(
+    ptr: *const c_void,
+    len: usize,
+    family: frankenlibc_membrane::runtime_math::ApiFamily,
     decision: &frankenlibc_membrane::runtime_math::RuntimeDecision,
-) -> Option<usize> {
-    let rem = known_remaining(addr);
-    if !runtime_policy::strict_passthrough_active()
-        && (decision.risk_upper_bound_ppm >= crate::runtime_policy::ESCALATED_RISK_THRESHOLD_PPM
+) -> bool {
+    if ptr.is_null() {
+        return len == 0;
+    }
+    let addr = ptr as usize;
+    let escalated = !runtime_policy::strict_passthrough_active()
+        && !runtime_policy::runtime_math_disabled()
+        && (runtime_policy::is_family_escalated(family)
             || matches!(
                 decision.action,
                 frankenlibc_membrane::runtime_math::MembraneAction::Deny
-            ))
-        && rem.is_some_and(|r| r > 0)
-        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
-        && let Some((slot, _)) = pipeline.arena.remaining_from(addr)
-        && slot.state.is_live()
-        && !pipeline.arena.verify_live_canary(slot.user_base)
-    {
-        frankenlibc_membrane::metrics::MembraneMetrics::inc(
-            &frankenlibc_membrane::metrics::global_metrics().canary_failures,
-        );
-        return Some(0);
+            ));
+    if escalated {
+        let slot = current_allocator_reentry_slot();
+        if !runtime_policy::in_policy_reentry_context()
+            && !slot.is_none_or(|s| {
+                s.allocator_depth.load(Ordering::Acquire) > 0 || in_signal_handler(s)
+            })
+            && !crate::membrane_state::pipeline_initialization_active()
+            && !frankenlibc_membrane::ptr_validator::in_validation_context()
+            && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+            && let Some((user_base, rem, verdict)) = pipeline.arena.verify_live_integrity_from(addr)
+        {
+            match verdict {
+                CachedIntegrityVerdict::HeaderCorrupted => {
+                    frankenlibc_membrane::metrics::MembraneMetrics::inc(
+                        &frankenlibc_membrane::metrics::global_metrics().fingerprint_failures,
+                    );
+                    frankenlibc_membrane::tls_cache::bump_shard_epoch(
+                        frankenlibc_membrane::tls_cache::tls_cache_shard_for(user_base),
+                    );
+                    return false;
+                }
+                CachedIntegrityVerdict::CanaryCorrupted => {
+                    frankenlibc_membrane::metrics::MembraneMetrics::inc(
+                        &frankenlibc_membrane::metrics::global_metrics().canary_failures,
+                    );
+                    frankenlibc_membrane::tls_cache::bump_shard_epoch(
+                        frankenlibc_membrane::tls_cache::tls_cache_shard_for(user_base),
+                    );
+                    return false;
+                }
+                CachedIntegrityVerdict::EpochStale => {
+                    return false;
+                }
+                CachedIntegrityVerdict::Intact => {
+                    return len <= rem;
+                }
+            }
+        }
     }
-    rem
+    known_remaining(addr).is_none_or(|remaining| len <= remaining)
 }
 
 // ---------------------------------------------------------------------------
@@ -7248,8 +7414,8 @@ fn reject_oversize_request(size: usize) -> bool {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-    let hot_mode = STRICT_HOT_MODE.load(Ordering::Relaxed);
-    if hot_mode != STRICT_HOT_MODE_SLOW
+    let hot_state = STRICT_HOT_MODE_STATE.load(Ordering::Relaxed);
+    if hot_state.wrapping_sub(1) < 2
         && size <= MAX_SMALL_SIZE
         && let Some(key) = current_thread_key()
         && let Some(slot) = lookup_key_slot_dir(key)
@@ -7257,6 +7423,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             | (slot.allocator_depth.load(Ordering::Relaxed) as usize))
             == 0
     {
+        let hot_mode = hot_state as u8;
         // SAFETY: `slot` from `lookup_key_slot_dir(key)` is never `BOOTSTRAP_REENTRY_SLOT`
         // and is uniquely owned by this live thread (`tid == KEY_CLAIMED_TID`,
         // `thread_key == key`). Only same-thread signal/reentrant frames can observe
@@ -7357,10 +7524,10 @@ unsafe extern "C" fn malloc_slow(size: usize) -> *mut c_void {
         }
         if !cfg!(test)
             && !cfg!(feature = "owned-tls-cache")
-            && STRICT_HOT_MODE.load(Ordering::Relaxed) == STRICT_HOT_MODE_SLOW
-            && ALLOC_SLOW_GATE_COUNT.load(Ordering::Relaxed) == 0
+            && !cfg!(feature = "standalone")
+            && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
             && GLOBAL_ALLOC_STATS.get().is_some()
-            && runtime_policy::strict_passthrough_active()
+            && runtime_policy::explicit_strict_passthrough_resolved()
         {
             refresh_strict_hot_mode();
         }
@@ -7444,7 +7611,7 @@ unsafe fn malloc_membrane_path(reentry_guard: &AllocatorReentryGuard, req: usize
             ApiFamily::Allocator,
             decision.profile,
             runtime_policy::scaled_cost(8, req),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }
@@ -7510,8 +7677,9 @@ unsafe fn malloc_membrane_path(reentry_guard: &AllocatorReentryGuard, req: usize
 /// `realloc`, and must not have been freed already.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
-    let hot_mode = STRICT_HOT_MODE.load(Ordering::Relaxed);
-    if hot_mode != STRICT_HOT_MODE_SLOW {
+    let hot_state = STRICT_HOT_MODE_STATE.load(Ordering::Relaxed);
+    if hot_state.wrapping_sub(1) < 2 {
+        let hot_mode = hot_state as u8;
         if ptr.is_null() {
             return;
         }
@@ -7647,7 +7815,12 @@ unsafe extern "C" fn finish_strict_invalid_slot_swap(
         let meta = unsafe { &*((arena_base + meta_offset) as *const SegmentSlotMeta) };
         let requested = previous as usize;
         if previous == 0 || (previous != SEGMENT_SLOT_FREE && requested > class_size) {
-            meta.requested_size.store(previous, Ordering::Release);
+            let _ = meta.requested_size.compare_exchange(
+                SEGMENT_SLOT_FREE,
+                previous,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
         }
     }
     strict_invalid_free(if previous == SEGMENT_SLOT_FREE {
@@ -7736,10 +7909,10 @@ unsafe extern "C" fn free_slow(ptr: *mut c_void) {
     if strict_host_path
         && !cfg!(test)
         && !cfg!(feature = "owned-tls-cache")
-        && STRICT_HOT_MODE.load(Ordering::Relaxed) == STRICT_HOT_MODE_SLOW
-        && ALLOC_SLOW_GATE_COUNT.load(Ordering::Relaxed) == 0
+        && !cfg!(feature = "standalone")
+        && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
         && GLOBAL_ALLOC_STATS.get().is_some()
-        && runtime_policy::strict_passthrough_active()
+        && runtime_policy::explicit_strict_passthrough_resolved()
     {
         refresh_strict_hot_mode();
     }
@@ -7841,7 +8014,7 @@ unsafe fn free_membrane_path(
             recent_page,
             Some(stage_index(&ordering, CheckStage::Arena)),
         );
-        runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, true);
+        runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, false);
         return None;
     }
 
@@ -8515,7 +8688,7 @@ pub unsafe extern "C" fn posix_memalign(
             ApiFamily::Allocator,
             decision.profile,
             runtime_policy::scaled_cost(8, req),
-            true,
+            false,
         );
         return ENOMEM as c_int;
     }
@@ -8634,7 +8807,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
             ApiFamily::Allocator,
             decision.profile,
             runtime_policy::scaled_cost(8, req),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }
@@ -8748,7 +8921,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
             ApiFamily::Allocator,
             decision.profile,
             runtime_policy::scaled_cost(8, req),
-            true,
+            false,
         );
         return std::ptr::null_mut();
     }

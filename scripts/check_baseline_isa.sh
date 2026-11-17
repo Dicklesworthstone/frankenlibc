@@ -166,7 +166,47 @@ then
   echo "FAIL: a function outside the dispatch allow-list uses non-baseline instructions"
   failures=$((failures + 1))
 else
-  echo "PASS: every non-baseline instruction is inside a dispatch-guarded function"
+echo "PASS: every non-baseline instruction is inside a dispatch-guarded function"
+fi
+echo ""
+
+echo "--- Check 1b: zero non-math_abi internal calls or GOT jumps to exported math symbols ---"
+if ! python3 - "${work}/lib.dis" "${ROOT}/support_matrix.json" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[2], encoding="utf-8") as fh:
+    sm = json.load(fh)
+math_syms = {row["symbol"] for row in sm["symbols"] if row.get("module") == "math_abi"}
+
+func = None
+hdr = re.compile(r"^[0-9a-f]+ <(.+)>:$")
+call_re = re.compile(
+    r"\b(?:call|jmp)\s+(?:QWORD PTR \[rip\+0x[0-9a-f]+\]\s*#\s*[0-9a-f]+\s*<([^+>]+)|[0-9a-f]+\s+<([^+>]+))"
+)
+hits = []
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    m = hdr.match(line)
+    if m:
+        func = m.group(1)
+        continue
+    m = call_re.search(line)
+    if m and func:
+        tgt = (m.group(1) or m.group(2) or "").split("@")[0]
+        if tgt in math_syms and func not in math_syms and not func.startswith("frankenlibc_abi::math_abi::"):
+            hits.append((func, tgt, line.strip()))
+
+for caller, tgt, raw in hits[:20]:
+    print(f"FAIL {caller} -> {tgt}: {raw}")
+print(f"math_abi_exports={len(math_syms)} non_math_abi_math_calls={len(hits)}")
+sys.exit(1 if hits else 0)
+PY
+then
+  echo "FAIL: non-math_abi code calls exported C math symbols"
+  failures=$((failures + 1))
+else
+  echo "PASS: zero non-math_abi calls or GOT jumps to exported C math symbols"
 fi
 echo ""
 

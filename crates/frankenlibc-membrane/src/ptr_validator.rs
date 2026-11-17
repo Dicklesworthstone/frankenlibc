@@ -981,14 +981,12 @@ impl ValidationPipeline {
         if addr == 0 || self.validation_logging_enabled() || !mode.validation_enabled() {
             return None;
         }
-        let cached = try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
-            cache.lookup_hit_remaining_with_oracle_const::<IS_WRITE>(
-                addr,
-                &self.page_oracle,
-                Some(&self.arena),
-                write_len,
-            )
-        });
+        let cached = crate::tls_cache::lookup_tls_cache_hit_remaining::<IS_WRITE>(
+            addr,
+            &self.page_oracle,
+            Some(&self.arena),
+            write_len,
+        );
         if cached.is_corrupted() {
             // `TLS_CACHE` already evicted the corrupted entry and bumped
             // `canary_failures`/`fingerprint_failures`. Only clamp to `0` (and
@@ -1042,16 +1040,13 @@ impl ValidationPipeline {
         if self.validation_logging_enabled() || !mode.validation_enabled() {
             return (CachedRemaining::MISS, CachedRemaining::MISS);
         }
-        let (mut l, mut r) =
-            try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
-                cache.lookup_hit_remaining_pair_with_oracle::<LHS_IS_WRITE>(
-                    lhs,
-                    rhs,
-                    &self.page_oracle,
-                    Some(&self.arena),
-                    write_len,
-                )
-            });
+        let (mut l, mut r) = crate::tls_cache::lookup_tls_cache_hit_remaining_pair::<LHS_IS_WRITE>(
+            lhs,
+            rhs,
+            &self.page_oracle,
+            Some(&self.arena),
+            write_len,
+        );
         if l.is_corrupted() {
             l = if mode.heals_enabled() {
                 CachedRemaining::clamped_zero()
@@ -1212,13 +1207,7 @@ impl ValidationPipeline {
             0,
         );
         if addr == 0 {
-            self.runtime_math.observe_validation_result(
-                mode,
-                ApiFamily::PointerValidation,
-                ValidationProfile::Fast,
-                1,
-                false,
-            );
+            self.pipeline_observe(mode, ValidationProfile::Fast, 1, false);
             // Null is dependency-forced before any adaptive ordering decision,
             // so there is no sampled check order to feed back to the bandit.
             self.emit_terminal_transition(
@@ -1243,9 +1232,7 @@ impl ValidationPipeline {
 
         let aligned = addr & 0x7 == 0;
         let recent_page = self.page_oracle.query(addr);
-        let raw_order =
-            self.runtime_math
-                .check_ordering(ApiFamily::PointerValidation, aligned, recent_page);
+        let raw_order = self.pipeline_check_ordering(aligned, recent_page);
         let ordering = Self::dependency_safe_order(raw_order);
 
         if raw_order != ordering {
@@ -1334,13 +1321,7 @@ impl ValidationPipeline {
                         let abs = Self::abstraction_from_cached(addr, cv);
                         // Cache hits replay a previously validated abstraction.
                         // Misses and deeper exits still train the sampled check oracle.
-                        self.runtime_math.observe_validation_result(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            ValidationProfile::Fast,
-                            elapsed_ns,
-                            false,
-                        );
+                        self.pipeline_observe(mode, ValidationProfile::Fast, elapsed_ns, false);
                         self.emit_terminal_transition(
                             &trace,
                             mode,
@@ -1434,8 +1415,7 @@ impl ValidationPipeline {
                         }
 
                         let pre_decision = self
-                            .runtime_math
-                            .decide(mode, RuntimeContext::pointer_validation(addr, true));
+                            .pipeline_decide(mode, RuntimeContext::pointer_validation(addr, true));
                         self.emit_validation_log(
                             &trace,
                             mode,
@@ -1462,21 +1442,14 @@ impl ValidationPipeline {
 
                         // Runtime-math selected fast path for foreign pointers.
                         if !pre_decision.requires_full_validation() && !mode.heals_enabled() {
-                            self.runtime_math.note_check_order_outcome(
+                            self.pipeline_note_order(
                                 mode,
-                                ApiFamily::PointerValidation,
                                 aligned,
                                 recent_page,
                                 &ordering,
                                 Some(idx),
                             );
-                            self.runtime_math.observe_validation_result(
-                                mode,
-                                ApiFamily::PointerValidation,
-                                pre_decision.profile,
-                                elapsed_ns,
-                                false,
-                            );
+                            self.pipeline_observe(mode, pre_decision.profile, elapsed_ns, false);
                             self.emit_terminal_transition(
                                 &trace,
                                 mode,
@@ -1498,21 +1471,8 @@ impl ValidationPipeline {
                         }
 
                         // No page ownership evidence: classify as foreign regardless of profile.
-                        self.runtime_math.note_check_order_outcome(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            aligned,
-                            recent_page,
-                            &ordering,
-                            Some(idx),
-                        );
-                        self.runtime_math.observe_validation_result(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            pre_decision.profile,
-                            elapsed_ns,
-                            false,
-                        );
+                        self.pipeline_note_order(mode, aligned, recent_page, &ordering, Some(idx));
+                        self.pipeline_observe(mode, pre_decision.profile, elapsed_ns, false);
                         self.emit_terminal_transition(
                             &trace,
                             mode,
@@ -1565,21 +1525,8 @@ impl ValidationPipeline {
                     elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Arena.cost_ns()));
                     MembraneMetrics::inc(&metrics.arena_lookups);
                     let Some(found) = self.arena.lookup(addr) else {
-                        self.runtime_math.note_check_order_outcome(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            aligned,
-                            recent_page,
-                            &ordering,
-                            Some(idx),
-                        );
-                        self.runtime_math.observe_validation_result(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            ValidationProfile::Fast,
-                            elapsed_ns,
-                            false,
-                        );
+                        self.pipeline_note_order(mode, aligned, recent_page, &ordering, Some(idx));
+                        self.pipeline_observe(mode, ValidationProfile::Fast, elapsed_ns, false);
                         self.emit_terminal_transition(
                             &trace,
                             mode,
@@ -1601,21 +1548,8 @@ impl ValidationPipeline {
                     };
                     if !found.state.is_live() {
                         let abs = self.abstraction_from_slot(addr, &found);
-                        self.runtime_math.note_check_order_outcome(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            aligned,
-                            recent_page,
-                            &ordering,
-                            Some(idx),
-                        );
-                        self.runtime_math.observe_validation_result(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            ValidationProfile::Full,
-                            elapsed_ns,
-                            true,
-                        );
+                        self.pipeline_note_order(mode, aligned, recent_page, &ordering, Some(idx));
+                        self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
                         self.emit_terminal_transition(
                             &trace,
                             mode,
@@ -1658,21 +1592,14 @@ impl ValidationPipeline {
                         {
                             MembraneMetrics::inc(&metrics.fingerprint_failures);
                             let abs = self.abstraction_from_slot(addr, &s);
-                            self.runtime_math.note_check_order_outcome(
+                            self.pipeline_note_order(
                                 mode,
-                                ApiFamily::PointerValidation,
                                 aligned,
                                 recent_page,
                                 &ordering,
                                 Some(idx),
                             );
-                            self.runtime_math.observe_validation_result(
-                                mode,
-                                ApiFamily::PointerValidation,
-                                ValidationProfile::Full,
-                                elapsed_ns,
-                                true,
-                            );
+                            self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
                             self.emit_terminal_transition(
                                 &trace,
                                 mode,
@@ -1746,21 +1673,14 @@ impl ValidationPipeline {
                         if !expected_canary.verify(&actual) {
                             MembraneMetrics::inc(&metrics.canary_failures);
                             let abs = self.abstraction_from_slot(addr, &s);
-                            self.runtime_math.note_check_order_outcome(
+                            self.pipeline_note_order(
                                 mode,
-                                ApiFamily::PointerValidation,
                                 aligned,
                                 recent_page,
                                 &ordering,
                                 Some(idx),
                             );
-                            self.runtime_math.observe_validation_result(
-                                mode,
-                                ApiFamily::PointerValidation,
-                                ValidationProfile::Full,
-                                elapsed_ns,
-                                true,
-                            );
+                            self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
                             self.emit_terminal_transition(
                                 &trace,
                                 mode,
@@ -1810,21 +1730,14 @@ impl ValidationPipeline {
                         let end = s.user_base.saturating_add(s.user_size);
                         if addr < s.user_base || addr >= end {
                             let abs = self.abstraction_from_slot(addr, &s);
-                            self.runtime_math.note_check_order_outcome(
+                            self.pipeline_note_order(
                                 mode,
-                                ApiFamily::PointerValidation,
                                 aligned,
                                 recent_page,
                                 &ordering,
                                 Some(idx),
                             );
-                            self.runtime_math.observe_validation_result(
-                                mode,
-                                ApiFamily::PointerValidation,
-                                ValidationProfile::Full,
-                                elapsed_ns,
-                                true,
-                            );
+                            self.pipeline_observe(mode, ValidationProfile::Full, elapsed_ns, true);
                             self.emit_terminal_transition(
                                 &trace,
                                 mode,
@@ -1868,21 +1781,8 @@ impl ValidationPipeline {
         }
 
         let Some(slot) = slot else {
-            self.runtime_math.note_check_order_outcome(
-                mode,
-                ApiFamily::PointerValidation,
-                aligned,
-                recent_page,
-                &ordering,
-                None,
-            );
-            self.runtime_math.observe_validation_result(
-                mode,
-                ApiFamily::PointerValidation,
-                ValidationProfile::Fast,
-                elapsed_ns,
-                false,
-            );
+            self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+            self.pipeline_observe(mode, ValidationProfile::Fast, elapsed_ns, false);
             self.emit_terminal_transition(
                 &trace,
                 mode,
@@ -1903,7 +1803,7 @@ impl ValidationPipeline {
             return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
         };
 
-        let deep_decision = self.runtime_math.decide(
+        let deep_decision = self.pipeline_decide(
             mode,
             RuntimeContext::pointer_validation(addr, bloom_negative),
         );
@@ -1940,21 +1840,8 @@ impl ValidationPipeline {
             if let Some(snapshot) = validation_shard_epochs.as_ref() {
                 self.cache_validation(addr, &slot, verified_fp_hash, verified_canary_tag, snapshot);
             }
-            self.runtime_math.note_check_order_outcome(
-                mode,
-                ApiFamily::PointerValidation,
-                aligned,
-                recent_page,
-                &ordering,
-                None,
-            );
-            self.runtime_math.observe_validation_result(
-                mode,
-                ApiFamily::PointerValidation,
-                deep_decision.profile,
-                elapsed_ns,
-                false,
-            );
+            self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+            self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, false);
             self.emit_terminal_transition(
                 &trace,
                 mode,
@@ -1995,21 +1882,8 @@ impl ValidationPipeline {
             {
                 MembraneMetrics::inc(&metrics.fingerprint_failures);
                 let abs = self.abstraction_from_slot(addr, &slot);
-                self.runtime_math.note_check_order_outcome(
-                    mode,
-                    ApiFamily::PointerValidation,
-                    aligned,
-                    recent_page,
-                    &ordering,
-                    None,
-                );
-                self.runtime_math.observe_validation_result(
-                    mode,
-                    ApiFamily::PointerValidation,
-                    deep_decision.profile,
-                    elapsed_ns,
-                    true,
-                );
+                self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+                self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, true);
                 self.emit_terminal_transition(
                     &trace,
                     mode,
@@ -2080,21 +1954,8 @@ impl ValidationPipeline {
             if !expected_canary.verify(&actual) {
                 MembraneMetrics::inc(&metrics.canary_failures);
                 let abs = self.abstraction_from_slot(addr, &slot);
-                self.runtime_math.note_check_order_outcome(
-                    mode,
-                    ApiFamily::PointerValidation,
-                    aligned,
-                    recent_page,
-                    &ordering,
-                    None,
-                );
-                self.runtime_math.observe_validation_result(
-                    mode,
-                    ApiFamily::PointerValidation,
-                    deep_decision.profile,
-                    elapsed_ns,
-                    true,
-                );
+                self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+                self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, true);
                 self.emit_terminal_transition(
                     &trace,
                     mode,
@@ -2142,21 +2003,8 @@ impl ValidationPipeline {
         if let Some(snapshot) = validation_shard_epochs.as_ref() {
             self.cache_validation(addr, &slot, verified_fp_hash, verified_canary_tag, snapshot);
         }
-        self.runtime_math.note_check_order_outcome(
-            mode,
-            ApiFamily::PointerValidation,
-            aligned,
-            recent_page,
-            &ordering,
-            None,
-        );
-        self.runtime_math.observe_validation_result(
-            mode,
-            ApiFamily::PointerValidation,
-            deep_decision.profile,
-            elapsed_ns,
-            false,
-        );
+        self.pipeline_note_order(mode, aligned, recent_page, &ordering, None);
+        self.pipeline_observe(mode, deep_decision.profile, elapsed_ns, false);
         self.emit_terminal_transition(
             &trace,
             mode,
@@ -2175,6 +2023,108 @@ impl ValidationPipeline {
             false,
         );
         ValidationOutcome::Validated(abs)
+    }
+
+    #[inline]
+    fn pipeline_check_ordering(&self, aligned: bool, recent_page: bool) -> [CheckStage; 7] {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            return crate::check_oracle::DEFAULT_ORDER;
+        }
+        self.runtime_math
+            .check_ordering(ApiFamily::PointerValidation, aligned, recent_page)
+    }
+
+    #[inline]
+    fn pipeline_decide(
+        &self,
+        mode: SafetyLevel,
+        ctx: RuntimeContext,
+    ) -> crate::runtime_math::RuntimeDecision {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            crate::tls_cache::set_warm_integrity_source_escalated(
+                crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+                false,
+            );
+            return crate::runtime_math::RuntimeDecision {
+                action: crate::runtime_math::MembraneAction::Allow,
+                profile: if mode.heals_enabled() {
+                    ValidationProfile::Full
+                } else {
+                    ValidationProfile::Fast
+                },
+                policy_id: 0,
+                risk_upper_bound_ppm: 0,
+                evidence_seqno: 0,
+            };
+        }
+        let decision = self.runtime_math.decide(mode, ctx);
+        let escalated = mode.heals_enabled()
+            && (self
+                .runtime_math
+                .family_conformal_risk_ppm(ApiFamily::PointerValidation)
+                >= 750_000
+                || matches!(decision.action, crate::runtime_math::MembraneAction::Deny));
+        crate::tls_cache::set_warm_integrity_source_escalated(
+            crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+            escalated,
+        );
+        decision
+    }
+
+    #[inline]
+    fn pipeline_note_order(
+        &self,
+        mode: SafetyLevel,
+        aligned: bool,
+        recent_page: bool,
+        ordering: &[CheckStage; 7],
+        early_exit_idx: Option<usize>,
+    ) {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            return;
+        }
+        self.runtime_math.note_check_order_outcome(
+            mode,
+            ApiFamily::PointerValidation,
+            aligned,
+            recent_page,
+            ordering,
+            early_exit_idx,
+        );
+    }
+
+    #[inline]
+    fn pipeline_observe(
+        &self,
+        mode: SafetyLevel,
+        profile: ValidationProfile,
+        elapsed_ns: u64,
+        adverse: bool,
+    ) {
+        if crate::tls_cache::pipeline_runtime_math_disabled() {
+            crate::tls_cache::set_warm_integrity_source_escalated(
+                crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+                false,
+            );
+            return;
+        }
+        self.runtime_math.observe_validation_result(
+            mode,
+            ApiFamily::PointerValidation,
+            profile,
+            elapsed_ns,
+            adverse,
+        );
+        if mode.heals_enabled() {
+            let escalated = self
+                .runtime_math
+                .family_conformal_risk_ppm(ApiFamily::PointerValidation)
+                >= 750_000;
+            crate::tls_cache::set_warm_integrity_source_escalated(
+                crate::tls_cache::INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR,
+                escalated,
+            );
+        }
     }
 
     /// Register a new allocation in all backing structures.

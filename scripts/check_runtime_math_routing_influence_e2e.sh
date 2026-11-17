@@ -19,25 +19,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+EXPLICIT_CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/data/tmp/cargo-target}"
 export CARGO_TARGET_DIR
 
 OUT_DIR="${REPO_ROOT}/target/runtime_math_routing_influence_e2e"
 mkdir -p "${OUT_DIR}"
 
-LIB_CANDIDATES=(
-  "${FRANKENLIBC_SMOKE_LIB_PATH:-}"
-  "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
-  "${REPO_ROOT}/target/release/libfrankenlibc_abi.so"
-)
-
 LIB_PATH=""
-for candidate in "${LIB_CANDIDATES[@]}"; do
-  if [[ -n "${candidate}" && -f "${candidate}" ]]; then
-    LIB_PATH="${candidate}"
-    break
-  fi
-done
+if [[ -n "${FRANKENLIBC_SMOKE_LIB_PATH:-}" && -f "${FRANKENLIBC_SMOKE_LIB_PATH}" ]]; then
+  LIB_PATH="${FRANKENLIBC_SMOKE_LIB_PATH}"
+else
+  for candidate in \
+    "${REPO_ROOT}/target/release/libfrankenlibc_abi.so" \
+    "${EXPLICIT_CARGO_TARGET_DIR:+${EXPLICIT_CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so}" \
+    "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"; do
+    if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+      if [[ -z "${LIB_PATH}" || "${candidate}" -nt "${LIB_PATH}" ]]; then
+        LIB_PATH="${candidate}"
+      fi
+    fi
+  done
+fi
 
 if [[ -z "${LIB_PATH}" ]]; then
   echo "FAIL: could not locate release libfrankenlibc_abi.so (set FRANKENLIBC_SMOKE_LIB_PATH or build --release)" >&2
@@ -45,8 +48,10 @@ if [[ -z "${LIB_PATH}" ]]; then
 fi
 
 LIB_SHA256="$(sha256sum "${LIB_PATH}" | awk '{print $1}')"
-FIXTURE_SRC="${OUT_DIR}/fixture_routing_influence.c"
-FIXTURE_BIN="${OUT_DIR}/fixture_routing_influence"
+WORK_DIR="$(mktemp -d "${OUT_DIR}/run.XXXXXX")"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+FIXTURE_SRC="${WORK_DIR}/fixture_routing_influence.c"
+FIXTURE_BIN="${WORK_DIR}/fixture_routing_influence"
 REPORT_JSON="${OUT_DIR}/runtime_math_routing_influence_report.v1.json"
 
 cat > "${FIXTURE_SRC}" <<'ENDC'
@@ -130,6 +135,14 @@ static int run_hot_probe(int adverse) {
     if (__frankenlibc_runtime_route_counts(&before_routes) != 1) return 2;
     uint64_t heals_before = __frankenlibc_healing_action_count(1);
 
+    /* Exercise a genuinely cold heap allocation inside the measured window so
+     * ValidationPipeline::validate runs on a TLS_CACHE miss (proving math=off
+     * suppresses pipeline_kernel_decisions on real cold misses, not vacuously). */
+    char *cold_buf = (char *)malloc(128);
+    if (!cold_buf) return 2;
+    memcpy(cold_buf, "cold_miss_probe", 16);
+    if (strlen_fn(cold_buf) != 15) return 2;
+
     /* ConformalRiskEngine recomputes upper_bound_ppm on RECOMPUTE_CADENCE = 64. */
     for (int i = 0; i < 64; ++i) {
         if (adverse) {
@@ -203,6 +216,7 @@ static int run_hot_probe(int adverse) {
         *((volatile unsigned char *)buf_b[b] + 256) = orig_canary[b];
         free(buf_b[b]);
     }
+    free(cold_buf);
     free(buf_a);
 
     printf("probe=hot adverse=%d math_enabled=%d heals_delta=%lu abi_decisions_delta=%lu "
@@ -259,12 +273,17 @@ static int run_socket_probe(int adverse) {
     struct route_counts_snapshot after_routes = {0};
     if (__frankenlibc_runtime_route_counts(&before_routes) != 1) return 2;
 
-    for (int i = 0; i < 4096; ++i) {
-        int fd = socket(AF_UNIX, adverse ? -1 : SOCK_STREAM, 0);
-        if (adverse) {
+    if (adverse) {
+        for (int i = 0; i < 128; ++i) {
+            int fd = socket(AF_UNIX, -1, 0);
             if (fd != -1 || errno != EINVAL) return 2;
-        } else {
-            if (fd < 0 || close(fd) != 0) return 2;
+        }
+    } else {
+        /* 16,384 benign send/recv pairs (> 8,192): proves 100%-benign traffic
+         * never self-escalates HOT_FAMILY_ESCALATED_MASK. */
+        const char ping[8] = "PINGPONG";
+        for (int i = 0; i < 16384; ++i) {
+            if (send(sv[0], ping, 8, 0) != 8 || recv(sv[1], rx, 8, 0) != 8) return 2;
         }
     }
 
@@ -333,8 +352,8 @@ static int run_socket_probe(int adverse) {
 
     printf("probe=socket adverse=%d math_enabled=%d abi_decisions_delta=%lu "
            "pipeline_decisions_delta=%lu bounds_delta=%lu canary_failures_delta=%lu "
-           "math_off_delta=%lu snap_ok=%d snap_family=%u snap_profile=%u snap_action=%u "
-           "snap_risk=%u caught_immediate=%d caught_within_16=%d\n",
+           "math_off_delta=%lu escalated_mask=%u snap_ok=%d snap_family=%u snap_profile=%u "
+           "snap_action=%u snap_risk=%u caught_immediate=%d caught_within_16=%d\n",
            adverse,
            __frankenlibc_is_runtime_math_enabled(),
            after_routes.abi_kernel_decisions - before_routes.abi_kernel_decisions,
@@ -342,10 +361,133 @@ static int run_socket_probe(int adverse) {
            after_routes.independent_bounds_validations - before_routes.independent_bounds_validations,
            after_routes.canary_failures - before_routes.canary_failures,
            after_routes.math_off_bypasses - before_routes.math_off_bypasses,
+           after_routes.hot_escalated_mask,
            snap_ok,
            snap.family,
            snap.profile,
            snap.action,
+           snap.risk_upper_bound_ppm,
+           caught_immediate,
+           caught_within_16);
+    return 0;
+}
+
+static int run_iofd_probe(int adverse) {
+    if (!require_exports()) return 2;
+
+    char tmpl[] = "/tmp/fl_iofd_probe.XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd < 0) return 2;
+    unlink(tmpl);
+    if (pwrite(fd, "IOFD_OK!", 8, 0) != 8) {
+        close(fd);
+        return 2;
+    }
+
+    unsigned char *buf[3] = {NULL, NULL, NULL};
+    for (int b = 0; b < 3; ++b) {
+        buf[b] = (unsigned char *)malloc(256);
+        if (!buf[b]) {
+            close(fd);
+            return 2;
+        }
+        memset(buf[b], 0, 256);
+        if (pread(fd, buf[b], 8, 0) != 8 || memcmp(buf[b], "IOFD_OK!", 8) != 0) {
+            close(fd);
+            return 2;
+        }
+    }
+
+    struct route_counts_snapshot before_routes = {0};
+    struct route_counts_snapshot after_routes = {0};
+    if (__frankenlibc_runtime_route_counts(&before_routes) != 1) {
+        close(fd);
+        return 2;
+    }
+
+    unsigned char scratch[8] = {0};
+    if (adverse) {
+        for (int i = 0; i < 128; ++i) {
+            errno = 0;
+            if (pread(-1, scratch, 8, 0) != -1 || errno != EBADF) {
+                close(fd);
+                return 2;
+            }
+        }
+    } else {
+        for (int i = 0; i < 16384; ++i) {
+            if (pread(fd, scratch, 8, 0) != 8) {
+                close(fd);
+                return 2;
+            }
+        }
+    }
+
+    unsigned char orig_canary[3] = {0, 0, 0};
+    int caught_immediate = 0;
+    struct decision_snapshot snap = {0};
+    int snap_ok = 0;
+    for (int b = 0; b < 3; ++b) {
+        volatile unsigned char *canary_byte = (volatile unsigned char *)buf[b] + 256;
+        orig_canary[b] = *canary_byte;
+        *canary_byte = (unsigned char)(orig_canary[b] ^ 0xFFu);
+
+        errno = 0;
+        ssize_t first_rc = pread(fd, buf[b], 8, 0);
+        int first_errno = errno;
+        if (first_rc == -1 && first_errno == EFAULT) {
+            ++caught_immediate;
+        } else if (first_rc != 8) {
+            for (int r = 0; r <= b; ++r) {
+                *((volatile unsigned char *)buf[r] + 256) = orig_canary[r];
+            }
+            close(fd);
+            return 2;
+        }
+        if (b == 0) {
+            snap_ok = __frankenlibc_runtime_decision_snapshot(&snap);
+        }
+    }
+
+    if (__frankenlibc_runtime_route_counts(&after_routes) != 1) {
+        for (int b = 0; b < 3; ++b) {
+            *((volatile unsigned char *)buf[b] + 256) = orig_canary[b];
+        }
+        close(fd);
+        return 2;
+    }
+
+    int caught_within_16 = 0;
+    for (int b = 0; b < 3; ++b) {
+        int caught_this = 0;
+        for (int k = 0; k < 16; ++k) {
+            errno = 0;
+            ssize_t rc = pread(fd, buf[b], 8, 0);
+            if (rc == -1 && errno == EFAULT) {
+                caught_this = 1;
+                break;
+            }
+        }
+        if (caught_this) ++caught_within_16;
+        *((volatile unsigned char *)buf[b] + 256) = orig_canary[b];
+        free(buf[b]);
+    }
+    close(fd);
+
+    printf("probe=iofd adverse=%d math_enabled=%d abi_decisions_delta=%lu "
+           "pipeline_decisions_delta=%lu bounds_delta=%lu canary_failures_delta=%lu "
+           "math_off_delta=%lu escalated_mask=%u snap_ok=%d snap_family=%u snap_risk=%u "
+           "caught_immediate=%d caught_within_16=%d\n",
+           adverse,
+           __frankenlibc_is_runtime_math_enabled(),
+           after_routes.abi_kernel_decisions - before_routes.abi_kernel_decisions,
+           after_routes.pipeline_kernel_decisions - before_routes.pipeline_kernel_decisions,
+           after_routes.independent_bounds_validations - before_routes.independent_bounds_validations,
+           after_routes.canary_failures - before_routes.canary_failures,
+           after_routes.math_off_bypasses - before_routes.math_off_bypasses,
+           after_routes.hot_escalated_mask,
+           snap_ok,
+           snap.family,
            snap.risk_upper_bound_ppm,
            caught_immediate,
            caught_within_16);
@@ -517,12 +659,14 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "--hot-benign") == 0) return run_hot_probe(0);
     if (strcmp(argv[1], "--socket-adverse") == 0) return run_socket_probe(1);
     if (strcmp(argv[1], "--socket-benign") == 0) return run_socket_probe(0);
+    if (strcmp(argv[1], "--iofd-adverse") == 0) return run_iofd_probe(1);
+    if (strcmp(argv[1], "--iofd-benign") == 0) return run_iofd_probe(0);
     if (strcmp(argv[1], "--bench-same-invocation") == 0) return run_same_invocation_bench();
     return 2;
 }
 ENDC
 
-gcc -O2 -pthread -fPIE -pie -o "${FIXTURE_BIN}" "${FIXTURE_SRC}" -ldl
+"${CC:-cc}" -O2 -pthread -fPIE -pie -o "${FIXTURE_BIN}" "${FIXTURE_SRC}" -ldl
 
 echo "=== Causal Runtime-Math Routing Influence Gate (bd-reality-202609-lx578q.4) ==="
 echo "Library: ${LIB_PATH} (sha256=${LIB_SHA256})"
@@ -535,6 +679,10 @@ SOCK_ON_ADV="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH
 SOCK_ON_BEN="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=on LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --socket-benign)"
 SOCK_OFF_ADV="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=off LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --socket-adverse)"
 
+IOFD_ON_ADV="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=on LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --iofd-adverse)"
+IOFD_ON_BEN="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=on LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --iofd-benign)"
+IOFD_OFF_ADV="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=off LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --iofd-adverse)"
+
 BENCH_STRICT="$(timeout 30 env FRANKENLIBC_MODE=strict FRANKENLIBC_RUNTIME_MATH=on LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --bench-same-invocation)"
 BENCH_HARDENED_ON="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=on LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --bench-same-invocation)"
 BENCH_HARDENED_OFF="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTIME_MATH=off LD_PRELOAD="${LIB_PATH}" "${FIXTURE_BIN}" --bench-same-invocation)"
@@ -542,11 +690,13 @@ BENCH_HARDENED_OFF="$(timeout 30 env FRANKENLIBC_MODE=hardened FRANKENLIBC_RUNTI
 printf '%s\n' \
   "${HOT_ON_ADV}" "${HOT_ON_BEN}" "${HOT_OFF_ADV}" \
   "${SOCK_ON_ADV}" "${SOCK_ON_BEN}" "${SOCK_OFF_ADV}" \
+  "${IOFD_ON_ADV}" "${IOFD_ON_BEN}" "${IOFD_OFF_ADV}" \
   "${BENCH_STRICT}" "${BENCH_HARDENED_ON}" "${BENCH_HARDENED_OFF}"
 
 python3 - "${LIB_PATH}" "${LIB_SHA256}" "${REPORT_JSON}" \
   "${HOT_ON_ADV}" "${HOT_ON_BEN}" "${HOT_OFF_ADV}" \
   "${SOCK_ON_ADV}" "${SOCK_ON_BEN}" "${SOCK_OFF_ADV}" \
+  "${IOFD_ON_ADV}" "${IOFD_ON_BEN}" "${IOFD_OFF_ADV}" \
   "${BENCH_STRICT}" "${BENCH_HARDENED_ON}" "${BENCH_HARDENED_OFF}" <<'PY'
 import json
 import sys
@@ -562,6 +712,9 @@ from datetime import datetime, timezone
     sock_on_adv_s,
     sock_on_ben_s,
     sock_off_adv_s,
+    iofd_on_adv_s,
+    iofd_on_ben_s,
+    iofd_off_adv_s,
     bench_strict_s,
     bench_hard_on_s,
     bench_hard_off_s,
@@ -588,6 +741,9 @@ hot_off_adv = parse_kv(hot_off_adv_s)
 sock_on_adv = parse_kv(sock_on_adv_s)
 sock_on_ben = parse_kv(sock_on_ben_s)
 sock_off_adv = parse_kv(sock_off_adv_s)
+iofd_on_adv = parse_kv(iofd_on_adv_s)
+iofd_on_ben = parse_kv(iofd_on_ben_s)
+iofd_off_adv = parse_kv(iofd_off_adv_s)
 bench_strict = parse_kv(bench_strict_s)
 bench_hard_on = parse_kv(bench_hard_on_s)
 bench_hard_off = parse_kv(bench_hard_off_s)
@@ -595,14 +751,16 @@ bench_hard_off = parse_kv(bench_hard_off_s)
 # 1. Hot StringMemory matched-control causal assertions
 assert hot_on_adv["heals_delta"] == 64, hot_on_adv
 assert hot_on_adv["abi_decisions_delta"] >= 64, hot_on_adv
+assert hot_on_adv["pipeline_decisions_delta"] >= 1, hot_on_adv
 assert hot_on_adv["cadence_mask"] == 0, hot_on_adv
 assert (hot_on_adv["escalated_mask"] & (1 << 2)) != 0, hot_on_adv
 assert hot_on_adv["hot_cached_delta"] >= 3, hot_on_adv
-assert hot_on_adv["snap_ok"] == 1 and hot_on_adv["snap_family"] in (1, 2), hot_on_adv
+assert hot_on_adv["snap_ok"] == 1 and hot_on_adv["snap_family"] == 2, hot_on_adv
 assert hot_on_adv["caught_immediate"] == 3 and hot_on_adv["caught_within_16"] == 3, hot_on_adv
 assert hot_on_adv["canary_failures_delta"] >= 3, hot_on_adv
 
 assert hot_on_ben["heals_delta"] == 0, hot_on_ben
+assert hot_on_ben["pipeline_decisions_delta"] >= 1, hot_on_ben
 assert hot_on_ben["cadence_mask"] == 15, hot_on_ben
 assert (hot_on_ben["escalated_mask"] & (1 << 2)) == 0, hot_on_ben
 assert hot_on_ben["caught_immediate"] <= 1 and hot_on_ben["caught_within_16"] == 3, hot_on_ben
@@ -610,28 +768,45 @@ assert hot_on_ben["caught_immediate"] <= 1 and hot_on_ben["caught_within_16"] ==
 assert hot_off_adv["heals_delta"] == 64, hot_off_adv
 assert hot_off_adv["abi_decisions_delta"] == 0, hot_off_adv
 assert hot_off_adv["pipeline_decisions_delta"] == 0, hot_off_adv
+assert hot_off_adv["math_off_delta"] >= 64, hot_off_adv
 assert hot_off_adv["cadence_mask"] == 15, hot_off_adv
 assert hot_off_adv["caught_immediate"] <= 1 and hot_off_adv["caught_within_16"] == 3, hot_off_adv
 
 # 2. Synchronous Socket send() matched-control causal assertions
-assert sock_on_adv["abi_decisions_delta"] >= 4098, sock_on_adv
+assert sock_on_adv["abi_decisions_delta"] >= 130, sock_on_adv
+assert (sock_on_adv["escalated_mask"] & (1 << 13)) != 0, sock_on_adv
 assert sock_on_adv["snap_ok"] == 1 and sock_on_adv["snap_family"] == 13, sock_on_adv
-assert sock_on_adv["snap_risk"] >= 750000, sock_on_adv
 assert sock_on_adv["caught_immediate"] == 3 and sock_on_adv["caught_within_16"] == 3, sock_on_adv
 assert sock_on_adv["canary_failures_delta"] >= 3, sock_on_adv
 
-assert sock_on_ben["snap_risk"] < 750000, sock_on_ben
+assert (sock_on_ben["escalated_mask"] & (1 << 13)) == 0, sock_on_ben
 assert sock_on_ben["caught_immediate"] <= 1 and sock_on_ben["caught_within_16"] == 3, sock_on_ben
 
 assert sock_off_adv["abi_decisions_delta"] == 0, sock_off_adv
-assert sock_off_adv["math_off_delta"] >= 4098, sock_off_adv
+assert sock_off_adv["math_off_delta"] >= 130, sock_off_adv
 assert sock_off_adv["caught_immediate"] <= 1 and sock_off_adv["caught_within_16"] == 3, sock_off_adv
 
-# 3. Same-invocation route separation assertions
+# 3. Synchronous IoFd pread() matched-control causal assertions
+assert iofd_on_adv["abi_decisions_delta"] >= 130, iofd_on_adv
+assert (iofd_on_adv["escalated_mask"] & (1 << 12)) != 0, iofd_on_adv
+assert iofd_on_adv["snap_ok"] == 1 and iofd_on_adv["snap_family"] == 12, iofd_on_adv
+assert iofd_on_adv["caught_immediate"] == 3 and iofd_on_adv["caught_within_16"] == 3, iofd_on_adv
+assert iofd_on_adv["canary_failures_delta"] >= 3, iofd_on_adv
+
+assert (iofd_on_ben["escalated_mask"] & (1 << 12)) == 0, iofd_on_ben
+assert iofd_on_ben["caught_immediate"] <= 1 and iofd_on_ben["caught_within_16"] == 3, iofd_on_ben
+
+assert iofd_off_adv["abi_decisions_delta"] == 0, iofd_off_adv
+assert iofd_off_adv["math_off_delta"] >= 130, iofd_off_adv
+assert iofd_off_adv["caught_immediate"] <= 1 and iofd_off_adv["caught_within_16"] == 3, iofd_off_adv
+
+# 4. Same-invocation route separation assertions
 assert bench_hard_off["abi_decisions_delta"] == 0, bench_hard_off
 assert bench_hard_off["pipeline_decisions_delta"] == 0, bench_hard_off
-assert bench_hard_off["math_off_delta"] >= 8192, bench_hard_off
-assert bench_hard_on["abi_decisions_delta"] >= 8192, bench_hard_on
+assert bench_hard_off["ffi_pcc_delta"] == 0, bench_hard_off
+assert bench_hard_off["math_off_delta"] >= 663552, bench_hard_off
+assert bench_hard_on["abi_decisions_delta"] >= 73728, bench_hard_on
+assert bench_hard_on["ffi_pcc_delta"] >= 589824, bench_hard_on
 
 report = {
     "schema_version": "runtime_math_routing_influence_report.v1",
@@ -649,6 +824,11 @@ report = {
             "hardened_math_on_adverse": sock_on_adv,
             "hardened_math_on_benign": sock_on_ben,
             "hardened_math_off_adverse": sock_off_adv,
+        },
+        "synchronous_iofd_pread": {
+            "hardened_math_on_adverse": iofd_on_adv,
+            "hardened_math_on_benign": iofd_on_ben,
+            "hardened_math_off_adverse": iofd_off_adv,
         },
     },
     "same_invocation_benchmarks": {

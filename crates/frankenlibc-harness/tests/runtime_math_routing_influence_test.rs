@@ -244,6 +244,34 @@ fn runtime_math_routing_inventory_matches_source_routes() {
     let rp_src = fs::read_to_string(&rp_path).expect("runtime_policy.rs must be readable");
     let mod_path = root.join("crates/frankenlibc-membrane/src/runtime_math/mod.rs");
     let mod_src = fs::read_to_string(&mod_path).expect("runtime_math/mod.rs must be readable");
+    let abi_toml = fs::read_to_string(root.join("crates/frankenlibc-abi/Cargo.toml"))
+        .expect("frankenlibc-abi/Cargo.toml must be readable");
+
+    let feature_axes = inv
+        .get("optional_feature_axes")
+        .as_array()
+        .expect("optional_feature_axes must be an array");
+    let observed_features: BTreeSet<&str> = feature_axes
+        .iter()
+        .map(|f| f.get("feature").as_str().expect("feature name"))
+        .collect();
+    let expected_features: BTreeSet<&str> = [
+        "owned-tls-cache",
+        "standalone",
+        "owned-unwind-stub",
+        "runtime-tracing",
+        "conformance-testing",
+        "alloc-path-telemetry",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(observed_features, expected_features);
+    for feat in &expected_features {
+        assert!(
+            abi_toml.contains(&format!("{feat} =")),
+            "Cargo.toml missing feature `{feat}`"
+        );
+    }
 
     assert!(
         mod_src.contains("pub const COUNT: usize = 20;"),
@@ -369,10 +397,20 @@ fn causal_consumers_and_gate_script_are_wired_in_source() {
         .expect("tls_cache.rs must exist");
     assert!(tls_src.contains("pub fn warm_integrity_cadence_mask() -> u32"));
     assert!(tls_src.contains("pub fn set_warm_integrity_cadence_mask(mask: u32)"));
+    assert!(tls_src.contains("ESCALATED_INTEGRITY_SOURCES"));
+    assert!(tls_src.contains("pub fn pipeline_runtime_math_disabled() -> bool"));
+
+    let arena_src = fs::read_to_string(root.join("crates/frankenlibc-membrane/src/arena.rs"))
+        .expect("arena.rs must exist");
+    assert!(arena_src.contains("pub fn verify_live_integrity_from("));
+
+    let pv_src = fs::read_to_string(root.join("crates/frankenlibc-membrane/src/ptr_validator.rs"))
+        .expect("ptr_validator.rs must exist");
+    assert!(pv_src.contains("fn pipeline_decide("));
 
     let malloc_src = fs::read_to_string(root.join("crates/frankenlibc-abi/src/malloc_abi.rs"))
         .expect("malloc_abi.rs must exist");
-    assert!(malloc_src.contains("pub(crate) fn known_remaining_for_decision("));
+    assert!(malloc_src.contains("pub(crate) fn tracked_region_fits_for_decision("));
 
     let socket_src = fs::read_to_string(root.join("crates/frankenlibc-abi/src/socket_abi.rs"))
         .expect("socket_abi.rs must exist");
@@ -392,9 +430,19 @@ fn causal_consumers_and_gate_script_are_wired_in_source() {
     assert!(map_src.contains("__frankenlibc_runtime_route_counts;"));
 
     let gate_script = root.join("scripts/check_runtime_math_routing_influence_e2e.sh");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&gate_script)
+            .expect("gate script metadata")
+            .permissions()
+            .mode();
+        assert_ne!(mode & 0o111, 0, "gate script must be executable");
+    }
     let gate_src = fs::read_to_string(&gate_script).expect("gate script must exist");
     assert!(gate_src.contains("--hot-adverse"));
     assert!(gate_src.contains("--socket-adverse"));
+    assert!(gate_src.contains("--iofd-adverse"));
     assert!(gate_src.contains("--bench-same-invocation"));
     assert!(gate_src.contains("LM_ID_NEWLM"));
 }

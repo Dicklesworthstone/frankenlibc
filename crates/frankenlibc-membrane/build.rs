@@ -909,11 +909,13 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // bump_shard_epoch, bump_tls_cache_epoch, current_epoch) and the
         // race-safety + cross-shard isolation tests each touch SHARD_EPOCHS
         // directly. Adjust here when the in-file barrier surface changes.
-        // 8 -> 10 (bd-reality-202609-lx578q.4): ADAPTIVE_WARM_INTEGRITY_MASK
-        // adds 1 Relaxed load + 1 Relaxed store for scalar cadence tightening
-        // (15 -> 0); it publishes no auxiliary memory, while slot/header/canary
-        // reads remain synchronized by SHARD_EPOCHS Acquire/Release + shard lock.
-        expected_sites: 10,
+        // 8 -> 13 (bd-reality-202609-lx578q.4): ESCALATED_INTEGRITY_SOURCES
+        // adds 1 Relaxed load + 1 fetch_or + 1 fetch_and for race-free multi-source
+        // cadence tightening, and PIPELINE_RUNTIME_MATH_DISABLED adds 1 Relaxed load +
+        // 1 Relaxed store for FRANKENLIBC_RUNTIME_MATH=off synchronization; neither
+        // publishes auxiliary memory, while slot/header/canary reads remain
+        // synchronized by SHARD_EPOCHS Acquire/Release + shard lock.
+        expected_sites: 13,
         stop_at_cfg_test: false,
         optional: false,
     },

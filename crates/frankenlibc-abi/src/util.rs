@@ -619,6 +619,8 @@ fn reclaim_native_thread_tls_heap_cells(tid: i32) {
 /// Reclaim all `TlsHeapCell` allocations owned by the calling host thread.
 pub(crate) fn reclaim_current_thread_tls_heap_cells() {
     let _errno_guard = TlsErrnoGuard::new();
+    #[cfg(not(test))]
+    crate::malloc_abi::clear_current_thread_exit_slot_state();
     let tid = frankenlibc_core::syscall::sys_gettid();
     if !TLS_HEAP_OWNER_TID
         .try_with(|owner| owner.get() == tid)

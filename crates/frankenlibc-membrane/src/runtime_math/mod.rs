@@ -6322,6 +6322,16 @@ fn oracle_bias_from_ordering(ordering: &[CheckStage; 7], mode: SafetyLevel) -> u
     1
 }
 
+impl RuntimeMathKernel {
+    /// Return the per-family conformal empirical error upper bound (in ppm),
+    /// uncontaminated by global non-randomness/ergodicity bonuses on zero-adverse streams.
+    #[inline]
+    #[must_use]
+    pub fn family_conformal_risk_ppm(&self, family: ApiFamily) -> u32 {
+        self.risk.upper_bound_ppm(family)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
