@@ -31791,7 +31791,7 @@
       "bead_id": "bd-rc0923-epic-eeuy4f.47",
       "title": "[RC-1020 acceptance] Execute integrated L1 readiness against the actual release artifact",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [],
       "dependencies": [],
@@ -32012,7 +32012,7 @@
       "bead_id": "bd-reality-202609-lx578q.4",
       "title": "[RC-202609] Prove runtime-math decision influence on actual production routing paths",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [
         "reality-check",
@@ -32056,7 +32056,7 @@
         },
         "structured_logs": {
           "status": "complete",
-          "artifacts": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4/receipt.json"
+          "artifacts": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4-r3/receipt.json"
         },
         "perf_evidence": {
           "status": "complete",
@@ -32101,16 +32101,16 @@
           "tests/conformance/runtime_math_routing_inventory.v1.json",
           "scripts/check_runtime_math_routing_influence_e2e.sh",
           "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs",
-          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4/receipt.json"
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4-r3/receipt.json"
         ],
         "perf_proof_refs": [
           "scripts/check_runtime_math_routing_influence_e2e.sh",
           "scripts/check_membrane_access.py"
         ],
         "close_blockers": [],
-        "notes": "Verified on release libfrankenlibc_abi.so SHA256 2c2338dba4b6628c89ef5c5980baf49162068bb82e882e8aa1e160b25df30210 (sort100k-lexical hardened/strict=1.933x<=2.0x, hardened/glibc=2.205x<=3.0x; c_fixture_suite 28/28 pass).",
+        "notes": "Verified on release libfrankenlibc_abi.so SHA256 35df026568baed2fa2dcbec0e9351d72318e735b1afc7d2ff5686dfc986ee6f5 (sort100k-lexical hardened/strict=1.894x<=2.0x, hardened/glibc=2.149x<=3.0x; c_fixture_suite 28/28 pass; 12/12 causal routing probes pass).",
         "result_receipts": [
-          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4/receipt.json"
+          "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4-r3/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Causal RuntimeMathKernel routing influence on hot cached hardened families (TLS_CACHE cadence tightening + FFI-PCC override) and synchronous syscall families (Socket/IoFd decision integrity verification) with matched math=off control and separated route inventory",
@@ -32119,6 +32119,8 @@
           "evidence_class": "executed_unit",
           "behavior_paths": [
             "crates/frankenlibc-membrane/build.rs",
+            "crates/frankenlibc-membrane/src/arena.rs",
+            "crates/frankenlibc-membrane/src/ptr_validator.rs",
             "crates/frankenlibc-membrane/src/tls_cache.rs",
             "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
             "crates/frankenlibc-abi/src/runtime_policy.rs",
@@ -32134,21 +32136,22 @@
             "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs"
           ],
           "source": {
-            "commit": "fe794bd624174176964445cfc9d68074d6a97b68",
+            "commit": "ee57a1afe36fd4ed87d98f0872c761d125c4441f",
             "files": {
-              "crates/frankenlibc-membrane/build.rs": "60be3c09592bddc3e0c60bc38e83ebec76f3f9b9f55230c84da02c271123c2b7",
-              "crates/frankenlibc-membrane/src/tls_cache.rs": "4bd09d531fdd74b361ea6475075a9a01c683302515250429be6127355ce09b8d",
-              "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "12878609240083c3732526430afffcae97facabd84a440f0e71863617582658a",
-              "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs": "9470d400371b17f2e07dc9db6d46714a633df7f59059f69f654e72ce208b16c0",
-              "crates/frankenlibc-abi/src/runtime_policy.rs": "5e5b8b2cf623864f3477875f269f6f8be4300d732f9bc7170b729aa886fefcec",
-              "crates/frankenlibc-abi/src/malloc_abi.rs": "dcc9cbf490f4b9ea77c431c4a1b4825d2ee7bff06991c9d5db82b8bda1f49e80",
-              "crates/frankenlibc-abi/src/socket_abi.rs": "52f4777e7aa859ec1771cc540547c9a43feaa4bf40b24d621656215bc3e144ec",
-              "crates/frankenlibc-abi/src/io_abi.rs": "0a40c90123331edddebb25f31c50da2114cc76f9a741ae56e331303909659152",
+              "crates/frankenlibc-membrane/build.rs": "b511a38a20ceb482b5e3abd155dbfeb4a296b25d5fd3ec3b555ef59d1e1adaaa",
+              "crates/frankenlibc-membrane/src/arena.rs": "b807e9433b543008f3fc3b459dc687cb4dce82788fa2f5392c2176a665b8ffec",
+              "crates/frankenlibc-membrane/src/ptr_validator.rs": "4fd4fa402296d9af764ecb8fd9fdf4164d2fc668e5976821d9a370ea185c33cd",
+              "crates/frankenlibc-membrane/src/tls_cache.rs": "7964d3a913f483180220002d1bf86356888df3da00e509cec72575d3be00d704",
+              "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "acf3c1694f1c1635115a196301fe849ab2c4a7c6a6fef48146aeaf67ea3617b8",
+              "crates/frankenlibc-abi/src/runtime_policy.rs": "6aa54de97e090adf193353948446256365dcbb62a4968d999a8e4721fdb22896",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "bf51e10d692fe253adad9a0383fe0d7ffe21ab362687eac98f05b48928af9799",
+              "crates/frankenlibc-abi/src/socket_abi.rs": "2ff70d7408be42a01166ab2e65e322e1b8c9156119afb8b9a6d0379213f47a50",
+              "crates/frankenlibc-abi/src/io_abi.rs": "640036f974eda8db229235d448f427955affb0318ae0bad04333913221da5651",
               "crates/frankenlibc-abi/src/startup_abi.rs": "13fcd0dad4672ba3a8cfc9a9ffa6676aab861ad7b1faf8addefd108b3cbd5bef",
               "crates/frankenlibc-abi/version_scripts/libc.map": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
-              "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs": "0bf20393fce780585bad38b267ef987afa027eb5ea75ba15bc2ffcf44b35ab48",
-              "scripts/check_runtime_math_routing_influence_e2e.sh": "500924379bdb1c26eb20623ca29d9dbef66b45fde622662a474df61aaa3ad5c3",
-              "tests/conformance/runtime_math_routing_inventory.v1.json": "904ecfa7a495f943fb5ffba2f87668bef6e977ca063633e89ae3d16a0e4e74ce"
+              "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs": "8589ebf019bd82486200db70367d0396432720694e4bb8999e4e22b442971e41",
+              "scripts/check_runtime_math_routing_influence_e2e.sh": "e8c964f737e54db6d71280246ce7bf271b82a38c5c866bebfa865a515bb51ef6",
+              "tests/conformance/runtime_math_routing_inventory.v1.json": "73b6f6bf2ca9e4ae583de9a0d81657e109e91db41b8026ff7e6e854071108cad"
             }
           },
           "configuration": {
@@ -32193,7 +32196,7 @@
       "bead_id": "bd-rc0923-epic-eeuy4f.13",
       "title": "[RC-0923] whole .so compiled with +avx2,+fma — SIGILL on non-AVX2 x86_64; needs baseline build + runtime dispatch",
       "priority": 1,
-      "status": "in_progress",
+      "status": "closed",
       "assignee": "antigravity",
       "labels": [
         "build",
@@ -32239,7 +32242,7 @@
         },
         "structured_logs": {
           "status": "complete",
-          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13/receipt.json"
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json"
         },
         "perf_evidence": {
           "status": "not_required"
@@ -32250,7 +32253,7 @@
         },
         "golden_artifacts": {
           "status": "complete",
-          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13/receipt.json"
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json"
         }
       },
       "coverage_summary": {
@@ -32281,13 +32284,13 @@
           "Cargo.toml",
           "scripts/check_baseline_isa.sh",
           "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs",
-          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13/receipt.json"
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json"
         ],
         "perf_proof_refs": [],
         "close_blockers": [],
-        "notes": "Verified on baseline release SHA256 2c2338dba4b6628c89ef5c5980baf49162068bb82e882e8aa1e160b25df30210 and release-x86-64-v3 SHA256 dd7bd2635b15f7ab33aa19edf75f55345a693e53a3d41284d88598f5d5f0bc7b.",
+        "notes": "Verified on baseline release SHA256 35df026568baed2fa2dcbec0e9351d72318e735b1afc7d2ff5686dfc986ee6f5 and release-x86-64-v3 SHA256 dd7bd2635b15f7ab33aa19edf75f55345a693e53a3d41284d88598f5d5f0bc7b.",
         "result_receipts": [
-          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13/receipt.json"
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json"
         ],
         "closure_evidence": {
           "behavior": "Baseline x86-64 default release build without global AVX2/FMA flags, runtime CPUID dispatch twins, IRELATIVE cpu_guard refusal on release-x86-64-v3, zero internal GOT calls to exported math symbols, and 28/28 Nehalem/qemu64 parity gate",
@@ -32305,14 +32308,14 @@
             "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs"
           ],
           "source": {
-            "commit": "fe794bd624174176964445cfc9d68074d6a97b68",
+            "commit": "ee57a1afe36fd4ed87d98f0872c761d125c4441f",
             "files": {
               ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
               "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
               "crates/frankenlibc-abi/src/lib.rs": "eb7f5595e198c7ea465a9241062d66f21ec468dff327fc6b70e798ca71053411",
               "crates/frankenlibc-core/src/math/mod.rs": "4eab707ae58c6949c695a96c6e72c9c707d060c82b8f488c032edd36d2fc1e91",
-              "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs": "9ef14fefef5b534fe96a65ee863a92af4fb2c1482d243dd99922b502a9e2a253",
-              "scripts/check_baseline_isa.sh": "4b3297ad0d69758fbb7762ddd0b69bd5c2930a77ec8ce6faac9081634753adb6"
+              "crates/frankenlibc-harness/tests/baseline_isa_gate_test.rs": "aaee51316a7dbc87052e284bf9103330b0b6a3aafa60390b01b77de9d73a6cc7",
+              "scripts/check_baseline_isa.sh": "56c11ff20a71187f4969a264b952ec48c4dfed0ba9b64fc4522806aac23c6e0c"
             }
           },
           "configuration": {
@@ -32357,7 +32360,8 @@
   "result_receipts": {
     "bd-reality-202609-lx578q.6.4": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.4/receipt.json",
     "bd-reality-202609-lx578q.6.5": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.5/receipt.json",
-    "bd-reality-202609-lx578q.4": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4/receipt.json",
-    "bd-rc0923-epic-eeuy4f.13": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13/receipt.json"
+    "bd-rc0923-epic-eeuy4f.47": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json",
+    "bd-reality-202609-lx578q.4": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4-r3/receipt.json",
+    "bd-rc0923-epic-eeuy4f.13": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json"
   }
 }

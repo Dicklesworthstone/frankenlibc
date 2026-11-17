@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-reality-202609-lx578q.4",
+  "contract": {
+    "behavior": "Causal RuntimeMathKernel routing influence on hot cached hardened families (TLS_CACHE cadence tightening + FFI-PCC override) and synchronous syscall families (Socket/IoFd decision integrity verification) with matched math=off control and separated route inventory",
+    "acceptance_sha256": "ea62f3671939c93acc18687d528229e8e027afc11c4876f3350d3e230f304771",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-membrane/build.rs",
+      "crates/frankenlibc-membrane/src/arena.rs",
+      "crates/frankenlibc-membrane/src/ptr_validator.rs",
+      "crates/frankenlibc-membrane/src/tls_cache.rs",
+      "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+      "crates/frankenlibc-abi/src/runtime_policy.rs",
+      "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "crates/frankenlibc-abi/src/socket_abi.rs",
+      "crates/frankenlibc-abi/src/io_abi.rs",
+      "crates/frankenlibc-abi/src/startup_abi.rs",
+      "crates/frankenlibc-abi/version_scripts/libc.map",
+      "scripts/check_runtime_math_routing_influence_e2e.sh",
+      "tests/conformance/runtime_math_routing_inventory.v1.json"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs"
+    ],
+    "source": {
+      "commit": "ee57a1afe36fd4ed87d98f0872c761d125c4441f",
+      "files": {
+        "crates/frankenlibc-membrane/build.rs": "b511a38a20ceb482b5e3abd155dbfeb4a296b25d5fd3ec3b555ef59d1e1adaaa",
+        "crates/frankenlibc-membrane/src/arena.rs": "b807e9433b543008f3fc3b459dc687cb4dce82788fa2f5392c2176a665b8ffec",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs": "4fd4fa402296d9af764ecb8fd9fdf4164d2fc668e5976821d9a370ea185c33cd",
+        "crates/frankenlibc-membrane/src/tls_cache.rs": "7964d3a913f483180220002d1bf86356888df3da00e509cec72575d3be00d704",
+        "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "acf3c1694f1c1635115a196301fe849ab2c4a7c6a6fef48146aeaf67ea3617b8",
+        "crates/frankenlibc-abi/src/runtime_policy.rs": "6aa54de97e090adf193353948446256365dcbb62a4968d999a8e4721fdb22896",
+        "crates/frankenlibc-abi/src/malloc_abi.rs": "bf51e10d692fe253adad9a0383fe0d7ffe21ab362687eac98f05b48928af9799",
+        "crates/frankenlibc-abi/src/socket_abi.rs": "2ff70d7408be42a01166ab2e65e322e1b8c9156119afb8b9a6d0379213f47a50",
+        "crates/frankenlibc-abi/src/io_abi.rs": "640036f974eda8db229235d448f427955affb0318ae0bad04333913221da5651",
+        "crates/frankenlibc-abi/src/startup_abi.rs": "13fcd0dad4672ba3a8cfc9a9ffa6676aab861ad7b1faf8addefd108b3cbd5bef",
+        "crates/frankenlibc-abi/version_scripts/libc.map": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
+        "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs": "8589ebf019bd82486200db70367d0396432720694e4bb8999e4e22b442971e41",
+        "scripts/check_runtime_math_routing_influence_e2e.sh": "e8c964f737e54db6d71280246ce7bf271b82a38c5c866bebfa865a515bb51ef6",
+        "tests/conformance/runtime_math_routing_inventory.v1.json": "73b6f6bf2ca9e4ae583de9a0d81657e109e91db41b8026ff7e6e854071108cad"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-17T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/runtime_math_routing_influence_test"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs",
+        "-o",
+        "target/closure_bins/runtime_math_routing_influence_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/runtime_math_routing_influence_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "runtime_math_routing_inventory_matches_source_routes",
+        "causal_consumers_and_gate_script_are_wired_in_source"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs",
+      "-o",
+      "target/closure_bins/runtime_math_routing_influence_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T20:39:22.680749+00:00",
+    "finished_at": "2026-11-17T20:39:23.347217+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/runtime_math_routing_influence_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T20:39:23.348984+00:00",
+    "finished_at": "2026-11-17T20:39:23.364909+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "be0836f07d21da2338304dc582832676373cefeccdb9b08ad990a17286cae5cf",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/runtime_math_routing_influence_test": "9fc4907cd6295504785692b0d3c69a1150c06f2fa922ec548ceb6847eded545f"
+  },
+  "artifact_files": {
+    "target/closure_bins/runtime_math_routing_influence_test": "artifact-0"
+  },
+  "source_files": {
+    "crates/frankenlibc-membrane/build.rs": "b511a38a20ceb482b5e3abd155dbfeb4a296b25d5fd3ec3b555ef59d1e1adaaa",
+    "crates/frankenlibc-membrane/src/arena.rs": "b807e9433b543008f3fc3b459dc687cb4dce82788fa2f5392c2176a665b8ffec",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs": "4fd4fa402296d9af764ecb8fd9fdf4164d2fc668e5976821d9a370ea185c33cd",
+    "crates/frankenlibc-membrane/src/tls_cache.rs": "7964d3a913f483180220002d1bf86356888df3da00e509cec72575d3be00d704",
+    "crates/frankenlibc-membrane/src/runtime_math/mod.rs": "acf3c1694f1c1635115a196301fe849ab2c4a7c6a6fef48146aeaf67ea3617b8",
+    "crates/frankenlibc-abi/src/runtime_policy.rs": "6aa54de97e090adf193353948446256365dcbb62a4968d999a8e4721fdb22896",
+    "crates/frankenlibc-abi/src/malloc_abi.rs": "bf51e10d692fe253adad9a0383fe0d7ffe21ab362687eac98f05b48928af9799",
+    "crates/frankenlibc-abi/src/socket_abi.rs": "2ff70d7408be42a01166ab2e65e322e1b8c9156119afb8b9a6d0379213f47a50",
+    "crates/frankenlibc-abi/src/io_abi.rs": "640036f974eda8db229235d448f427955affb0318ae0bad04333913221da5651",
+    "crates/frankenlibc-abi/src/startup_abi.rs": "13fcd0dad4672ba3a8cfc9a9ffa6676aab861ad7b1faf8addefd108b3cbd5bef",
+    "crates/frankenlibc-abi/version_scripts/libc.map": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
+    "crates/frankenlibc-harness/tests/runtime_math_routing_influence_test.rs": "8589ebf019bd82486200db70367d0396432720694e4bb8999e4e22b442971e41",
+    "scripts/check_runtime_math_routing_influence_e2e.sh": "e8c964f737e54db6d71280246ce7bf271b82a38c5c866bebfa865a515bb51ef6",
+    "tests/conformance/runtime_math_routing_inventory.v1.json": "73b6f6bf2ca9e4ae583de9a0d81657e109e91db41b8026ff7e6e854071108cad"
+  },
+  "executable_sha256": "9fc4907cd6295504785692b0d3c69a1150c06f2fa922ec548ceb6847eded545f"
+}

@@ -1,0 +1,368 @@
+{
+  "schema_version": "runtime_math_routing_inventory.v1",
+  "bead_id": "bd-reality-202609-lx578q.4",
+  "source_module": "crates/frankenlibc-abi/src/runtime_policy.rs",
+  "companion_modules": [
+    "crates/frankenlibc-membrane/src/arena.rs",
+    "crates/frankenlibc-membrane/src/ptr_validator.rs",
+    "crates/frankenlibc-membrane/src/tls_cache.rs",
+    "crates/frankenlibc-abi/src/malloc_abi.rs",
+    "crates/frankenlibc-abi/src/string_abi.rs",
+    "crates/frankenlibc-abi/src/socket_abi.rs",
+    "crates/frankenlibc-abi/src/io_abi.rs",
+    "crates/frankenlibc-abi/src/startup_abi.rs"
+  ],
+  "default_features": [],
+  "optional_feature_axes": [
+    {
+      "feature": "owned-tls-cache",
+      "default_enabled": false,
+      "routing_effect": "Switches RUNTIME_POLICY_TLS to TCB-backed owned TLS; frankenlibc_membrane::tls_cache::with_tls_cache uses TCB-backed storage on owned threads and returns None on unowned host threads without changing decision gates, FFI-PCC certificates, or conformal escalation semantics."
+    },
+    {
+      "feature": "standalone",
+      "default_enabled": false,
+      "routing_effect": "Disables host_errno_location_cached capture in ErrnoTransparencyGuard, forces native allocator segments over host passthrough, and disables panic backtrace symbolization; kernel decision gates are unchanged."
+    },
+    {
+      "feature": "owned-unwind-stub",
+      "default_enabled": false,
+      "routing_effect": "Selects stubbed unwind hooks when paired with standalone; runtime-math decision gates, FFI-PCC certificates, and escalation thresholds are unchanged."
+    },
+    {
+      "feature": "runtime-tracing",
+      "default_enabled": false,
+      "routing_effect": "Enables optional structured tracing spans without changing runtime-math decision actions, profiles, or conformal escalation thresholds."
+    },
+    {
+      "feature": "conformance-testing",
+      "default_enabled": false,
+      "routing_effect": "Exposes conformance ModeGuard test helpers (which refresh strict hot allocator routing on mode swaps) without altering production decision gates."
+    },
+    {
+      "feature": "alloc-path-telemetry",
+      "default_enabled": false,
+      "routing_effect": "Enables optional allocator path counters for benchmark attribution without changing runtime-math routing or validation semantics."
+    }
+  ],
+  "decision_gates": [
+    "runtime_policy.decide",
+    "runtime_policy.ffi_pcc.decide",
+    "runtime_policy.hot_cached.decide",
+    "runtime_policy.math_off.bypass",
+    "runtime_policy.passthrough"
+  ],
+  "route_separation_contract": {
+    "abi_kernel_decisions": "Consultations of crates/frankenlibc-abi/src/runtime_policy.rs KERNEL_CELL RuntimeMathKernel::decide (synchronous non-hot hardened families, strict observation when KERNEL_STATE == STATE_READY, and observe()-driven hot-family cache refreshes).",
+    "pipeline_kernel_decisions": "Consultations of ValidationPipeline::runtime_math RuntimeMathKernel::decide on cold pointer-validation misses inside frankenlibc-membrane (bypassed when FRANKENLIBC_RUNTIME_MATH=off, and escalating INTEGRITY_SOURCE_PIPELINE_PTR_VALIDATOR when PointerValidation conformal risk >= 750000 ppm).",
+    "independent_bounds_validations": "MembraneMetrics::validations + known_remaining* / maybe_clamp_copy_len* / tracked_region_fits* independent bounds, arena, SipHash fingerprint, and canary checks. Remains active under FRANKENLIBC_RUNTIME_MATH=off.",
+    "ffi_pcc_decisions": "Static proof-carried certificate fast-exits (lookup_active_ffi_pcc_certificate_with_index, decide_certified_memcmp, and try_decide_certified_string_pcc). Automatically declined in hardened mode when FRANKENLIBC_RUNTIME_MATH=off or HOT_FAMILY_ESCALATED_MASK marks the family escalated.",
+    "hot_cached_decisions": "O(1) CACHED_HOT_HARDENED_DECISION reads on the 7 high-frequency hardened families (Deny falls through to synchronous k.decide), refreshed by observe() on 100% of adverse events and sampled benign calls (1-in-64 Allocator, 1-in-256 other hot families + IoFd), with escalation gated on per-family conformal risk >= 750000 ppm.",
+    "math_off_bypasses": "Explicit FRANKENLIBC_RUNTIME_MATH=off bypasses in runtime_policy::decide (including certified hardened calls) and ValidationPipeline that skip RuntimeMathKernel consultation while keeping independent bounds/canary/quarantine validation active."
+  },
+  "causal_consumers": [
+    {
+      "consumer_id": "hot_family_tls_cache_cadence_and_pcc_override",
+      "families": [
+        "PointerValidation",
+        "Allocator",
+        "StringMemory",
+        "Stdio"
+      ],
+      "trigger": "observe() and ValidationPipeline feed RuntimeMathKernel::observe_validation_result and refresh CACHED_HOT_HARDENED_DECISION[family]; escalation triggers when family_conformal_risk_ppm(family) >= 750000 or action is Deny.",
+      "observable_effect": "Sets ESCALATED_INTEGRITY_SOURCES bitmask to tighten frankenlibc_membrane::tls_cache::warm_integrity_cadence_mask from 15 (1-in-16) to 0 (1-in-1 every-access SipHash header + trailing canary verification), declines try_decide_certified_string_pcc and active_unescalated_ffi_pcc_by_index static fast-exits, routes decide() through runtime_policy.hot_cached.decide, increments variant_upgrades on UpgradeToSafeVariant, and immediately detects non-tail heap canary corruption on every warm buffer read (returning clamped 0 instead of warm cached length)."
+    },
+    {
+      "consumer_id": "synchronous_syscall_decision_integrity_escalation",
+      "families": [
+        "Socket",
+        "IoFd"
+      ],
+      "trigger": "runtime_policy::decide consults RuntimeMathKernel::decide synchronously on ABI entry and updates HOT_FAMILY_ESCALATED_MASK from family_conformal_risk_ppm(family) >= 750000 or action == Deny (de-escalating via 1-in-256 benign observe sampling once conformal risk recovers).",
+      "observable_effect": "tracked_region_fits_for_decision -> malloc_abi::tracked_region_fits_for_decision forces single-lock AllocationArena::verify_live_integrity_from(addr) instead of trusting a warm 1-in-16 TLS_CACHE hit, accurately attributing fingerprint_failures vs canary_failures, bumping shard epochs, and immediately rejecting corrupted live heap buffers with -1/EFAULT on connect/send/recv/sendto/recvfrom/pread/pwrite while allowing all valid buffers and syscalls."
+    }
+  ],
+  "ffi_pcc_certificate_count": 24,
+  "ffi_pcc_symbols_by_family": {
+    "Allocator": [
+      "malloc",
+      "calloc",
+      "realloc",
+      "posix_memalign",
+      "memalign",
+      "aligned_alloc",
+      "free"
+    ],
+    "StringMemory": [
+      "memcmp",
+      "strlen",
+      "memcpy",
+      "strcmp",
+      "strncmp",
+      "strchr",
+      "strrchr",
+      "strstr",
+      "memchr",
+      "memrchr",
+      "strnlen",
+      "memmove",
+      "memset",
+      "strcpy",
+      "strncpy"
+    ],
+    "Stdio": [
+      "snprintf",
+      "vsnprintf"
+    ]
+  },
+  "families": [
+    {
+      "index": 0,
+      "variant": "PointerValidation",
+      "name": "pointer_validation",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 1,
+      "variant": "Allocator",
+      "name": "allocator",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "ffi_pcc_or_hot_cached",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 64,
+      "ffi_pcc_count": 7,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 2,
+      "variant": "StringMemory",
+      "name": "string_memory",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "ffi_pcc_or_hot_cached",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 15,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 3,
+      "variant": "Stdio",
+      "name": "stdio",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "ffi_pcc_or_hot_cached",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 2,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 4,
+      "variant": "Threading",
+      "name": "threading",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 5,
+      "variant": "Resolver",
+      "name": "resolver",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 6,
+      "variant": "MathFenv",
+      "name": "math_fenv",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "hot_cached_with_unary_binary_entry_fastpath",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": false
+    },
+    {
+      "index": 7,
+      "variant": "Loader",
+      "name": "loader",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "hot_cached",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 8,
+      "variant": "Stdlib",
+      "name": "stdlib",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "hot_cached_with_numeric_parse_fastpath",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 9,
+      "variant": "Ctype",
+      "name": "ctype",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "hot_cached_with_table_fastpath",
+      "hardened_hot_cached": true,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": false
+    },
+    {
+      "index": 10,
+      "variant": "Time",
+      "name": "time",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 11,
+      "variant": "Signal",
+      "name": "signal",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 12,
+      "variant": "IoFd",
+      "name": "io_fd",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "benign_observe_sample_period": 256,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 13,
+      "variant": "Socket",
+      "name": "socket",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 14,
+      "variant": "Locale",
+      "name": "locale",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "passthrough",
+      "hardened_math_on": "passthrough",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": false
+    },
+    {
+      "index": 15,
+      "variant": "Termios",
+      "name": "termios",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 16,
+      "variant": "Inet",
+      "name": "inet",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 17,
+      "variant": "Process",
+      "name": "process",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 18,
+      "variant": "VirtualMemory",
+      "name": "virtual_memory",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_passthrough_hot",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    },
+    {
+      "index": 19,
+      "variant": "Poll",
+      "name": "poll",
+      "bootstrap_or_reentry": "passthrough",
+      "strict_cfg_not_test": "strict_observation_if_kernel_ready",
+      "hardened_math_off": "math_off_bypass",
+      "hardened_math_on": "synchronous_abi_kernel",
+      "hardened_hot_cached": false,
+      "ffi_pcc_count": 0,
+      "independent_bounds_validation": true
+    }
+  ]
+}
