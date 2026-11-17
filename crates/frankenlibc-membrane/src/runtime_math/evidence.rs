@@ -2272,16 +2272,23 @@ fn decision_reasoning_flags(
 }
 
 #[inline]
-#[cfg(feature = "owned-tls-cache")]
-fn current_thread_id_u64() -> u64 {
+fn stack_thread_id_u64() -> u64 {
     let stack_probe = 0u8;
     let stack_addr = &stack_probe as *const u8 as usize as u64;
     u64::from(std::process::id()).rotate_left(32) ^ stack_addr.rotate_right(4)
 }
 
+#[cfg(feature = "owned-tls-cache")]
+fn current_thread_id_u64() -> u64 {
+    stack_thread_id_u64()
+}
+
 #[inline]
 #[cfg(not(feature = "owned-tls-cache"))]
 fn current_thread_id_u64() -> u64 {
+    if crate::tls_cache::compiler_tls_disabled() {
+        return stack_thread_id_u64();
+    }
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

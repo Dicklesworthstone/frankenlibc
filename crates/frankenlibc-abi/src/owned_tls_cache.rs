@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "owned-tls-cache"), allow(dead_code))]
 //! Process-keyed scratch storage for opt-in standalone TLS-removal experiments.
 //!
 //! This intentionally avoids Rust `thread_local!` so experiment lanes can

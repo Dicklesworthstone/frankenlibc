@@ -1383,6 +1383,22 @@ pub struct CachedValidation {
     pub state: SafetyState,
 }
 
+static NATIVE_THREAD_COMPILER_TLS_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Disable compiler-TLS (`%fs` / `tpidr_el0`) validation-cache lookups when the
+/// runtime creates native `clone` threads without `CLONE_SETTLS`, preventing
+/// threads that share a TCB from racing on `TLS_CACHE`.
+#[inline]
+pub fn disable_compiler_tls_cache_for_native_threads() {
+    NATIVE_THREAD_COMPILER_TLS_DISABLED.store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[inline(always)]
+pub(crate) fn compiler_tls_disabled() -> bool {
+    NATIVE_THREAD_COMPILER_TLS_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Access the thread-local validation cache.
 #[cfg(not(feature = "owned-tls-cache"))]
 #[inline]
@@ -1390,6 +1406,10 @@ pub fn with_tls_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
+    if compiler_tls_disabled() {
+        let mut fallback = TlsValidationCache::unbacked();
+        return f(&mut fallback);
+    }
     let mut maybe_f = Some(f);
     let result = TLS_CACHE.try_with(|cache| {
         TLS_CACHE_FAST_PTR.set(std::ptr::from_ref(cache));
@@ -1432,6 +1452,9 @@ pub(crate) fn try_with_tls_cache_hit<F, R: Copy>(default: R, f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
+    if compiler_tls_disabled() {
+        return default;
+    }
     let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
     if cache_ptr.is_null() {
         cache_ptr = init_tls_cache_fast_ptr_slow();
@@ -1459,6 +1482,9 @@ pub(crate) fn lookup_tls_cache_hit_remaining<const IS_WRITE: bool>(
     arena: Option<&crate::arena::AllocationArena>,
     write_len: usize,
 ) -> CachedRemaining {
+    if compiler_tls_disabled() {
+        return CachedRemaining::MISS;
+    }
     let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
     if cache_ptr.is_null() {
         cache_ptr = init_tls_cache_fast_ptr_slow();
@@ -1489,6 +1515,9 @@ pub(crate) fn lookup_tls_cache_hit_remaining_pair<const LHS_IS_WRITE: bool>(
     arena: Option<&crate::arena::AllocationArena>,
     write_len: usize,
 ) -> (CachedRemaining, CachedRemaining) {
+    if compiler_tls_disabled() {
+        return (CachedRemaining::MISS, CachedRemaining::MISS);
+    }
     let mut cache_ptr = TLS_CACHE_FAST_PTR.get();
     if cache_ptr.is_null() {
         cache_ptr = init_tls_cache_fast_ptr_slow();
@@ -1525,6 +1554,9 @@ fn init_tls_cache_fast_ptr_slow() -> *const std::cell::RefCell<TlsValidationCach
 
 #[cfg(not(feature = "owned-tls-cache"))]
 pub(crate) fn flush_current_thread_hit_metrics() {
+    if compiler_tls_disabled() {
+        return;
+    }
     let _ = TLS_CACHE.try_with(|cache| {
         if let Ok(mut borrowed) = cache.try_borrow_mut() {
             borrowed.flush_pipeline_hits();

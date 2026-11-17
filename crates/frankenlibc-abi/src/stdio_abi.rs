@@ -1442,7 +1442,7 @@ fn clear_fast_fixed_mem_read_tls(id: usize) {
             unsafe { Arc::decrement_strong_count(old_ptr) };
         }
     }
-    if !TLS_REFCELL_MEM_CACHED.get() {
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
         return;
     }
     let mut any_left = false;
@@ -1477,7 +1477,8 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
         return None;
     }
-    if TLS_REFCELL_MEM_CACHED.get()
+    if !crate::malloc_abi::native_thread_backend_active()
+        && TLS_REFCELL_MEM_CACHED.get()
         && let Ok(Some(cursor)) = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
             if let Some((cached_id, cursor)) = cache.borrow().as_ref()
                 && *cached_id == id
@@ -1508,10 +1509,12 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     if cursor.memory.owner_tls.load(Ordering::Acquire) != current_fast_mem_tls_anchor() {
         cursor.memory.owner_tls.store(0, Ordering::Release);
     }
-    TLS_REFCELL_MEM_CACHED.set(true);
-    let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
-        *cache.borrow_mut() = Some((id, Arc::clone(&cursor)));
-    });
+    if !crate::malloc_abi::native_thread_backend_active() {
+        TLS_REFCELL_MEM_CACHED.set(true);
+        let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+            *cache.borrow_mut() = Some((id, Arc::clone(&cursor)));
+        });
+    }
     Some(cursor)
 }
 
@@ -1542,7 +1545,7 @@ fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
             return Some(b as c_int);
         }
     }
-    if !TLS_REFCELL_MEM_CACHED.get() {
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
         return None;
     }
     FGETC_MEM_PTR_CACHE
@@ -1569,10 +1572,12 @@ fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>
     } else {
         cursor.memory.owner_tls.store(0, Ordering::Release);
     }
-    TLS_REFCELL_MEM_CACHED.set(true);
-    let _ = FGETC_MEM_PTR_CACHE.try_with(|c| {
-        *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
-    });
+    if !crate::malloc_abi::native_thread_backend_active() {
+        TLS_REFCELL_MEM_CACHED.set(true);
+        let _ = FGETC_MEM_PTR_CACHE.try_with(|c| {
+            *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
+        });
+    }
 }
 
 /// Single-threaded POD TLS fast path for `fread` on read-only `fmemopen` streams.
@@ -1590,7 +1595,7 @@ fn try_fread_fast_fixed_mem_st(stream: *mut c_void, dst: &mut [u8]) -> Option<us
 /// `Some(bytes_read)` on a gen-valid, open cached cursor for `stream`; `None` on any miss
 /// (uncached / different stream / gen-stale / closed) ⇒ caller falls through and re-caches.
 fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
-    if !TLS_REFCELL_MEM_CACHED.get() {
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
         return None;
     }
     let key = stream as usize;
@@ -1623,7 +1628,7 @@ fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Op
             return Some(n);
         }
     }
-    if !TLS_REFCELL_MEM_CACHED.get() {
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
         return None;
     }
     FGETC_MEM_PTR_CACHE
@@ -2358,6 +2363,9 @@ thread_local! {
 }
 
 fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     // C++ static destructors can flush streams after Rust TLS destructors.
@@ -2383,24 +2391,38 @@ thread_local! {
         const { std::cell::Cell::new((usize::MAX, 0, std::ptr::null_mut())) };
 }
 
-struct WideIoGuard;
+struct WideIoGuard {
+    native_slot: bool,
+}
 
 impl Drop for WideIoGuard {
     #[inline]
     fn drop(&mut self) {
-        WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
+        if self.native_slot {
+            crate::malloc_abi::leave_native_wide_io_depth();
+        } else {
+            WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
+        }
     }
 }
 
 #[inline]
 pub(crate) fn with_wide_io_active<R>(f: impl FnOnce() -> R) -> R {
-    WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_add(1)));
-    let _guard = WideIoGuard;
+    let native_slot = crate::malloc_abi::native_thread_backend_active();
+    if native_slot {
+        crate::malloc_abi::enter_native_wide_io_depth();
+    } else {
+        WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_add(1)));
+    }
+    let _guard = WideIoGuard { native_slot };
     f()
 }
 
 #[inline]
 pub(crate) fn wide_io_active() -> bool {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return crate::malloc_abi::native_wide_io_active();
+    }
     WIDE_IO_ACTIVE.with(|c| c.get() != 0)
 }
 
@@ -2424,6 +2446,9 @@ fn wide_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> 
 
 #[inline]
 fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return;
+    }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);
     WIDE_STREAM_CACHE.with(|c| {
         c.set((stream as usize, generation, ptr));
@@ -2431,7 +2456,7 @@ fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
 }
 
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
-    if wide_io_active() {
+    if crate::malloc_abi::native_thread_backend_active() || wide_io_active() {
         return;
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
@@ -4235,6 +4260,9 @@ thread_local! {
 struct RefillTmpGuard(Vec<u8>);
 impl Drop for RefillTmpGuard {
     fn drop(&mut self) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
         let _ = REFILL_TMP.try_with(|c| c.set(std::mem::take(&mut self.0)));
     }
 }
@@ -4250,7 +4278,11 @@ unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
     // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
     // Vec. `sys_read_fd` overwrites the first `want` bytes, so no pre-zeroing is required for
     // correctness; `resize(want, 0)` only grows (a no-op once warmed to the common size).
-    let mut guard = RefillTmpGuard(REFILL_TMP.try_with(|c| c.take()).unwrap_or_default());
+    let mut guard = RefillTmpGuard(if crate::malloc_abi::native_thread_backend_active() {
+        Vec::new()
+    } else {
+        REFILL_TMP.try_with(|c| c.take()).unwrap_or_default()
+    });
     let tmp = &mut guard.0;
     if tmp.len() < want {
         tmp.resize(want, 0);
@@ -9912,6 +9944,9 @@ mod printf_out_pool {
         static POOL: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
     }
     pub(super) fn take() -> Vec<u8> {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return Vec::with_capacity(256);
+        }
         // Process callbacks can format after the calling thread's TLS
         // destructors drained this optional cache. Reuse is not required for
         // rendering: an unavailable slot needs the same fresh-buffer fallback
@@ -9925,6 +9960,9 @@ mod printf_out_pool {
         )
     }
     pub(super) fn give(v: Vec<u8>) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
         // If TLS has been destroyed, the uncalled closure drops v normally.
         // Never recreate thread-local state while returning a scratch buffer.
         let _ = POOL.try_with(|p| {
@@ -17136,11 +17174,17 @@ struct GetdelimScratchGuard(Vec<u8>);
 impl GetdelimScratchGuard {
     #[inline]
     fn take() -> Self {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return Self(Vec::new());
+        }
         Self(GETDELIM_SCRATCH.try_with(|c| c.take()).unwrap_or_default())
     }
 }
 impl Drop for GetdelimScratchGuard {
     fn drop(&mut self) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
         // Return the (grown) buffer to the thread-local so its capacity is reused next call.
         let _ = GETDELIM_SCRATCH.try_with(|c| c.set(std::mem::take(&mut self.0)));
     }
@@ -18220,6 +18264,9 @@ thread_local! {
 
 #[inline]
 fn take_pooled_fmemopen_objects() -> Option<PooledFmemopenObjects> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return None;
+    }
     FMEMOPEN_OBJECT_POOL
         .try_with(|cell| {
             cell.try_with_init(|| std::cell::Cell::new(None), None, |slot| slot.take())
@@ -18231,6 +18278,9 @@ fn take_pooled_fmemopen_objects() -> Option<PooledFmemopenObjects> {
 
 #[inline]
 fn return_pooled_fmemopen_objects(bundle: PooledFmemopenObjects) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
     let _ = FMEMOPEN_OBJECT_POOL.try_with(|cell| {
         let _ = cell.try_with_init(
             || std::cell::Cell::new(None),
@@ -18269,6 +18319,9 @@ fn recycle_fmemopen_objects(mut cell: StreamCell, mut cursor: Arc<FastFixedMemRe
 
 #[inline]
 fn take_pooled_fixed_mem_input() -> Vec<u8> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return Vec::new();
+    }
     FIXED_MEM_INPUT_POOL
         .try_with(|cell| {
             cell.try_with_init(|| std::cell::Cell::new(None), None, |slot| slot.take())
@@ -18281,6 +18334,9 @@ fn take_pooled_fixed_mem_input() -> Vec<u8> {
 
 #[inline]
 fn return_pooled_fixed_mem_input(mut buf: Vec<u8>) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
     let cap = buf.capacity();
     if cap == 0 || cap > FIXED_MEM_INPUT_POOL_MAX_CAP {
         return;

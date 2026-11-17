@@ -551,12 +551,169 @@ fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
 
+pub(crate) const NATIVE_SIGCANCEL: c_int = 32;
+static NATIVE_SIGCANCEL_INSTALLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static PREV_SIGCANCEL_HANDLER: AtomicUsize = AtomicUsize::new(0);
+static PREV_SIGCANCEL_FLAGS: AtomicUsize = AtomicUsize::new(0);
+
+struct CancelWindowSignalDepthGuard;
+
+impl CancelWindowSignalDepthGuard {
+    #[inline]
+    fn enter() -> Self {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        frankenlibc_core::syscall::note_signal_handler_for_cancel_window(true);
+        Self
+    }
+}
+
+impl Drop for CancelWindowSignalDepthGuard {
+    #[inline]
+    fn drop(&mut self) {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        frankenlibc_core::syscall::note_signal_handler_for_cancel_window(false);
+    }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+unsafe extern "C-unwind" fn native_sigcancel_trampoline(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    context: *mut c_void,
+) {
+    if !context.is_null() {
+        let (begin, insn, abort) = frankenlibc_core::syscall::native_cancel_syscall_pc_range();
+        #[cfg(target_arch = "x86_64")]
+        let pc = unsafe {
+            (*context.cast::<libc::ucontext_t>()).uc_mcontext.gregs[libc::REG_RIP as usize] as usize
+        };
+        #[cfg(target_arch = "aarch64")]
+        let pc = unsafe { (*context.cast::<libc::ucontext_t>()).uc_mcontext.pc as usize };
+
+        if (begin..insn).contains(&pc) {
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                (*context.cast::<libc::ucontext_t>()).uc_mcontext.gregs[libc::REG_RIP as usize] =
+                    abort as i64;
+            }
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                (*context.cast::<libc::ucontext_t>()).uc_mcontext.pc = abort as u64;
+            }
+            return;
+        }
+
+        if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+            // SAFETY: calling thread owns its live ThreadHandle; touch zero compiler TLS.
+            let enabled = unsafe { (*handle).cancel_state.load(Ordering::Relaxed) } == 0;
+            let async_type = unsafe { (*handle).cancel_type.load(Ordering::Relaxed) } == 1;
+            let exiting = unsafe { (*handle).exit_started.load(Ordering::Relaxed) } != 0;
+            if enabled
+                && async_type
+                && !exiting
+                && !crate::pthread_abi::address_is_inside_this_object(pc)
+            {
+                unsafe { crate::pthread_abi::pthread_testcancel() };
+            }
+            return;
+        }
+
+        if !crate::pthread_abi::host_cancellation_thread() {
+            if crate::pthread_abi::unregistered_native_async_cancel_ready()
+                && !crate::pthread_abi::address_is_inside_this_object(pc)
+            {
+                unsafe { crate::pthread_abi::pthread_testcancel() };
+            }
+            return;
+        }
+    } else if !crate::pthread_abi::host_cancellation_thread() {
+        return;
+    }
+
+    let prev = PREV_SIGCANCEL_HANDLER.load(Ordering::Acquire);
+    if prev != 0 && !is_default_or_ignore_handler(prev) {
+        let prev_flags = PREV_SIGCANCEL_FLAGS.load(Ordering::Relaxed);
+        if prev_flags & (libc::SA_SIGINFO as usize) != 0 {
+            let f: unsafe extern "C-unwind" fn(c_int, *mut libc::siginfo_t, *mut c_void) =
+                unsafe { std::mem::transmute(prev) };
+            unsafe { f(signum, info, context) };
+        } else {
+            let f: unsafe extern "C-unwind" fn(c_int) = unsafe { std::mem::transmute(prev) };
+            unsafe { f(signum) };
+        }
+    }
+}
+
+/// Lazily install the `!SA_RESTART | SA_SIGINFO` kernel handler on signal 32
+/// (`NATIVE_SIGCANCEL`) when native cancellation is active. Never called on
+/// pure hosted paths; chains to any preexisting host handler if mixed in tests.
+pub(crate) fn ensure_native_sigcancel_installed() {
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        if NATIVE_SIGCANCEL_INSTALLED.load(Ordering::Acquire) {
+            return;
+        }
+        let our_handler = native_sigcancel_trampoline as *const () as usize;
+        let mut current = KernelSigaction::zeroed();
+        if unsafe {
+            raw_syscall::sys_rt_sigaction(
+                NATIVE_SIGCANCEL,
+                std::ptr::null(),
+                std::ptr::from_mut(&mut current).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_ok()
+            && current.sa_handler != 0
+            && current.sa_handler != our_handler
+            && !is_default_or_ignore_handler(current.sa_handler)
+        {
+            PREV_SIGCANCEL_FLAGS.store(current.sa_flags, Ordering::Relaxed);
+            PREV_SIGCANCEL_HANDLER.store(current.sa_handler, Ordering::Release);
+        }
+
+        let mut act = KernelSigaction {
+            sa_handler: our_handler,
+            sa_flags: libc::SA_SIGINFO as usize,
+            sa_restorer: 0,
+            sa_mask: 0,
+        };
+        #[cfg(target_arch = "x86_64")]
+        {
+            act.sa_flags |= SA_RESTORER_FLAG as usize;
+            act.sa_restorer = signal_restorer_trampoline_addr();
+        }
+        if unsafe {
+            raw_syscall::sys_rt_sigaction(
+                NATIVE_SIGCANCEL,
+                std::ptr::from_ref(&act).cast(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_ok()
+        {
+            NATIVE_SIGCANCEL_INSTALLED.store(true, Ordering::Release);
+        }
+    }
+}
+
 /// Child waits can use bounded native cancellation only without deliverable
 /// caught signals. The kernel must retain control of wait's SA_RESTART rules
 /// when any unblocked handler is installed, including preinstalled handlers.
 /// Called with signals blocked; `original_mask` is the wait's entry mask.
 pub(crate) fn supports_native_child_wait(original_mask: u64) -> bool {
     for signum in 1..=64 {
+        if signal_core::glibc_reserved_signal(signum) {
+            continue;
+        }
         if original_mask & (1u64 << (signum - 1)) != 0 {
             continue;
         }
@@ -798,6 +955,7 @@ unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+    let _cancel_depth = CancelWindowSignalDepthGuard::enter();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
 }
@@ -820,6 +978,7 @@ unsafe extern "C" fn signal_siginfo_trampoline(
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+    let _cancel_depth = CancelWindowSignalDepthGuard::enter();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, info, context) };
 }

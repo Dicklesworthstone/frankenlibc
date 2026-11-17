@@ -249,7 +249,7 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
 - Multi-threaded allocation throughput and per-thread cache architecture remain open (`bd-rc0923-epic-eeuy4f.26`).
 - `fork`/exit and fork/exec page-fault overhead was reduced via zero-initialized `.bss` allocator slots (`bd-rc0923-epic-eeuy4f.25`, resolved), though strict `fork`/exit remains ~1.4x–1.5x glibc.
 - Pathname `dlopen` host-fallback and `dladdr`/`dlinfo`/`dl_iterate_phdr` metadata routing are wired (`bd-rc0923-epic-eeuy4f.3`, resolved), though standalone host-free dynamic linking (`CRT`/loader ownership) remains outside interpose scope (`bd-reality-202609-lx578q.6.1`).
-- Complete blocked-cancellation-point coverage remains open (`bd-rc0923-epic-eeuy4f.24`).
+- Blocked-syscall cancellation (`__fl_syscall_cancel_arch` + `NATIVE_SIGCANCEL`), owned-startup `main` unwind/last-thread `exit(0)`, and C/C++/C11/`stdio` cleanup parity are wired across hosted and `FRANKENLIBC_THREAD_NATIVE=1` backends (`bd-rc0923-epic-eeuy4f.24`, resolved), though standalone `CLONE_SETTLS` TCB allocation remains tracked under `bd-reality-202609-lx578q.6.1`.
 - Support-matrix source/proof promotion reconciliation (`bd-rc0923-epic-eeuy4f.37`, resolved: `4,119/4,119` valid, `0` Stubs) and integrated `L1` interpose graduation (`bd-rc0923-epic-eeuy4f.47`, resolved) are wired; standalone `L2`/`L3` replacement remains open (`bd-reality-202609-lx578q.6.1`).
 
 ---

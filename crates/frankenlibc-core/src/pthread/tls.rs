@@ -32,7 +32,7 @@ use crate::syscall;
 
 use crate::rcu;
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Maximum number of TLS keys (POSIX requires >= 128; glibc uses 1024).
@@ -125,8 +125,31 @@ static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }
 /// occupant of either the table slot or the allocation.
 static TLS_CANCEL_WORDS: [AtomicU64; TLS_TABLE_SLOTS] =
     [const { AtomicU64::new(0) }; TLS_TABLE_SLOTS];
+static TLS_CANCEL_FLAGS: [AtomicU32; TLS_TABLE_SLOTS] =
+    [const { AtomicU32::new(0) }; TLS_TABLE_SLOTS];
 static NEXT_CANCEL_GENERATION: AtomicU64 = AtomicU64::new(2);
 const CANCEL_PENDING: u64 = 1;
+
+/// Per-registration cancellation state flags observed by `pthread_cancel` to
+/// decide whether `NATIVE_SIGCANCEL` should interrupt a kernel wait or async loop.
+pub const CANCEL_FLAG_DISABLED: u32 = 1 << 0;
+pub const CANCEL_FLAG_ASYNC: u32 = 1 << 1;
+pub const CANCEL_FLAG_IN_POINT: u32 = 1 << 2;
+
+const UNREGISTERED_CANCEL_SLOTS: usize = 64;
+static UNREGISTERED_CANCEL_USED: AtomicBool = AtomicBool::new(false);
+static UNREGISTERED_CANCEL_TIDS: [AtomicI32; UNREGISTERED_CANCEL_SLOTS] =
+    [const { AtomicI32::new(TLS_SLOT_EMPTY) }; UNREGISTERED_CANCEL_SLOTS];
+static UNREGISTERED_CANCEL_WORDS: [AtomicU64; UNREGISTERED_CANCEL_SLOTS] =
+    [const { AtomicU64::new(0) }; UNREGISTERED_CANCEL_SLOTS];
+static UNREGISTERED_CANCEL_FLAGS: [AtomicU32; UNREGISTERED_CANCEL_SLOTS] =
+    [const { AtomicU32::new(0) }; UNREGISTERED_CANCEL_SLOTS];
+
+/// Whether a target thread's flags warrant delivering `NATIVE_SIGCANCEL`.
+#[inline]
+pub const fn native_cancel_signal_needed(flags: u32) -> bool {
+    (flags & CANCEL_FLAG_DISABLED) == 0 && (flags & (CANCEL_FLAG_IN_POINT | CANCEL_FLAG_ASYNC)) != 0
+}
 
 /// One native thread's cancellation word for a wait on multiple futexes.
 ///
@@ -138,10 +161,17 @@ const CANCEL_PENDING: u64 = 1;
 pub struct CancellationWait {
     word: &'static AtomicU64,
     generation: u64,
+    tid: i32,
     owner: core::marker::PhantomData<*const ()>,
 }
 
 impl CancellationWait {
+    /// Kernel TID of the owning thread when this wait descriptor was obtained.
+    #[inline]
+    pub fn tid(&self) -> i32 {
+        self.tid
+    }
+
     /// Aligned address of the pending bit's 32-bit word for a private futex.
     #[inline]
     pub fn address(&self) -> *const u32 {
@@ -160,7 +190,7 @@ impl CancellationWait {
     /// reporting a replacement occupant's request, including low-word wrap.
     #[inline]
     pub fn pending(&self) -> bool {
-        self.word.load(Ordering::Acquire) == (self.generation | CANCEL_PENDING)
+        self.word.load(Ordering::SeqCst) == (self.generation | CANCEL_PENDING)
     }
 }
 
@@ -175,6 +205,7 @@ fn cancellation_word_address(word: &AtomicU64) -> *const u32 {
 
 fn publish_tls_slot(index: usize, values_ptr: *mut TlsEntry, generation: u64) {
     TLS_CANCEL_WORDS[index].store(0, Ordering::Release);
+    TLS_CANCEL_FLAGS[index].store(0, Ordering::Release);
     TLS_PTRS[index].store(values_ptr as usize, Ordering::Release);
     TLS_CANCEL_WORDS[index].store(generation, Ordering::Release);
 }
@@ -530,8 +561,8 @@ fn request_cancel_generation(index: usize, mut observed: u64) -> bool {
         match TLS_CANCEL_WORDS[index].compare_exchange(
             observed,
             observed | CANCEL_PENDING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
         ) {
             Ok(_) => {
                 // Publish before waking. A waiter that has not parked sees the
@@ -559,9 +590,17 @@ fn request_cancel_generation(index: usize, mut observed: u64) -> bool {
 
 /// Request cancellation by an opaque native TLS-storage address. Neither the
 /// caller nor this table needs to dereference the target's allocation.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn request_thread_cancellation(values_address: usize) -> bool {
+    request_thread_cancellation_with_info(values_address).is_some()
+}
+
+/// Request cancellation by an opaque native TLS-storage address and return the
+/// target's `(tid, cancel_flags)` snapshot observed in `SeqCst` order after
+/// publishing `CANCEL_PENDING`.
+pub(crate) fn request_thread_cancellation_with_info(values_address: usize) -> Option<(i32, u32)> {
     if values_address == 0 {
-        return false;
+        return None;
     }
     for index in 0..TLS_TABLE_SLOTS {
         // Acquire the generation before comparing the pointer. Publishing a
@@ -569,10 +608,15 @@ pub(crate) fn request_thread_cancellation(values_address: usize) -> bool {
         // removal/reuse even when the allocator returns the identical address.
         let observed = TLS_CANCEL_WORDS[index].load(Ordering::Acquire);
         if observed != 0 && TLS_PTRS[index].load(Ordering::Acquire) == values_address {
-            return request_cancel_generation(index, observed);
+            let tid = TLS_TIDS[index].load(Ordering::Acquire);
+            if request_cancel_generation(index, observed) {
+                let flags = TLS_CANCEL_FLAGS[index].load(Ordering::SeqCst);
+                return Some((tid, flags));
+            }
+            return None;
         }
     }
-    false
+    None
 }
 
 /// Obtain the calling native thread's wait word without borrowing its handle.
@@ -591,6 +635,7 @@ pub(crate) fn thread_cancellation_wait(tid: i32) -> Option<CancellationWait> {
             return (generation != 0).then_some(CancellationWait {
                 word,
                 generation,
+                tid,
                 owner: core::marker::PhantomData,
             });
         }
@@ -623,6 +668,216 @@ pub(crate) fn take_thread_cancellation(tid: i32) -> bool {
     false
 }
 
+fn ensure_unregistered_cancel_slot(tid: i32) -> Option<usize> {
+    if tid <= 0 {
+        return None;
+    }
+    UNREGISTERED_CANCEL_USED.store(true, Ordering::Release);
+    let start = (tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
+    let mut first_tombstone: Option<usize> = None;
+    for i in 0..UNREGISTERED_CANCEL_SLOTS {
+        let idx = (start + i) % UNREGISTERED_CANCEL_SLOTS;
+        let stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            if UNREGISTERED_CANCEL_WORDS[idx].load(Ordering::Acquire) != 0 {
+                return Some(idx);
+            }
+            let generation = NEXT_CANCEL_GENERATION
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(2)
+                })
+                .ok()?;
+            let _ = UNREGISTERED_CANCEL_WORDS[idx].compare_exchange(
+                0,
+                generation,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
+            return Some(idx);
+        }
+        if stored == TLS_SLOT_TOMBSTONE {
+            if first_tombstone.is_none() {
+                first_tombstone = Some(idx);
+            }
+            continue;
+        }
+        if stored == TLS_SLOT_EMPTY {
+            let (target, expected) = match first_tombstone {
+                Some(tomb) => (tomb, TLS_SLOT_TOMBSTONE),
+                None => (idx, TLS_SLOT_EMPTY),
+            };
+            let generation = NEXT_CANCEL_GENERATION
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(2)
+                })
+                .ok()?;
+            if UNREGISTERED_CANCEL_TIDS[target]
+                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                UNREGISTERED_CANCEL_FLAGS[target].store(0, Ordering::Release);
+                UNREGISTERED_CANCEL_WORDS[target].store(generation, Ordering::Release);
+                return Some(target);
+            }
+            first_tombstone = None;
+        }
+    }
+    if let Some(tomb) = first_tombstone {
+        let generation = NEXT_CANCEL_GENERATION
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(2)
+            })
+            .ok()?;
+        if UNREGISTERED_CANCEL_TIDS[tomb]
+            .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            UNREGISTERED_CANCEL_FLAGS[tomb].store(0, Ordering::Release);
+            UNREGISTERED_CANCEL_WORDS[tomb].store(generation, Ordering::Release);
+            return Some(tomb);
+        }
+    }
+    None
+}
+
+/// Obtain a `CancellationWait` descriptor for an unregistered native thread
+/// (such as the initial `main` thread under native threading or standalone mode).
+pub fn unregistered_cancellation_wait(tid: i32) -> Option<CancellationWait> {
+    let idx = ensure_unregistered_cancel_slot(tid)?;
+    let word = &UNREGISTERED_CANCEL_WORDS[idx];
+    let generation = word.load(Ordering::Acquire) & !CANCEL_PENDING;
+    (generation != 0).then_some(CancellationWait {
+        word,
+        generation,
+        tid,
+        owner: core::marker::PhantomData,
+    })
+}
+
+/// Publish a cooperative cancellation request for an unregistered native thread
+/// (`tid`), waking any futex waiter and returning its `SeqCst` flags snapshot.
+pub fn request_unregistered_cancellation_with_flags(tid: i32) -> Option<u32> {
+    let idx = ensure_unregistered_cancel_slot(tid)?;
+    let mut observed = UNREGISTERED_CANCEL_WORDS[idx].load(Ordering::Acquire);
+    let generation = observed & !CANCEL_PENDING;
+    if generation == 0 {
+        return None;
+    }
+    loop {
+        match UNREGISTERED_CANCEL_WORDS[idx].compare_exchange(
+            observed,
+            observed | CANCEL_PENDING,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => {
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                unsafe {
+                    let _ = syscall::sys_futex(
+                        cancellation_word_address(&UNREGISTERED_CANCEL_WORDS[idx]),
+                        0x81, // FUTEX_WAKE_PRIVATE
+                        1,
+                        0,
+                        0,
+                        0,
+                    );
+                }
+                return Some(UNREGISTERED_CANCEL_FLAGS[idx].load(Ordering::SeqCst));
+            }
+            Err(current) if current & !CANCEL_PENDING == generation => observed = current,
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Consume a pending request for an unregistered native thread.
+pub fn take_unregistered_cancellation(tid: i32) -> bool {
+    if tid <= 0 || !UNREGISTERED_CANCEL_USED.load(Ordering::Acquire) {
+        return false;
+    }
+    let start = (tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
+    for i in 0..UNREGISTERED_CANCEL_SLOTS {
+        let idx = (start + i) % UNREGISTERED_CANCEL_SLOTS;
+        let stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            return UNREGISTERED_CANCEL_WORDS[idx].fetch_and(!CANCEL_PENDING, Ordering::AcqRel)
+                & CANCEL_PENDING
+                != 0;
+        }
+        if stored == TLS_SLOT_EMPTY {
+            break;
+        }
+    }
+    false
+}
+
+/// Retire an unregistered native thread's cancellation slot on final exit.
+pub fn retire_unregistered_cancellation(tid: i32) {
+    if tid <= 0 || !UNREGISTERED_CANCEL_USED.load(Ordering::Acquire) {
+        return;
+    }
+    let start = (tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
+    for i in 0..UNREGISTERED_CANCEL_SLOTS {
+        let idx = (start + i) % UNREGISTERED_CANCEL_SLOTS;
+        let stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            UNREGISTERED_CANCEL_WORDS[idx].store(0, Ordering::Release);
+            UNREGISTERED_CANCEL_FLAGS[idx].store(0, Ordering::Release);
+            UNREGISTERED_CANCEL_TIDS[idx].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
+            return;
+        }
+        if stored == TLS_SLOT_EMPTY {
+            break;
+        }
+    }
+}
+
+fn update_native_cancel_flag(tid: i32, mask: u32, set: bool) {
+    if tid <= 0 {
+        return;
+    }
+    if TLS_TABLE_USED.load(Ordering::Acquire) {
+        let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+        for offset in 0..TLS_TABLE_SLOTS {
+            let index = (start + offset) % TLS_TABLE_SLOTS;
+            let stored_tid = TLS_TIDS[index].load(Ordering::Acquire);
+            if stored_tid == tid {
+                if set {
+                    TLS_CANCEL_FLAGS[index].fetch_or(mask, Ordering::SeqCst);
+                } else {
+                    TLS_CANCEL_FLAGS[index].fetch_and(!mask, Ordering::SeqCst);
+                }
+                return;
+            }
+            if stored_tid == TLS_SLOT_EMPTY {
+                break;
+            }
+        }
+    }
+    if let Some(idx) = ensure_unregistered_cancel_slot(tid) {
+        if set {
+            UNREGISTERED_CANCEL_FLAGS[idx].fetch_or(mask, Ordering::SeqCst);
+        } else {
+            UNREGISTERED_CANCEL_FLAGS[idx].fetch_and(!mask, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Update `CANCEL_FLAG_DISABLED` for a native thread (`registered` or `unregistered`).
+pub fn set_native_cancel_disabled(tid: i32, disabled: bool) {
+    update_native_cancel_flag(tid, CANCEL_FLAG_DISABLED, disabled);
+}
+
+/// Update `CANCEL_FLAG_ASYNC` for a native thread (`registered` or `unregistered`).
+pub fn set_native_cancel_async(tid: i32, async_mode: bool) {
+    update_native_cancel_flag(tid, CANCEL_FLAG_ASYNC, async_mode);
+}
+
+/// Update `CANCEL_FLAG_IN_POINT` for a native thread (`registered` or `unregistered`).
+pub fn set_native_cancel_point_active(tid: i32, active: bool) {
+    update_native_cancel_flag(tid, CANCEL_FLAG_IN_POINT, active);
+}
+
 /// Remove a TID from the table and return its values pointer.
 ///
 /// **Allocation-free.**
@@ -636,6 +891,7 @@ fn table_remove(tid: i32) -> *mut TlsEntry {
         let stored_tid = TLS_TIDS[idx].load(Ordering::Acquire);
         if stored_tid == tid {
             TLS_CANCEL_WORDS[idx].store(0, Ordering::Release);
+            TLS_CANCEL_FLAGS[idx].store(0, Ordering::Release);
             let ptr = TLS_PTRS[idx].swap(0, Ordering::AcqRel);
             TLS_TIDS[idx].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
             return ptr as *mut TlsEntry;
@@ -703,7 +959,7 @@ static TLS_TABLE_USED: core::sync::atomic::AtomicBool = core::sync::atomic::Atom
 fn rekey_fork_child_table(
     tids: &[AtomicI32; TLS_TABLE_SLOTS],
     pointers: &[AtomicUsize; TLS_TABLE_SLOTS],
-    cancellation: Option<&[AtomicU64; TLS_TABLE_SLOTS]>,
+    cancellation: Option<(&[AtomicU64; TLS_TABLE_SLOTS], &[AtomicU32; TLS_TABLE_SLOTS])>,
     parent_tid: i32,
     child_tid: i32,
     retain_unused_blocks: bool,
@@ -714,14 +970,23 @@ fn rekey_fork_child_table(
     let survivor = survivor_index
         .map(|index| pointers[index].swap(0, Ordering::AcqRel))
         .unwrap_or(0);
-    let survivor_cancel = cancellation
-        .zip(survivor_index)
-        .map_or(0, |(words, index)| words[index].load(Ordering::Acquire));
+    let (survivor_cancel, survivor_flags) =
+        cancellation
+            .zip(survivor_index)
+            .map_or((0, 0), |((words, flags), index)| {
+                (
+                    words[index].load(Ordering::Acquire),
+                    flags[index].load(Ordering::Acquire) & !CANCEL_FLAG_IN_POINT,
+                )
+            });
     for index in 0..TLS_TABLE_SLOTS {
-        if let Some(words) = cancellation
-            && words[index].load(Ordering::Relaxed) != 0
-        {
-            words[index].store(0, Ordering::Release);
+        if let Some((words, flags)) = cancellation {
+            if words[index].load(Ordering::Relaxed) != 0 {
+                words[index].store(0, Ordering::Release);
+            }
+            if flags[index].load(Ordering::Relaxed) != 0 {
+                flags[index].store(0, Ordering::Release);
+            }
         }
         if tids[index].load(Ordering::Relaxed) != TLS_SLOT_EMPTY {
             tids[index].store(TLS_SLOT_EMPTY, Ordering::Release);
@@ -741,9 +1006,33 @@ fn rekey_fork_child_table(
             pointers[source].store(spare, Ordering::Release);
         }
         tids[destination].store(child_tid, Ordering::Release);
-        if let Some(words) = cancellation {
+        if let Some((words, flags)) = cancellation {
+            flags[destination].store(survivor_flags, Ordering::Release);
             words[destination].store(survivor_cancel, Ordering::Release);
         }
+    }
+}
+
+fn rekey_fork_child_unregistered_cancel(parent_tid: i32, child_tid: i32) {
+    let survivor_index = UNREGISTERED_CANCEL_TIDS
+        .iter()
+        .position(|tid| tid.load(Ordering::Acquire) == parent_tid);
+    let survivor_word = survivor_index.map_or(0, |idx| {
+        UNREGISTERED_CANCEL_WORDS[idx].load(Ordering::Acquire)
+    });
+    let survivor_flags = survivor_index.map_or(0, |idx| {
+        UNREGISTERED_CANCEL_FLAGS[idx].load(Ordering::Acquire) & !CANCEL_FLAG_IN_POINT
+    });
+    for idx in 0..UNREGISTERED_CANCEL_SLOTS {
+        UNREGISTERED_CANCEL_WORDS[idx].store(0, Ordering::Release);
+        UNREGISTERED_CANCEL_FLAGS[idx].store(0, Ordering::Release);
+        UNREGISTERED_CANCEL_TIDS[idx].store(TLS_SLOT_EMPTY, Ordering::Release);
+    }
+    if survivor_word != 0 && child_tid > 0 {
+        let dst = (child_tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
+        UNREGISTERED_CANCEL_FLAGS[dst].store(survivor_flags, Ordering::Release);
+        UNREGISTERED_CANCEL_WORDS[dst].store(survivor_word, Ordering::Release);
+        UNREGISTERED_CANCEL_TIDS[dst].store(child_tid, Ordering::Release);
     }
 }
 
@@ -754,16 +1043,24 @@ fn rekey_fork_child_table(
 /// and parent_tid is its kernel TID captured before fork. Inherited table
 /// metadata must not be accessed concurrently while it is rebuilt.
 pub unsafe fn note_fork_child(parent_tid: i32) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    super::thread::reset_live_native_threads_after_fork();
+    syscall::reset_native_cancel_syscalls_after_fork();
+
     if TLS_TABLE_USED.load(Ordering::Acquire) {
         let child_tid = syscall::sys_gettid();
         rekey_fork_child_table(
             &TLS_TIDS,
             &TLS_PTRS,
-            Some(&TLS_CANCEL_WORDS),
+            Some((&TLS_CANCEL_WORDS, &TLS_CANCEL_FLAGS)),
             parent_tid,
             child_tid,
             false,
         );
+    }
+    if UNREGISTERED_CANCEL_USED.load(Ordering::Acquire) {
+        let child_tid = syscall::sys_gettid();
+        rekey_fork_child_unregistered_cancel(parent_tid, child_tid);
     }
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -1264,8 +1561,14 @@ pub(crate) fn reset_tls_state() {
     // Clear the table.
     for i in 0..TLS_TABLE_SLOTS {
         TLS_CANCEL_WORDS[i].store(0, Ordering::Release);
+        TLS_CANCEL_FLAGS[i].store(0, Ordering::Release);
         TLS_TIDS[i].store(TLS_SLOT_EMPTY, Ordering::Release);
         TLS_PTRS[i].store(0, Ordering::Release);
+    }
+    for i in 0..UNREGISTERED_CANCEL_SLOTS {
+        UNREGISTERED_CANCEL_WORDS[i].store(0, Ordering::Release);
+        UNREGISTERED_CANCEL_FLAGS[i].store(0, Ordering::Release);
+        UNREGISTERED_CANCEL_TIDS[i].store(TLS_SLOT_EMPTY, Ordering::Release);
     }
     // Clear fallback values for the current thread.
     #[cfg(not(feature = "owned-tls-cache"))]
@@ -1424,19 +1727,25 @@ mod tests {
             let tids = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
             let pointers = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
             let cancellation = [const { AtomicU64::new(0) }; TLS_TABLE_SLOTS];
+            let flags = [const { AtomicU32::new(0) }; TLS_TABLE_SLOTS];
             tids[100].store(100, Ordering::Relaxed);
             pointers[100].store(0x1000, Ordering::Relaxed);
             cancellation[100].store(3, Ordering::Relaxed);
+            flags[100].store(
+                CANCEL_FLAG_DISABLED | CANCEL_FLAG_IN_POINT,
+                Ordering::Relaxed,
+            );
             tids[101].store(100 + TLS_TABLE_SLOTS as i32, Ordering::Relaxed);
             pointers[101].store(0x2000, Ordering::Relaxed);
             cancellation[101].store(5, Ordering::Relaxed);
+            flags[101].store(CANCEL_FLAG_ASYNC, Ordering::Relaxed);
             tids[102].store(101 + TLS_TABLE_SLOTS as i32, Ordering::Relaxed);
             pointers[102].store(0x3000, Ordering::Relaxed);
 
             rekey_fork_child_table(
                 &tids,
                 &pointers,
-                Some(&cancellation),
+                Some((&cancellation, &flags)),
                 100,
                 101,
                 retain_unused,
@@ -1445,7 +1754,9 @@ mod tests {
             assert_eq!(tids[101].load(Ordering::Relaxed), 101);
             assert_eq!(pointers[101].load(Ordering::Relaxed), 0x1000);
             assert_eq!(cancellation[101].load(Ordering::Relaxed), 3);
+            assert_eq!(flags[101].load(Ordering::Relaxed), CANCEL_FLAG_DISABLED);
             assert_eq!(cancellation[100].load(Ordering::Relaxed), 0);
+            assert_eq!(flags[100].load(Ordering::Relaxed), 0);
             assert_eq!(cancellation[102].load(Ordering::Relaxed), 0);
             assert_eq!(
                 tids.iter()
@@ -2638,5 +2949,29 @@ mod tests {
         let vals = OBSERVED_VALUES.lock().unwrap();
         assert_eq!(vals.len(), 1);
         assert_eq!(vals[0], 777, "destructor should receive the original value");
+    }
+
+    #[test]
+    fn unregistered_native_cancellation_tracks_flags_and_retires_cleanly() {
+        let _g = lock_and_reset();
+        let tid = 424_242;
+        set_native_cancel_disabled(tid, true);
+        set_native_cancel_point_active(tid, true);
+        let flags = request_unregistered_cancellation_with_flags(tid).expect("slot allocated");
+        assert!(!native_cancel_signal_needed(flags));
+
+        set_native_cancel_disabled(tid, false);
+        let wait = unregistered_cancellation_wait(tid).expect("wait descriptor");
+        assert_eq!(wait.tid(), tid);
+        assert!(wait.pending());
+        assert!(take_unregistered_cancellation(tid));
+        assert!(!wait.pending());
+
+        let flags_live = request_unregistered_cancellation_with_flags(tid).expect("slot live");
+        assert!(native_cancel_signal_needed(flags_live));
+
+        retire_unregistered_cancellation(tid);
+        assert!(!wait.pending());
+        assert!(!take_unregistered_cancellation(tid));
     }
 }

@@ -184,8 +184,9 @@ pub unsafe extern "C-unwind" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int 
         return THRD_ERROR;
     }
 
+    let caller = core::intrinsics::return_address() as usize;
     let mut retval: *mut c_void = std::ptr::null_mut();
-    let rc = unsafe { crate::pthread_abi::pthread_join(thr, &mut retval) };
+    let rc = unsafe { crate::pthread_abi::pthread_join_for_caller(thr, &mut retval, caller) };
     if rc == 0 && !res.is_null() {
         unsafe { *res = retval as usize as c_int };
     }

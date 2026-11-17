@@ -6504,11 +6504,15 @@ impl PooledWideFormat {
 
 impl Drop for PooledWideFormat {
     fn drop(&mut self) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
         let mut buf = std::mem::take(&mut self.buf);
         buf.clear();
         let _ = WPRINTF_FORMAT_BUF.try_with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if slot.capacity() < buf.capacity() {
+            if let Ok(mut slot) = slot.try_borrow_mut()
+                && slot.capacity() < buf.capacity()
+            {
                 *slot = buf;
             }
         });
@@ -6559,9 +6563,19 @@ unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
 }
 
 unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
-    let mut buf = WPRINTF_FORMAT_BUF
-        .try_with(|slot| std::mem::take(&mut *slot.borrow_mut()))
-        .unwrap_or_default();
+    let mut buf = if crate::malloc_abi::native_thread_backend_active() {
+        Vec::new()
+    } else {
+        WPRINTF_FORMAT_BUF
+            .try_with(|slot| {
+                slot.try_borrow_mut()
+                    .ok()
+                    .map(|mut guard| std::mem::take(&mut *guard))
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
     unsafe { wide_to_narrow_into(wcs, &mut buf) };
     PooledWideFormat { buf }
 }
@@ -10686,7 +10700,6 @@ enum MultibyteState {
     LegacyWide,
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static MULTIBYTE_STATES_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[[u8; 8]; 8]> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| [[0; 8]; 8]);
 
@@ -10707,6 +10720,10 @@ fn with_implicit_mbstate(which: MultibyteState, f: impl FnOnce(*mut c_void) -> u
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return MULTIBYTE_STATES_OWNED_TLS
+                .with(|states| f(states[which as usize].as_mut_ptr().cast()));
+        }
         MULTIBYTE_STATES.with(|states| f(states.borrow_mut()[which as usize].as_mut_ptr().cast()))
     }
 }

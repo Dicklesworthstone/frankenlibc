@@ -4,7 +4,395 @@
 //! `svc 0` on aarch64) with the specified number of arguments.
 //! The return value is the raw kernel return register value.
 
-use core::arch::asm;
+use core::arch::{asm, global_asm};
+use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
+
+const CANCEL_SYSCALL_SLOTS: usize = 256;
+const CANCEL_SLOT_EMPTY: i32 = 0;
+const CANCEL_SLOT_TOMBSTONE: i32 = -1;
+
+#[repr(C)]
+struct CancelSyscallArgs {
+    nr: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    a5: usize,
+    a6: usize,
+}
+
+#[cfg(target_arch = "x86_64")]
+global_asm!(
+    ".pushsection .text.__fl_syscall_cancel_arch,\"ax\",@progbits",
+    ".p2align 4",
+    ".globl __fl_syscall_cancel_arch",
+    ".hidden __fl_syscall_cancel_arch",
+    ".type __fl_syscall_cancel_arch,@function",
+    "__fl_syscall_cancel_arch:",
+    ".cfi_startproc",
+    ".globl __fl_syscall_cancel_begin",
+    ".hidden __fl_syscall_cancel_begin",
+    "__fl_syscall_cancel_begin:",
+    "mov eax, dword ptr [rdi]",
+    "test al, 1",
+    "jnz __fl_syscall_cancel_abort",
+    "mov r11, rsi",
+    "mov rax, qword ptr [r11 + 0]",
+    "mov rdi, qword ptr [r11 + 8]",
+    "mov rsi, qword ptr [r11 + 16]",
+    "mov rdx, qword ptr [r11 + 24]",
+    "mov r10, qword ptr [r11 + 32]",
+    "mov r8,  qword ptr [r11 + 40]",
+    "mov r9,  qword ptr [r11 + 48]",
+    ".globl __fl_syscall_cancel_insn",
+    ".hidden __fl_syscall_cancel_insn",
+    "__fl_syscall_cancel_insn:",
+    "syscall",
+    ".globl __fl_syscall_cancel_end",
+    ".hidden __fl_syscall_cancel_end",
+    "__fl_syscall_cancel_end:",
+    "ret",
+    ".globl __fl_syscall_cancel_abort",
+    ".hidden __fl_syscall_cancel_abort",
+    "__fl_syscall_cancel_abort:",
+    "mov rax, -4",
+    "ret",
+    ".cfi_endproc",
+    ".size __fl_syscall_cancel_arch, . - __fl_syscall_cancel_arch",
+    ".popsection",
+);
+
+#[cfg(target_arch = "aarch64")]
+global_asm!(
+    ".pushsection .text.__fl_syscall_cancel_arch,\"ax\",@progbits",
+    ".p2align 2",
+    ".globl __fl_syscall_cancel_arch",
+    ".hidden __fl_syscall_cancel_arch",
+    ".type __fl_syscall_cancel_arch,@function",
+    "__fl_syscall_cancel_arch:",
+    ".cfi_startproc",
+    ".globl __fl_syscall_cancel_begin",
+    ".hidden __fl_syscall_cancel_begin",
+    "__fl_syscall_cancel_begin:",
+    "ldr w9, [x0]",
+    "tbnz w9, #0, __fl_syscall_cancel_abort",
+    "mov x10, x1",
+    "ldr x8, [x10, #0]",
+    "ldr x0, [x10, #8]",
+    "ldr x1, [x10, #16]",
+    "ldr x2, [x10, #24]",
+    "ldr x3, [x10, #32]",
+    "ldr x4, [x10, #40]",
+    "ldr x5, [x10, #48]",
+    ".globl __fl_syscall_cancel_insn",
+    ".hidden __fl_syscall_cancel_insn",
+    "__fl_syscall_cancel_insn:",
+    "svc #0",
+    ".globl __fl_syscall_cancel_end",
+    ".hidden __fl_syscall_cancel_end",
+    "__fl_syscall_cancel_end:",
+    "ret",
+    ".globl __fl_syscall_cancel_abort",
+    ".hidden __fl_syscall_cancel_abort",
+    "__fl_syscall_cancel_abort:",
+    "mov x0, #-4",
+    "ret",
+    ".cfi_endproc",
+    ".size __fl_syscall_cancel_arch, . - __fl_syscall_cancel_arch",
+    ".popsection",
+);
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+unsafe extern "C" {
+    fn __fl_syscall_cancel_arch(cancel_word: *const u32, args: *const CancelSyscallArgs) -> usize;
+    fn __fl_syscall_cancel_begin();
+    fn __fl_syscall_cancel_insn();
+    fn __fl_syscall_cancel_abort();
+}
+
+/// Return `(begin, insn, abort)` instruction addresses for `__fl_syscall_cancel_arch`.
+///
+/// If `NATIVE_SIGCANCEL` interrupts a thread while its PC is in `begin..insn`,
+/// redirecting its PC to `abort` prevents a pre-syscall lost wakeup without
+/// unwinding out of the signal frame.
+#[inline]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn native_cancel_syscall_pc_range() -> (usize, usize, usize) {
+    (
+        __fl_syscall_cancel_begin as *const () as usize,
+        __fl_syscall_cancel_insn as *const () as usize,
+        __fl_syscall_cancel_abort as *const () as usize,
+    )
+}
+
+static NATIVE_CANCEL_WINDOW_DEPTH: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_CANCEL_TIDS: [AtomicI32; CANCEL_SYSCALL_SLOTS] =
+    [const { AtomicI32::new(CANCEL_SLOT_EMPTY) }; CANCEL_SYSCALL_SLOTS];
+static ACTIVE_CANCEL_WORDS: [AtomicUsize; CANCEL_SYSCALL_SLOTS] =
+    [const { AtomicUsize::new(0) }; CANCEL_SYSCALL_SLOTS];
+static ACTIVE_CANCEL_RSPS: [AtomicUsize; CANCEL_SYSCALL_SLOTS] =
+    [const { AtomicUsize::new(0) }; CANCEL_SYSCALL_SLOTS];
+static ACTIVE_CANCEL_STATE: [AtomicU8; CANCEL_SYSCALL_SLOTS] =
+    [const { AtomicU8::new(0) }; CANCEL_SYSCALL_SLOTS];
+static ACTIVE_SIGNAL_DEPTH: [AtomicUsize; CANCEL_SYSCALL_SLOTS] =
+    [const { AtomicUsize::new(0) }; CANCEL_SYSCALL_SLOTS];
+
+const CANCEL_STATE_CONSUMED: u8 = 1;
+const CANCEL_STATE_INTERRUPTED: u8 = 2;
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+fn current_stack_pointer() -> usize {
+    let sp: usize;
+    // SAFETY: Reading RSP has no side effects.
+    unsafe {
+        asm!("mov {}, rsp", out(reg) sp, options(nostack, nomem, preserves_flags));
+    }
+    sp
+}
+
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+fn current_stack_pointer() -> usize {
+    let sp: usize;
+    // SAFETY: Reading SP has no side effects.
+    unsafe {
+        asm!("mov {}, sp", out(reg) sp, options(nostack, nomem, preserves_flags));
+    }
+    sp
+}
+
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+fn raw_gettid_nocancel() -> i32 {
+    let ret: usize;
+    // SAFETY: SYS_gettid (186 on x86_64) takes no arguments and never fails.
+    unsafe {
+        asm!(
+            "syscall",
+            inlateout("rax") 186usize => ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags),
+        );
+    }
+    ret as i32
+}
+
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+fn raw_gettid_nocancel() -> i32 {
+    let ret: usize;
+    // SAFETY: SYS_gettid (178 on aarch64) takes no arguments and never fails.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") 178usize,
+            lateout("x0") ret,
+            options(nostack),
+        );
+    }
+    ret as i32
+}
+
+/// Whether at least one native thread is currently inside a cancellable syscall window.
+#[inline(always)]
+pub fn native_cancel_syscall_any_active() -> bool {
+    NATIVE_CANCEL_WINDOW_DEPTH.load(Ordering::Relaxed) != 0
+}
+
+/// Arm the interruptible native cancellation syscall trap for `tid`.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: usize) {
+    if tid <= 0 || cancel_word.is_null() {
+        return;
+    }
+    let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
+    let mut first_tombstone: Option<usize> = None;
+    for i in 0..CANCEL_SYSCALL_SLOTS {
+        let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
+        let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            ACTIVE_CANCEL_STATE[idx].store(0, Ordering::Release);
+            ACTIVE_CANCEL_SIGNAL_RESET(idx);
+            ACTIVE_CANCEL_RSPS[idx].store(window_rsp, Ordering::Release);
+            ACTIVE_CANCEL_WORDS[idx].store(cancel_word as usize, Ordering::Release);
+            return;
+        }
+        if stored == CANCEL_SLOT_TOMBSTONE {
+            if first_tombstone.is_none() {
+                first_tombstone = Some(idx);
+            }
+            continue;
+        }
+        if stored == CANCEL_SLOT_EMPTY {
+            let (target, expected) = match first_tombstone {
+                Some(tomb) => (tomb, CANCEL_SLOT_TOMBSTONE),
+                None => (idx, CANCEL_SLOT_EMPTY),
+            };
+            if ACTIVE_CANCEL_TIDS[target]
+                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                ACTIVE_CANCEL_STATE[target].store(0, Ordering::Release);
+                ACTIVE_SIGNAL_DEPTH[target].store(0, Ordering::Release);
+                ACTIVE_CANCEL_RSPS[target].store(window_rsp, Ordering::Release);
+                ACTIVE_CANCEL_WORDS[target].store(cancel_word as usize, Ordering::Release);
+                NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
+                return;
+            }
+            first_tombstone = None;
+        }
+    }
+    if let Some(tomb) = first_tombstone
+        && ACTIVE_CANCEL_TIDS[tomb]
+            .compare_exchange(
+                CANCEL_SLOT_TOMBSTONE,
+                tid,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    {
+        ACTIVE_CANCEL_STATE[tomb].store(0, Ordering::Release);
+        ACTIVE_SIGNAL_DEPTH[tomb].store(0, Ordering::Release);
+        ACTIVE_CANCEL_RSPS[tomb].store(window_rsp, Ordering::Release);
+        ACTIVE_CANCEL_WORDS[tomb].store(cancel_word as usize, Ordering::Release);
+        NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+#[allow(non_snake_case)]
+fn ACTIVE_CANCEL_SIGNAL_RESET(idx: usize) {
+    ACTIVE_SIGNAL_DEPTH[idx].store(0, Ordering::Release);
+}
+
+/// Disarm the interruptible native cancellation syscall trap for `tid`.
+/// Returns `true` if the trap was aborted before kernel entry or returned `-EINTR`.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn disarm_native_cancel_syscall(tid: i32) -> bool {
+    if tid <= 0 || !native_cancel_syscall_any_active() {
+        return false;
+    }
+    let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
+    for i in 0..CANCEL_SYSCALL_SLOTS {
+        let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
+        let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            ACTIVE_CANCEL_WORDS[idx].store(0, Ordering::Release);
+            ACTIVE_CANCEL_RSPS[idx].store(0, Ordering::Release);
+            ACTIVE_SIGNAL_DEPTH[idx].store(0, Ordering::Release);
+            let state = ACTIVE_CANCEL_STATE[idx].swap(0, Ordering::AcqRel);
+            ACTIVE_CANCEL_TIDS[idx].store(CANCEL_SLOT_TOMBSTONE, Ordering::Release);
+            let _ =
+                NATIVE_CANCEL_WINDOW_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |d| {
+                    Some(d.saturating_sub(1))
+                });
+            return state & CANCEL_STATE_INTERRUPTED != 0;
+        }
+        if stored == CANCEL_SLOT_EMPTY {
+            break;
+        }
+    }
+    false
+}
+
+/// Mark entry/exit of an application signal handler on the current thread so a
+/// handler invoked before the blocking syscall reaches `try_cancelable_syscall`
+/// never consumes the enclosing cancellation window's trap slot.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn note_signal_handler_for_cancel_window(entering: bool) {
+    if !native_cancel_syscall_any_active() {
+        return;
+    }
+    let tid = raw_gettid_nocancel();
+    if tid <= 0 {
+        return;
+    }
+    let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
+    for i in 0..CANCEL_SYSCALL_SLOTS {
+        let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
+        let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            if entering {
+                ACTIVE_SIGNAL_DEPTH[idx].fetch_add(1, Ordering::AcqRel);
+            } else {
+                let _ =
+                    ACTIVE_SIGNAL_DEPTH[idx].try_update(Ordering::AcqRel, Ordering::Acquire, |d| {
+                        Some(d.saturating_sub(1))
+                    });
+            }
+            return;
+        }
+        if stored == CANCEL_SLOT_EMPTY {
+            break;
+        }
+    }
+}
+
+/// Clear all inherited active cancel-syscall slots in a fork child.
+pub fn reset_native_cancel_syscalls_after_fork() {
+    if NATIVE_CANCEL_WINDOW_DEPTH.swap(0, Ordering::AcqRel) == 0 {
+        return;
+    }
+    for i in 0..CANCEL_SYSCALL_SLOTS {
+        ACTIVE_CANCEL_WORDS[i].store(0, Ordering::Release);
+        ACTIVE_CANCEL_RSPS[i].store(0, Ordering::Release);
+        ACTIVE_CANCEL_STATE[i].store(0, Ordering::Release);
+        ACTIVE_SIGNAL_DEPTH[i].store(0, Ordering::Release);
+        ACTIVE_CANCEL_TIDS[i].store(CANCEL_SLOT_EMPTY, Ordering::Release);
+    }
+}
+
+#[cold]
+#[inline(never)]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+unsafe fn try_cancelable_syscall(args: &CancelSyscallArgs) -> Option<usize> {
+    let sp = current_stack_pointer();
+    let tid = raw_gettid_nocancel();
+    if tid <= 0 {
+        return None;
+    }
+    let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
+    for i in 0..CANCEL_SYSCALL_SLOTS {
+        let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
+        let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
+        if stored == tid {
+            if ACTIVE_SIGNAL_DEPTH[idx].load(Ordering::Acquire) != 0 {
+                return None;
+            }
+            let word = ACTIVE_CANCEL_WORDS[idx].load(Ordering::Acquire);
+            let window_rsp = ACTIVE_CANCEL_RSPS[idx].load(Ordering::Acquire);
+            if word == 0 || window_rsp.wrapping_sub(sp) >= 16384 {
+                return None;
+            }
+            if ACTIVE_CANCEL_STATE[idx]
+                .compare_exchange(
+                    0,
+                    CANCEL_STATE_CONSUMED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return None;
+            }
+            // SAFETY: `word` is a static 32-bit atomic cancellation word and `args`
+            // holds the caller's validated syscall register image.
+            let ret = unsafe { __fl_syscall_cancel_arch(word as *const u32, args) };
+            if ret as isize == -(crate::errno::EINTR as isize) {
+                ACTIVE_CANCEL_STATE[idx].fetch_or(CANCEL_STATE_INTERRUPTED, Ordering::Release);
+            }
+            return Some(ret);
+        }
+        if stored == CANCEL_SLOT_EMPTY {
+            break;
+        }
+    }
+    None
+}
 
 /// Fill a Rust-owned slice with kernel entropy, returning the actual count.
 ///
@@ -52,6 +440,21 @@ const fn current_clone_tail_args(
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall0(nr: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1: 0,
+                a2: 0,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees nr is valid.
     unsafe {
@@ -75,6 +478,21 @@ pub unsafe fn syscall0(nr: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn syscall0(nr: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1: 0,
+                a2: 0,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees nr is valid.
     unsafe {
@@ -96,6 +514,21 @@ pub unsafe fn syscall0(nr: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2: 0,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
     unsafe {
@@ -119,6 +552,21 @@ pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2: 0,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
     unsafe {
@@ -140,6 +588,21 @@ pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
     unsafe {
@@ -164,6 +627,21 @@ pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
     unsafe {
@@ -186,6 +664,21 @@ pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
     unsafe {
@@ -211,6 +704,21 @@ pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
     unsafe {
@@ -234,6 +742,21 @@ pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
     unsafe {
@@ -260,6 +783,21 @@ pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) ->
 #[inline]
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4,
+                a5: 0,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
     unsafe {
@@ -284,6 +822,21 @@ pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) ->
 #[inline]
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4,
+                a5,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
     unsafe {
@@ -311,6 +864,21 @@ pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5
 #[inline]
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4,
+                a5,
+                a6: 0,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
     unsafe {
@@ -495,6 +1063,21 @@ pub unsafe fn syscall6(
     a5: usize,
     a6: usize,
 ) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4,
+                a5,
+                a6,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
     unsafe {
@@ -594,6 +1177,21 @@ pub unsafe fn syscall6(
     a5: usize,
     a6: usize,
 ) -> usize {
+    if native_cancel_syscall_any_active()
+        && let Some(ret) = unsafe {
+            try_cancelable_syscall(&CancelSyscallArgs {
+                nr,
+                a1,
+                a2,
+                a3,
+                a4,
+                a5,
+                a6,
+            })
+        }
+    {
+        return ret;
+    }
     let ret: usize;
     // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
     unsafe {

@@ -352,20 +352,27 @@ struct PinnedEpochGuard<'a> {
     _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
 }
 
-struct ValidationExecutionGuard;
+struct ValidationExecutionGuard {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    unbacked: bool,
+}
 
 impl Drop for ValidationExecutionGuard {
     fn drop(&mut self) {
         #[cfg(not(feature = "owned-tls-cache"))]
         {
-            let decremented_to_zero = VALIDATION_DEPTH
-                .try_with(|depth| {
-                    let prev = depth.get();
-                    let next = prev.saturating_sub(1);
-                    depth.set(next);
-                    prev > 0 && next == 0
-                })
-                .unwrap_or(false);
+            let decremented_to_zero = if self.unbacked {
+                true
+            } else {
+                VALIDATION_DEPTH
+                    .try_with(|depth| {
+                        let prev = depth.get();
+                        let next = prev.saturating_sub(1);
+                        depth.set(next);
+                        prev > 0 && next == 0
+                    })
+                    .unwrap_or(false)
+            };
             if decremented_to_zero {
                 ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
             }
@@ -380,28 +387,39 @@ impl Drop for ValidationExecutionGuard {
 fn enter_validation_execution_context() -> ValidationExecutionGuard {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        let incremented_from_zero = VALIDATION_DEPTH
-            .try_with(|depth| {
-                let prev = depth.get();
-                depth.set(prev.saturating_add(1));
-                prev == 0
-            })
-            .unwrap_or(false);
+        let unbacked = crate::tls_cache::compiler_tls_disabled();
+        let incremented_from_zero = if unbacked {
+            true
+        } else {
+            VALIDATION_DEPTH
+                .try_with(|depth| {
+                    let prev = depth.get();
+                    depth.set(prev.saturating_add(1));
+                    prev == 0
+                })
+                .unwrap_or(false)
+        };
         if incremented_from_zero {
             ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
         }
+        ValidationExecutionGuard { unbacked }
     }
     #[cfg(feature = "owned-tls-cache")]
-    let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-        Some(current.saturating_add(1))
-    });
-    ValidationExecutionGuard
+    {
+        let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            Some(current.saturating_add(1))
+        });
+        ValidationExecutionGuard {}
+    }
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
 #[cold]
 #[inline(never)]
 fn in_validation_context_slow() -> bool {
+    if crate::tls_cache::compiler_tls_disabled() {
+        return true;
+    }
     VALIDATION_DEPTH
         .try_with(|depth| depth.get() > 0)
         .unwrap_or(false)
@@ -451,7 +469,7 @@ impl ValidationPipeline {
     /// Pin the EBR epoch for the duration of validation.
     fn pin_epoch(&self) -> PinnedEpochGuard<'_> {
         #[cfg(not(feature = "owned-tls-cache"))]
-        {
+        if !crate::tls_cache::compiler_tls_disabled() {
             let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
             // `try_with`: validation also runs during thread teardown -- host
             // thread-key destructors (OpenSSL's per-thread cleanup) call

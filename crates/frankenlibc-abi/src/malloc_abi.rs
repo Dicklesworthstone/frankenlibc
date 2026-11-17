@@ -132,6 +132,9 @@ struct AllocatorReentrySlot {
     string_membrane_active: AtomicBool,
     /// Per-thread compact fast-PCC explainability word (`(mode_raw << 8) | pcc_index`).
     last_fast_pcc_packed: AtomicU16,
+    /// Per-TID wide-I/O nesting depth used when `NATIVE_THREAD_BACKEND` is active
+    /// (packed into existing padding before `fallback_cache_index`).
+    wide_io_depth: AtomicU16,
     fallback_cache_index: AtomicUsize,
     /// Cumulative owner-only fast-PCC decisions (`Relaxed` load + `wrapping_add(1)` + `store`,
     /// zero `LOCK` prefix on x86_64), summed into `RuntimeRouteCountsSnapshot::ffi_pcc_decisions`.
@@ -169,6 +172,7 @@ impl AllocatorReentrySlot {
             #[cfg(not(feature = "owned-tls-cache"))]
             string_membrane_active: AtomicBool::new(false),
             last_fast_pcc_packed: AtomicU16::new(0),
+            wide_io_depth: AtomicU16::new(0),
             // Stored as `index + 1` so `0` means "empty" and the entire
             // reentry-slot table is zero-initialized in `.bss` / demand-zero slab
             // (bd-rc0923-epic-eeuy4f.25).
@@ -716,10 +720,84 @@ const KEY_CLAIMED_TID: i32 = -1;
 /// also stops the single-threaded cache handing such a thread its creator's slot.)
 static NATIVE_THREAD_BACKEND: AtomicBool = AtomicBool::new(false);
 static FIRST_OBSERVED_KEY: AtomicUsize = AtomicUsize::new(0);
+static HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID: AtomicI32 = AtomicI32::new(0);
+static HOST_ALLOCATOR_NATIVE_THREAD_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+#[inline(always)]
+pub(crate) fn native_thread_backend_active() -> bool {
+    NATIVE_THREAD_BACKEND.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub(crate) fn enter_native_wide_io_depth() {
+    if let Some(slot) = current_allocator_reentry_slot() {
+        let prev = slot.wide_io_depth.load(Ordering::Relaxed);
+        slot.wide_io_depth
+            .store(prev.saturating_add(1), Ordering::Relaxed);
+    }
+}
+
+#[inline]
+pub(crate) fn leave_native_wide_io_depth() {
+    if let Some(slot) = current_allocator_reentry_slot() {
+        let prev = slot.wide_io_depth.load(Ordering::Relaxed);
+        slot.wide_io_depth
+            .store(prev.saturating_sub(1), Ordering::Relaxed);
+    }
+}
+
+#[inline]
+pub(crate) fn native_wide_io_active() -> bool {
+    current_allocator_reentry_slot()
+        .is_some_and(|slot| slot.wide_io_depth.load(Ordering::Relaxed) != 0)
+}
+
+#[inline]
+fn acquire_host_allocator_native_thread_lock(tid: i32) {
+    let tid = if tid > 0 {
+        tid
+    } else {
+        raw_syscall::sys_gettid().max(1)
+    };
+    if HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID.load(Ordering::Relaxed) == tid {
+        HOST_ALLOCATOR_NATIVE_THREAD_DEPTH.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let mut spins = 0u32;
+    while HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID
+        .compare_exchange_weak(0, tid, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        if spins < 64 {
+            spins += 1;
+            std::hint::spin_loop();
+        } else {
+            raw_syscall::sys_sched_yield();
+        }
+    }
+    HOST_ALLOCATOR_NATIVE_THREAD_DEPTH.store(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn release_host_allocator_native_thread_lock() {
+    let prev = HOST_ALLOCATOR_NATIVE_THREAD_DEPTH.fetch_sub(1, Ordering::Relaxed);
+    if prev <= 1 {
+        HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID.store(0, Ordering::Release);
+    }
+}
 
 /// Called by the native `pthread_create` before it clones.
 pub(crate) fn note_native_thread_backend() {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        // Initialize std::thread::current() once on the creator's TCB before any
+        // native clone without CLONE_SETTLS shares `%fs`, preventing concurrent
+        // `init_current()` transitions through std's `DESTROYED` sentinel.
+        let _ = std::thread::current();
+    }
     MULTI_THREADED.store(true, Ordering::SeqCst);
+    crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
+    frankenlibc_membrane::tls_cache::disable_compiler_tls_cache_for_native_threads();
     if !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst) {
         refresh_strict_hot_mode();
     }
@@ -888,6 +966,7 @@ fn bind_slot_to_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize
     if previous != 0 && previous != thread_key {
         slot.native_guard_bits.store(0, Ordering::Release);
         slot.allocator_depth.store(0, Ordering::Release);
+        slot.wide_io_depth.store(0, Ordering::Release);
         slot.fallback_cache_index.store(0, Ordering::Release);
     }
 }
@@ -1055,10 +1134,14 @@ fn current_allocator_reentry_slot_slow(
 struct NativeAllocatorReentryGuard {
     slot: &'static AllocatorReentrySlot,
     mask: u8,
+    host_lock_acquired: bool,
 }
 
 impl Drop for NativeAllocatorReentryGuard {
     fn drop(&mut self) {
+        if self.host_lock_acquired {
+            release_host_allocator_native_thread_lock();
+        }
         self.slot
             .native_guard_bits
             .fetch_and(!self.mask, Ordering::AcqRel);
@@ -1078,9 +1161,20 @@ fn enter_native_reentry_guard_for_slot(
     slot: &'static AllocatorReentrySlot,
     mask: u8,
 ) -> Option<NativeAllocatorReentryGuard> {
+    let native_threads = NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
+    if native_threads && in_signal_handler(slot) {
+        return None;
+    }
     let previous = slot.native_guard_bits.fetch_or(mask, Ordering::AcqRel);
     if previous & mask == 0 {
-        Some(NativeAllocatorReentryGuard { slot, mask })
+        if native_threads {
+            acquire_host_allocator_native_thread_lock(slot.tid.load(Ordering::Relaxed));
+        }
+        Some(NativeAllocatorReentryGuard {
+            slot,
+            mask,
+            host_lock_acquired: native_threads,
+        })
     } else {
         None
     }
@@ -4442,15 +4536,30 @@ static GLOBAL_ALLOC_STATS: OnceLock<FlatCombiningStats> = OnceLock::new();
 /// host-fork change removed the more frequent arena-lock hang. The two locks
 /// are never nested elsewhere (a malloc inserts into the table, then records
 /// stats), so taking both here cannot deadlock.
+struct NativeHostAllocForkGuard;
+
+impl Drop for NativeHostAllocForkGuard {
+    fn drop(&mut self) {
+        release_host_allocator_native_thread_lock();
+    }
+}
+
 pub(crate) struct MallocForkGuard {
     surviving_slot_addr: usize,
     stats: Option<&'static FlatCombiningStats>,
     _fallback_table: FallbackAllocTableGuard,
+    _native_host_alloc: Option<NativeHostAllocForkGuard>,
 }
 
 pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
     let surviving_slot_addr =
         current_allocator_reentry_slot().map_or(0, |s| s as *const AllocatorReentrySlot as usize);
+    let native_host_alloc = if NATIVE_THREAD_BACKEND.load(Ordering::Acquire) {
+        acquire_host_allocator_native_thread_lock(0);
+        Some(NativeHostAllocForkGuard)
+    } else {
+        None
+    };
     let fallback_table = lock_fallback_alloc_table();
     let stats = GLOBAL_ALLOC_STATS.get();
     if let Some(stats) = stats {
@@ -4466,6 +4575,7 @@ pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
         surviving_slot_addr,
         stats,
         _fallback_table: fallback_table,
+        _native_host_alloc: native_host_alloc,
     }
 }
 
@@ -4479,6 +4589,9 @@ impl MallocForkGuard {
     pub(crate) unsafe fn adopt_in_fork_child(&self) {
         let surviving = self.surviving_slot_addr;
         let child_tid = raw_syscall::sys_gettid().max(1);
+        if self._native_host_alloc.is_some() {
+            HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID.store(child_tid, Ordering::Relaxed);
+        }
         LAST_THREAD_CACHE.store(0, Ordering::Relaxed);
         for entry in &KEY_SLOT_DIR {
             entry.store(0, Ordering::Relaxed);
@@ -4495,6 +4608,7 @@ impl MallocForkGuard {
             } else {
                 slot.native_guard_bits.store(0, Ordering::Relaxed);
                 slot.allocator_depth.store(0, Ordering::Relaxed);
+                slot.wide_io_depth.store(0, Ordering::Relaxed);
                 slot.fallback_cache_index.store(0, Ordering::Relaxed);
                 slot.in_fallback_table.store(false, Ordering::Relaxed);
                 slot.st_stats_dirty.store(false, Ordering::Relaxed);
@@ -4528,7 +4642,7 @@ impl Drop for MallocForkGuard {
         if let Some(stats) = self.stats {
             stats.combiner_lock.store(false, Ordering::Release);
         }
-        // `_fallback_table` releases the table lock when it drops, after this.
+        // `_fallback_table` and `_native_host_alloc` release in declaration order after this.
     }
 }
 

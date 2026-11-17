@@ -461,6 +461,9 @@ unsafe impl<T: Send + Sync> Sync for BravoRwLock<T> {}
 fn current_thread_token() -> usize {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::tls_cache::compiler_tls_disabled() {
+            return 1;
+        }
         THREAD_TOKEN.with(|token| *token)
     }
     #[cfg(feature = "owned-tls-cache")]

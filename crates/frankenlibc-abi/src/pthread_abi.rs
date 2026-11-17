@@ -22,15 +22,17 @@ use frankenlibc_core::elf::Elf64Header;
 use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
 use frankenlibc_core::elf::symbol::{get_string, parse_symbols};
 use frankenlibc_core::pthread::thread::{
-    ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
+    CancellationWait, ThreadStartup, create_thread_with_startup as core_create_thread_with_startup,
     current_cancellation_wait as core_current_cancellation_wait,
-    current_thread_handle as core_current_thread_handle,
-    request_cancellation as core_request_cancellation,
-    take_current_cancellation as core_take_current_cancellation,
+    current_thread_handle as core_current_thread_handle, maybe_exit_process_as_last_native_thread,
+    request_cancellation_with_info as core_request_cancellation_with_info,
+    set_last_thread_exit_hook, take_current_cancellation as core_take_current_cancellation,
 };
 use frankenlibc_core::pthread::tls::{
-    PthreadKey, pthread_key_create as core_pthread_key_create,
-    pthread_key_delete as core_pthread_key_delete,
+    PthreadKey, native_cancel_signal_needed, pthread_key_create as core_pthread_key_create,
+    pthread_key_delete as core_pthread_key_delete, request_unregistered_cancellation_with_flags,
+    retire_unregistered_cancellation, set_native_cancel_async, set_native_cancel_disabled,
+    set_native_cancel_point_active, take_unregistered_cancellation, unregistered_cancellation_wait,
 };
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use frankenlibc_core::pthread::tls::{
@@ -137,6 +139,7 @@ static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
+const ADOPTING_MUTEX_MAGIC: u32 = 0x414d_5854; // "AMXT"
 /// Left in the magic word by `pthread_mutex_destroy`. Being neither zero nor
 /// `MANAGED_MUTEX_MAGIC`, it makes `ensure_managed_default_mutex` refuse the
 /// storage, so lock/trylock/timedlock/unlock/cond_wait return EINVAL until the
@@ -286,6 +289,7 @@ struct PthreadTlsState {
     thread_cancel_type: c_int,
     native_cleanup_head: usize,
     native_exit_started: bool,
+    native_unwind_boundary: usize,
     native_unwind_exception: [u128; 2],
     current_threading_backend: u8,
     current_pthread_self_cache: libc::pthread_t,
@@ -301,6 +305,7 @@ impl PthreadTlsState {
             thread_cancel_type: PTHREAD_CANCEL_DEFERRED_TYPE,
             native_cleanup_head: 0,
             native_exit_started: false,
+            native_unwind_boundary: 0,
             native_unwind_exception: [0; 2],
             current_threading_backend: THREAD_BACKEND_UNKNOWN,
             current_pthread_self_cache: 0,
@@ -308,38 +313,55 @@ impl PthreadTlsState {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
+pub(crate) fn set_current_native_unwind_boundary(boundary: usize) {
+    let _ = try_with_pthread_tls(|tls| tls.native_unwind_boundary = boundary);
+}
+
+fn any_registered_host_thread_alive() -> bool {
+    let tids: Vec<i32> = HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .copied()
+        .collect();
+    tids.into_iter().any(thread_tid_appears_alive)
+}
+
+unsafe extern "C" fn native_last_thread_exit_hook() {
+    if !any_registered_host_thread_alive() {
+        // SAFETY: POSIX requires terminating the process as if by exit(0) when
+        // the last remaining thread terminates via pthread_exit or cancellation.
+        unsafe { crate::stdlib_abi::exit(0) };
+    }
+}
+
+pub(crate) fn install_native_last_thread_exit_hook() {
+    set_last_thread_exit_hook(native_last_thread_exit_hook);
+}
+
 static PTHREAD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PthreadTlsState> =
     crate::owned_tls_cache::OwnedTlsCache::new(PthreadTlsState::new);
 
-#[cfg(feature = "owned-tls-cache")]
 static PTHREAD_TLS_ACCESS_DEPTH: AtomicU32 = AtomicU32::new(0);
 
-#[cfg(feature = "owned-tls-cache")]
 struct PthreadTlsAccessGuard;
 
-#[cfg(feature = "owned-tls-cache")]
 impl Drop for PthreadTlsAccessGuard {
     fn drop(&mut self) {
         PTHREAD_TLS_ACCESS_DEPTH.fetch_sub(1, Ordering::Release);
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn with_owned_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
     PTHREAD_TLS_ACCESS_DEPTH.fetch_add(1, Ordering::Acquire);
     let _guard = PthreadTlsAccessGuard;
     PTHREAD_OWNED_TLS.with(f)
 }
 
-#[cfg(feature = "owned-tls-cache")]
+#[inline(always)]
 pub(crate) fn pthread_tls_access_active() -> bool {
-    PTHREAD_TLS_ACCESS_DEPTH.load(Ordering::Acquire) != 0
-}
-
-#[cfg(not(feature = "owned-tls-cache"))]
-pub(crate) const fn pthread_tls_access_active() -> bool {
-    false
+    PTHREAD_TLS_ACCESS_DEPTH.load(Ordering::Relaxed) != 0
+        && PTHREAD_OWNED_TLS.is_accessed_by_current_thread()
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -352,12 +374,12 @@ thread_local! {
 //
 // `in_threading_policy_context()` is on the allocator's hot path: the allocator
 // re-entry guard evaluates it on EVERY `malloc` and `free`, because the term that
-// would short-circuit it, `pthread_tls_access_active()`, is a `const fn` returning
-// `false` unless the `owned-tls-cache` feature is on. Reading the depth out of
-// `PTHREAD_TLS` cost a `RefCell` borrow-flag check and, worse, a LAZY-INIT check,
-// because that `thread_local!` has a non-`const` initializer
-// (`RefCell::new(PthreadTlsState::new())`) and so carries a state word the
-// accessor must test on every use.
+// would short-circuit it, `pthread_tls_access_active()`, stays `0` in `.bss`
+// unless the `owned-tls-cache` feature or native-thread backend is active.
+// Reading the depth out of `PTHREAD_TLS` cost a `RefCell` borrow-flag check and,
+// worse, a LAZY-INIT check, because that `thread_local!` has a non-`const`
+// initializer (`RefCell::new(PthreadTlsState::new())`) and so carries a state
+// word the accessor must test on every use.
 //
 // A single `u32` in its own `const`-initialised `Cell` needs neither. Hosted
 // threads use that fast path in both feature configurations. Registered native
@@ -375,6 +397,11 @@ fn with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::malloc_abi::native_thread_backend_active()
+            || global_force_native_threading_enabled()
+        {
+            return with_owned_pthread_tls(f);
+        }
         PTHREAD_TLS.with(|tls| {
             let mut tls = tls.borrow_mut();
             f(&mut tls)
@@ -390,6 +417,11 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::malloc_abi::native_thread_backend_active()
+            || global_force_native_threading_enabled()
+        {
+            return Some(with_owned_pthread_tls(f));
+        }
         PTHREAD_TLS
             .try_with(|tls| {
                 let Ok(mut tls) = tls.try_borrow_mut() else {
@@ -1084,6 +1116,24 @@ fn is_destroyed_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
     unsafe { &*magic_ptr }.load(Ordering::Acquire) == DESTROYED_MUTEX_MAGIC
 }
 
+fn wait_for_mutex_adoption(magic: &AtomicU32) -> bool {
+    let mut spins = 0u32;
+    loop {
+        match magic.load(Ordering::Acquire) {
+            MANAGED_MUTEX_MAGIC => return true,
+            ADOPTING_MUTEX_MAGIC => {
+                if spins < 64 {
+                    spins += 1;
+                    std::hint::spin_loop();
+                } else {
+                    raw_syscall::sys_sched_yield();
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
 fn ensure_managed_default_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
     if is_managed_mutex(mutex) {
         return true;
@@ -1112,28 +1162,48 @@ fn ensure_managed_default_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
     let owner = unsafe { &*owner_ptr };
     let count = unsafe { &*count_ptr };
 
-    if word.load(Ordering::Acquire) != 0 || magic.load(Ordering::Acquire) != 0 {
-        return false;
+    match magic.load(Ordering::Acquire) {
+        MANAGED_MUTEX_MAGIC => return true,
+        ADOPTING_MUTEX_MAGIC => return wait_for_mutex_adoption(magic),
+        0 => {}
+        _ => return false,
     }
 
-    // A never-initialized mutex is a glibc static initializer, and those are not
-    // all zero: PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP and
-    // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP set glibc's `__kind` (byte 16,
-    // which is our lock-count slot) to 1 and 2; the adaptive one sets 3, which
-    // behaves as normal. Adopting them all as NORMAL turned every statically
-    // allocated C++ `std::recursive_mutex` into a plain one, so a nested lock
-    // deadlocked -- libLLVM's constructor does exactly that, which hung `perf`,
-    // mesa and anything else linking LLVM at startup.
-    let static_kind = match count.load(Ordering::Acquire) & GLIBC_MUTEX_KIND_MASK {
-        1 => PTHREAD_MUTEX_RECURSIVE_TYPE,
-        2 => PTHREAD_MUTEX_ERRORCHECK_TYPE,
-        _ => PTHREAD_MUTEX_NORMAL_TYPE,
-    };
-    mtype.store(static_kind, Ordering::Release);
-    owner.store(MUTEX_NO_OWNER, Ordering::Release);
-    count.store(0, Ordering::Release);
-    magic.store(MANAGED_MUTEX_MAGIC, Ordering::Release);
-    true
+    if word.load(Ordering::Acquire) != 0 {
+        // A concurrent first caller may have adopted and locked the mutex
+        // immediately after our initial `is_managed_mutex` check.
+        return wait_for_mutex_adoption(magic);
+    }
+
+    match magic.compare_exchange(0, ADOPTING_MUTEX_MAGIC, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => {
+            if word.load(Ordering::Acquire) != 0 {
+                magic.store(0, Ordering::Release);
+                return false;
+            }
+            // A never-initialized mutex is a glibc static initializer, and those are not
+            // all zero: PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP and
+            // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP set glibc's `__kind` (byte 16,
+            // which is our lock-count slot) to 1 and 2; the adaptive one sets 3, which
+            // behaves as normal. Adopting them all as NORMAL turned every statically
+            // allocated C++ `std::recursive_mutex` into a plain one, so a nested lock
+            // deadlocked -- libLLVM's constructor does exactly that, which hung `perf`,
+            // mesa and anything else linking LLVM at startup.
+            let static_kind = match count.load(Ordering::Acquire) & GLIBC_MUTEX_KIND_MASK {
+                1 => PTHREAD_MUTEX_RECURSIVE_TYPE,
+                2 => PTHREAD_MUTEX_ERRORCHECK_TYPE,
+                _ => PTHREAD_MUTEX_NORMAL_TYPE,
+            };
+            mtype.store(static_kind, Ordering::Release);
+            owner.store(MUTEX_NO_OWNER, Ordering::Release);
+            count.store(0, Ordering::Release);
+            magic.store(MANAGED_MUTEX_MAGIC, Ordering::Release);
+            true
+        }
+        Err(MANAGED_MUTEX_MAGIC) => true,
+        Err(ADOPTING_MUTEX_MAGIC) => wait_for_mutex_adoption(magic),
+        Err(_) => false,
+    }
 }
 
 fn rwlock_word_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicI32> {
@@ -1319,7 +1389,10 @@ fn adopt_static_condvar(condvar: &CondvarData) -> bool {
         || condvar.assoc_mutex.load(Ordering::Acquire) != 0
         || condvar.clock_id.load(Ordering::Acquire) != 0
     {
-        return false;
+        return matches!(
+            condvar.magic.load(Ordering::Acquire),
+            MANAGED_CONDVAR_MAGIC | MANAGED_CONDVAR_PSHARED_MAGIC
+        );
     }
     match condvar.magic.compare_exchange(
         0,
@@ -1328,7 +1401,9 @@ fn adopt_static_condvar(condvar: &CondvarData) -> bool {
         Ordering::Acquire,
     ) {
         Ok(_) => true,
-        Err(current) => current == MANAGED_CONDVAR_MAGIC,
+        Err(current) => {
+            current == MANAGED_CONDVAR_MAGIC || current == MANAGED_CONDVAR_PSHARED_MAGIC
+        }
     }
 }
 
@@ -4289,7 +4364,7 @@ pub unsafe extern "C-unwind" fn pthread_join(
 
 /// Shared join dispatch retaining the originating caller across aliases and
 /// the NULL-deadline forms of the GNU join extensions.
-unsafe fn pthread_join_for_caller(
+pub(crate) unsafe fn pthread_join_for_caller(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
     caller: usize,
@@ -6619,6 +6694,31 @@ fn cancel_async_for_current_thread() -> bool {
     with_pthread_tls(|tls| tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE)
 }
 
+pub(crate) fn unregistered_native_async_cancel_ready() -> bool {
+    with_pthread_tls(|tls| {
+        tls.thread_cancel_state == PTHREAD_CANCEL_ENABLE_STATE
+            && tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE
+            && !tls.native_exit_started
+    })
+}
+
+#[inline]
+fn current_native_cancellation_wait() -> Option<CancellationWait> {
+    if let Some(wait) = core_current_cancellation_wait() {
+        return Some(wait);
+    }
+    if host_cancellation_thread() {
+        return None;
+    }
+    let enabled = with_pthread_tls(|tls| {
+        tls.thread_cancel_state == PTHREAD_CANCEL_ENABLE_STATE && !tls.native_exit_started
+    });
+    if !enabled {
+        return None;
+    }
+    unregistered_cancellation_wait(core_self_tid())
+}
+
 fn consume_pending_cancel_for_current_thread() -> bool {
     if !cancel_enabled_for_current_thread() {
         return false;
@@ -6634,6 +6734,9 @@ fn consume_pending_cancel_for_current_thread() -> bool {
     }
     if with_pthread_tls(|tls| tls.native_exit_started) {
         return false;
+    }
+    if take_unregistered_cancellation(core_self_tid()) {
+        return true;
     }
     let thread_key = current_cancel_key();
     if !cancellation_pending(thread_key) {
@@ -6702,7 +6805,16 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
     }
 
     let thread_key = pthread_handle_key(thread);
-    if !core_request_cancellation(thread_key) {
+    if let Some((target_tid, flags)) = core_request_cancellation_with_info(thread_key) {
+        if target_tid > 0 && native_cancel_signal_needed(flags) {
+            crate::signal_abi::ensure_native_sigcancel_installed();
+            let _ = raw_syscall::sys_tgkill(
+                raw_syscall::sys_getpid(),
+                target_tid,
+                crate::signal_abi::NATIVE_SIGCANCEL,
+            );
+        }
+    } else {
         // A native identity can disappear concurrently with this call. Never
         // leave an address-keyed fallback request behind for its next owner.
         if is_managed_thread_handle(thread) {
@@ -6732,17 +6844,28 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
             return unsafe { host_cancel(target) };
         }
 
-        // Unregistered native-mode callers (including main) retain the
-        // fallback path. Signal 0 checks existence without sending a signal.
-        let liveness = unsafe { pthread_kill(thread, 0) };
-        if liveness != 0 {
-            return liveness;
+        // Unregistered native-mode callers (including main) use the lock-free
+        // unregistered cancellation slot keyed by kernel TID.
+        let Some(target_tid) = resolve_thread_tid(thread) else {
+            return libc::ESRCH;
+        };
+        let pid = raw_syscall::sys_getpid();
+        if let Err(errno) = raw_syscall::sys_tgkill(pid, target_tid, 0) {
+            return errno;
         }
-        set_cancellation_pending(thread_key, true);
+        if let Some(flags) = request_unregistered_cancellation_with_flags(target_tid) {
+            if native_cancel_signal_needed(flags) {
+                crate::signal_abi::ensure_native_sigcancel_installed();
+                let _ =
+                    raw_syscall::sys_tgkill(pid, target_tid, crate::signal_abi::NATIVE_SIGCANCEL);
+            }
+        } else {
+            set_cancellation_pending(thread_key, true);
+        }
     }
 
     // If cancelling ourselves in async mode, act on it immediately.
-    if thread_key == current_cancel_key()
+    if (thread == native_pthread_self() || thread_key == current_cancel_key())
         && cancel_enabled_for_current_thread()
         && cancel_async_for_current_thread()
     {
@@ -6781,6 +6904,7 @@ pub unsafe extern "C-unwind" fn pthread_setcancelstate(
             prev
         })
     };
+    set_native_cancel_disabled(core_self_tid(), state == PTHREAD_CANCEL_DISABLE_STATE);
     if !oldstate.is_null() {
         // SAFETY: oldstate is provided by caller and checked for null.
         unsafe { *oldstate = previous };
@@ -6817,6 +6941,10 @@ pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut 
             prev
         })
     };
+    if typ == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
+        crate::signal_abi::ensure_native_sigcancel_installed();
+    }
+    set_native_cancel_async(core_self_tid(), typ == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE);
     if !oldtype.is_null() {
         // SAFETY: oldtype is provided by caller and checked for null.
         unsafe { *oldtype = previous };
@@ -7002,10 +7130,7 @@ unsafe fn cancellation_sigwait_window(
     set: *const u8,
     sigset_size: usize,
 ) -> Result<c_int, c_int> {
-    if caller != 0
-        && core_current_thread_handle().is_some()
-        && !address_is_inside_this_object(caller)
-    {
+    if caller != 0 && !host_cancellation_thread() && !address_is_inside_this_object(caller) {
         let slice = raw_syscall::Timespec {
             tv_sec: 0,
             tv_nsec: 50_000_000,
@@ -7013,7 +7138,7 @@ unsafe fn cancellation_sigwait_window(
         // A signal handler may disable cancellation during a slice. Obtain a
         // fresh descriptor before each wait, then retain the original indefinite
         // syscall when cancellation is disabled or exit cleanup has started.
-        while let Some(cancel) = core_current_cancellation_wait() {
+        while let Some(cancel) = current_native_cancellation_wait() {
             if cancel.pending() {
                 // SAFETY: the calling native thread owns the request. No signal
                 // has been consumed, output changed, or resource acquired.
@@ -7107,7 +7232,7 @@ unsafe fn cancellation_child_window(
 ) -> Result<c_int, c_int> {
     if operation.supports_slices()
         && caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7179,7 +7304,7 @@ unsafe extern "C-unwind" fn native_cancellation_sleep_window(
         || (absolute && clock == libc::CLOCK_MONOTONIC);
     if supported
         && caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7274,9 +7399,27 @@ unsafe extern "C-unwind" fn cancellation_sleep_window_raw(
     if caller == 0 {
         return invoke_sleep_syscall();
     }
-    if core_current_thread_handle().is_some() {
-        if !address_is_inside_this_object(caller) {
-            unsafe { pthread_testcancel() };
+    if !host_cancellation_thread() {
+        if !address_is_inside_this_object(caller)
+            && let Some(cancel) = current_native_cancellation_wait()
+        {
+            let tid = cancel.tid();
+            crate::signal_abi::ensure_native_sigcancel_installed();
+            set_native_cancel_point_active(tid, true);
+            if cancel.pending() {
+                set_native_cancel_point_active(tid, false);
+                unsafe { pthread_testcancel() };
+                return invoke_sleep_syscall();
+            }
+            let window_rsp = current_window_stack_pointer();
+            raw_syscall::arm_native_cancel_syscall(tid, cancel.address(), window_rsp);
+            let ret = invoke_sleep_syscall();
+            let interrupted = raw_syscall::disarm_native_cancel_syscall(tid);
+            set_native_cancel_point_active(tid, false);
+            if interrupted && cancel.pending() {
+                unsafe { pthread_testcancel() };
+            }
+            return ret;
         }
         return invoke_sleep_syscall();
     }
@@ -7328,7 +7471,7 @@ unsafe fn cancellation_signal_window(
     blocking_syscall: impl FnOnce() -> Result<(), c_int>,
 ) -> Result<(), c_int> {
     if caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7523,7 +7666,7 @@ unsafe fn native_select_window(
     timeout: cancel_poll::SelectTimeout,
     mask: *const u8,
 ) -> Option<Result<c_int, c_int>> {
-    let cancel = core_current_cancellation_wait()?;
+    let cancel = current_native_cancellation_wait()?;
     if caller == 0 || address_is_inside_this_object(caller) {
         return None;
     }
@@ -7557,7 +7700,7 @@ unsafe fn cancellation_poll_window(
     blocking_syscall: impl FnOnce() -> Result<c_int, c_int>,
 ) -> Result<c_int, c_int> {
     if caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7602,7 +7745,7 @@ unsafe fn cancellation_epoll_window(
     mask: *const u8,
 ) -> Result<c_int, c_int> {
     if caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7665,7 +7808,7 @@ unsafe fn cancellation_epoll2_window(
     mask: *const u8,
 ) -> Result<c_int, c_int> {
     if caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7761,7 +7904,7 @@ unsafe fn cancellation_receive_window(
     operation: cancel_poll::ReceiveFrom,
 ) -> Result<isize, c_int> {
     if caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
     {
         if cancel.pending() {
@@ -7823,7 +7966,7 @@ unsafe fn cancellation_futex_window(
     bitset: u32,
 ) -> Result<isize, c_int> {
     if caller != 0
-        && let Some(cancel) = core_current_cancellation_wait()
+        && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
         && cancel_wait::supported(operation, timeout, bitset)
     {
@@ -7876,7 +8019,7 @@ unsafe fn preflight_cancellation_point_for_caller(caller: usize) {
     if caller == 0 {
         return;
     }
-    if core_current_thread_handle().is_some() {
+    if !host_cancellation_thread() {
         if !address_is_inside_this_object(caller) {
             unsafe { pthread_testcancel() };
         }
@@ -7887,6 +8030,40 @@ unsafe fn preflight_cancellation_point_for_caller(caller: usize) {
         && !address_is_inside_this_object(caller)
     {
         unsafe { pthread_testcancel() };
+    }
+}
+
+#[inline(always)]
+fn current_window_stack_pointer() -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let sp: usize;
+        // SAFETY: reading RSP does not mutate machine state.
+        unsafe {
+            core::arch::asm!(
+                "mov {}, rsp",
+                out(reg) sp,
+                options(nostack, nomem, preserves_flags)
+            );
+        }
+        sp
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let sp: usize;
+        // SAFETY: reading SP does not mutate machine state.
+        unsafe {
+            core::arch::asm!(
+                "mov {}, sp",
+                out(reg) sp,
+                options(nostack, nomem, preserves_flags)
+            );
+        }
+        sp
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        0
     }
 }
 
@@ -7922,24 +8099,32 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
     }
     // Native threads keep cooperative requests outside the host's TCB. Deliver
     // an already-pending request before the syscall can consume data, publish
-    // output or acquire a semaphore token. Internal libc I/O must still finish
-    // without unwinding through non-cancelling Rust callers. The shared native
-    // testcancel path preserves disabled cancellation and exit/cleanup guards.
-    // Native futex, poll, epoll, signal, child, supported socket receive and sleep points use
-    // their windows to observe a request arriving while parked; other syscalls
-    // remain pending-request cancellation points until they gain an interruptible
-    // native path.
-    // With no native threads, current_thread_handle exits at its atomic flag
-    // without a TID syscall, allocation or TLS initialization.
-    if core_current_thread_handle().is_some() {
-        if caller != 0 && !address_is_inside_this_object(caller) {
-            // SAFETY: the registered calling thread owns its cancellation state;
-            // this C-unwind frame holds no resources or partially applied syscall.
-            unsafe { pthread_testcancel() };
+    // output or acquire a semaphore token, and arm the RIP-guarded
+    // `__fl_syscall_cancel_arch` trap so a request arriving while parked aborts
+    // the kernel wait with `-EINTR` and unwinds cleanly in user context without
+    // discarding a completed syscall's result.
+    if !host_cancellation_thread() {
+        if !address_is_inside_this_object(caller)
+            && let Some(cancel) = current_native_cancellation_wait()
+        {
+            let tid = cancel.tid();
+            crate::signal_abi::ensure_native_sigcancel_installed();
+            set_native_cancel_point_active(tid, true);
+            if cancel.pending() {
+                set_native_cancel_point_active(tid, false);
+                unsafe { pthread_testcancel() };
+                return blocking_syscall();
+            }
+            let window_rsp = current_window_stack_pointer();
+            raw_syscall::arm_native_cancel_syscall(tid, cancel.address(), window_rsp);
+            let ret = blocking_syscall();
+            let interrupted = raw_syscall::disarm_native_cancel_syscall(tid);
+            set_native_cancel_point_active(tid, false);
+            if interrupted && cancel.pending() {
+                unsafe { pthread_testcancel() };
+            }
+            return ret;
         }
-        // An owned clone may inherit a cached HOST backend in host TLS. Its
-        // kernel-TID registration is authoritative: never mutate a host TCB's
-        // cancellation type on behalf of the native thread, even when disabled.
         return blocking_syscall();
     }
     let set_type = cancellation_window_hook(caller);
@@ -11212,8 +11397,12 @@ unsafe fn finish_native_thread_exit() -> ! {
     // The initial thread can select the native backend without a clone-owned
     // handle. Its ordinary TLS fallback is private because managed children
     // keep all cleanup state in their own handles.
-    frankenlibc_core::pthread::tls::run_exiting_thread_key_destructors(core_self_tid());
+    let tid = core_self_tid();
+    let _ = raw_syscall::disarm_native_cancel_syscall(tid);
+    retire_unregistered_cancellation(tid);
+    frankenlibc_core::pthread::tls::run_exiting_thread_key_destructors(tid);
     crate::util::reclaim_current_thread_tls_heap_cells();
+    unsafe { maybe_exit_process_as_last_native_thread() };
     raw_syscall::sys_exit_thread(0);
 }
 
@@ -11402,16 +11591,18 @@ unsafe extern "C-unwind" fn native_unwind_stop(
     if at_end {
         unsafe { finish_native_thread_exit() };
     }
-    if let Some(handle) = core_current_thread_handle() {
+    let boundary = if let Some(handle) = core_current_thread_handle() {
         // SAFETY: the clone trampoline published its own stack pointer before
         // enabling application signals or calling user code. The application's
         // outer frame has CFA == boundary and must still run its personality;
         // only the next frame crosses it. The synthetic clone frame has no
         // valid caller and must never be submitted to the platform unwinder.
-        let boundary = unsafe { (*handle).unwind_stack_boundary.load(Ordering::Relaxed) };
-        if boundary != 0 && cfa > boundary {
-            unsafe { finish_native_thread_exit() };
-        }
+        unsafe { (*handle).unwind_stack_boundary.load(Ordering::Relaxed) }
+    } else {
+        try_with_pthread_tls(|tls| tls.native_unwind_boundary).unwrap_or(0)
+    };
+    if boundary != 0 && cfa > boundary {
+        unsafe { finish_native_thread_exit() };
     }
     0 // _URC_NO_REASON: allow this frame's language cleanup to run.
 }

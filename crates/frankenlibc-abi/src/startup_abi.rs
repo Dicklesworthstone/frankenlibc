@@ -568,6 +568,14 @@ unsafe extern "C-unwind" fn host_delegate_main_wrapper(
         return 0;
     }
 
+    if !returns_to_host && !crate::pthread_abi::host_cancellation_thread() {
+        crate::pthread_abi::install_native_last_thread_exit_hook();
+        let main_c: MainFn =
+            unsafe { std::mem::transmute::<*const c_void, MainFn>(main_ptr as *const c_void) };
+        let rc = unsafe { run_owned_main_native(main_c, argc, argv, resolved_envp) };
+        unsafe { crate::stdlib_abi::exit(rc) }
+    }
+
     // SAFETY: `HOST_DELEGATED_MAIN` is set from a valid `MainFn` immediately
     // before delegating into host `__libc_start_main`; `MainUnwindFn` is the
     // same calling convention, and `main` may be unwound out of.
@@ -760,6 +768,52 @@ unsafe fn run_owned_main_on_host(
             stack_end,
         )
     }
+}
+
+#[inline(never)]
+unsafe extern "C-unwind" fn run_owned_main_native(
+    main: MainFn,
+    argc: c_int,
+    argv: *mut *mut c_char,
+    envp: *mut *mut c_char,
+) -> c_int {
+    scrub_stack_for_main();
+    #[cfg(target_arch = "x86_64")]
+    let unwind_boundary: usize = {
+        let sp: usize;
+        // SAFETY: reading RSP does not mutate machine state.
+        unsafe {
+            core::arch::asm!(
+                "mov {}, rsp",
+                out(reg) sp,
+                options(nostack, nomem, preserves_flags)
+            );
+        }
+        sp
+    };
+    #[cfg(target_arch = "aarch64")]
+    let unwind_boundary: usize = {
+        let sp: usize;
+        // SAFETY: reading SP does not mutate machine state.
+        unsafe {
+            core::arch::asm!(
+                "mov {}, sp",
+                out(reg) sp,
+                options(nostack, nomem, preserves_flags)
+            );
+        }
+        sp
+    };
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let unwind_boundary: usize = 0;
+
+    crate::pthread_abi::set_current_native_unwind_boundary(unwind_boundary);
+    // SAFETY: C and C-unwind share identical calling conventions; allowing
+    // C-unwind lets pthread_exit and cancellation unwind through main cleanly.
+    let main_unwind: MainUnwindFn = unsafe { std::mem::transmute(main) };
+    let status = unsafe { main_unwind(argc, argv, envp) };
+    crate::pthread_abi::set_current_native_unwind_boundary(0);
+    status
 }
 
 /// Test-only hook for overriding host `__libc_start_main` delegation.
@@ -1239,9 +1293,15 @@ unsafe fn startup_phase0_impl(
     // Hand finalizers to exit before constructors: a constructor may terminate
     // the process itself. Fixtures still run their caller-owned hooks below.
     let finalizers_run_by_exit = publish_environment;
+    let return_to_caller = startup_return_to_caller_for_tests();
     let host_main_runner = if finalizers_run_by_exit {
         crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
-        prepare_owned_host_main_runner()
+        let runner = prepare_owned_host_main_runner();
+        if runner.is_none() && !return_to_caller {
+            let _ = crate::stdlib_abi::register_exit_finalizers();
+            crate::pthread_abi::install_native_last_thread_exit_hook();
+        }
+        runner
     } else {
         None
     };
@@ -1296,9 +1356,13 @@ unsafe fn startup_phase0_impl(
         unsafe {
             run_owned_main_on_host(host, main_fn, normalized_argc as c_int, ubp_av, stack_end)
         }
+    } else if publish_environment && !return_to_caller {
+        // SAFETY: real owned native startup; records main's unwind boundary so
+        // native pthread_exit / cancellation stops cleanly above main.
+        unsafe { run_owned_main_native(main_fn, normalized_argc as c_int, ubp_av, resolved_envp) }
     } else {
         scrub_stack_for_main();
-        // SAFETY: callback + vectors are validated for the native/fixture path.
+        // SAFETY: callback + vectors are validated for the fixture path.
         unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) }
     };
 

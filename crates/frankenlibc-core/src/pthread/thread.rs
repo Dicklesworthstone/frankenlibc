@@ -73,6 +73,52 @@ pub const THREAD_DETACHED: u32 = 3;
 /// Thread state: joined — return value consumed, resources freed.
 pub const THREAD_JOINED: u32 = 4;
 
+/// Count of live native threads in this thread group (starts at `1` for the
+/// initial process thread, matching NPTL's `__nptl_nthreads`).
+static LIVE_NATIVE_THREADS: AtomicUsize = AtomicUsize::new(1);
+
+/// Optional ABI callback invoked when the last live native thread exits via
+/// `pthread_exit` or cancellation, running POSIX `exit(0)` semantics.
+pub type LastThreadExitHook = unsafe extern "C" fn();
+static LAST_THREAD_EXIT_HOOK: AtomicUsize = AtomicUsize::new(0);
+
+/// Install the ABI last-thread `exit(0)` callback for real process startups.
+pub fn set_last_thread_exit_hook(hook: LastThreadExitHook) {
+    LAST_THREAD_EXIT_HOOK.store(hook as usize, Ordering::Release);
+}
+
+/// Reset live native thread count to `1` in a freshly forked child process.
+pub fn reset_live_native_threads_after_fork() {
+    LIVE_NATIVE_THREADS.store(1, Ordering::Release);
+}
+
+fn decrement_live_native_threads() -> bool {
+    LIVE_NATIVE_THREADS
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            Some(n.saturating_sub(1))
+        })
+        .unwrap_or(0)
+        == 1
+}
+
+/// Decrement the live native thread count for an exiting thread and invoke the
+/// process `exit(0)` hook if this thread was the last live native thread.
+///
+/// # Safety
+///
+/// Must be called at most once by an exiting native thread (or `main` exiting
+/// via `pthread_exit` / cancellation) while its stack is still mapped.
+pub unsafe fn maybe_exit_process_as_last_native_thread() {
+    if decrement_live_native_threads() {
+        let raw = LAST_THREAD_EXIT_HOOK.load(Ordering::Acquire);
+        if raw != 0 {
+            // SAFETY: `set_last_thread_exit_hook` stores a valid `LastThreadExitHook`.
+            let hook: LastThreadExitHook = unsafe { core::mem::transmute(raw) };
+            unsafe { hook() };
+        }
+    }
+}
+
 /// Clone flags for creating a POSIX thread.
 ///
 /// Shares: virtual memory, filesystem info, file descriptors, signal handlers,
@@ -465,11 +511,17 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
 #[allow(unsafe_code)]
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
+    let _ = syscall::disarm_native_cancel_syscall(tid);
     super::tls::teardown_native_thread_tls(tid);
 
     // SAFETY: `handle_ptr` is the current thread's live handle. The return
     // value becomes visible only after the FINISHED/DETACHED synchronization.
     unsafe { *(*handle_ptr).retval.get() = retval };
+
+    // POSIX: when the last remaining thread in the process terminates via
+    // pthread_exit/cancellation (or returns after main exited via pthread_exit),
+    // terminate the process as if by exit(0) before unmapping this thread's stack.
+    unsafe { maybe_exit_process_as_last_native_thread() };
 
     let handle = unsafe { &*handle_ptr };
     loop {
@@ -892,6 +944,7 @@ pub unsafe fn create_thread_with_startup(
     // The child shares this thread's TLS (no CLONE_SETTLS below), so a
     // TLS-cached tid would answer with ours.
     super::tls::disable_tid_cache();
+    LIVE_NATIVE_THREADS.fetch_add(1, Ordering::AcqRel);
 
     // Execute clone.
     // SAFETY: All pointers are valid. child_sp is a properly prepared stack.
@@ -928,6 +981,7 @@ pub unsafe fn create_thread_with_startup(
             match wait_for_startup(handle_ptr) {
                 Ok(()) => Ok(handle_ptr),
                 Err(error) => {
+                    let _ = decrement_live_native_threads();
                     // SAFETY: the failed child never entered application code
                     // and this handle has not escaped. join waits for the
                     // kernel to clear tid before freeing its owned storage.
@@ -937,6 +991,7 @@ pub unsafe fn create_thread_with_startup(
             }
         }
         Err(errno) => {
+            let _ = decrement_live_native_threads();
             // Clone failed — clean up.
             // SAFETY: handle_ptr was just created via Box::into_raw.
             unsafe { drop(Box::from_raw(handle_ptr)) };
@@ -1281,15 +1336,19 @@ pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
 /// its handle. The identity table retires requests before handle reclamation.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn request_cancellation(handle_address: usize) -> bool {
+    request_cancellation_with_info(handle_address).is_some()
+}
+
+/// Request cooperative cancellation of a live native thread and return its
+/// `(tid, cancel_flags)` snapshot observed in `SeqCst` order.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn request_cancellation_with_info(handle_address: usize) -> Option<(i32, u32)> {
     if !super::tls::native_threads_may_exist() {
-        return false;
+        return None;
     }
-    let Some(values_address) =
-        handle_address.checked_add(core::mem::offset_of!(ThreadHandle, tls_values))
-    else {
-        return false;
-    };
-    super::tls::request_thread_cancellation(values_address)
+    let values_address =
+        handle_address.checked_add(core::mem::offset_of!(ThreadHandle, tls_values))?;
+    super::tls::request_thread_cancellation_with_info(values_address)
 }
 
 /// Wait descriptor for the calling native thread while cancellation is enabled.

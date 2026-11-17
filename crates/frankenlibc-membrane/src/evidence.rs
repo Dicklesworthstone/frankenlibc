@@ -234,21 +234,35 @@ thread_local! {
 pub fn next_stdio_trace_id() -> String {
     let timestamp = current_unix_ns();
     let pid = u64::from(std::process::id());
-    STDIO_TRACE_STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        state.next_local_seq = state.next_local_seq.saturating_add(1);
+    if !crate::tls_cache::compiler_tls_disabled()
+        && let Ok(Some(id)) = STDIO_TRACE_STATE.try_with(|state| {
+            let mut state = state.try_borrow_mut().ok()?;
+            state.next_local_seq = state.next_local_seq.saturating_add(1);
 
-        let mut bytes = [0u8; 16];
-        let hi = timestamp ^ pid.rotate_left(17) ^ state.stream_seed.rotate_left(33);
-        let lo = state.stream_seed.rotate_left(7) ^ state.next_local_seq ^ timestamp.rotate_left(9);
+            let mut bytes = [0u8; 16];
+            let hi = timestamp ^ pid.rotate_left(17) ^ state.stream_seed.rotate_left(33);
+            let lo =
+                state.stream_seed.rotate_left(7) ^ state.next_local_seq ^ timestamp.rotate_left(9);
 
-        bytes[..8].copy_from_slice(&hi.to_be_bytes());
-        bytes[8..].copy_from_slice(&lo.to_be_bytes());
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+            bytes[..8].copy_from_slice(&hi.to_be_bytes());
+            bytes[8..].copy_from_slice(&lo.to_be_bytes());
+            bytes[6] = (bytes[6] & 0x0f) | 0x40;
+            bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
-        format_uuid_bytes(bytes)
-    })
+            Some(format_uuid_bytes(bytes))
+        })
+    {
+        return id;
+    }
+    let fallback_seq = NEXT_TRACE_STREAM_SEED.fetch_add(1, Ordering::Relaxed);
+    let mut bytes = [0u8; 16];
+    let hi = timestamp ^ pid.rotate_left(17) ^ fallback_seq.rotate_left(33);
+    let lo = fallback_seq.rotate_left(7) ^ timestamp.rotate_left(9);
+    bytes[..8].copy_from_slice(&hi.to_be_bytes());
+    bytes[8..].copy_from_slice(&lo.to_be_bytes());
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format_uuid_bytes(bytes)
 }
 
 /// Serialize a row into a single JSONL line without a trailing newline.

@@ -915,7 +915,10 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // 1 Relaxed store for FRANKENLIBC_RUNTIME_MATH=off synchronization; neither
         // publishes auxiliary memory, while slot/header/canary reads remain
         // synchronized by SHARD_EPOCHS Acquire/Release + shard lock.
-        expected_sites: 13,
+        // 13 -> 15 (bd-rc0923-epic-eeuy4f.24): NATIVE_THREAD_COMPILER_TLS_DISABLED
+        // adds 1 Release store (before clone) + 1 Relaxed load so native threads
+        // sharing a TCB bypass compiler-TLS validation-cache borrows.
+        expected_sites: 15,
         stop_at_cfg_test: false,
         optional: false,
     },
