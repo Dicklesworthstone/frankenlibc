@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.1.1",
-  "source_commit": "2ad4ce6720fecb5e869235c73e02e294ad7d35d0",
-  "generated_at_utc": "2026-11-03T04:21:32Z",
+  "source_commit": "current",
+  "generated_at_utc": "2026-11-17T20:30:00Z",
   "purpose": "Inventory every declared export as an explicit semantic unknown, with representative source-observed limitations retained as obligations. Inventory completeness is not semantic review, runtime execution, dynamic-symbol availability or replacement readiness.",
   "source_artifacts": {
     "seed_overlay": "tests/conformance/support_semantic_overlay.v1.json",
@@ -58,7 +58,7 @@
       ],
       "module": "frankenlibc-abi::pthread_abi",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 11403,
+      "source_line": 11460,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __pthread_register_cancel(",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -619,25 +619,25 @@
         }
       }
     },
-    "source_tree_sha256": "cacf4ab3b75ba096d1f76db6ecca1ff02270e152a3904d894393d47d1475546d",
-    "version_script_sha256": "295ab0a4c499c2f1dc601809646c79a6b872635c4d61a79d796938c4abb0d78d",
+    "source_tree_sha256": "38a2fde6c4ef35347599dc6a8c70e3ed82b89c092390f520226c9c605e24eddb",
+    "version_script_sha256": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
     "support_rows_sha256": "3988f4e6e54c7c886be2edd0b062197a5f0d78dd5c49505c5e7153155137554e",
-    "contract_rows_sha256": "b1b5625da639cbc62f0c7aa8ceef2428ad15cb6bc8e7cf20de4ed0a282f12f32",
+    "contract_rows_sha256": "16bb8260d8bb3887826613f9bf28155a25f93de412a8e1a9efca55ec326d1b9c",
     "summary": {
-      "declared_symbol_count": 4730,
-      "raw_source_symbol_count": 4725,
+      "declared_symbol_count": 4731,
+      "raw_source_symbol_count": 4726,
       "profile_source_symbol_counts": {
-        "interpose-release-linux-x86_64": 4701,
-        "standalone-release-linux-x86_64": 4704
+        "interpose-release-linux-x86_64": 4702,
+        "standalone-release-linux-x86_64": 4705
       },
       "profile_function_symbol_counts": {
-        "interpose-release-linux-x86_64": 4604,
-        "standalone-release-linux-x86_64": 4605
+        "interpose-release-linux-x86_64": 4605,
+        "standalone-release-linux-x86_64": 4606
       },
-      "version_script_symbol_count": 4235,
+      "version_script_symbol_count": 4237,
       "support_symbol_count": 4119,
-      "group_count": 154,
-      "unknown_semantics_count": 4730,
+      "group_count": 153,
+      "unknown_semantics_count": 4731,
       "full_semantics_count": 0,
       "unqualified_configuration_count": 26
     },
@@ -6005,32 +6005,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-99dc345f8c50530c",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "startup_abi"
-        ],
-        "version_nodes": [],
-        "support_status": "not_listed",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "__frankenlibc_runtime_decision_snapshot"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-9c3af8c029b6eac0",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -8524,7 +8498,9 @@
           "__frankenlibc_is_feedback_enabled",
           "__frankenlibc_is_runtime_math_enabled",
           "__frankenlibc_is_runtime_ready",
+          "__frankenlibc_runtime_decision_snapshot",
           "__frankenlibc_runtime_phase",
+          "__frankenlibc_runtime_route_counts",
           "getprogname",
           "setprogname"
         ],
