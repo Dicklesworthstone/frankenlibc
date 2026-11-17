@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-17, bound to ABI source `eb513531a`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-17, bound to ABI source `1b6b712f8`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
 Reality snapshot: total_exported=4119, implemented=2464, raw_syscall=408, wraps_host_libc=1247, glibc_call_through=0, stub=0.
 
 Declared replacement level: **L1 — Hardened Interpose**.
@@ -306,7 +306,7 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
               │ crates/frankenlibc-harness  (44 modules, ~34 kLOC)      │
               │ tests/conformance/  (282 completion-contract JSONs +    │
               │                     69 CLI-contract manifests)         │
-              │ scripts/  (733 files under scripts/: gates, smoke)     │
+              │ scripts/  (734 files under scripts/: gates, smoke)     │
               │ docs/proofs/  (9 proof notes; obligation mappings)      │
               │ no machine-checked proof artifacts committed yet         │
               └────────────────────────────────────────────────────────┘
@@ -703,7 +703,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,128 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,192 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -1376,7 +1376,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 ### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (1,229 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
+`crates/frankenlibc-membrane/build.rs` (1,232 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
 
 | Task label | What the build actually checks |
 |---|---|
@@ -2966,7 +2966,7 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,229 lines at this snapshot. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,232 lines at this snapshot. It performs three jobs at compile time:
 
 ### Job 1: Supplied SOS-Task Consistency
 
@@ -3967,10 +3967,10 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,872 native/direct-syscall rows (69.7%), 1,247 host-backed wrapper rows (30.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,904 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 248,086 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,029 lines |
-| `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,994 lines including generated codec tables |
+| Tracked Rust files in `crates/` | 2,905 |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 248,688 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,103 lines |
+| `crates/frankenlibc-core/src/` | 204 Rust files, 1,175,986 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
@@ -3979,9 +3979,9 @@ Selected project health snapshot:
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Top-level shell/scripts files | 733 files under `scripts/` |
+| Top-level shell/scripts files | 734 files under `scripts/` |
 | GNU ld version script | 4,755 lines, `GLIBC_2.2.5` |
-| Membrane `build.rs` | 1,229 lines (exact rational SOS polynomial verification + atomic-site inventory) |
+| Membrane `build.rs` | 1,232 lines (exact rational SOS polynomial verification + atomic-site inventory) |
 | Curated `LD_PRELOAD` snapshot | 360 pass / 0 fail / 4 optional skip / 0 xfail (`run 20261117T074800Z-fec80ccf6`, source `fec80ccf…`) |
 
 ---

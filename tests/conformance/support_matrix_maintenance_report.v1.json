@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-17T20:21:51Z",
-  "source_commit": "eb513531a51384e5dd66bb5a0896a158bfe8dc47",
-  "source_generated_at_utc": "2026-11-17T20:20:00Z",
-  "newest_abi_commit": "eb513531a51384e5dd66bb5a0896a158bfe8dc47",
-  "newest_abi_commit_time": "2026-11-17T15:18:38-05:00",
+  "generated_at": "2026-11-17T23:37:40Z",
+  "source_commit": "1b6b712f88cadb17a25759a4cbe3a64f6de3f94a",
+  "source_generated_at_utc": "2026-11-17T23:40:00Z",
+  "newest_abi_commit": "1b6b712f88cadb17a25759a4cbe3a64f6de3f94a",
+  "newest_abi_commit_time": "2026-11-17T18:30:06-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -64,8 +64,8 @@
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
     "promotion_proof_symbol_count": 256,
-    "promotion_triage_manifest_path": null,
-    "promotion_triage_manifest_loaded": false,
+    "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
+    "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
       "Implemented": 0,
@@ -101,7 +101,7 @@
       "status": "pass",
       "implemented_promotion_delta": 0,
       "violation_count": 0,
-      "promotion_triage_manifest_loaded": false
+      "promotion_triage_manifest_loaded": true
     },
     "downgrade_only_evidence": {
       "status": "pass",
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "12742012b0ed9ac62740aea5d7bc04c193cc29d006c11338589e44737aecec01",
+        "artifact_sha256": "c86f369487a0e3ea0fc124979d982eb9634ac37c3274f8d9e53b6ad758abdfe2",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 18,
-        "source_tree_sha256": "38a2fde6c4ef35347599dc6a8c70e3ed82b89c092390f520226c9c605e24eddb"
+        "source_tree_sha256": "e9d92bbbca6131c3ab5f1d39f9ec13d2b23f3feafbae62633d28eb2521930823"
       }
     },
     "summary": {
@@ -2432,7 +2432,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1797",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1861",
             "host_symbols": [
               "__cxa_thread_atexit_impl"
             ],
@@ -2441,7 +2441,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "startup_abi:__cxa_thread_atexit_impl:1797:001"
+              "startup_abi:__cxa_thread_atexit_impl:1861:001"
             ]
           }
         }
@@ -5262,7 +5262,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1359",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1423",
             "host_symbols": [
               "__libc_start_main"
             ],
@@ -5272,10 +5272,10 @@
             ],
             "callsite_count": 4,
             "callsite_ids": [
-              "startup_abi:__libc_start_main:1359:001",
-              "startup_abi:__libc_start_main:1359:002",
-              "startup_abi:__libc_start_main:1359:003",
-              "startup_abi:__libc_start_main:1359:004"
+              "startup_abi:__libc_start_main:1423:001",
+              "startup_abi:__libc_start_main:1423:002",
+              "startup_abi:__libc_start_main:1423:003",
+              "startup_abi:__libc_start_main:1423:004"
             ]
           }
         }
@@ -6545,7 +6545,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11460",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11651",
             "host_symbols": [
               "__pthread_register_cancel"
             ],
@@ -6554,7 +6554,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_register_cancel:11460:001"
+              "pthread_abi:__pthread_register_cancel:11651:001"
             ]
           }
         }
@@ -6570,7 +6570,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11489",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11680",
             "host_symbols": [
               "__pthread_register_cancel_defer"
             ],
@@ -6579,7 +6579,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_register_cancel_defer:11489:001"
+              "pthread_abi:__pthread_register_cancel_defer:11680:001"
             ]
           }
         }
@@ -6683,7 +6683,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11475",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11666",
             "host_symbols": [
               "__pthread_unregister_cancel"
             ],
@@ -6692,7 +6692,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unregister_cancel:11475:001"
+              "pthread_abi:__pthread_unregister_cancel:11666:001"
             ]
           }
         }
@@ -6708,7 +6708,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11503",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11694",
             "host_symbols": [
               "__pthread_unregister_cancel_restore"
             ],
@@ -6717,7 +6717,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unregister_cancel_restore:11503:001"
+              "pthread_abi:__pthread_unregister_cancel_restore:11694:001"
             ]
           }
         }
@@ -6733,7 +6733,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11551",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11742",
             "host_symbols": [
               "__pthread_unwind_next"
             ],
@@ -6742,7 +6742,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unwind_next:11551:001"
+              "pthread_abi:__pthread_unwind_next:11742:001"
             ]
           }
         }
@@ -12328,7 +12328,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8113",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8227",
             "host_symbols": [
               "calloc"
             ],
@@ -12337,7 +12337,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:calloc:8113:001"
+              "malloc_abi:calloc:8227:001"
             ]
           }
         }
@@ -21114,7 +21114,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7679",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7793",
             "host_symbols": [
               "free"
             ],
@@ -21123,7 +21123,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:free:7679:001"
+              "malloc_abi:free:7793:001"
             ]
           }
         }
@@ -28424,7 +28424,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7416",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7530",
             "host_symbols": [
               "malloc"
             ],
@@ -28433,7 +28433,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:malloc:7416:001"
+              "malloc_abi:malloc:7530:001"
             ]
           }
         }
@@ -32676,7 +32676,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6699",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6802",
             "host_symbols": [
               "pthread_cancel"
             ],
@@ -32685,7 +32685,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_cancel:6699:001"
+              "pthread_abi:pthread_cancel:6802:001"
             ]
           }
         }
@@ -32701,7 +32701,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10373",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10558",
             "host_symbols": [
               "pthread_clockjoin_np"
             ],
@@ -32710,7 +32710,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_clockjoin_np:10373:001"
+              "pthread_abi:pthread_clockjoin_np:10558:001"
             ]
           }
         }
@@ -32869,7 +32869,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4220",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4295",
             "host_symbols": [
               "pthread_create"
             ],
@@ -32878,7 +32878,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_create:4220:001"
+              "pthread_abi:pthread_create:4295:001"
             ]
           }
         }
@@ -32894,7 +32894,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4308",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4383",
             "host_symbols": [
               "pthread_detach"
             ],
@@ -32903,7 +32903,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_detach:4308:001"
+              "pthread_abi:pthread_detach:4383:001"
             ]
           }
         }
@@ -32930,7 +32930,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10597",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10782",
             "host_symbols": [
               "pthread_exit"
             ],
@@ -32939,7 +32939,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_exit:10597:001"
+              "pthread_abi:pthread_exit:10782:001"
             ]
           }
         }
@@ -33054,7 +33054,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4280",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4355",
             "host_symbols": [
               "pthread_join"
             ],
@@ -33063,7 +33063,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_join:4280:001"
+              "pthread_abi:pthread_join:4355:001"
             ]
           }
         }
@@ -33651,7 +33651,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6756",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6879",
             "host_symbols": [
               "pthread_setcancelstate"
             ],
@@ -33660,7 +33660,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_setcancelstate:6756:001"
+              "pthread_abi:pthread_setcancelstate:6879:001"
             ]
           }
         }
@@ -33676,7 +33676,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6796",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6920",
             "host_symbols": [
               "pthread_setcanceltype"
             ],
@@ -33685,7 +33685,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_setcanceltype:6796:001"
+              "pthread_abi:pthread_setcanceltype:6920:001"
             ]
           }
         }
@@ -33833,7 +33833,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8011",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8196",
             "host_symbols": [
               "pthread_testcancel"
             ],
@@ -33842,7 +33842,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_testcancel:8011:001"
+              "pthread_abi:pthread_testcancel:8196:001"
             ]
           }
         }
@@ -33858,7 +33858,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10263",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10448",
             "host_symbols": [
               "pthread_timedjoin_np"
             ],
@@ -33867,7 +33867,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_timedjoin_np:10263:001"
+              "pthread_abi:pthread_timedjoin_np:10448:001"
             ]
           }
         }
@@ -33883,7 +33883,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10308",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10493",
             "host_symbols": [
               "pthread_tryjoin_np"
             ],
@@ -33892,7 +33892,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_tryjoin_np:10308:001"
+              "pthread_abi:pthread_tryjoin_np:10493:001"
             ]
           }
         }
@@ -34678,7 +34678,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8221",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8335",
             "host_symbols": [
               "realloc"
             ],
@@ -34687,7 +34687,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:realloc:8221:001"
+              "malloc_abi:realloc:8335:001"
             ]
           }
         }
@@ -46008,7 +46008,7 @@
   "fixture_coverage_ratchet": {
     "schema_version": "fixture_coverage_ratchet.v1",
     "bead": "bd-8t1chf",
-    "promotion_triage_manifest_loaded": false,
+    "promotion_triage_manifest_loaded": true,
     "policy": {
       "high_impact_modules": [
         "math_abi",
