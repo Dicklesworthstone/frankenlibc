@@ -9,7 +9,7 @@
     "startup_tls_matrix_evidence_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "generated_at_utc": "2026-11-17T07:55:00Z",
+  "generated_at_utc": "2026-11-17T20:20:00Z",
   "purpose": "Define the L1 CRT/startup/TLS/init/fini/destructor proof matrix so hardened-interpose claims cannot advance from symbol counts or broad smoke evidence alone.",
   "inputs": {
     "replacement_levels": "tests/conformance/replacement_levels.json",

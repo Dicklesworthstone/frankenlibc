@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-17, bound to ABI source `fec80ccf6`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-17, bound to ABI source `eb513531a`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
 Reality snapshot: total_exported=4119, implemented=2464, raw_syscall=408, wraps_host_libc=1247, glibc_call_through=0, stub=0.
 
 Declared replacement level: **L1 — Hardened Interpose**.
@@ -262,8 +262,8 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
                                             ▼
               ┌────────────────────────────────────────────────────────┐
               │ glibc-shaped extern "C" ABI                            │
-              │ crates/frankenlibc-abi  (125 Rust files, ~246 kLOC)    │
-              │ libc.map version script  (4,753 lines, GLIBC_2.2.5)    │
+              │ crates/frankenlibc-abi  (125 Rust files, ~248 kLOC)    │
+              │ libc.map version script  (4,755 lines, GLIBC_2.2.5)    │
               └────────────────────────────────────────────────────────┘
                                             │
                                             ▼
@@ -276,7 +276,7 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
                                             ▼
               ┌────────────────────────────────────────────────────────┐
               │ Transparent Safety Membrane                            │
-              │ crates/frankenlibc-membrane  (113 Rust files, ~86 kLOC)│
+              │ crates/frankenlibc-membrane  (113 Rust files, ~87 kLOC)│
               │                                                        │
               │ null → tls_cache → bloom → arena → fingerprint         │
               │      → canary → bounds → policy → decision             │
@@ -306,7 +306,7 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
               │ crates/frankenlibc-harness  (44 modules, ~34 kLOC)      │
               │ tests/conformance/  (282 completion-contract JSONs +    │
               │                     69 CLI-contract manifests)         │
-              │ scripts/  (732 files under scripts/: gates, smoke)     │
+              │ scripts/  (733 files under scripts/: gates, smoke)     │
               │ docs/proofs/  (9 proof notes; obligation mappings)      │
               │ no machine-checked proof artifacts committed yet         │
               └────────────────────────────────────────────────────────┘
@@ -316,8 +316,8 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
 
 | Crate | Purpose | Approx size |
 |---|---|---:|
-| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 125 Rust source files, ~243 kLOC |
-| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~86 kLOC |
+| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 125 Rust source files, ~248 kLOC |
+| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~87 kLOC |
 | `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 204 Rust source files, ~1.17 MLOC including generated codec tables |
 | `frankenlibc-harness` | Conformance CLI, fixture capture/verify, reports, evidence tooling | 44 files, ~34 kLOC |
 | `frankenlibc-bench` | Criterion benches | 1 module, ~25 kLOC |
@@ -600,7 +600,7 @@ Full POSIX TLS key lifecycle (`pthread_key_create`, `pthread_setspecific`, `pthr
 
 For `AF_UNSPEC` `getaddrinfo`, the module bridge tries `gethostbyname4_r` first (`nss_module.rs`), retaining mixed address families, canonical name, and IPv6 scope IDs; family-specific (`AF_INET`/`AF_INET6`) and `gethostbyname*` lookups try `gethostbyname3_r`, then `gethostbyname2_r`, then the IPv4-only `gethostbyname_r` when newer symbols are absent. Reverse lookup tries `gethostbyaddr2_r`, then `gethostbyaddr_r`. It copies names, aliases, tuples, and full address lists before releasing module scratch storage, grows that storage on ERANGE, and keeps the separate canonical-name output for `AI_CANONNAME`. A negative answer from an implemented entry point is passed to the source policy. The internal `_nss_files_*` exports remain files-only.
 
-This is L0 interpose functionality: installed modules use the host dynamic loader. Standalone builds report module sources unavailable, and `bd-rc0923-epic-eeuy4f.19` remains open for the remaining NSS scope (standalone module loading and concurrency/cache-coherence closure).
+This is L1 interpose functionality: installed modules use the host dynamic loader, while standalone builds report external module sources unavailable until standalone `dlopen`/NSS module loading lands (`bd-rc0923-epic-eeuy4f.19` resolved the interpose `hosts:` policy and `nss_unavailable_sources` accounting).
 
 ### What's Live
 
@@ -703,7 +703,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,114 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,128 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -1376,7 +1376,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 ### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (1,223 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
+`crates/frankenlibc-membrane/build.rs` (1,229 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
 
 | Task label | What the build actually checks |
 |---|---|
@@ -1715,7 +1715,7 @@ Limitations of interposition:
 - `LD_PRELOAD` is ignored for setuid/setgid binaries (kernel security policy)
 - The interpose library must export symbols with the correct version tags
 
-The version script (`crates/frankenlibc-abi/version_scripts/libc.map`, 4,753 lines) defines the full `GLIBC_2.2.5`+ symbol-version hierarchy used when linking `libfrankenlibc_abi.a` or standalone replacement targets. Default `cargo build -p frankenlibc-abi --release` runs `crates/frankenlibc-abi/build_elf.rs`, which supplies `version_scripts/fromfp.map` for the C23 `fromfp` version nodes on Linux x86_64 interpose builds while specific symbols carry explicit `.symver` assembly bindings.
+The version script (`crates/frankenlibc-abi/version_scripts/libc.map`, 4,755 lines) defines the full `GLIBC_2.2.5`+ symbol-version hierarchy used when linking `libfrankenlibc_abi.a` or standalone replacement targets. Default `cargo build -p frankenlibc-abi --release` runs `crates/frankenlibc-abi/build_elf.rs`, which supplies `version_scripts/fromfp.map` for the C23 `fromfp` version nodes on Linux x86_64 interpose builds while specific symbols carry explicit `.symver` assembly bindings.
 
 ---
 
@@ -2966,7 +2966,7 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,223 lines at this snapshot. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,229 lines at this snapshot. It performs three jobs at compile time:
 
 ### Job 1: Supplied SOS-Task Consistency
 
@@ -3203,7 +3203,7 @@ Wrong ordering here can surface only under heavy multi-thread load and resist re
 
 Linux dynamic linking is *versioned*. A binary built against glibc-2.34 expects `__libc_start_main@@GLIBC_2.34`; a binary built against glibc-2.17 expects `__libc_start_main@@GLIBC_2.17`. The two have different argument conventions.
 
-FrankenLibC's `version_scripts/libc.map` (4,753 lines) is a GNU ld version script that maps symbols to versions. The actual structure on disk:
+FrankenLibC's `version_scripts/libc.map` (4,755 lines) is a GNU ld version script that maps symbols to versions. The actual structure on disk:
 
 ```
 GLIBC_2.2.5 {
@@ -3473,7 +3473,7 @@ Edition 2024 also brings `unsafe extern "C"` defaults (which make the FFI bounda
 - Version-symbol resolution for compatibility shims that need `@@GLIBC_x.y` precision
 - One-time bootstrap discovery of host-loader state for the phase-0 startup envelope
 
-`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,247 `WrapsHostLibc` taxonomy rows record host delegation in the interpose artifact, verified against host-delegation census v17 (`status_invalid = 0`).
+`host_resolve.rs` centralizes much of the bootstrap/versioned host lookup logic, but its helpers are not themselves universally membrane-gated or recorded in the runtime evidence ledger. Callers must be audited individually; the 1,247 `WrapsHostLibc` taxonomy rows record host delegation in the interpose artifact, verified against host-delegation census v18 (`status_invalid = 0`).
 
 This is the practical difference between the L1 interpose artifact and the future L2/L3 replace artifact: the replace artifact removes `host_resolve.rs` entirely, since by definition no host glibc is loaded.
 
@@ -3691,7 +3691,7 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
      for `frankenlibc-abi`; workspace-wide LTO and strip remain disabled
      by default.
 8. Native packaging and standalone checks that require the full
-   4,753-line `version_scripts/libc.map` hierarchy link
+   4,755-line `version_scripts/libc.map` hierarchy link
    `libfrankenlibc_abi.a` with `cc -Wl,--version-script=libc.map`
    (see `scripts/check_setjmp_native.sh`).
 ```
@@ -3967,9 +3967,9 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,872 native/direct-syscall rows (69.7%), 1,247 host-backed wrapper rows (30.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,902 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 246,424 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 86,661 lines |
+| Tracked Rust files in `crates/` | 2,904 |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 248,086 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,029 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,994 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
@@ -3979,9 +3979,9 @@ Selected project health snapshot:
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Top-level shell/scripts files | 732 files under `scripts/` |
-| GNU ld version script | 4,753 lines, `GLIBC_2.2.5` |
-| Membrane `build.rs` | 1,223 lines (exact rational SOS polynomial verification + atomic-site inventory) |
+| Top-level shell/scripts files | 733 files under `scripts/` |
+| GNU ld version script | 4,755 lines, `GLIBC_2.2.5` |
+| Membrane `build.rs` | 1,229 lines (exact rational SOS polynomial verification + atomic-site inventory) |
 | Curated `LD_PRELOAD` snapshot | 360 pass / 0 fail / 4 optional skip / 0 xfail (`run 20261117T074800Z-fec80ccf6`, source `fec80ccf…`) |
 
 ---
@@ -4027,7 +4027,7 @@ Selected project health snapshot:
 | `crates/frankenlibc-core/` | Safe semantic kernels |
 | `crates/frankenlibc-harness/` | Verification and evidence tooling |
 | `crates/frankenlibc-membrane/build.rs` | Exact rational SOS polynomial checks + atomic-site inventory |
-| `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,753 lines) |
+| `crates/frankenlibc-abi/version_scripts/libc.map` | GNU ld version script (`GLIBC_2.2.5`, 4,755 lines) |
 | `tests/conformance/` | Canonical reports, fixtures, completion contracts, CLI contracts |
 | `tests/conformance/fixtures/` | Host-libc fixture corpus |
 | `tests/integration/` | C integration fixtures linked against `libfrankenlibc_abi.so` |

@@ -3,8 +3,8 @@
   "manifest_id": "replacement-claim-doc-audit",
   "bead": "bd-5unc9",
   "owner_bead": "bd-zyck1",
-  "generated_utc": "2026-11-17T07:55:00Z",
-  "source_commit": "fec80ccf63466a06a6459bd38dd122a4444fbeca",
+  "generated_utc": "2026-11-17T20:20:00Z",
+  "source_commit": "eb513531a51384e5dd66bb5a0896a158bfe8dc47",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -61,7 +61,7 @@
       "phrase_id": "drop-in-replacement",
       "phrase": "drop-in replacement",
       "phrase_kind": "case_insensitive_substring_unless_disclaimed",
-      "disclaimer_anchors": ["?", "No.", "not yet", "remains planned"],
+      "disclaimer_anchors": ["?", "No.", "not yet", "remains planned", "not established properties", "not an established property"],
       "rationale": "Marketing copy for full glibc parity; allowed only inside an explicit disclaimer / question form so the FAQ entry 'Is FrankenLibC a drop-in replacement for glibc today? No.' is preserved as the canonical disclaimer."
     },
     {

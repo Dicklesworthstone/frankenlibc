@@ -111,49 +111,49 @@
     {
       "kind": "levels_gate_status_check",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 209,
+      "line": 261,
       "anchor": "status_check"
     },
     {
       "kind": "levels_gate_monotonicity_check",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 262,
+      "line": 314,
       "anchor": "mono_check"
     },
     {
       "kind": "levels_gate_claim_drift_check",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 313,
+      "line": 365,
       "anchor": "claim_check"
     },
     {
       "kind": "levels_gate_l1_crt_check",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 419,
+      "line": 488,
       "anchor": "l1_crt_check"
     },
     {
       "kind": "levels_gate_artifact_report",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 623,
+      "line": 698,
       "anchor": "artifact_output"
     },
     {
       "kind": "levels_gate_report_schema",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 1160,
+      "line": 1425,
       "anchor": "\"gate_id\": \"replacement_levels_l1_gate\""
     },
     {
       "kind": "levels_gate_log_rows",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 1197,
+      "line": 1459,
       "anchor": "log_rows"
     },
     {
       "kind": "levels_gate_pass_summary",
       "path": "scripts/check_replacement_levels.sh",
-      "line": 1271,
+      "line": 1533,
       "anchor": "Structured L1 objective gate artifacts refreshed"
     },
     {
@@ -313,7 +313,7 @@
       "claim_status": "replacement_callthrough_blockers_cleared"
     },
     "replacement_level_dashboard": {
-      "replacement_level": "L0",
+      "replacement_level": "L1",
       "claim_status": "claim_blocked",
       "first_failing_blocker": "standalone_artifact_missing"
     }

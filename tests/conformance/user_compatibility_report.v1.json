@@ -50,9 +50,9 @@
     "failure_signature"
   ],
   "environment": {
-    "environment_id": "host-l0-preload-current",
+    "environment_id": "host-l1-preload-current",
     "runtime_modes": ["strict", "hardened"],
-    "replacement_level": "L0"
+    "replacement_level": "L1"
   },
   "support_status_rules": {
     "current_level_supported_if": [

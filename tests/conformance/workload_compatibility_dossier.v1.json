@@ -75,7 +75,7 @@
     "dossier_missing_input_artifact"
   ],
   "ready_policy": {
-    "replacement_level": "L0",
+    "replacement_level": "L1",
     "strict_required_status": "pass",
     "hardened_required_status": "pass",
     "freshness_required_state": "current",
