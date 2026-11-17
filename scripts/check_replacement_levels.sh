@@ -541,13 +541,19 @@ def full_git_commit(value):
 
 def git_head():
     try:
-        return subprocess.check_output(
+        head = subprocess.check_output(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
+        if full_git_commit(head):
+            return head
     except Exception:
-        return "unknown"
+        pass
+    rch_source = os.environ.get("RCH_BUILD_SOURCE", "").strip().removesuffix("-dirty")
+    if full_git_commit(rch_source):
+        return rch_source
+    return "unknown"
 
 
 current_head = git_head()
@@ -764,13 +770,19 @@ def full_git_commit(value):
 
 def git_source_commit() -> str:
     try:
-        return subprocess.check_output(
+        head = subprocess.check_output(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
+        if full_git_commit(head):
+            return head
     except Exception:
-        return "unknown"
+        pass
+    rch_source = os.environ.get("RCH_BUILD_SOURCE", "").strip().removesuffix("-dirty")
+    if full_git_commit(rch_source):
+        return rch_source
+    return "unknown"
 
 
 current_git_head = git_source_commit()

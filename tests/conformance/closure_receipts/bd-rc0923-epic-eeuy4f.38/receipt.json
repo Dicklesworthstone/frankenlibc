@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.38",
+  "contract": {
+    "behavior": "Support matrix maintenance gate 100% valid across 4119 symbols with zero Stubs, cross-module census invalidation, and conservative unproven WrapsHostLibc retention",
+    "acceptance_sha256": "17be70fbb37ec7d54450081747f92df2ff73fb131448f530cf47873f7383d94d",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "scripts/generate_support_matrix_maintenance.py",
+      "support_matrix.json",
+      "tests/conformance/support_matrix_maintenance_report.v1.json"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs"
+    ],
+    "source": {
+      "commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
+      "files": {
+        ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+        "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+        "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+        "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs": "0eab9750164d3419f3de4b20cc763495b510daaa60d3c46bd4adfbfd37fac67f",
+        "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+        "scripts/generate_support_matrix_maintenance.py": "c6de95f6f01848c26274f4024c6df047bef0aa4c873879c7b0208f50d3b77111",
+        "support_matrix.json": "5eb1a01826a13b350dd522aa65f4628f590d75e15d4265ae0853c181a7758d13",
+        "tests/conformance/support_matrix_maintenance_report.v1.json": "3303022771893a384c1c6092867d019f6b1fc2b18d4d98b7c6261392974cabb6"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": [
+        "default"
+      ]
+    },
+    "not_before": "2026-10-20T22:14:21.786520Z",
+    "gate": {
+      "command": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "-Zchecksum-freshness",
+        "--locked",
+        "--config",
+        "build.fingerprint=\"content\"",
+        "--config",
+        "profile.test.debug=0",
+        "--config",
+        "profile.test.strip=\"symbols\"",
+        "--target-dir",
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+        "-p",
+        "frankenlibc-harness",
+        "--test",
+        "support_matrix_maintenance_test",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "artifacts": [
+        "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "maintenance_gate_emits_structured_logs_with_required_fields",
+        "maintenance_gate_does_not_rewrite_canonical_report",
+        "maintenance_gate_fails_on_canonical_stable_section_drift",
+        "injected_host_edge_invalidates_implemented_and_unproven_wraps_stays_conservative"
+      ]
+    }
+  },
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "cargo",
+      "test",
+      "-Zchecksum-freshness",
+      "--locked",
+      "--config",
+      "build.fingerprint=\"content\"",
+      "--config",
+      "profile.test.debug=0",
+      "--config",
+      "profile.test.strip=\"symbols\"",
+      "--target-dir",
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+      "-p",
+      "frankenlibc-harness",
+      "--test",
+      "support_matrix_maintenance_test",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T05:19:11.540248+00:00",
+    "finished_at": "2026-11-17T05:19:11.911470+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "179aa3a82285a3f6d0db43ad06aedc0ccdd9fbcfb2446f98d25649ef54d40ad7",
+    "stderr_sha256": "75496f89209bdf2625af9231cd5e7d8717503ee1fab6bcf34befe962d3dd69dc",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T05:19:11.922258+00:00",
+    "finished_at": "2026-11-17T05:23:18.655695+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "8d858f78b2a9e5250b8868ee5048b18106d8dfeafc89798e8c2df462ca364341",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 59
+  },
+  "artifacts": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4": "762b9106713719fd236ef7befc6adb38503ef1d2742e3674171ffbc10869bb85"
+  },
+  "artifact_files": {
+    "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4": "artifact-0"
+  },
+  "source_files": {
+    ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+    "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+    "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+    "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs": "0eab9750164d3419f3de4b20cc763495b510daaa60d3c46bd4adfbfd37fac67f",
+    "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+    "scripts/generate_support_matrix_maintenance.py": "c6de95f6f01848c26274f4024c6df047bef0aa4c873879c7b0208f50d3b77111",
+    "support_matrix.json": "5eb1a01826a13b350dd522aa65f4628f590d75e15d4265ae0853c181a7758d13",
+    "tests/conformance/support_matrix_maintenance_report.v1.json": "3303022771893a384c1c6092867d019f6b1fc2b18d4d98b7c6261392974cabb6"
+  },
+  "executable_sha256": "762b9106713719fd236ef7befc6adb38503ef1d2742e3674171ffbc10869bb85"
+}

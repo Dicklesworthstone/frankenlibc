@@ -1,0 +1,4039 @@
+// support_matrix_maintenance_test.rs — bd-3g4p
+// Integration tests for the automated support matrix maintenance system.
+// Validates: report generation, report schema, status validation coverage,
+// conformance linkage coverage, and module coverage completeness.
+
+use std::path::Path;
+use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn repo_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn load_json(path: &Path) -> serde_json::Value {
+    let content = std::fs::read_to_string(path).expect("failed to read JSON file");
+    serde_json::from_str(&content).expect("invalid JSON file")
+}
+
+fn load_jsonl(path: &Path) -> Vec<serde_json::Value> {
+    let content = std::fs::read_to_string(path).expect("failed to read JSONL file");
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("invalid JSONL line"))
+        .collect()
+}
+
+fn canonical_report_path() -> std::path::PathBuf {
+    repo_root().join("tests/conformance/support_matrix_maintenance_report.v1.json")
+}
+
+fn host_delegation_census_path() -> std::path::PathBuf {
+    repo_root().join("tests/conformance/host_delegation_census.v1.json")
+}
+
+fn unique_generated_report_path(tag: &str) -> std::path::PathBuf {
+    let root = repo_root();
+    let out_dir = root.join("target/conformance");
+    std::fs::create_dir_all(&out_dir).expect("failed to create target/conformance");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after unix epoch")
+        .as_nanos();
+    out_dir.join(format!("{tag}.{}.{}.json", std::process::id(), nanos))
+}
+
+fn generate_maintenance_report(output_path: &Path) -> std::process::Output {
+    let root = repo_root();
+    Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator")
+}
+
+fn shared_generated_maintenance_report() -> &'static serde_json::Value {
+    static REPORT: OnceLock<serde_json::Value> = OnceLock::new();
+    REPORT.get_or_init(|| {
+        let generated_path = unique_generated_report_path("shared_default_maintenance_report");
+        let output = generate_maintenance_report(&generated_path);
+        assert!(
+            output.status.success(),
+            "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        load_json(&generated_path)
+    })
+}
+
+#[test]
+fn maintenance_generator_rejects_uncertain_and_upward_only_evidence() {
+    let root = repo_root();
+    let output = Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "--self-test-downgrade-only",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator self-test");
+    assert!(
+        output.status.success(),
+        "maintenance validator self-test failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Self-test: downgrade-only evidence: 16 cases passed"),
+        "focused malformed/duplicate/prose/non-promotion/stale/missing/mismatch controls did not run:\n{stdout}"
+    );
+}
+
+fn generate_maintenance_report_with_proof_manifest(
+    output_path: &Path,
+    proof_manifest_path: &Path,
+) -> std::process::Output {
+    let root = repo_root();
+    Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+            "--promotion-proof-manifest",
+            proof_manifest_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator")
+}
+
+fn generate_maintenance_report_with_previous_and_triage(
+    output_path: &Path,
+    previous_report_path: &Path,
+    promotion_triage_path: Option<&Path>,
+) -> std::process::Output {
+    let root = repo_root();
+    let mut command = Command::new("python3");
+    command.args([
+        root.join("scripts/generate_support_matrix_maintenance.py")
+            .to_str()
+            .unwrap(),
+        "-o",
+        output_path.to_str().unwrap(),
+        "--previous-report",
+        previous_report_path.to_str().unwrap(),
+    ]);
+    if let Some(path) = promotion_triage_path {
+        command.args(["--promotion-triage-report", path.to_str().unwrap()]);
+    }
+    command
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator")
+}
+
+fn generate_promotion_triage_report() -> std::path::PathBuf {
+    let root = repo_root();
+    let maintenance_path = unique_generated_report_path("promotion_triage_maintenance");
+    let triage_path = unique_generated_report_path("promotion_triage_report");
+    let log_path = unique_generated_report_path("promotion_triage_log");
+    let output = Command::new("bash")
+        .arg(root.join("scripts/check_support_matrix_promotion_triage.sh"))
+        .env(
+            "FRANKENLIBC_PROMOTION_TRIAGE_MAINTENANCE_REPORT",
+            &maintenance_path,
+        )
+        .env("FRANKENLIBC_PROMOTION_TRIAGE_REPORT", &triage_path)
+        .env("FRANKENLIBC_PROMOTION_TRIAGE_LOG", &log_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute promotion triage checker");
+    assert!(
+        output.status.success(),
+        "promotion triage checker failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    triage_path
+}
+
+fn stable_report_sections(report: &serde_json::Value) -> serde_json::Value {
+    let mut stable = serde_json::Map::new();
+    // These are the current-state sections. We intentionally exclude the
+    // generator's baseline-relative transition fields (`generated_at`, `trend`,
+    // `reclassified_symbols`, and parts of `policy_checks`) because they depend
+    // on which prior report is used as the baseline.
+    for key in [
+        "schema_version",
+        "bead",
+        "summary",
+        "coverage_dashboard",
+        "status_distribution",
+        "module_coverage",
+        "symbol_status_map",
+        "status_validation_issues",
+        "unlinked_symbols",
+    ] {
+        stable.insert(
+            key.to_owned(),
+            report
+                .get(key)
+                .expect("report missing stable section")
+                .clone(),
+        );
+    }
+    serde_json::Value::Object(stable)
+}
+
+fn gate_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn support_matrix_symbol_is_implemented(symbol: &str) -> bool {
+    let matrix = load_json(&repo_root().join("support_matrix.json"));
+    matrix["symbols"]
+        .as_array()
+        .and_then(|symbols| {
+            symbols
+                .iter()
+                .find(|row| row["symbol"].as_str() == Some(symbol))
+        })
+        .and_then(|row| row["status"].as_str())
+        == Some("Implemented")
+}
+
+fn run_support_matrix_gate_with_canonical(
+    trace_symbol_events: bool,
+    canonical_override: Option<&Path>,
+) -> std::process::Output {
+    let root = repo_root();
+    let script_path = root.join("scripts/check_support_matrix_maintenance.sh");
+    let mut command = Command::new("bash");
+    command.arg(script_path).current_dir(&root);
+    if trace_symbol_events {
+        command.env("FRANKENLIBC_SYMBOL_GATE_TRACE", "1");
+    } else {
+        command.env_remove("FRANKENLIBC_SYMBOL_GATE_TRACE");
+    }
+    command.env_remove("FRANKENLIBC_PROMOTION_TRIAGE_OUT_DIR");
+    command.env_remove("FRANKENLIBC_PROMOTION_TRIAGE_MAINTENANCE_REPORT");
+    command.env_remove("FRANKENLIBC_PROMOTION_TRIAGE_REPORT");
+    if let Some(path) = canonical_override {
+        command.env("FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT", path);
+    } else {
+        command.env_remove("FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT");
+    }
+    command
+        .output()
+        .expect("failed to execute support matrix maintenance gate")
+}
+
+fn run_support_matrix_gate(trace_symbol_events: bool) -> std::process::Output {
+    run_support_matrix_gate_with_canonical(trace_symbol_events, None)
+}
+
+const IMPLEMENTED_NATIVE_SAMPLE_SYMBOLS: &[&str] = &[
+    "__b64_ntop",
+    "__ctype_b_loc",
+    "__errno_location",
+    "__finite",
+    "__fpclassify",
+    "__h_errno_location",
+    "__isinf",
+    "__isnan",
+    "__libc_current_sigrtmax",
+    "__libc_current_sigrtmin",
+    "abs",
+    "a64l",
+];
+
+const HOST_WRAPPED_SYMBOLS: &[&str] = &[
+    "__libc_start_main",
+    "malloc",
+    "pthread_create",
+    "pthread_join",
+    "pthread_detach",
+    "dlopen",
+    "dlsym",
+    "dlclose",
+    "dl_iterate_phdr",
+    "dladdr",
+    "_IO_fclose",
+    "_IO_fopen",
+    "_IO_printf",
+    "_IO_flockfile",
+    "_IO_funlockfile",
+    "_IO_ftrylockfile",
+];
+
+const MATH_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "__clog10",
+    "__clog10f",
+    "__clog10l",
+    "acos",
+    "acosh",
+    "asin",
+    "atanh",
+    "cosh",
+    "exp",
+    "exp2",
+    "expf",
+    "expm1",
+    "fmod",
+    "fmodf",
+    "hypot",
+    "hypotf",
+    "ldexp",
+    "ldexpf",
+    "lgamma",
+    "lgamma_r",
+    "lgammaf_r",
+    "log",
+    "log10",
+    "log1p",
+    "log2",
+    "logb",
+    "logf",
+    "logf64",
+    "logl",
+    "pow",
+    "remainder",
+    "remainderf",
+    "remquo",
+    "remquof",
+    "scalbln",
+    "scalbn",
+    "scalbnf",
+    "sinh",
+    "sqrt",
+    "sqrtf",
+    "tgamma",
+    "tgammaf",
+    "y0",
+    "y1",
+    "yn",
+];
+const FENV_CROSS_MODULE_SOURCE_SYMBOLS: &[&str] = &[
+    "fedisableexcept",
+    "feenableexcept",
+    "fegetexcept",
+    "fegetmode",
+    "fesetexcept",
+    "fesetmode",
+    "fetestexceptflag",
+];
+const ERR_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "err", "errc", "errx", "verr", "verrc", "verrx", "vwarn", "vwarnc", "vwarnx", "warn", "warnc",
+    "warnx",
+];
+const LOCALE_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["catclose", "catgets", "catopen"];
+const ICONV_LOCALE_BOOTSTRAP_PROMOTION_TRANCHE_SYMBOLS: &[&str] =
+    &["iconv", "iconv_close", "iconv_open", "newlocale"];
+const RESOLV_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["getprotobyname", "getprotobynumber"];
+const DIRENT_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["readdir64"];
+const GRP_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["getgrent"];
+const PWD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["getpwent"];
+const PWD_GSHADOW_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["getsgent", "getsgnam"];
+const INET_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["if_indextoname", "if_nametoindex"];
+const SETJMP_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "_longjmp",
+    "_setjmp",
+    "longjmp",
+    "setjmp",
+    "siglongjmp",
+    "sigsetjmp",
+];
+const C11THREADS_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "call_once",
+    "cnd_init",
+    "mtx_lock",
+    "mtx_timedlock",
+    "mtx_unlock",
+    "thrd_create",
+    "thrd_detach",
+    "thrd_exit",
+    "thrd_join",
+];
+const STDIO_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__isoc99_wscanf", "fscanf", "vsscanf"];
+const WCHAR_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "__isoc23_fwscanf",
+    "__isoc23_vfwscanf",
+    "__isoc23_vwscanf",
+    "__isoc23_wcstoimax",
+    "__isoc23_wcstol",
+    "__isoc23_wcstol_l",
+    "__isoc23_wcstoll",
+    "__isoc23_wcstoll_l",
+    "__isoc23_wcstoul",
+    "__isoc23_wcstoul_l",
+    "__isoc23_wcstoull",
+    "__isoc23_wcstoull_l",
+    "__isoc23_wcstoumax",
+    "__isoc23_wscanf",
+    "mbrtoc16",
+    "open_wmemstream",
+    "wcsdup",
+];
+const STRING_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "__strtod_internal",
+    "__strtod_l",
+    "__strtof_internal",
+    "__strtof_l",
+    "__strtol_internal",
+    "__strtol_l",
+    "__strtold_internal",
+    "__strtold_l",
+    "__strtoll_internal",
+    "__strtoll_l",
+    "__strtoul_internal",
+    "__strtoul_l",
+    "__strtoull_internal",
+    "__strtoull_l",
+    "argz_append",
+    "argz_delete",
+    "argz_insert",
+    "argz_replace",
+    "envz_remove",
+    "envz_strip",
+    "globfree",
+    "re_match",
+    "re_match_2",
+    "re_search",
+    "re_search_2",
+];
+const FORTIFY_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "__asprintf_chk",
+    "__dprintf_chk",
+    "__fgets_chk",
+    "__fgets_unlocked_chk",
+    "__fgetws_chk",
+    "__fgetws_unlocked_chk",
+    "__fprintf_chk",
+    "__fread_chk",
+    "__fread_unlocked_chk",
+    "__fwprintf_chk",
+    "__fortify_fail",
+    "__getcwd_chk",
+    "__getdomainname_chk",
+    "__getgroups_chk",
+    "__gethostname_chk",
+    "__gets_chk",
+    "__getwd_chk",
+    "__longjmp_chk",
+    "__mbsnrtowcs_chk",
+    "__mbsrtowcs_chk",
+    "__mbstowcs_chk",
+    "__open64_2",
+    "__open_2",
+    "__openat64_2",
+    "__openat_2",
+    "__poll_chk",
+    "__ppoll_chk",
+    "__pread64_chk",
+    "__pread_chk",
+    "__printf_chk",
+    "__read_chk",
+    "__readlink_chk",
+    "__readlinkat_chk",
+    "__realpath_chk",
+    "__recv_chk",
+    "__recvfrom_chk",
+    "__snprintf_chk",
+    "__sprintf_chk",
+    "__syslog_chk",
+    "__vasprintf_chk",
+    "__vdprintf_chk",
+    "__vfprintf_chk",
+    "__vfwprintf_chk",
+    "__vprintf_chk",
+    "__vsnprintf_chk",
+    "__vsprintf_chk",
+    "__vsyslog_chk",
+    "__vwprintf_chk",
+    "__wcsnrtombs_chk",
+    "__wcsrtombs_chk",
+    "__wcstombs_chk",
+    "__wctomb_chk",
+    "__wprintf_chk",
+];
+const UNISTD_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "__stack_chk_fail",
+    "ftruncate64",
+    "getopt",
+    "getwc",
+    "getwc_unlocked",
+    "getwchar_unlocked",
+    "lseek64",
+    "mbrlen",
+    "mbsnrtowcs",
+    "mbstowcs",
+    "mbtowc",
+    "mmap64",
+    "posix_close",
+    "posix_spawnattr_getsigdefault",
+    "posix_spawnattr_getsigmask",
+    "posix_spawnattr_setsigdefault",
+    "posix_spawnattr_setsigmask",
+    "pread64",
+    "pwrite64",
+    "putwc",
+    "putwc_unlocked",
+    "putwchar_unlocked",
+    "sem_close",
+    "sem_open",
+    "sem_unlink",
+    "sendfile64",
+    "syslog",
+    "truncate64",
+    "vsyslog",
+    "wcsftime_l",
+    "wcsnrtombs",
+    "wcstoimax",
+    "wcstol_l",
+    "wcstoll_l",
+    "wcstombs",
+    "wcstoul_l",
+    "wcstoull_l",
+    "wcstoumax",
+    "wctomb",
+];
+const UNISTD_CROSS_MODULE_LOCATOR_PENDING_SYMBOLS: &[&str] = &[
+    "mbrlen",
+    "mbsnrtowcs",
+    "mbstowcs",
+    "mbtowc",
+    "getwc",
+    "getwc_unlocked",
+    "getwchar_unlocked",
+    "posix_spawnattr_getsigdefault",
+    "posix_spawnattr_getsigmask",
+    "posix_spawnattr_setsigdefault",
+    "posix_spawnattr_setsigmask",
+    "putwc",
+    "putwc_unlocked",
+    "putwchar_unlocked",
+    "wcsftime_l",
+    "wcsnrtombs",
+    "wcstoimax",
+    "wcstol_l",
+    "wcstoll_l",
+    "wcstombs",
+    "wcstoul_l",
+    "wcstoull_l",
+    "wcstoumax",
+    "wctomb",
+];
+const RPC_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
+    "host2netname",
+    "user2netname",
+    "xdr_accepted_reply",
+    "xdr_array",
+    "xdr_authdes_cred",
+    "xdr_authunix_parms",
+    "xdr_bytes",
+    "xdr_callmsg",
+    "xdr_cryptkeyarg",
+    "xdr_cryptkeyarg2",
+    "xdr_getcredres",
+    "xdr_key_netstarg",
+    "xdr_netnamestr",
+    "xdr_netobj",
+    "xdr_opaque_auth",
+    "xdr_pmaplist",
+    "xdr_pointer",
+    "xdr_reference",
+    "xdr_replymsg",
+    "xdr_rmtcallres",
+    "xdr_string",
+    "xdr_unixcred",
+    "xdr_wrapstring",
+    "xdrrec_create",
+];
+const GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__clone"];
+
+#[test]
+fn maintenance_report_generates_successfully() {
+    let canonical_path = canonical_report_path();
+    assert!(
+        canonical_path.exists(),
+        "canonical report missing at {}",
+        canonical_path.display()
+    );
+
+    let generated_path = unique_generated_report_path("support_matrix_maintenance_test");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        generated_path.exists(),
+        "Report not generated at {}",
+        generated_path.display()
+    );
+
+    let canonical = load_json(&canonical_path);
+    let generated = load_json(&generated_path);
+    assert_eq!(
+        stable_report_sections(&generated),
+        stable_report_sections(&canonical),
+        "generated maintenance report stable sections drift from canonical artifact"
+    );
+}
+
+#[test]
+fn generated_report_resolves_math_cataloged_fenv_sources() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    let offenders: Vec<&str> = issues
+        .iter()
+        .filter_map(|issue| {
+            let candidate = issue["symbol"].as_str()?;
+            if !FENV_CROSS_MODULE_SOURCE_SYMBOLS.contains(&candidate) {
+                return None;
+            }
+            let missing_body = issue["findings"].as_array().is_some_and(|findings| {
+                findings.iter().any(|finding| {
+                    finding
+                        .as_str()
+                        .is_some_and(|text| text.starts_with("function body not found"))
+                })
+            });
+            missing_body.then_some(candidate)
+        })
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "fenv symbols should be resolved through fenv_abi.rs, not reported as missing-body: {offenders:?}"
+    );
+}
+
+#[test]
+fn maintenance_report_schema_complete() {
+    let report_path = canonical_report_path();
+    assert!(
+        report_path.exists(),
+        "canonical report missing at {}",
+        report_path.display()
+    );
+    let data = load_json(&report_path);
+
+    // Check top-level fields
+    assert_eq!(
+        data["schema_version"].as_str(),
+        Some("v1"),
+        "Wrong schema version"
+    );
+    assert_eq!(
+        data["bead"].as_str(),
+        Some("bd-3g4p"),
+        "Wrong bead reference"
+    );
+
+    // Check summary fields
+    let summary = &data["summary"];
+    let required_fields = [
+        "total_symbols",
+        "status_validated",
+        "status_invalid",
+        "status_skipped",
+        "status_valid_pct",
+        "fixture_linked",
+        "fixture_unlinked",
+        "fixture_coverage_pct",
+    ];
+    for field in &required_fields {
+        assert!(!summary[field].is_null(), "Missing summary field: {field}");
+    }
+
+    // Check sections exist
+    assert!(
+        data["status_distribution"].is_object(),
+        "Missing status_distribution"
+    );
+    assert!(
+        data["module_coverage"].is_object(),
+        "Missing module_coverage"
+    );
+    assert!(
+        data["status_validation_issues"].is_array(),
+        "Missing status_validation_issues"
+    );
+    assert!(
+        data["unlinked_symbols"].is_array(),
+        "Missing unlinked_symbols"
+    );
+}
+
+#[test]
+fn support_matrix_embedded_counts_match_symbol_rows() {
+    let matrix = load_json(&repo_root().join("support_matrix.json"));
+    let symbols = matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols must be an array");
+    let mut counts = std::collections::BTreeMap::<&str, u64>::new();
+    for symbol in symbols {
+        let status = symbol["status"]
+            .as_str()
+            .expect("support_matrix symbol status must be a string");
+        *counts.entry(status).or_default() += 1;
+    }
+
+    assert_eq!(
+        matrix["total_exported"].as_u64(),
+        Some(symbols.len() as u64),
+        "support_matrix.total_exported must match symbols.len()"
+    );
+    assert_eq!(
+        matrix["summary"]["total"].as_u64(),
+        Some(symbols.len() as u64),
+        "support_matrix.summary.total must match symbols.len()"
+    );
+
+    for (json_key, status) in [
+        ("implemented", "Implemented"),
+        ("raw_syscall", "RawSyscall"),
+        ("wraps_host_libc", "WrapsHostLibc"),
+        ("glibc_call_through", "GlibcCallThrough"),
+        ("stub", "Stub"),
+    ] {
+        let actual = counts.get(status).copied().unwrap_or_default();
+        assert_eq!(
+            matrix[json_key].as_u64(),
+            Some(actual),
+            "support_matrix.{json_key} must be derived from symbols[].status"
+        );
+        assert_eq!(
+            matrix["counts"][json_key].as_u64(),
+            Some(actual),
+            "support_matrix.counts.{json_key} must be derived from symbols[].status"
+        );
+        assert_eq!(
+            matrix["summary"][json_key].as_u64(),
+            Some(actual),
+            "support_matrix.summary.{json_key} must be derived from symbols[].status"
+        );
+    }
+}
+
+#[test]
+fn generated_maintenance_dashboard_counts_match_symbol_rows() {
+    let matrix = load_json(&repo_root().join("support_matrix.json"));
+    let symbols = matrix["symbols"]
+        .as_array()
+        .expect("support_matrix.symbols must be an array");
+    let mut counts = std::collections::BTreeMap::<&str, u64>::new();
+    for symbol in symbols {
+        let status = symbol["status"]
+            .as_str()
+            .expect("support_matrix symbol status must be a string");
+        *counts.entry(status).or_default() += 1;
+    }
+
+    let report = shared_generated_maintenance_report();
+    let dashboard_counts = report["coverage_dashboard"]["status_counts"]
+        .as_object()
+        .expect("coverage_dashboard.status_counts must be an object");
+    for status in [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub",
+    ] {
+        let actual = counts.get(status).copied().unwrap_or_default();
+        assert_eq!(
+            dashboard_counts
+                .get(status)
+                .and_then(serde_json::Value::as_u64),
+            Some(actual),
+            "generated maintenance dashboard count for {status} must be derived from symbols[].status"
+        );
+    }
+}
+
+#[test]
+fn maintenance_status_validation_above_threshold() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
+    let data = load_json(&report_path);
+
+    let valid_pct = data["summary"]["status_valid_pct"].as_f64().unwrap();
+    assert!(
+        valid_pct >= 80.0,
+        "Status validation {valid_pct}% below 80% threshold"
+    );
+
+    let total = data["summary"]["total_symbols"].as_u64().unwrap();
+    assert!(
+        total >= 200,
+        "Expected at least 200 symbols in matrix, got {total}"
+    );
+}
+
+#[test]
+fn maintenance_report_has_no_invalid_status_rows() {
+    let report_path = canonical_report_path();
+    let data = load_json(&report_path);
+
+    let invalid = data["summary"]["status_invalid"]
+        .as_u64()
+        .expect("summary.status_invalid must be a u64");
+    assert_eq!(
+        invalid, 0,
+        "support matrix maintenance report should not carry invalid status rows"
+    );
+
+    let issues = data["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let invalid_issues: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|issue| issue["valid"].as_bool() == Some(false))
+        .collect();
+    assert!(
+        invalid_issues.is_empty(),
+        "unexpected invalid status issues remain: {invalid_issues:?}"
+    );
+}
+
+#[test]
+fn maintenance_module_coverage_consistent() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
+    let data = load_json(&report_path);
+
+    let module_cov = data["module_coverage"].as_object().unwrap();
+    let mut total_from_modules: u64 = 0;
+    for (_mod_name, info) in module_cov {
+        let t = info["total"].as_u64().unwrap();
+        let l = info["linked"].as_u64().unwrap();
+        total_from_modules += t;
+        assert!(
+            l <= t,
+            "Module {} has more linked ({l}) than total ({t})",
+            _mod_name
+        );
+        let pct = info["coverage_pct"].as_f64().unwrap();
+        assert!(
+            (0.0..=100.0).contains(&pct),
+            "Module {} coverage {pct}% out of range",
+            _mod_name
+        );
+    }
+
+    let total_from_summary = data["summary"]["total_symbols"].as_u64().unwrap();
+    assert_eq!(
+        total_from_modules, total_from_summary,
+        "Module total ({total_from_modules}) != summary total ({total_from_summary})"
+    );
+}
+
+#[test]
+fn maintenance_report_marks_native_sample_symbols_implemented() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
+    let data = load_json(&report_path);
+    let symbol_status_map = data["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map should be an object");
+
+    for symbol in IMPLEMENTED_NATIVE_SAMPLE_SYMBOLS {
+        let status = symbol_status_map
+            .get(*symbol)
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(
+            status,
+            Some("Implemented"),
+            "expected {symbol} to be Implemented in support_matrix_maintenance_report.v1.json"
+        );
+    }
+}
+
+#[test]
+fn maintenance_report_reclassifies_host_delegating_symbols() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
+    let data = load_json(&report_path);
+    let symbol_status_map = data["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map should be an object");
+
+    let wraps_count = data["coverage_dashboard"]["status_counts"]["WrapsHostLibc"]
+        .as_u64()
+        .expect("WrapsHostLibc count should be numeric");
+    assert!(
+        wraps_count > 0,
+        "support matrix should expose a non-empty host-backed taxonomy bucket"
+    );
+
+    for symbol in HOST_WRAPPED_SYMBOLS {
+        let status = symbol_status_map
+            .get(*symbol)
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(
+            status,
+            Some("WrapsHostLibc"),
+            "expected {symbol} to be reclassified out of Implemented"
+        );
+    }
+
+    let issues = data["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let implemented_host_delegation: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|issue| issue["status"].as_str() == Some("Implemented"))
+        .filter(|issue| {
+            issue["findings"].as_array().is_some_and(|findings| {
+                findings.iter().any(|finding| {
+                    finding.as_str() == Some("Implemented but host delegation detected")
+                })
+            })
+        })
+        .collect();
+    assert!(
+        implemented_host_delegation.is_empty(),
+        "Implemented rows must not delegate to host libc: {implemented_host_delegation:?}"
+    );
+}
+
+#[test]
+fn maintenance_report_has_no_implemented_host_census_symbols() {
+    let report = load_json(&canonical_report_path());
+    let census = load_json(&host_delegation_census_path());
+    let symbol_status_map = report["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map should be an object");
+    let host_symbols: std::collections::BTreeSet<&str> = census["symbol_census"]
+        .as_array()
+        .expect("symbol_census should be an array")
+        .iter()
+        .filter_map(|row| row["symbol"].as_str())
+        .collect();
+    let proofed_symbols: std::collections::BTreeSet<&str> = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array")
+        .iter()
+        .filter(|issue| issue["issue_class"].as_str() == Some("promotion_proof_accepted"))
+        .filter_map(|issue| issue["symbol"].as_str())
+        .collect();
+
+    let implemented_host_symbols: Vec<&str> = host_symbols
+        .iter()
+        .copied()
+        .filter(|symbol| {
+            symbol_status_map
+                .get(*symbol)
+                .and_then(serde_json::Value::as_str)
+                == Some("Implemented")
+        })
+        .filter(|symbol| !proofed_symbols.contains(symbol))
+        .collect();
+    assert!(
+        implemented_host_symbols.is_empty(),
+        "unproofed host-census symbols must be reclassified out of Implemented: {implemented_host_symbols:?}"
+    );
+}
+
+#[test]
+fn math_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/math_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("math_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-h1fbda"));
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        MATH_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("math_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn err_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/err_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("err_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-err-formatting-with-runtime-io-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "get_progname",
+        "sys_read_fd",
+        "write_err_message",
+        "vformat_and_write",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "err_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        ERR_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("err_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn locale_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/locale_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("locale_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-locale-catalog-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "load_host_symbol",
+        "sys_read_fd",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "locale_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        LOCALE_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("locale_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn resolv_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/resolv_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("resolv_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-protocol-database-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "load_host_symbol",
+        "read",
+        "sys_read_fd",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "resolv_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        RESOLV_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("resolv_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn dirent_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/dirent_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("dirent_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-dirent64-alias-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "readdir",
+        "set_abi_errno",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "dirent_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        DIRENT_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("dirent_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn grp_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/grp_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("grp_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-group-files-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "set_abi_errno",
+        "load_host_symbol",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "grp_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        GRP_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("grp_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn pwd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/pwd_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("pwd_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-passwd-files-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "set_abi_errno",
+        "load_host_symbol",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "pwd_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        PWD_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("pwd_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn pwd_gshadow_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest =
+        load_json(&root.join("tests/conformance/pwd_gshadow_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("pwd_gshadow_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-gshadow-files-with-sys-read-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "read",
+        "read_gshadow_file",
+        "set_abi_errno",
+        "sys_read_fd",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "pwd_abi gshadow proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> = PWD_GSHADOW_PROMOTION_TRANCHE_SYMBOLS
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("pwd_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn inet_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/inet_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("inet_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-interface-index-ioctl-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "set_abi_errno",
+        "load_host_symbol",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "inet_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        INET_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("inet_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn setjmp_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/setjmp_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("setjmp_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-setjmp-phase1-with-errno-bridges")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "abort",
+        "capture_entrypoint",
+        "restore_entrypoint",
+        "sigaddset",
+        "sigemptyset",
+        "terminate_deferred_transfer",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "setjmp_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        SETJMP_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("setjmp_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn c11threads_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest =
+        load_json(&root.join("tests/conformance/c11threads_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("c11threads_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-c11threads-pthread-abi-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "pthread_create",
+        "pthread_join",
+        "pthread_detach",
+        "pthread_exit",
+        "pthread_mutex_lock",
+        "pthread_mutex_unlock",
+        "pthread_cond_init",
+        "pthread_once",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "c11threads_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> = C11THREADS_PROMOTION_TRANCHE_SYMBOLS
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("c11threads_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn stdio_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/stdio_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("stdio_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-stdio-scanf-libio-registry-with-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "_IO_list_all",
+        "__errno_location",
+        "read_stream_for_scanf",
+        "registry",
+        "sys_read_fd",
+        "vwscanf",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "stdio_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        STDIO_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("stdio_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn wchar_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/wchar_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("wchar_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-wchar-isoc-libio-codec-allocator-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "read_stream_for_scanf",
+        "registry",
+        "mbrtoc32",
+        "mbrtowc",
+        "malloc",
+        "free",
+        "register_memory_stream_with_native_handle",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "wchar_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        WCHAR_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("wchar_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn string_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/string_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("string_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-string-conversion-argz-envz-glob-regex-allocator-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "strtod",
+        "strtoul",
+        "argz_add",
+        "argz_delete",
+        "malloc",
+        "free",
+        "calloc",
+        "legacy_regex_write_regs",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "string_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        STRING_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("string_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn fortify_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/fortify_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("fortify_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-fortify-wrapper-libio-allocator-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "registry",
+        "host_stdio_symbol",
+        "vasprintf",
+        "vfprintf",
+        "fgets",
+        "fread",
+        "getcwd",
+        "mbrtowc",
+        "malloc",
+        "free",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "fortify_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        FORTIFY_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("fortify_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/unistd_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("unistd_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some(
+            "native-unistd-stackfail-lfs-wchar-stream-locale-sem-syslog-process-getopt-errno-bridge"
+        )
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "abort",
+        "ftruncate",
+        "lseek",
+        "mmap",
+        "pread",
+        "pwrite",
+        "registry",
+        "sendfile",
+        "sys_write_fd",
+        "set_abi_errno",
+        "truncate",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "unistd_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        UNISTD_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("unistd_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn rpc_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest = load_json(&root.join("tests/conformance/rpc_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("rpc_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-rpc-xdr-netname-allocator-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "calloc",
+        "free",
+        "malloc",
+        "raw_alloc",
+        "raw_free",
+        "resolve_host_allocator_symbol",
+        "set_abi_errno",
+        "write_host_errno_if_available",
+        "xdr_accepted_reply",
+        "xdr_array",
+        "xdr_bytes",
+        "xdr_netnamestr",
+        "xdr_opaque_auth",
+        "xdr_reference",
+        "xdr_string",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "rpc_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        RPC_PROMOTION_TRANCHE_SYMBOLS.iter().copied().collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("rpc_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn glibc_internal_abi_promotion_tranche_manifest_has_strict_and_hardened_proof() {
+    let root = repo_root();
+    let manifest =
+        load_json(&root.join("tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"));
+    assert_eq!(
+        manifest["schema_version"].as_str(),
+        Some("glibc_internal_abi_promotion_tranche.v1")
+    );
+    assert_eq!(manifest["bead"].as_str(), Some("bd-5tgwug"));
+    assert_eq!(
+        manifest["policy"]["classification"].as_str(),
+        Some("native-glibc-internal-clone-errno-bridge")
+    );
+
+    let policy_modes: std::collections::BTreeSet<&str> = manifest["policy"]["required_modes"]
+        .as_array()
+        .expect("required_modes should be an array")
+        .iter()
+        .map(|mode| mode.as_str().expect("mode should be a string"))
+        .collect();
+    assert_eq!(
+        policy_modes,
+        std::collections::BTreeSet::from(["hardened", "strict"])
+    );
+
+    let accepted_symbols: std::collections::BTreeSet<&str> =
+        manifest["policy"]["accepted_host_symbols"]
+            .as_array()
+            .expect("accepted_host_symbols should be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("host symbol should be a string"))
+            .collect();
+    for helper in [
+        "__errno_location",
+        "bootstrap_host_symbols",
+        "set_abi_errno",
+        "write_host_errno_if_available",
+    ] {
+        assert!(
+            accepted_symbols.contains(helper),
+            "glibc_internal_abi proof must explicitly account for {helper}"
+        );
+    }
+
+    let symbols = manifest["symbols"]
+        .as_array()
+        .expect("symbols should be an array");
+    let manifest_symbols: std::collections::BTreeSet<&str> = symbols
+        .iter()
+        .map(|row| row["symbol"].as_str().expect("symbol should be a string"))
+        .collect();
+    let expected_symbols: std::collections::BTreeSet<&str> =
+        GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS
+            .iter()
+            .copied()
+            .collect();
+    assert_eq!(manifest_symbols, expected_symbols);
+
+    for row in symbols {
+        assert_eq!(row["module"].as_str(), Some("glibc_internal_abi"));
+        assert_eq!(row["decision"].as_str(), Some("proven"));
+        for mode in ["strict", "hardened"] {
+            let key = format!("{mode}_conformance");
+            let proof = &row[&key];
+            assert!(
+                proof["total"].as_u64().unwrap_or_default() > 0,
+                "{} must have {mode} conformance rows",
+                row["symbol"]
+            );
+            assert_eq!(proof["failed"].as_u64(), Some(0));
+            assert_eq!(proof["errors"].as_u64(), Some(0));
+            assert_eq!(proof["passed"].as_u64(), proof["total"].as_u64());
+        }
+    }
+}
+
+#[test]
+fn generated_report_accepts_math_abi_errno_bridge_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in MATH_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after math ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_err_abi_runtime_io_bridge_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in ERR_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after err ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_locale_abi_catalog_bridge_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in LOCALE_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after locale ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_iconv_locale_bootstrap_bridge_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in ICONV_LOCALE_BOOTSTRAP_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after iconv/locale bootstrap proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_resolv_abi_protocol_bridge_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in RESOLV_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after resolv ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_dirent_abi_readdir64_alias_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in DIRENT_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after dirent ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_grp_abi_getgrent_files_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in GRP_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after grp ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_pwd_abi_getpwent_files_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in PWD_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after pwd ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_pwd_abi_gshadow_files_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in PWD_GSHADOW_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after pwd ABI gshadow proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_inet_abi_interface_index_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in INET_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after inet ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_setjmp_abi_phase1_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in SETJMP_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after setjmp ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_c11threads_abi_pthread_bridge_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in C11THREADS_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after c11threads ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_stdio_abi_scanf_libio_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in STDIO_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after stdio ABI proof: {rows:?}"
+        );
+        let proof_warning_present = rows.iter().any(|issue| {
+            issue["warnings"].as_array().is_some_and(|warnings| {
+                warnings.iter().any(|warning| {
+                    warning.as_str()
+                        == Some("host delegation census covered by promotion proof manifest")
+                })
+            })
+        });
+        let alias_locator_pending = *symbol == "__isoc99_wscanf"
+            && rows
+                .iter()
+                .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
+        assert!(
+            proof_warning_present || alias_locator_pending,
+            "{symbol} should keep either a proof-manifest warning or the known alias locator finding"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_wchar_abi_isoc_libio_codec_allocator_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in WCHAR_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after wchar ABI proof: {rows:?}"
+        );
+        let proof_warning_present = rows.iter().any(|issue| {
+            issue["warnings"].as_array().is_some_and(|warnings| {
+                warnings.iter().any(|warning| {
+                    warning.as_str()
+                        == Some("host delegation census covered by promotion proof manifest")
+                })
+            })
+        });
+        let isoc_alias_locator_pending = symbol.starts_with("__isoc23_")
+            && rows
+                .iter()
+                .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
+        assert!(
+            proof_warning_present || isoc_alias_locator_pending,
+            "{symbol} should keep either a proof-manifest warning or the known isoc alias locator finding"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_string_abi_conversion_argz_regex_allocator_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in STRING_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after string ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_fortify_abi_wrapper_libio_allocator_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in FORTIFY_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after fortify ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in UNISTD_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after unistd ABI proof: {rows:?}"
+        );
+        let proof_warning_present = rows.iter().any(|issue| {
+            issue["warnings"].as_array().is_some_and(|warnings| {
+                warnings.iter().any(|warning| {
+                    warning.as_str()
+                        == Some("host delegation census covered by promotion proof manifest")
+                })
+            })
+        });
+        let cross_module_locator_pending = (*symbol == "__stack_chk_fail"
+            || UNISTD_CROSS_MODULE_LOCATOR_PENDING_SYMBOLS.contains(symbol))
+            && rows
+                .iter()
+                .any(|issue| issue["issue_class"].as_str() == Some("missing_body"));
+        assert!(
+            proof_warning_present || cross_module_locator_pending,
+            "{symbol} should keep either a proof-manifest warning or the known cross-module locator finding"
+        );
+    }
+
+    let unistd_proofs =
+        &report["fixture_coverage_ratchet"]["proof_manifest_by_module"]["unistd_abi"];
+    assert!(
+        unistd_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= UNISTD_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "unistd_abi proof manifest should expose strict+hardened proven symbols"
+    );
+}
+
+#[test]
+fn generated_report_accepts_rpc_abi_xdr_netname_allocator_errno_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in RPC_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after rpc ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+
+    let rpc_proofs = &report["fixture_coverage_ratchet"]["proof_manifest_by_module"]["rpc_abi"];
+    assert!(
+        rpc_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= RPC_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "rpc_abi proof manifest should expose strict+hardened proven symbols"
+    );
+}
+
+#[test]
+fn generated_report_accepts_glibc_internal_abi_clone_errno_tranche() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    for symbol in GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS {
+        if !support_matrix_symbol_is_implemented(symbol) {
+            continue;
+        }
+        let rows: Vec<&serde_json::Value> = issues
+            .iter()
+            .filter(|issue| issue["symbol"].as_str() == Some(*symbol))
+            .collect();
+        assert!(
+            rows.iter()
+                .all(|issue| issue["valid"].as_bool() == Some(true)),
+            "{symbol} should not remain invalid after glibc_internal ABI proof: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|issue| {
+                issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str()
+                            == Some("host delegation census covered by promotion proof manifest")
+                    })
+                })
+            }),
+            "{symbol} should keep an auditable proof-manifest warning"
+        );
+    }
+}
+
+#[test]
+fn fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas() {
+    let triage_path = generate_promotion_triage_report();
+    let previous_report_path = unique_generated_report_path("fixture_ratchet_selected_previous");
+    let previous = serde_json::json!({
+        "symbol_status_map": {
+            "acos": "WrapsHostLibc",
+            "__adjtimex": "WrapsHostLibc",
+            "__asprintf_chk": "WrapsHostLibc",
+            "__assert": "WrapsHostLibc"
+        },
+        "coverage_dashboard": {
+            "status_counts": {
+                "Implemented": 0,
+                "RawSyscall": 0,
+                "WrapsHostLibc": 4,
+                "GlibcCallThrough": 0,
+                "Stub": 0
+            },
+            "native_coverage_pct": 0.0
+        }
+    });
+    std::fs::write(
+        &previous_report_path,
+        serde_json::to_vec_pretty(&previous).expect("previous report should serialize"),
+    )
+    .expect("failed to write selected previous report");
+
+    let generated_path = unique_generated_report_path("fixture_coverage_ratchet");
+    let output = generate_maintenance_report_with_previous_and_triage(
+        &generated_path,
+        &previous_report_path,
+        Some(&triage_path),
+    );
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let ratchet = &report["fixture_coverage_ratchet"];
+    assert_eq!(
+        ratchet["schema_version"].as_str(),
+        Some("fixture_coverage_ratchet.v1")
+    );
+    assert_eq!(ratchet["bead"].as_str(), Some("bd-8t1chf"));
+    assert_eq!(
+        ratchet["promotion_triage_manifest_loaded"].as_bool(),
+        Some(true)
+    );
+
+    let module_deltas = ratchet["module_deltas"]
+        .as_object()
+        .expect("module_deltas should be an object");
+    for module in [
+        "math_abi",
+        "glibc_internal_abi",
+        "unistd_abi",
+        "rpc_abi",
+        "stdlib_abi",
+        "wchar_abi",
+        "fortify_abi",
+        "stdio_abi",
+    ] {
+        let entry = module_deltas
+            .get(module)
+            .unwrap_or_else(|| panic!("missing ratchet module entry for {module}"));
+        assert!(
+            entry["mode_deltas"]["strict"].is_object(),
+            "{module} missing strict mode delta"
+        );
+        assert!(
+            entry["mode_deltas"]["hardened"].is_object(),
+            "{module} missing hardened mode delta"
+        );
+        assert!(
+            entry["proof_class_counts"].is_object(),
+            "{module} missing proof class counts"
+        );
+    }
+
+    let math_proofs = &ratchet["proof_manifest_by_module"]["math_abi"];
+    assert!(
+        math_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= MATH_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "math_abi pilot proof manifest should expose strict+hardened proven symbols"
+    );
+    let err_proofs = &ratchet["proof_manifest_by_module"]["err_abi"];
+    assert!(
+        err_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= ERR_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "err_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let locale_proofs = &ratchet["proof_manifest_by_module"]["locale_abi"];
+    assert!(
+        locale_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= (LOCALE_PROMOTION_TRANCHE_SYMBOLS.len() + 1) as u64,
+        "locale_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let iconv_proofs = &ratchet["proof_manifest_by_module"]["iconv_abi"];
+    assert!(
+        iconv_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 3,
+        "iconv_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let resolv_proofs = &ratchet["proof_manifest_by_module"]["resolv_abi"];
+    assert!(
+        resolv_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= RESOLV_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "resolv_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let dirent_proofs = &ratchet["proof_manifest_by_module"]["dirent_abi"];
+    assert!(
+        dirent_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= DIRENT_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "dirent_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let grp_proofs = &ratchet["proof_manifest_by_module"]["grp_abi"];
+    assert!(
+        grp_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= GRP_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "grp_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let pwd_proofs = &ratchet["proof_manifest_by_module"]["pwd_abi"];
+    assert!(
+        pwd_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= (PWD_PROMOTION_TRANCHE_SYMBOLS.len() + PWD_GSHADOW_PROMOTION_TRANCHE_SYMBOLS.len())
+                as u64,
+        "pwd_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let inet_proofs = &ratchet["proof_manifest_by_module"]["inet_abi"];
+    assert!(
+        inet_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= INET_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "inet_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let setjmp_proofs = &ratchet["proof_manifest_by_module"]["setjmp_abi"];
+    assert!(
+        setjmp_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= SETJMP_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "setjmp_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let c11threads_proofs = &ratchet["proof_manifest_by_module"]["c11threads_abi"];
+    assert!(
+        c11threads_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= C11THREADS_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "c11threads_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let stdio_proofs = &ratchet["proof_manifest_by_module"]["stdio_abi"];
+    assert!(
+        stdio_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= STDIO_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "stdio_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let wchar_proofs = &ratchet["proof_manifest_by_module"]["wchar_abi"];
+    assert!(
+        wchar_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= WCHAR_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "wchar_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let string_proofs = &ratchet["proof_manifest_by_module"]["string_abi"];
+    assert!(
+        string_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= STRING_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "string_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let fortify_proofs = &ratchet["proof_manifest_by_module"]["fortify_abi"];
+    assert!(
+        fortify_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= FORTIFY_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "fortify_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let unistd_proofs = &ratchet["proof_manifest_by_module"]["unistd_abi"];
+    assert!(
+        unistd_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= UNISTD_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "unistd_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let glibc_internal_proofs = &ratchet["proof_manifest_by_module"]["glibc_internal_abi"];
+    assert!(
+        glibc_internal_proofs["strict_hardened_symbol_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS.len() as u64,
+        "glibc_internal_abi proof manifest should expose strict+hardened proven symbols"
+    );
+    let malloc_violations = ratchet["module_deltas"]["malloc_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !malloc_violations
+            .iter()
+            .any(|symbol| symbol.as_str() == Some("malloc_info")),
+        "malloc_info should be downgraded instead of counted as an implemented-promotion violation"
+    );
+    let dirent_violations = ratchet["module_deltas"]["dirent_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !dirent_violations
+            .iter()
+            .any(|symbol| symbol.as_str() == Some("readdir64")),
+        "readdir64 should be proofed instead of counted as missing fixture evidence"
+    );
+    let grp_violations = ratchet["module_deltas"]["grp_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !grp_violations
+            .iter()
+            .any(|symbol| symbol.as_str() == Some("getgrent")),
+        "getgrent should be proofed instead of counted as missing fixture evidence"
+    );
+    let pwd_violations = ratchet["module_deltas"]["pwd_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in PWD_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !pwd_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    for symbol in PWD_GSHADOW_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !pwd_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let inet_violations = ratchet["module_deltas"]["inet_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in INET_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !inet_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let setjmp_violations = ratchet["module_deltas"]["setjmp_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in SETJMP_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !setjmp_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let c11threads_violations = ratchet["module_deltas"]["c11threads_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in C11THREADS_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !c11threads_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let stdio_violations = ratchet["module_deltas"]["stdio_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in STDIO_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !stdio_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let wchar_violations = ratchet["module_deltas"]["wchar_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in WCHAR_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !wchar_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let string_violations = ratchet["module_deltas"]["string_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in STRING_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !string_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let fortify_violations = ratchet["module_deltas"]["fortify_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in FORTIFY_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !fortify_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let unistd_violations = ratchet["module_deltas"]["unistd_abi"]["violating_symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for symbol in UNISTD_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !unistd_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    let glibc_internal_violations =
+        ratchet["module_deltas"]["glibc_internal_abi"]["violating_symbols"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+    for symbol in GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS {
+        assert!(
+            !glibc_internal_violations
+                .iter()
+                .any(|violation| violation.as_str() == Some(*symbol)),
+            "{symbol} should be proofed instead of counted as missing fixture evidence"
+        );
+    }
+    assert_eq!(
+        ratchet["module_deltas"]["math_abi"]["proof_class_counts"]
+            ["strict_hardened_conformance_proof"]
+            .as_u64(),
+        Some(1),
+        "selected math_abi promotion should be backed by strict+hardened proof"
+    );
+    if GLIBC_INTERNAL_PROMOTION_TRANCHE_SYMBOLS
+        .iter()
+        .any(|symbol| support_matrix_symbol_is_implemented(symbol))
+    {
+        assert_eq!(
+            ratchet["module_deltas"]["glibc_internal_abi"]["proof_class_counts"]
+                ["documented_no_fixture_rationale"]
+                .as_u64(),
+            Some(1),
+            "selected glibc_internal_abi promotion should carry scanner rationale"
+        );
+    }
+}
+
+#[test]
+fn fixture_coverage_ratchet_flags_evidence_free_implemented_promotion() {
+    let previous_report_path = unique_generated_report_path("fixture_ratchet_previous_report");
+    let previous = serde_json::json!({
+        "symbol_status_map": {
+            "__ctype_b_loc": "WrapsHostLibc"
+        },
+        "coverage_dashboard": {
+            "status_counts": {
+                "Implemented": 0,
+                "RawSyscall": 0,
+                "WrapsHostLibc": 1,
+                "GlibcCallThrough": 0,
+                "Stub": 0
+            },
+            "native_coverage_pct": 0.0
+        }
+    });
+    std::fs::write(
+        &previous_report_path,
+        serde_json::to_vec_pretty(&previous).expect("previous report should serialize"),
+    )
+    .expect("failed to write previous report");
+
+    let generated_path = unique_generated_report_path("fixture_ratchet_mutation");
+    let output = generate_maintenance_report_with_previous_and_triage(
+        &generated_path,
+        &previous_report_path,
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "Maintenance validator should emit ratchet findings rather than crash:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let ratchet_policy = &report["policy_checks"]["fixture_coverage_ratchet"];
+    assert_eq!(ratchet_policy["status"].as_str(), Some("fail"));
+    assert!(
+        ratchet_policy["violation_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 1,
+        "evidence-free promotion should create a ratchet violation"
+    );
+
+    let violations = report["fixture_coverage_ratchet"]["violations"]
+        .as_array()
+        .expect("ratchet violations should be an array");
+    let ctype_violation = violations
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("__ctype_b_loc"))
+        .expect("__ctype_b_loc mutation should be reported as a violation");
+    assert_eq!(
+        ctype_violation["proof_class"].as_str(),
+        Some("missing_fixture_evidence")
+    );
+    let missing: std::collections::BTreeSet<&str> = ctype_violation["missing_evidence"]
+        .as_array()
+        .expect("missing_evidence should be an array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(
+        missing,
+        std::collections::BTreeSet::from([
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing",
+        ])
+    );
+}
+
+#[test]
+fn scanner_classifies_proofed_and_alternate_pattern_findings() {
+    let report = shared_generated_maintenance_report();
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    let find_issue = |symbol: &str| {
+        issues
+            .iter()
+            .find(|issue| issue["symbol"].as_str() == Some(symbol))
+            .unwrap_or_else(|| panic!("missing scanner issue for {symbol}"))
+    };
+
+    let proofed = find_issue("acos");
+    assert_eq!(
+        proofed["issue_class"].as_str(),
+        Some("promotion_proof_accepted")
+    );
+    assert_eq!(
+        proofed["scanner_bucket"].as_str(),
+        Some("native_proven_errno_bridge")
+    );
+    assert_eq!(proofed["valid"].as_bool(), Some(true));
+
+    assert!(
+        issues.iter().all(|issue| {
+            !matches!(
+                issue["issue_class"].as_str(),
+                Some("true_host_delegation" | "host_census_unverified")
+            )
+        }),
+        "current scanner report should have no unproofed host-delegation findings"
+    );
+
+    let alternate_pattern = find_issue("__after_morecore_hook");
+    assert_eq!(
+        alternate_pattern["issue_class"].as_str(),
+        Some("alternate_pattern_unresolved")
+    );
+    assert_eq!(
+        alternate_pattern["scanner_bucket"].as_str(),
+        Some("generated_or_alias_pattern")
+    );
+}
+
+#[test]
+fn math_abi_promotion_proof_manifest_requires_both_modes() {
+    let root = repo_root();
+    let manifest_path = root.join("tests/conformance/math_abi_promotion_tranche.v1.json");
+    let mut manifest = load_json(&manifest_path);
+    let symbols = manifest["symbols"]
+        .as_array_mut()
+        .expect("symbols should be an array");
+    let acos = symbols
+        .iter_mut()
+        .find(|row| row["symbol"].as_str() == Some("acos"))
+        .expect("acos proof row should exist");
+    acos["hardened_conformance"]["total"] = serde_json::json!(0);
+    acos["hardened_conformance"]["passed"] = serde_json::json!(0);
+
+    let broken_manifest_path = unique_generated_report_path("math_abi_broken_proof_manifest");
+    std::fs::write(
+        &broken_manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("failed to write broken proof manifest");
+
+    let generated_path = unique_generated_report_path("math_abi_broken_proof_report");
+    let output =
+        generate_maintenance_report_with_proof_manifest(&generated_path, &broken_manifest_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator should emit findings rather than crash:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let acos_issue = issues
+        .iter()
+        .find(|issue| issue["symbol"].as_str() == Some("acos"))
+        .expect("acos should return to invalid census status when hardened proof is missing");
+    assert_eq!(acos_issue["valid"].as_bool(), Some(false));
+    assert!(
+        acos_issue["findings"].as_array().is_some_and(|findings| {
+            findings.iter().any(|finding| {
+                finding.as_str() == Some("Implemented but host delegation census detected")
+            })
+        }),
+        "missing hardened proof should not suppress host census finding: {acos_issue:?}"
+    );
+}
+
+#[test]
+fn maintenance_gate_emits_structured_logs_with_required_fields() {
+    let _guard = gate_test_lock();
+    let output = run_support_matrix_gate(false);
+    assert!(
+        output.status.code().is_some(),
+        "Gate process terminated without an exit code"
+    );
+
+    let root = repo_root();
+    let log_path = root.join("target/conformance/support_matrix_maintenance.log.jsonl");
+    assert!(
+        log_path.exists(),
+        "Structured log missing at {}",
+        log_path.display()
+    );
+
+    let events = load_jsonl(&log_path);
+    assert!(
+        !events.is_empty(),
+        "Structured log must contain at least one event"
+    );
+
+    for event in &events {
+        for key in [
+            "timestamp",
+            "trace_id",
+            "level",
+            "event",
+            "mode",
+            "api_family",
+            "symbol",
+            "outcome",
+            "errno",
+            "artifact_refs",
+            "details",
+        ] {
+            assert!(
+                event.get(key).is_some(),
+                "Structured event missing key `{key}`: {event:?}"
+            );
+        }
+    }
+
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"].as_str() == Some("coverage_summary")
+                && event["level"].as_str() == Some("info")),
+        "Missing INFO coverage_summary event"
+    );
+    let glibc_callthrough_issue_levels: Vec<&str> = events
+        .iter()
+        .filter(|event| event["event"].as_str() == Some("status_validation_issue"))
+        .filter(|event| event["details"]["status"].as_str() == Some("GlibcCallThrough"))
+        .filter_map(|event| event["level"].as_str())
+        .collect();
+    assert!(
+        glibc_callthrough_issue_levels
+            .iter()
+            .all(|level| *level == "warn"),
+        "GlibcCallThrough status_validation_issue events must be WARN"
+    );
+    let gate_result = events
+        .iter()
+        .find(|event| event["event"].as_str() == Some("gate_result"))
+        .expect("Missing gate_result event");
+    assert!(
+        matches!(gate_result["outcome"].as_str(), Some("pass" | "fail")),
+        "gate_result.outcome must be pass|fail"
+    );
+    if !output.status.success() {
+        assert!(
+            events
+                .iter()
+                .any(|event| event["level"].as_str() == Some("error")),
+            "Expected ERROR events when gate command exits non-zero"
+        );
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|event| event["level"].as_str() == Some("trace")),
+        "TRACE events must be opt-in only"
+    );
+}
+
+#[test]
+fn maintenance_gate_loads_promotion_triage_manifest() {
+    let _guard = gate_test_lock();
+    let output = run_support_matrix_gate(false);
+    assert!(
+        output.status.code().is_some(),
+        "Gate process terminated without an exit code"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Promotion triage report:"),
+        "gate should announce the generated promotion triage report\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let generated_report = load_json(
+        &repo_root().join("target/conformance/support_matrix_maintenance.generated.json"),
+    );
+    let ratchet = &generated_report["fixture_coverage_ratchet"];
+    assert_eq!(
+        ratchet["promotion_triage_manifest_loaded"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        ratchet["module_deltas"].is_object(),
+        "triage-loaded ratchet should include module-level deltas"
+    );
+    assert!(
+        ratchet["summary"]["implemented_promotion_delta"].is_u64(),
+        "ratchet should report the current implemented-promotion delta"
+    );
+    assert_eq!(
+        generated_report["policy_checks"]["fixture_coverage_ratchet"]
+            ["promotion_triage_manifest_loaded"]
+            .as_bool(),
+        Some(true)
+    );
+}
+
+#[test]
+fn maintenance_gate_trace_flag_emits_symbol_status_snapshot_events() {
+    let _guard = gate_test_lock();
+    let output = run_support_matrix_gate(true);
+    assert!(
+        output.status.code().is_some(),
+        "Gate process terminated without an exit code"
+    );
+
+    let root = repo_root();
+    let log_path = root.join("target/conformance/support_matrix_maintenance.log.jsonl");
+    assert!(
+        log_path.exists(),
+        "Structured log missing at {}",
+        log_path.display()
+    );
+
+    let events = load_jsonl(&log_path);
+    assert!(
+        events.iter().any(|event| {
+            event["level"].as_str() == Some("trace")
+                && event["event"].as_str() == Some("symbol_status_snapshot")
+        }),
+        "Expected TRACE symbol_status_snapshot events when FRANKENLIBC_SYMBOL_GATE_TRACE=1"
+    );
+}
+
+#[test]
+fn maintenance_gate_does_not_rewrite_canonical_report() {
+    let _guard = gate_test_lock();
+    let canonical_path = canonical_report_path();
+    let before = std::fs::read_to_string(&canonical_path).expect("failed to read canonical report");
+
+    let output = run_support_matrix_gate(false);
+    assert!(
+        output.status.code().is_some(),
+        "Gate process terminated without an exit code"
+    );
+
+    let after =
+        std::fs::read_to_string(&canonical_path).expect("failed to re-read canonical report");
+    assert_eq!(
+        before, after,
+        "support matrix maintenance gate must not rewrite the canonical maintenance report"
+    );
+}
+
+#[test]
+fn maintenance_gate_fails_on_canonical_stable_section_drift() {
+    let _guard = gate_test_lock();
+    let mutated_canonical_path =
+        unique_generated_report_path("support_matrix_maintenance_bad_canonical");
+    let mut mutated = load_json(&canonical_report_path());
+    let original_total = mutated["summary"]["total_symbols"]
+        .as_u64()
+        .expect("summary.total_symbols should be numeric");
+    mutated["summary"]["total_symbols"] = serde_json::Value::from(original_total + 1);
+    std::fs::write(
+        &mutated_canonical_path,
+        serde_json::to_vec_pretty(&mutated).expect("mutated canonical report should serialize"),
+    )
+    .expect("failed to write mutated canonical report");
+
+    let output = run_support_matrix_gate_with_canonical(false, Some(&mutated_canonical_path));
+    assert!(
+        !output.status.success(),
+        "gate should fail when canonical stable sections drift\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log_path = repo_root().join("target/conformance/support_matrix_maintenance.log.jsonl");
+    let events = load_jsonl(&log_path);
+    let drift_event = events
+        .iter()
+        .find(|event| event["event"].as_str() == Some("canonical_stable_sections"))
+        .expect("expected canonical_stable_sections event");
+    assert_eq!(drift_event["level"].as_str(), Some("error"));
+    assert_eq!(drift_event["outcome"].as_str(), Some("fail"));
+    assert!(
+        drift_event["details"]["mismatched_keys"]
+            .as_array()
+            .map(|keys| keys.iter().any(|key| key.as_str() == Some("summary")))
+            .unwrap_or(false),
+        "expected summary drift to be reported in mismatched_keys"
+    );
+}
+
+#[test]
+fn injected_host_edge_invalidates_implemented_and_unproven_wraps_stays_conservative() {
+    let root = repo_root();
+    let matrix = load_json(&root.join("support_matrix.json"));
+    assert_eq!(
+        matrix["counts"]["stub"].as_u64(),
+        Some(0),
+        "support_matrix.json must have zero Stub rows after Wave 9.3 reconciliation"
+    );
+    assert_eq!(
+        matrix["counts"]["glibc_call_through"].as_u64(),
+        Some(0),
+        "support_matrix.json must have zero GlibcCallThrough rows"
+    );
+
+    let canonical = load_json(&canonical_report_path());
+    let status_map = canonical["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map must be an object");
+    for wrapper in [
+        "__pthread_register_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_unregister_cancel",
+        "__pthread_unregister_cancel_restore",
+        "_pthread_cleanup_push",
+        "_pthread_cleanup_push_defer",
+        "_pthread_cleanup_pop",
+        "_pthread_cleanup_pop_restore",
+        "pthread_cond_wait",
+        "pthread_cond_timedwait",
+        "pthread_cond_clockwait",
+        "_authenticate",
+        "callrpc",
+        "clnt_create",
+    ] {
+        assert_eq!(
+            status_map.get(wrapper).and_then(serde_json::Value::as_str),
+            Some("WrapsHostLibc"),
+            "{wrapper} must remain conservatively classified as WrapsHostLibc"
+        );
+    }
+
+    // 1. An unproven native body under WrapsHostLibc must remain valid (not auto-promoted).
+    let canonical_issues = canonical["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let conservative_symbol = canonical_issues
+        .iter()
+        .find(|issue| {
+            issue["status"].as_str() == Some("WrapsHostLibc")
+                && issue["valid"].as_bool() == Some(true)
+                && issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|w| {
+                        w.as_str()
+                            == Some(
+                                "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof",
+                            )
+                    })
+                })
+        })
+        .and_then(|issue| issue["symbol"].as_str())
+        .expect("expected at least one unproven native WrapsHostLibc row retained conservatively");
+
+    // 2. Supplying strict+hardened conformance proof for that WrapsHostLibc symbol must reject
+    // keeping it under WrapsHostLibc, while injecting a real interpose host dependency onto an
+    // Implemented symbol (`abs`) in ABI source must propagate through the census and invalidate
+    // its Implemented classification.
+    let temp_abi_dir =
+        unique_generated_report_path("mutated_abi_src_injected_edge").with_extension("abi_src");
+    std::fs::create_dir_all(&temp_abi_dir).expect("failed to create temporary ABI source dir");
+    let canonical_abi_dir = root.join("crates/frankenlibc-abi/src");
+    fn copy_abi_tree(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).expect("failed to create temporary ABI source dir");
+        for entry in std::fs::read_dir(src).expect("failed to read ABI dir") {
+            let entry = entry.expect("dir entry should read");
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+            if path.is_dir() {
+                copy_abi_tree(&path, &dest);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                if entry.file_name().to_str() == Some("stdlib_abi.rs") {
+                    let raw = std::fs::read_to_string(&path).expect("stdlib_abi.rs should read");
+                    let mutated = raw.replace(
+                        "pub extern \"C\" fn abs(n: c_int) -> c_int {\n    frankenlibc_core::stdlib::abs(n)\n}",
+                        "pub extern \"C\" fn abs(n: c_int) -> c_int {\n    crate::host_resolve::injected_abs_host_probe();\n    frankenlibc_core::stdlib::abs(n)\n}",
+                    );
+                    assert_ne!(
+                        mutated, raw,
+                        "stdlib_abi.rs abs() needle must match before host-edge injection"
+                    );
+                    std::fs::write(&dest, mutated).expect("mutated stdlib_abi.rs should write");
+                } else if entry.file_name().to_str() == Some("host_resolve.rs") {
+                    let mut raw =
+                        std::fs::read_to_string(&path).expect("host_resolve.rs should read");
+                    raw.push_str(
+                        "\npub(crate) fn injected_abs_host_probe() {\n    let _ = resolve_host_symbol_raw(\"abs\");\n}\n",
+                    );
+                    std::fs::write(&dest, raw).expect("mutated host_resolve.rs should write");
+                } else {
+                    std::fs::copy(&path, &dest).expect("ABI source file should copy");
+                }
+            }
+        }
+    }
+    copy_abi_tree(&canonical_abi_dir, &temp_abi_dir);
+
+    let mutated_census_path = unique_generated_report_path("mutated_host_census_injected_edge");
+    let census_out = Command::new("python3")
+        .args([
+            root.join("scripts/generate_host_delegation_census.py")
+                .to_str()
+                .unwrap(),
+            "--abi-source-dir",
+            temp_abi_dir.to_str().unwrap(),
+            "--output",
+            mutated_census_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to regenerate mutated host delegation census");
+    assert!(
+        census_out.status.success(),
+        "census generator failed on mutated ABI dir:\n{}",
+        String::from_utf8_lossy(&census_out.stderr)
+    );
+
+    let mut mutated_conformance =
+        load_json(&root.join("tests/conformance/conformance_matrix.v1.json"));
+    let sym_matrix = mutated_conformance["symbol_matrix"]
+        .as_array_mut()
+        .expect("symbol_matrix should be an array");
+    for mode in ["strict", "hardened"] {
+        sym_matrix.push(serde_json::json!({
+            "symbol": conservative_symbol,
+            "mode": mode,
+            "total": 4,
+            "passed": 4,
+            "failed": 0,
+            "errors": 0,
+            "pass_rate_percent": 100.0
+        }));
+    }
+    let mutated_conformance_path = unique_generated_report_path("mutated_conformance_proven_wraps");
+    std::fs::write(
+        &mutated_conformance_path,
+        serde_json::to_vec_pretty(&mutated_conformance)
+            .expect("mutated conformance matrix should serialize"),
+    )
+    .expect("failed to write mutated conformance matrix");
+
+    let temp_fixture_dir =
+        unique_generated_report_path("mutated_fixtures_proven_wraps").with_extension("fixtures");
+    std::fs::create_dir_all(&temp_fixture_dir).expect("failed to create temp fixture dir");
+    for entry in
+        std::fs::read_dir(root.join("tests/conformance/fixtures")).expect("read fixtures dir")
+    {
+        let entry = entry.expect("fixture entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            std::fs::copy(&path, temp_fixture_dir.join(entry.file_name()))
+                .expect("copy fixture file");
+        }
+    }
+    std::fs::write(
+        temp_fixture_dir.join("zz_synthetic_proven_wraps.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": "v1",
+            "family": "synthetic_proven_wraps",
+            "cases": [
+                {
+                    "name": "synthetic_both_mode_proof",
+                    "function": conservative_symbol,
+                    "mode": "both"
+                }
+            ]
+        }))
+        .expect("synthetic fixture should serialize"),
+    )
+    .expect("write synthetic fixture");
+
+    let mutated_report_path = unique_generated_report_path("mutated_maintenance_counterexample");
+    let output = Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            mutated_report_path.to_str().unwrap(),
+            "--abi-source-dir",
+            temp_abi_dir.to_str().unwrap(),
+            "--fixture-dir",
+            temp_fixture_dir.to_str().unwrap(),
+            "--host-delegation-census",
+            mutated_census_path.to_str().unwrap(),
+            "--conformance-matrix",
+            mutated_conformance_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator on counterexamples");
+    assert!(
+        output.status.success(),
+        "maintenance validator crashed on counterexamples:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mutated_report = load_json(&mutated_report_path);
+    assert!(
+        mutated_report["summary"]["status_invalid"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 2,
+        "injected host edge and proven WrapsHostLibc counterexample must both increment status_invalid"
+    );
+    let mutated_issues = mutated_report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    let abs_issue = mutated_issues
+        .iter()
+        .find(|issue| issue["symbol"].as_str() == Some("abs"))
+        .expect("abs must appear in status_validation_issues after injected host edge");
+    assert_eq!(abs_issue["valid"].as_bool(), Some(false));
+    assert!(
+        abs_issue["findings"].as_array().is_some_and(|findings| {
+            findings
+                .iter()
+                .any(|f| f.as_str() == Some("Implemented but host delegation census detected"))
+        }),
+        "injected cross-module host edge must propagate through census and invalidate Implemented symbol abs: {abs_issue:?}"
+    );
+
+    let proven_wraps_issue = mutated_issues
+        .iter()
+        .find(|issue| issue["symbol"].as_str() == Some(conservative_symbol))
+        .expect("proven WrapsHostLibc symbol must appear in status_validation_issues");
+    assert_eq!(proven_wraps_issue["valid"].as_bool(), Some(false));
+    assert!(
+        proven_wraps_issue["findings"].as_array().is_some_and(|findings| {
+            findings.iter().any(|f| {
+                f.as_str()
+                    == Some(
+                        "WrapsHostLibc but no host delegation detected and strict+hardened conformance is proven",
+                    )
+            })
+        }),
+        "proven native body under WrapsHostLibc must fail validation until promoted: {proven_wraps_issue:?}"
+    );
+}

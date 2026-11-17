@@ -621,7 +621,7 @@
     },
     "source_tree_sha256": "5f59774dfd6d5262de2f2e8609fbdd4f480b876ca277f7072bfe158c60255e3a",
     "version_script_sha256": "295ab0a4c499c2f1dc601809646c79a6b872635c4d61a79d796938c4abb0d78d",
-    "support_rows_sha256": "ad9ecafd85eabc37f2cdcb4a3a1cb492f52c79e4ee5870f234c774af4a90d87d",
+    "support_rows_sha256": "3988f4e6e54c7c886be2edd0b062197a5f0d78dd5c49505c5e7153155137554e",
     "contract_rows_sha256": "b1b5625da639cbc62f0c7aa8ceef2428ad15cb6bc8e7cf20de4ed0a282f12f32",
     "summary": {
       "declared_symbol_count": 4730,
@@ -636,7 +636,7 @@
       },
       "version_script_symbol_count": 4235,
       "support_symbol_count": 4119,
-      "group_count": 156,
+      "group_count": 154,
       "unknown_semantics_count": 4730,
       "full_semantics_count": 0,
       "unqualified_configuration_count": 26
@@ -1234,6 +1234,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "registerrpc",
           "svc_exit",
           "svc_getreq",
           "svc_getreq_common",
@@ -1245,8 +1246,13 @@
           "svc_unregister",
           "svcerr_auth",
           "svcerr_progvers",
+          "svcfd_create",
+          "svctcp_create",
           "svcudp_bufcreate",
-          "svcudp_create"
+          "svcudp_create",
+          "svcudp_enablecache",
+          "svcunix_create",
+          "svcunixfd_create"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -1369,6 +1375,34 @@
         "backend_review": "unreviewed",
         "symbols": [
           "dlerror"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
+        "id": "unknown-1cb85ad7c6095b96",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "rpc_svc"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "WrapsHostLibc",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "_authenticate"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -1721,16 +1755,6 @@
           "__isoc23_vfwscanf",
           "__isoc23_vscanf",
           "__isoc23_vwscanf",
-          "__isoc23_wcstoimax",
-          "__isoc23_wcstol",
-          "__isoc23_wcstol_l",
-          "__isoc23_wcstoll",
-          "__isoc23_wcstoll_l",
-          "__isoc23_wcstoul",
-          "__isoc23_wcstoul_l",
-          "__isoc23_wcstoull",
-          "__isoc23_wcstoull_l",
-          "__isoc23_wcstoumax",
           "__isoc23_wscanf",
           "__isoc99_fwscanf",
           "__isoc99_vfwscanf",
@@ -1860,36 +1884,7 @@
         "symbols": [
           "__cxa_thread_atexit_impl",
           "__frankenlibc_startup_phase0",
-          "__frankenlibc_startup_snapshot",
           "__libc_start_main"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
-        "id": "unknown-2fe6697e7bd442e9",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "fortify_abi"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "WrapsHostLibc",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "__stack_chk_fail"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -1967,6 +1962,9 @@
           "__atanhf128_finite",
           "__atanhf_finite",
           "__atanhl_finite",
+          "__clog10",
+          "__clog10f",
+          "__clog10l",
           "__cosh_finite",
           "__coshf128_finite",
           "__coshf_finite",
@@ -2710,40 +2708,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-320c79dccac948cc",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "rpc_svc"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "Stub",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "_authenticate",
-          "registerrpc",
-          "svcfd_create",
-          "svctcp_create",
-          "svcudp_enablecache",
-          "svcunix_create",
-          "svcunixfd_create"
-        ],
-        "next_action": "Confirm the current fallback against source and a real provider; link printf registration to bd-rc0923-epic-eeuy4f.33 or RPC to .35, and other measured runtime defects to bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-3359f632a9fdbdcc",
         "profiles": [
           "standalone-release-linux-x86_64"
@@ -2797,7 +2761,6 @@
           "sigaddset",
           "sigandset",
           "sigdelset",
-          "sigemptyset",
           "sigfillset",
           "sigisemptyset",
           "sigismember",
@@ -3014,37 +2977,6 @@
         "next_action": "Resolve the data/assembly/inactive-module or target/feature declaration before claiming a provider; then review behavior under bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-40e47c19cd4e9540",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "glibc_internal_abi"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "Stub",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "register_printf_function",
-          "register_printf_modifier",
-          "register_printf_specifier",
-          "register_printf_type"
-        ],
-        "next_action": "Confirm the current fallback against source and a real provider; link printf registration to bd-rc0923-epic-eeuy4f.33 or RPC to .35, and other measured runtime defects to bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-4403708f8cb0e0d8",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -3200,10 +3132,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "__adjtimex",
-          "__arch_prctl",
           "__asprintf",
-          "__bsd_getpgrp",
           "__clone",
           "__close",
           "__connect",
@@ -3299,6 +3228,10 @@
           "__xpg_sigpause",
           "_dl_find_object",
           "_flushlbf",
+          "_pthread_cleanup_pop",
+          "_pthread_cleanup_pop_restore",
+          "_pthread_cleanup_push",
+          "_pthread_cleanup_push_defer",
           "adjtime",
           "arch_prctl",
           "chflags",
@@ -3445,38 +3378,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-5133d5077d1f0b4c",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "rpc_abi"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "Stub",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "clnt_perror",
-          "clnt_sperror",
-          "clntraw_create",
-          "clntunix_create",
-          "svcraw_create"
-        ],
-        "next_action": "Confirm the current fallback against source and a real provider; link printf registration to bd-rc0923-epic-eeuy4f.33 or RPC to .35, and other measured runtime defects to bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-5323d61e76ccd92b",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -3500,14 +3401,11 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "execvpe",
           "fork",
-          "posix_spawn",
           "posix_spawnattr_getsigdefault",
           "posix_spawnattr_getsigmask",
           "posix_spawnattr_setsigdefault",
           "posix_spawnattr_setsigmask",
-          "posix_spawnp",
           "vfork"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
@@ -3573,8 +3471,10 @@
         "backend_review": "unreviewed",
         "symbols": [
           "alphasort",
+          "dirfd",
           "rewinddir",
           "seekdir",
+          "telldir",
           "versionsort"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
@@ -4118,6 +4018,7 @@
           "__recvfrom_chk",
           "__snprintf_chk",
           "__sprintf_chk",
+          "__stack_chk_fail",
           "__stpcpy_chk",
           "__stpncpy_chk",
           "__strcat_chk",
@@ -4373,6 +4274,8 @@
         "backend_review": "unreviewed",
         "symbols": [
           "_IO_enable_locks",
+          "__adjtimex",
+          "__arch_prctl",
           "__argz_count",
           "__argz_next",
           "__argz_stringify",
@@ -4381,6 +4284,7 @@
           "__backtrace",
           "__backtrace_symbols",
           "__backtrace_symbols_fd",
+          "__bsd_getpgrp",
           "__bzero",
           "__call_tls_dtors",
           "__cmsg_nxthdr",
@@ -4500,10 +4404,6 @@
           "_obstack_free",
           "_obstack_memory_used",
           "_obstack_newchunk",
-          "_pthread_cleanup_pop",
-          "_pthread_cleanup_pop_restore",
-          "_pthread_cleanup_push",
-          "_pthread_cleanup_push_defer",
           "_tolower",
           "_toupper",
           "advance",
@@ -4567,6 +4467,10 @@
           "pthread_setschedprio",
           "re_comp",
           "re_exec",
+          "register_printf_function",
+          "register_printf_modifier",
+          "register_printf_specifier",
+          "register_printf_type",
           "res_dnok",
           "res_hnok",
           "res_mailok",
@@ -4669,12 +4573,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "gmtime",
-          "gmtime_r",
-          "localtime",
-          "mktime",
-          "timegm",
-          "timespec_get"
+          "mktime"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -4786,6 +4685,16 @@
           "__isoc23_swscanf",
           "__isoc23_vsscanf",
           "__isoc23_vswscanf",
+          "__isoc23_wcstoimax",
+          "__isoc23_wcstol",
+          "__isoc23_wcstol_l",
+          "__isoc23_wcstoll",
+          "__isoc23_wcstoll_l",
+          "__isoc23_wcstoul",
+          "__isoc23_wcstoul_l",
+          "__isoc23_wcstoull",
+          "__isoc23_wcstoull_l",
+          "__isoc23_wcstoumax",
           "__isoc99_swscanf",
           "__isoc99_vswscanf"
         ],
@@ -5004,6 +4913,7 @@
           "iswxdigit",
           "iswxdigit_l",
           "mblen",
+          "mbrtoc16",
           "mbsinit",
           "swprintf",
           "swscanf",
@@ -5562,6 +5472,8 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "execvpe",
+          "posix_spawn",
           "posix_spawn_file_actions_addchdir_np",
           "posix_spawn_file_actions_addclose",
           "posix_spawn_file_actions_adddup2",
@@ -5578,7 +5490,8 @@
           "posix_spawnattr_setflags",
           "posix_spawnattr_setpgroup",
           "posix_spawnattr_setschedparam",
-          "posix_spawnattr_setschedpolicy"
+          "posix_spawnattr_setschedpolicy",
+          "posix_spawnp"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -5606,6 +5519,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "call_once",
           "cnd_broadcast",
           "cnd_destroy",
           "cnd_signal",
@@ -5613,7 +5527,10 @@
           "cnd_wait",
           "mtx_destroy",
           "mtx_init",
+          "mtx_lock",
+          "mtx_timedlock",
           "mtx_trylock",
+          "mtx_unlock",
           "thrd_current",
           "thrd_equal",
           "thrd_sleep",
@@ -5624,35 +5541,6 @@
           "tss_set"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
-        "id": "unknown-882a5b8b7801dd04",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "rpc_client_create"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "Stub",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "callrpc",
-          "clnt_create"
-        ],
-        "next_action": "Confirm the current fallback against source and a real provider; link printf registration to bd-rc0923-epic-eeuy4f.33 or RPC to .35, and other measured runtime defects to bd-reality-202609-lx578q.7."
       },
       {
         "id": "unknown-8c8d708486756a3e",
@@ -5738,13 +5626,11 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "dirfd",
           "fdopendir",
           "readdir64",
           "readdir_r",
           "scandir",
-          "scandir64",
-          "telldir"
+          "scandir64"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -5780,8 +5666,6 @@
           "__strtof_l",
           "__strtol_internal",
           "__strtol_l",
-          "__strtold_internal",
-          "__strtold_l",
           "__strtoll_internal",
           "__strtoll_l",
           "__strtoul_internal",
@@ -5846,15 +5730,20 @@
           "authnone_create",
           "authunix_create",
           "authunix_create_default",
+          "bindresvport",
           "cbc_crypt",
           "clnt_broadcast",
           "clnt_pcreateerror",
           "clnt_perrno",
+          "clnt_perror",
           "clnt_spcreateerror",
           "clnt_sperrno",
+          "clnt_sperror",
+          "clntraw_create",
           "clnttcp_create",
           "clntudp_bufcreate",
           "clntudp_create",
+          "clntunix_create",
           "des_setparity",
           "ecb_crypt",
           "get_myaddress",
@@ -5880,6 +5769,7 @@
           "pmap_set",
           "pmap_unset",
           "rtime",
+          "svcraw_create",
           "xdecrypt",
           "xdr_authdes_verf",
           "xdr_bool",
@@ -6028,14 +5918,12 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "__pthread_once",
-          "__pthread_rwlock_rdlock",
-          "__pthread_rwlock_unlock",
-          "__pthread_rwlock_wrlock",
-          "pthread_barrier_wait",
           "pthread_cancel",
           "pthread_clockjoin_np",
+          "pthread_cond_clockwait",
           "pthread_cond_init",
+          "pthread_cond_timedwait",
+          "pthread_cond_wait",
           "pthread_create",
           "pthread_detach",
           "pthread_exit",
@@ -6191,11 +6079,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "call_once",
           "cnd_init",
-          "mtx_lock",
-          "mtx_timedlock",
-          "mtx_unlock",
           "thrd_create",
           "thrd_detach",
           "thrd_exit",
@@ -6472,7 +6356,6 @@
           "getwchar",
           "getwchar_unlocked",
           "mbrlen",
-          "mbrtoc16",
           "mbrtoc32",
           "mbrtowc",
           "mbsnrtowcs",
@@ -6538,9 +6421,6 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "__clog10",
-          "__clog10f",
-          "__clog10l",
           "__gamma_r_finite",
           "__gammaf128_r_finite",
           "__gammaf_r_finite",
@@ -7859,6 +7739,35 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
+        "id": "unknown-c2bb946576d4b65b",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "rpc_client_create"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "WrapsHostLibc",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "callrpc",
+          "clnt_create"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
         "id": "unknown-c48d2507938afdc9",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -8082,6 +7991,8 @@
           "__strspn_c3",
           "__strtok_r",
           "__strtok_r_1c",
+          "__strtold_internal",
+          "__strtold_l",
           "__strverscmp",
           "__strxfrm_l",
           "argz_count",
@@ -8268,10 +8179,14 @@
           "__pthread_mutexattr_destroy",
           "__pthread_mutexattr_init",
           "__pthread_mutexattr_settype",
+          "__pthread_once",
           "__pthread_rwlock_destroy",
           "__pthread_rwlock_init",
+          "__pthread_rwlock_rdlock",
           "__pthread_rwlock_tryrdlock",
           "__pthread_rwlock_trywrlock",
+          "__pthread_rwlock_unlock",
+          "__pthread_rwlock_wrlock",
           "__pthread_setspecific",
           "pthread_atfork",
           "pthread_attr_destroy",
@@ -8300,16 +8215,14 @@
           "pthread_attr_setstacksize",
           "pthread_barrier_destroy",
           "pthread_barrier_init",
+          "pthread_barrier_wait",
           "pthread_barrierattr_destroy",
           "pthread_barrierattr_getpshared",
           "pthread_barrierattr_init",
           "pthread_barrierattr_setpshared",
           "pthread_cond_broadcast",
-          "pthread_cond_clockwait",
           "pthread_cond_destroy",
           "pthread_cond_signal",
-          "pthread_cond_timedwait",
-          "pthread_cond_wait",
           "pthread_condattr_destroy",
           "pthread_condattr_getclock",
           "pthread_condattr_getpshared",
@@ -8642,7 +8555,6 @@
         "backend_review": "unreviewed",
         "symbols": [
           "_rpc_dtablesize",
-          "bindresvport",
           "host2netname",
           "user2netname",
           "xdr_accepted_reply",
@@ -8901,8 +8813,13 @@
           "ctime",
           "ctime_r",
           "difftime",
+          "gmtime",
+          "gmtime_r",
+          "localtime",
           "strftime",
           "strptime",
+          "timegm",
+          "timespec_get",
           "timespec_getres",
           "tzset"
         ],
@@ -9069,7 +8986,8 @@
           "__libc_current_sigrtmax",
           "__libc_current_sigrtmin",
           "sigabbrev_np",
-          "sigdescr_np"
+          "sigdescr_np",
+          "sigemptyset"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -9220,6 +9138,34 @@
           "gai_error",
           "gai_suspend",
           "getaddrinfo_a"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
+        "id": "unknown-f6728a4f398df066",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "startup_abi"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "Implemented",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "__frankenlibc_startup_snapshot"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },

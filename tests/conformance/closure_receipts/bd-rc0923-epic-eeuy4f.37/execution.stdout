@@ -1,0 +1,14 @@
+
+running 9 tests
+test canonical_census_records_cancellation_and_cleanup_host_dependencies ... ok
+test symbol_and_callsite_counts_are_self_consistent ... ok
+test artifact_has_required_shape_and_anchors ... ok
+test callsites_reference_existing_nonblank_source_lines ... ok
+test generator_scopes_duplicate_helpers_and_resolves_qualified_calls ... ok
+test generator_detects_host_calls_on_opening_brace_line ... ok
+test generator_propagates_turbofish_cfg_exclusive_macro_exports_and_rejects_comparisons ... ok
+test gate_script_passes_and_emits_report_and_log ... ok
+test generator_check_mode_rederives_artifact ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.04s
+

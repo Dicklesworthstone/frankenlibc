@@ -1,33 +1,14 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-11-12T04:05:00Z",
-  "source_commit": "e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca",
+  "generated_at_utc": "2026-11-13T00:40:00Z",
+  "source_commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
   "total_exported": 4119,
   "counts": {
-    "implemented": 2414,
+    "implemented": 2464,
     "raw_syscall": 408,
-    "wraps_host_libc": 1279,
+    "wraps_host_libc": 1247,
     "glibc_call_through": 0,
-    "stub": 18
+    "stub": 0
   },
-  "stubs": [
-    "_authenticate",
-    "callrpc",
-    "clnt_create",
-    "clnt_perror",
-    "clnt_sperror",
-    "clntraw_create",
-    "clntunix_create",
-    "register_printf_function",
-    "register_printf_modifier",
-    "register_printf_specifier",
-    "register_printf_type",
-    "registerrpc",
-    "svcfd_create",
-    "svcraw_create",
-    "svctcp_create",
-    "svcudp_enablecache",
-    "svcunix_create",
-    "svcunixfd_create"
-  ]
+  "stubs": []
 }

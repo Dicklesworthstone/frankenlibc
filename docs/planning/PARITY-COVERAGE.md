@@ -1,14 +1,14 @@
 # FrankenLibC Parity Coverage Report
 
-**Reconciled:** 2026-11-11. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
+**Reconciled:** 2026-11-13. The symbol-presence comparison and session history below originate from 2026-05-25; they are not a fresh workload or parity run.
 
 ## Current Scope
 
-The declared replacement level is **L0 interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,414 `Implemented`, 408 `RawSyscall`, 1,279 `WrapsHostLibc`, zero `GlibcCallThrough`, and eighteen `Stub`. The 2,822 native/direct-syscall classifications (68.5%) measure ownership, not complete semantics or a standalone process.
+The declared replacement level is **L0 interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,464 `Implemented`, 408 `RawSyscall`, 1,247 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,872 native/direct-syscall classifications (69.7%) measure ownership, not complete semantics or a standalone process.
 
-The committed support-maintenance report rejects 1,092 classifications (1,074 host-label/source mismatches and 18 stub/source mismatches awaiting reviewed evidence). Those mismatches require reviewed source/provider evidence, not blanket promotion. Fixture linkage covers 1,190/4,119 rows (28.9%); linkage is not an executed pass rate. The 36-entry semantic overlay (`tests/conformance/support_semantic_overlay.v1.json`) is representative, not exhaustive.
+The committed support-maintenance report validates 4,119/4,119 classifications (0 status-invalid rows) while conservatively retaining unproven native wrapper rows under `WrapsHostLibc` until fixture/promotion-proof evidence is attached. Fixture linkage covers 1,205/4,119 rows (29.3%); linkage is not an executed pass rate. The 36-entry semantic overlay (`tests/conformance/support_semantic_overlay.v1.json`) is representative, not exhaustive.
 
-The November 11 committed preload summary (`tests/conformance/ld_preload_smoke_summary.v1.json`, run `20261111T134243Z-2744068` at source commit `44a61541…`) records 348 passes, zero failures, four optional skips and zero xfails (`175` strict passes and `173` hardened passes) for its identified artifact. Zero-stub completion and L1 promotion remain open. See [the bridge plan](REALITY_CHECK_BRIDGE_PLAN.md) and [compatibility guide](COMPATIBILITY.md) for evidence boundaries and active tasks.
+The November 11 committed preload summary (`tests/conformance/ld_preload_smoke_summary.v1.json`, run `20261111T134243Z-2744068` at source commit `44a61541…`) records 348 passes, zero failures, four optional skips and zero xfails (`175` strict passes and `173` hardened passes) for its identified artifact. L1 promotion verification remains gated under `bd-rc0923-epic-eeuy4f.47`. See [the bridge plan](REALITY_CHECK_BRIDGE_PLAN.md) and [compatibility guide](COMPATIBILITY.md) for evidence boundaries and active tasks.
 
 ## Historical Symbol-Presence Comparison — May 25, 2026
 
@@ -39,22 +39,22 @@ The full POSIX/GNU objective remains. Historical exclusions must not silently re
 | NSS plugins (`_nss_*`) | Native files/DNS coexist with installed host-loaded NSS modules | Public lookup behavior and provider independence need separate qualification |
 | Thread debug (`_thread_db_*`) | GDB/debugger integration internals | Debuggers use libthread_db.so |
 | Dynamic linker globals (`_rtld_*`, `_dl_*`) | Host-loader internals differ from the public symbol surface | Owned startup, TLS and transitive loading remain standalone integration obligations |
-| Sun RPC/XDR | Declared legacy ABI remains in scope | Native code exists, but fourteen RPC symbols remain classified as stubs pending implementation/qualification |
+| Sun RPC/XDR | Declared legacy ABI remains in scope | Native XDR and RPC client/service transports exist; 28 RPC symbols remain classified as `WrapsHostLibc` due to standalone NSS `dlsym` reachability or conservative promotion evidence |
 | STREAMS (`fattach`, `getmsg`, `putmsg`) | SVR4 legacy, never widely used on Linux | Effectively dead API |
 
 ## Support Matrix Breakdown
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| Implemented | 2414 | Classified native Rust behavior |
+| Implemented | 2464 | Classified native Rust behavior |
 | RawSyscall | 408 | Classified direct syscall path |
-| WrapsHostLibc | 1279 | Explicit host-backed subset |
+| WrapsHostLibc | 1247 | Explicit host-backed subset |
 | GlibcCallThrough | 0 | Opaque call-through subset |
-| Stub | 18 | Explicit unsupported contracts |
+| Stub | 0 | Explicit unsupported contracts |
 
-**Native-classified:** 2,822 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
+**Native-classified:** 2,872 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
 
-**Host-backed:** 1,279 symbols (`WrapsHostLibc`). Taxonomy/source disagreements are described above.
+**Host-backed:** 1,247 symbols (`WrapsHostLibc`). Conservative promotion-evidence boundaries are described above.
 
 ## Behavioral Parity Verification
 

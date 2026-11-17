@@ -228,10 +228,10 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 218,
-    "total_entries": 218,
+    "total_critique_beads": 220,
+    "total_entries": 220,
     "by_coverage_status": {
-      "complete": 156,
+      "complete": 158,
       "partial": 1,
       "missing": 61
     },
@@ -243,8 +243,8 @@
         "missing": 16
       },
       "P1": {
-        "total": 120,
-        "complete": 103,
+        "total": 122,
+        "complete": 105,
         "partial": 0,
         "missing": 17
       },
@@ -263,20 +263,20 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 217,
-        "complete": 156,
+        "required": 219,
+        "complete": 158,
         "partial": 0,
         "missing": 61
       },
       "e2e_scripts": {
-        "required": 117,
-        "complete": 82,
+        "required": 119,
+        "complete": 84,
         "partial": 0,
         "missing": 35
       },
       "structured_logs": {
-        "required": 148,
-        "complete": 75,
+        "required": 150,
+        "complete": 77,
         "partial": 0,
         "missing": 73
       },
@@ -293,8 +293,8 @@
         "missing": 36
       },
       "golden_artifacts": {
-        "required": 138,
-        "complete": 64,
+        "required": 140,
+        "complete": 66,
         "partial": 0,
         "missing": 74
       }
@@ -319,8 +319,8 @@
         "missing": 15
       },
       "e2e": {
-        "total": 79,
-        "complete": 70,
+        "total": 81,
+        "complete": 72,
         "partial": 1,
         "missing": 8
       },
@@ -14924,6 +14924,354 @@
               "rpc_legacy_network_fixture_covers_first_wave_symbols_in_both_modes",
               "rpc_legacy_network_cases_bind_expected_behavior_and_log_fields",
               "rpc_legacy_network_fixture_executes_via_isolated_harness"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.37",
+      "title": "[RC-1020] Reconcile stale host census and the 1079 rejected support classifications",
+      "priority": 1,
+      "status": "in_progress",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Source-derived host delegation census v18 with multiline/macro turbofish, cfg-branch, naked_asm sym, and cancellation/cleanup propagation"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_host_delegation_census.sh; bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.37/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test host_delegation_census_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_host_delegation_census.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.37/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.37/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.37",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test host_delegation_census_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_host_delegation_census.sh",
+          "bash scripts/check_closure_gate.sh"
+        ],
+        "expected_assertions": [
+          "Source-derived host delegation census v18 with multiline/macro turbofish, cfg-branch, naked_asm sym, and cancellation/cleanup propagation"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "scripts/generate_host_delegation_census.py",
+          "scripts/check_host_delegation_census.sh",
+          "tests/conformance/host_delegation_census.v1.json",
+          "crates/frankenlibc-abi/build.rs",
+          "crates/frankenlibc-harness/tests/host_delegation_census_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.37/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit b746ad1498d573b930019295c7c6fce52c4df4d4.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.37/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Source-derived host delegation census v18 with multiline/macro turbofish, cfg-branch, naked_asm sym, and cancellation/cleanup propagation",
+          "acceptance_sha256": "55036f8b1db88e689538f18bff5a8fc8a441560c414dcccded30f93ac564514b",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "scripts/generate_host_delegation_census.py",
+            "scripts/check_host_delegation_census.sh",
+            "tests/conformance/host_delegation_census.v1.json",
+            "crates/frankenlibc-abi/build.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/host_delegation_census_test.rs"
+          ],
+          "source": {
+            "commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-abi/build.rs": "0efe0f53acbd18d7c7c4f1d5d56e6945fe88a10808219e3d76cc23b552f19f71",
+              "crates/frankenlibc-harness/tests/host_delegation_census_test.rs": "2d19f797996523abab27298035385e39f87785bab31929b3e9e61ed16cf076bf",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/check_host_delegation_census.sh": "985772b4e021865f6df5c1844f5093a88ddd6d5e98d1a8febe05d4be414852a1",
+              "scripts/generate_host_delegation_census.py": "411e715e0b1449381a585b867a475290977c3eee24ede15159d8774c68af365c",
+              "tests/conformance/host_delegation_census.v1.json": "69f1cf4b541ab1c3db43c2b862ddebfb536cf8ee5d04bab6b384139e0dea5669"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:21.326962Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/7d5956ec81821d1b/out/host_delegation_census_test-7d5956ec81821d1b"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "host_delegation_census_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/7d5956ec81821d1b/out/host_delegation_census_test-7d5956ec81821d1b"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "artifact_has_required_shape_and_anchors",
+              "generator_check_mode_rederives_artifact",
+              "gate_script_passes_and_emits_report_and_log",
+              "generator_propagates_turbofish_cfg_exclusive_macro_exports_and_rejects_comparisons",
+              "canonical_census_records_cancellation_and_cleanup_host_dependencies"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.38",
+      "title": "[RC-1020 tests] Verify host-census derivation and classification counterexamples",
+      "priority": 1,
+      "status": "open",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f.37"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Support matrix maintenance gate 100% valid across 4119 symbols with zero Stubs, cross-module census invalidation, and conservative unproven WrapsHostLibc retention"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_support_matrix_maintenance.sh --strict; bash scripts/check_closure_gate.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "JSONL execution receipt"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": false,
+          "scope": ""
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.38/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test support_matrix_maintenance_test"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "bash scripts/check_support_matrix_maintenance.sh --strict"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.38/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "not_required"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.38/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.38",
+        "stream": "e2e",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test support_matrix_maintenance_test"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_support_matrix_maintenance.sh --strict",
+          "bash scripts/check_closure_gate.sh"
+        ],
+        "expected_assertions": [
+          "Support matrix maintenance gate 100% valid across 4119 symbols with zero Stubs, cross-module census invalidation, and conservative unproven WrapsHostLibc retention"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "scripts/generate_support_matrix_maintenance.py",
+          "support_matrix.json",
+          "tests/conformance/support_matrix_maintenance_report.v1.json",
+          "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.38/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified and recorded via check_closure_gate.sh at commit b746ad1498d573b930019295c7c6fce52c4df4d4.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.38/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Support matrix maintenance gate 100% valid across 4119 symbols with zero Stubs, cross-module census invalidation, and conservative unproven WrapsHostLibc retention",
+          "acceptance_sha256": "17be70fbb37ec7d54450081747f92df2ff73fb131448f530cf47873f7383d94d",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "scripts/generate_support_matrix_maintenance.py",
+            "support_matrix.json",
+            "tests/conformance/support_matrix_maintenance_report.v1.json"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs"
+          ],
+          "source": {
+            "commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
+            "files": {
+              ".cargo/config.toml": "9229a4f7ce07f0148f0824986897987ecb21309739b86174f398dd13a55b4cc0",
+              "Cargo.lock": "f81d6b479066248a8db1528d3c51b4d38648d630b9587b213d263acbc8bfbf58",
+              "Cargo.toml": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6",
+              "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs": "0eab9750164d3419f3de4b20cc763495b510daaa60d3c46bd4adfbfd37fac67f",
+              "rust-toolchain.toml": "6b42b786db58642d173380292dc24d3600d24ed1fc651a3d4a50cec9dc1b17bf",
+              "scripts/generate_support_matrix_maintenance.py": "c6de95f6f01848c26274f4024c6df047bef0aa4c873879c7b0208f50d3b77111",
+              "support_matrix.json": "5eb1a01826a13b350dd522aa65f4628f590d75e15d4265ae0853c181a7758d13",
+              "tests/conformance/support_matrix_maintenance_report.v1.json": "3303022771893a384c1c6092867d019f6b1fc2b18d4d98b7c6261392974cabb6"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": [
+              "default"
+            ]
+          },
+          "not_before": "2026-10-20T22:14:21.786520Z",
+          "gate": {
+            "command": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "cargo",
+              "test",
+              "-Zchecksum-freshness",
+              "--locked",
+              "--config",
+              "build.fingerprint=\"content\"",
+              "--config",
+              "profile.test.debug=0",
+              "--config",
+              "profile.test.strip=\"symbols\"",
+              "--target-dir",
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d",
+              "-p",
+              "frankenlibc-harness",
+              "--test",
+              "support_matrix_maintenance_test",
+              "--no-run",
+              "--message-format=json"
+            ],
+            "artifacts": [
+              "/data/projects/frankenlibc/.rch-target-vmi1227854-pool-bc9d242822fbc9a4645ae06f1333541d/debug/build/frankenlibc-harness/fd71a56c7e9629f4/out/support_matrix_maintenance_test-fd71a56c7e9629f4"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "maintenance_gate_emits_structured_logs_with_required_fields",
+              "maintenance_gate_does_not_rewrite_canonical_report",
+              "maintenance_gate_fails_on_canonical_stable_section_drift",
+              "injected_host_edge_invalidates_implemented_and_unproven_wraps_stays_conservative"
             ]
           }
         }

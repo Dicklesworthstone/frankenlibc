@@ -6,11 +6,11 @@
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2414,
+      "Implemented": 2464,
       "RawSyscall": 408,
-      "WrapsHostLibc": 1279,
+      "WrapsHostLibc": 1247,
       "GlibcCallThrough": 0,
-      "Stub": 18
+      "Stub": 0
     }
   },
   "semantic_contract_classes": {
@@ -56,7 +56,7 @@
       "semantic_class": "limited_bootstrap",
       "source_path": "crates/frankenlibc-core/src/elf/mod.rs",
       "source_line": 147,
-      "evidence": "RelocationSupport contains Stub and Unsupported variants. Exported-symbol taxonomy, currently including18Stub rows, does not prove per-relocation support.",
+      "evidence": "RelocationSupport contains Stub and Unsupported variants. Exported-symbol taxonomy, even with 0 Stub rows, does not prove per-relocation support.",
       "required_followup": "Gate replacement claims on per-relocation class coverage and fixture execution, not only exported-symbol status counts. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7."
     },
     {
@@ -217,6 +217,6 @@
       "unsupported_platform_contract": 1,
       "proof_gap": 2
     },
-    "blocked_claim": "The current support taxonomy contains 18 explicit Stub rows. The representative semantic inventory also retains no-op, fallback, bootstrap, unsupported, and under-proven surfaces; it is not exhaustive and cannot establish full replacement parity."
+    "blocked_claim": "The current support taxonomy contains 0 explicit Stub rows. The representative semantic inventory still retains no-op, fallback, bootstrap, unsupported, and under-proven surfaces; it is not exhaustive and cannot establish full replacement parity."
   }
 }

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "bead": "bd-2bu",
-  "generated_at_utc": "2026-11-01T15:22:42Z",
-  "source_commit": "cd397018485fc2776af3ee7625100cb85ee885c3",
+  "generated_at_utc": "2026-11-13T00:40:00Z",
+  "source_commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
   "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
   "levels": [
     {
@@ -21,12 +21,12 @@
         "test_gate": "cargo test --workspace passes"
       },
       "current_state": {
-        "implemented_pct": 59,
+        "implemented_pct": 60,
         "raw_syscall_pct": 10,
         "callthrough_pct": 0,
-        "wraps_host_libc_pct": 31,
+        "wraps_host_libc_pct": 30,
         "glibc_callthrough_pct": 0,
-        "native_pct": 69,
+        "native_pct": 70,
         "stub_pct": 0,
         "callthrough_modules": [
           "c11threads_abi",
@@ -57,10 +57,7 @@
           "unistd_abi",
           "wchar_abi"
         ],
-        "stub_modules": [
-          "glibc_internal_abi",
-          "rpc_abi"
-        ]
+        "stub_modules": []
       },
       "status": "achieved"
     },
@@ -87,7 +84,7 @@
       "objective_gate": {
         "bead": "bd-gtf.4",
         "status": "blocked",
-        "status_reason": "L1 is not yet achieved. The support taxonomy has 18 explicit deterministic-failure stubs, violating the zero-stub gate. The real-world preload corpus (run 20261111T134243Z-2744068: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes, fork from a multithreaded parent, RLIMIT_DATA=10MB VM geometry, and warm-TLS canary checks) passes 348/348 executed cases with 0 xfails.",
+        "status_reason": "L1 objective taxonomy gates now pass (0 Stub, 60% Implemented, 30% explicit host-backed interpose), and the real-world preload corpus (run 20261111T134243Z-2744068: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes, fork from a multithreaded parent, RLIMIT_DATA=10MB VM geometry, and warm-TLS canary checks) passes 348/348 executed cases with 0 xfails; L1 claim promotion remains gated on integrated readiness verification (bd-rc0923-epic-eeuy4f.47).",
         "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
@@ -103,9 +100,9 @@
               "stub": 0
             },
             "actual": {
-              "stub": 18
+              "stub": 0
             },
-            "outcome": "blocked"
+            "outcome": "pass"
           },
           {
             "id": "callthrough_pct_within_l1_bound",
@@ -115,7 +112,7 @@
               "max_callthrough_pct": 35
             },
             "actual": {
-              "callthrough_pct": 31
+              "callthrough_pct": 30
             },
             "outcome": "pass"
           },
@@ -127,7 +124,7 @@
               "min_implemented_pct": 35
             },
             "actual": {
-              "implemented_pct": 59
+              "implemented_pct": 60
             },
             "outcome": "pass"
           },
@@ -231,7 +228,7 @@
         }
       },
       "blockers": [
-        "18 deterministic-failure stubs remain: 14 SunRPC APIs and 4 printf registration APIs"
+        "L1 claim promotion (current_level and release_tag_policy.current_release_level together) awaits integrated L1 readiness verification (bd-rc0923-epic-eeuy4f.47)"
       ],
       "status": "in_progress"
     },
@@ -298,83 +295,80 @@
   "current_level": "L0",
   "current_assessment": {
     "total_symbols": 4119,
-    "implemented": 2414,
+    "implemented": 2464,
     "raw_syscall": 408,
-    "native": 2822,
-    "wraps_host_libc": 1279,
+    "native": 2872,
+    "wraps_host_libc": 1247,
     "glibc_callthrough": 0,
-    "callthrough": 1279,
-    "stub": 18,
-    "implemented_pct": 59,
+    "callthrough": 1247,
+    "stub": 0,
+    "implemented_pct": 60,
     "raw_syscall_pct": 10,
-    "native_pct": 69,
-    "wraps_host_libc_pct": 31,
+    "native_pct": 70,
+    "wraps_host_libc_pct": 30,
     "glibc_callthrough_pct": 0,
-    "callthrough_pct": 31,
+    "callthrough_pct": 30,
     "stub_pct": 0,
     "callthrough_breakdown": {
-      "c11threads_abi": 9,
-      "dirent_abi": 7,
+      "c11threads_abi": 5,
+      "dirent_abi": 5,
       "dlfcn_abi": 6,
       "err_abi": 12,
-      "glibc_internal_abi": 208,
+      "glibc_internal_abi": 209,
       "grp_abi": 3,
       "inet_abi": 10,
       "io_abi": 1,
       "io_internal_abi": 63,
       "isoc_abi": 3,
       "malloc_abi": 11,
-      "math_abi": 510,
-      "process_abi": 5,
-      "pthread_abi": 32,
+      "math_abi": 507,
+      "process_abi": 2,
+      "pthread_abi": 30,
       "pwd_abi": 8,
       "resolv_abi": 7,
-      "rpc_abi": 26,
+      "rpc_abi": 28,
       "search_abi": 1,
       "setjmp_abi": 4,
-      "signal_abi": 9,
-      "startup_abi": 4,
+      "signal_abi": 8,
+      "startup_abi": 3,
       "stdio_abi": 113,
       "stdlib_abi": 60,
-      "string_abi": 36,
-      "time_abi": 6,
-      "unistd_abi": 71,
-      "wchar_abi": 54
+      "string_abi": 34,
+      "time_abi": 1,
+      "unistd_abi": 70,
+      "wchar_abi": 43
     },
     "wraps_host_libc_breakdown": {
-      "c11threads_abi": 9,
-      "dirent_abi": 7,
+      "c11threads_abi": 5,
+      "dirent_abi": 5,
       "dlfcn_abi": 6,
       "err_abi": 12,
-      "glibc_internal_abi": 208,
+      "glibc_internal_abi": 209,
       "grp_abi": 3,
       "inet_abi": 10,
       "io_abi": 1,
       "io_internal_abi": 63,
       "isoc_abi": 3,
       "malloc_abi": 11,
-      "math_abi": 510,
-      "process_abi": 5,
-      "pthread_abi": 32,
+      "math_abi": 507,
+      "process_abi": 2,
+      "pthread_abi": 30,
       "pwd_abi": 8,
       "resolv_abi": 7,
-      "rpc_abi": 26,
+      "rpc_abi": 28,
       "search_abi": 1,
       "setjmp_abi": 4,
-      "signal_abi": 9,
-      "startup_abi": 4,
+      "signal_abi": 8,
+      "startup_abi": 3,
       "stdio_abi": 113,
       "stdlib_abi": 60,
-      "string_abi": 36,
-      "time_abi": 6,
-      "unistd_abi": 71,
-      "wchar_abi": 54
+      "string_abi": 34,
+      "time_abi": 1,
+      "unistd_abi": 70,
+      "wchar_abi": 43
     },
     "glibc_callthrough_breakdown": {},
-    "stub_breakdown": {
-      "glibc_internal_abi": 4,
-      "rpc_abi": 14
-    }
+    "stub_breakdown": {}
   },
   "release_tag_policy": {
     "description": "Release tags must encode exactly one replacement maturity level and must not claim a level above current_level.",

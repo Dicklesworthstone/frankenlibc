@@ -9,21 +9,21 @@
     "reality_report": "tests/conformance/reality_report.v1.json"
   },
   "reality_snapshot": {
-    "generated_at_utc": "2026-11-12T04:05:00Z",
+    "generated_at_utc": "2026-11-13T00:40:00Z",
     "total_exported": 4119,
     "counts": {
-      "implemented": 2414,
+      "implemented": 2464,
       "raw_syscall": 408,
-      "wraps_host_libc": 1279,
+      "wraps_host_libc": 1247,
       "glibc_call_through": 0,
-      "stub": 18
+      "stub": 0
     }
   },
   "subsystems": [
     {
       "id": "startup",
       "status": "IMPLEMENTED_PARTIAL",
-      "implemented_scope": "Phase-0 startup fixture path is exported and fixture-backed, but `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture remain host-backed in the support taxonomy.",
+      "implemented_scope": "Phase-0 startup fixture path and native snapshot capture (`__frankenlibc_startup_snapshot`) are exported and fixture-backed, while `__libc_start_main` and `__frankenlibc_startup_phase0` remain host-backed in the support taxonomy.",
       "deferred_scope": "Full native `csu`/TLS init-order hardening and secure-mode closure campaign remains open.",
       "support_expectations": {
         "required_symbols": [
@@ -37,11 +37,11 @@
           },
           {
             "symbol": "__frankenlibc_startup_snapshot",
-            "status": "WrapsHostLibc"
+            "status": "Implemented"
           }
         ]
       },
-      "doc_line": "- `startup`: `IMPLEMENTED_PARTIAL` \u2014 fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign."
+      "doc_line": "- `startup`: `IMPLEMENTED_PARTIAL` \u2014 fixture-backed phase-0 startup path and native snapshot capture (`__frankenlibc_startup_snapshot`) are exported while support-taxonomy rows remain host-backed for `__libc_start_main` and `__frankenlibc_startup_phase0`. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign."
     },
     {
       "id": "threading",
@@ -54,7 +54,7 @@
             "module": "pthread_abi",
             "status": "Implemented",
             "min_count": 1,
-            "implemented_count": 113,
+            "implemented_count": 111,
             "total_count": 141
           }
         ]

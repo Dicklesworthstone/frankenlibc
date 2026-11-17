@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from functools import lru_cache
 import hashlib
 import json
 import re
@@ -19,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 16
+DETECTOR_VERSION = 18
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -62,6 +63,51 @@ FUNCTION_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 CALL_PATH_RE = re.compile(
     r"(?<![\w.])((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)\s*\("
 )
+TURBOFISH_START_RE = re.compile(
+    r"(?P<dot>\.\s*)?(?<![\w])(?P<path>(?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)\s*::\s*<"
+)
+ASM_SYM_OPERAND_RE = re.compile(
+    r"(?<![\w.])sym\s+((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)"
+)
+RUST_NON_CALL_KEYWORDS = frozenset(
+    {
+        "as",
+        "async",
+        "await",
+        "break",
+        "const",
+        "continue",
+        "dyn",
+        "else",
+        "enum",
+        "extern",
+        "false",
+        "fn",
+        "for",
+        "if",
+        "impl",
+        "in",
+        "let",
+        "loop",
+        "match",
+        "mod",
+        "move",
+        "mut",
+        "pub",
+        "ref",
+        "return",
+        "static",
+        "struct",
+        "trait",
+        "true",
+        "type",
+        "unsafe",
+        "use",
+        "where",
+        "while",
+        "yield",
+    }
+)
 MACRO_INVOCATION_RE = re.compile(
     r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*"
     r"(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*!\s*([({\[])"
@@ -96,7 +142,12 @@ MODULE_DECL_RE = re.compile(
 )
 USE_ITEM_RE = re.compile(r"(?m)^(?:(?:pub(?:\([^)]*\))?)\s+)?use\s+([^;]+);")
 PATH_ATTRIBUTE_RE = re.compile(r'path\s*=\s*"([^"]+)"')
-RAW_STRING_START_RE = re.compile(r'(?:br|r)(?P<hashes>#{0,255})"')
+RAW_STRING_START_RE = re.compile(r'(?:br|cr|r)(?P<hashes>#{0,255})"')
+CHAR_LITERAL_RE = re.compile(
+    r"b?'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F_]{1,6}\}|.)|[^'\\\n])'"
+)
+MASK_TRIGGER_RE = re.compile(r'//|/\*|(?:br|cr|r)#{0,255}"|(?:b|c)?"|b?\'')
+BLOCK_COMMENT_STEP_RE = re.compile(r"/\*|\*/")
 
 
 @dataclass(frozen=True)
@@ -310,7 +361,9 @@ def evaluate_cfg(expr: CfgExpr, profile: CfgProfile) -> bool | None:
 
 
 def blank_preserving_newlines(text: str) -> str:
-    return "".join("\n" if char == "\n" else " " for char in text)
+    if "\n" not in text:
+        return " " * len(text)
+    return "\n".join(" " * len(part) for part in text.split("\n"))
 
 
 def replace_preserving_newlines(original: str, replacement: str) -> str:
@@ -334,57 +387,84 @@ def replace_preserving_newlines(original: str, replacement: str) -> str:
     return "".join(rendered)
 
 
+@lru_cache(maxsize=8192)
 def rust_code_mask(text: str) -> str:
     """Blank comments and literals while preserving offsets and newlines."""
 
-    rendered = list(text)
-    idx = 0
+    first = MASK_TRIGGER_RE.search(text)
+    if first is None:
+        return text
+
+    chunks: list[str] = []
+    last_unmasked = 0
+    idx = first.start()
     block_depth = 0
-    while idx < len(text):
+    n = len(text)
+    while idx < n:
         if block_depth:
-            if text.startswith("/*", idx):
-                rendered[idx] = rendered[idx + 1] = " "
+            bc = BLOCK_COMMENT_STEP_RE.search(text, idx)
+            if bc is None:
+                chunks.append(blank_preserving_newlines(text[idx:]))
+                last_unmasked = n
+                break
+            if bc.start() > idx:
+                chunks.append(blank_preserving_newlines(text[idx : bc.start()]))
+            chunks.append("  ")
+            if bc.group(0) == "/*":
                 block_depth += 1
-                idx += 2
-            elif text.startswith("*/", idx):
-                rendered[idx] = rendered[idx + 1] = " "
-                block_depth -= 1
-                idx += 2
             else:
-                if text[idx] != "\n":
-                    rendered[idx] = " "
-                idx += 1
+                block_depth -= 1
+            idx = bc.end()
+            last_unmasked = idx
             continue
+
+        matched = (
+            first
+            if (idx == first.start() and last_unmasked == 0 and not chunks)
+            else MASK_TRIGGER_RE.search(text, idx)
+        )
+        if matched is None:
+            break
+        idx = matched.start()
+
         if text.startswith("//", idx):
+            if idx > last_unmasked:
+                chunks.append(text[last_unmasked:idx])
             end = text.find("\n", idx)
-            end = len(text) if end < 0 else end
-            for pos in range(idx, end):
-                rendered[pos] = " "
+            end = n if end < 0 else end
+            chunks.append(" " * (end - idx))
             idx = end
+            last_unmasked = idx
             continue
         if text.startswith("/*", idx):
-            rendered[idx] = rendered[idx + 1] = " "
+            if idx > last_unmasked:
+                chunks.append(text[last_unmasked:idx])
+            chunks.append("  ")
             block_depth = 1
             idx += 2
+            last_unmasked = idx
             continue
 
         raw_match = RAW_STRING_START_RE.match(text, idx)
         if raw_match is not None:
+            if idx > last_unmasked:
+                chunks.append(text[last_unmasked:idx])
             opening_len = len(raw_match.group(0))
             closing = '"' + raw_match.group("hashes")
             end = text.find(closing, idx + opening_len)
-            end = len(text) if end < 0 else end + len(closing)
-            for pos in range(idx, end):
-                if text[pos] != "\n":
-                    rendered[pos] = " "
+            end = n if end < 0 else end + len(closing)
+            chunks.append(blank_preserving_newlines(text[idx:end]))
             idx = end
+            last_unmasked = idx
             continue
 
         quote_idx = idx + 1 if text.startswith(('b"', 'c"'), idx) else idx
-        if quote_idx < len(text) and text[quote_idx] == '"':
+        if quote_idx < n and text[quote_idx] == '"':
+            if idx > last_unmasked:
+                chunks.append(text[last_unmasked:idx])
             end = quote_idx + 1
             escaped = False
-            while end < len(text):
+            while end < n:
                 char = text[end]
                 end += 1
                 if char == '"' and not escaped:
@@ -393,26 +473,25 @@ def rust_code_mask(text: str) -> str:
                     escaped = True
                 else:
                     escaped = False
-            for pos in range(idx, end):
-                if text[pos] != "\n":
-                    rendered[pos] = " "
+            chunks.append(blank_preserving_newlines(text[idx:end]))
             idx = end
+            last_unmasked = idx
             continue
 
-        if text[idx] == "'":
-            char_end = idx + 1
-            if char_end < len(text) and text[char_end] == "\\":
-                char_end += 2
-            else:
-                char_end += 1
-            if char_end < len(text) and text[char_end] == "'":
-                char_end += 1
-                for pos in range(idx, char_end):
-                    rendered[pos] = " "
-                idx = char_end
-                continue
+        char_match = CHAR_LITERAL_RE.match(text, idx)
+        if char_match is not None:
+            if idx > last_unmasked:
+                chunks.append(text[last_unmasked:idx])
+            char_end = char_match.end()
+            chunks.append(" " * (char_end - idx))
+            idx = char_end
+            last_unmasked = idx
+            continue
         idx += 1
-    return "".join(rendered)
+
+    if last_unmasked < n:
+        chunks.append(text[last_unmasked:])
+    return "".join(chunks)
 
 
 def matching_delimiter(mask: str, opening: int, left: str, right: str) -> int | None:
@@ -425,6 +504,51 @@ def matching_delimiter(mask: str, opening: int, left: str, right: str) -> int | 
             depth -= 1
             if depth == 0:
                 return idx + 1
+    return None
+
+
+def matching_turbofish_end(mask: str, opening: int) -> tuple[int, bool] | None:
+    """Return ``(exclusive_end, followed_by_call_paren)`` of `<...>` turbofish type args."""
+    angle_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    idx = opening
+    length = len(mask)
+    while idx < length:
+        if mask.startswith("->", idx) or mask.startswith("=>", idx):
+            idx += 2
+            continue
+        char = mask[idx]
+        if char == "(":
+            paren_depth += 1
+        elif char == ")":
+            if paren_depth == 0:
+                return None
+            paren_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]":
+            if bracket_depth == 0:
+                return None
+            bracket_depth -= 1
+        elif char == "{":
+            brace_depth += 1
+        elif char == "}":
+            if brace_depth == 0:
+                return None
+            brace_depth -= 1
+        elif paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+            if char == "<":
+                angle_depth += 1
+            elif char == ">":
+                angle_depth -= 1
+                if angle_depth == 0:
+                    tail = mask[idx + 1 :].lstrip()
+                    return idx + 1, tail.startswith("(")
+            elif char == ";":
+                return None
+        idx += 1
     return None
 
 
@@ -744,6 +868,12 @@ class FunctionInfo:
     signature: str
     attr_text: str
     lines: list[tuple[int, str]] = field(default_factory=list)
+    _body_lines_cache: list[tuple[int, str, str]] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _scoped_call_paths_cache: dict[int, list[tuple[str, bool]]] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     @property
     def module(self) -> str:
@@ -1326,11 +1456,14 @@ def function_body_line(function: FunctionInfo, line_no: int, raw_line: str) -> s
 def function_body_lines(function: FunctionInfo) -> list[tuple[int, str, str]]:
     """Return raw evidence plus a comment/literal-free executable view."""
 
+    if function._body_lines_cache is not None:
+        return function._body_lines_cache
+
     raw_text = "\n".join(raw_line for _, raw_line in function.lines)
     masked_lines = rust_code_mask(raw_text).split("\n")
     if len(masked_lines) != len(function.lines):
         raise ValueError(f"Rust lexical mask changed line count for {function.identity}")
-    return [
+    result = [
         (
             line_no,
             function_body_line(function, line_no, raw_line),
@@ -1338,6 +1471,8 @@ def function_body_lines(function: FunctionInfo) -> list[tuple[int, str, str]]:
         )
         for (line_no, raw_line), masked_line in zip(function.lines, masked_lines)
     ]
+    function._body_lines_cache = result
+    return result
 
 
 def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]]]:
@@ -1348,6 +1483,9 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
     lexical scanner cannot prove shadowing for remain conservative: the call is
     not suppressed from host/call-graph analysis.
     """
+
+    if function._scoped_call_paths_cache is not None:
+        return function._scoped_call_paths_cache
 
     body_lines = function_body_lines(function)
     body_text = "\n".join(line for _, _, line in body_lines)
@@ -1367,7 +1505,65 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             macro_token_spans.append((opening, end, macro_name))
 
     def is_macro_token(position: int) -> bool:
+        if not macro_token_spans:
+            return False
         return any(start <= position < end for start, end, _ in macro_token_spans)
+
+    line_offsets: list[int] = []
+    running_offset = 0
+    for _, _, line in body_lines:
+        line_offsets.append(running_offset)
+        running_offset += len(line) + 1
+
+    turbofish_arg_spans: list[tuple[int, int]] = []
+    turbofish_events_by_idx: dict[int, list[tuple[int, str]]] = {}
+    line_cursor = 0
+    for tf_match in TURBOFISH_START_RE.finditer(body_text):
+        path_start = tf_match.start("path")
+        if path_start > 0 and tf_match.group("dot") is None and body_text[path_start - 1] == ".":
+            is_method = True
+        else:
+            is_method = tf_match.group("dot") is not None
+        angle_open = tf_match.end() - 1
+        tf_res = matching_turbofish_end(body_text, angle_open)
+        if tf_res is None:
+            continue
+        tf_end, is_call_tail = tf_res
+        turbofish_arg_spans.append((angle_open, tf_end))
+        tf_path = tf_match.group("path")
+        if is_method or not is_call_tail or tf_path in RUST_NON_CALL_KEYWORDS:
+            continue
+        while (
+            line_cursor + 1 < len(line_offsets)
+            and line_offsets[line_cursor + 1] <= path_start
+        ):
+            line_cursor += 1
+        col = path_start - line_offsets[line_cursor]
+        turbofish_events_by_idx.setdefault(line_cursor, []).append((col, tf_path))
+
+    asm_sym_events_by_idx: dict[int, list[tuple[int, str]]] = {}
+    for span_start, span_end, macro_name in macro_token_spans:
+        if macro_name not in {"asm", "naked_asm"}:
+            continue
+        for sym_match in ASM_SYM_OPERAND_RE.finditer(body_text, span_start, span_end):
+            sym_path = sym_match.group(1)
+            sym_leaf = sym_path.rsplit("::", 1)[-1]
+            if sym_leaf in RUST_NON_CALL_KEYWORDS or sym_leaf.isupper():
+                continue
+            sym_pos = sym_match.start(1)
+            line_idx_sym = 0
+            while (
+                line_idx_sym + 1 < len(line_offsets)
+                and line_offsets[line_idx_sym + 1] <= sym_pos
+            ):
+                line_idx_sym += 1
+            col = sym_pos - line_offsets[line_idx_sym]
+            asm_sym_events_by_idx.setdefault(line_idx_sym, []).append((col, sym_path))
+
+    def is_turbofish_type_arg(position: int) -> bool:
+        if not turbofish_arg_spans:
+            return False
+        return any(start <= position < end for start, end in turbofish_arg_spans)
 
     active_scopes = [set(PARAM_BINDING_RE.findall(function.signature))]
     scope_is_macro = [False]
@@ -1375,10 +1571,12 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
     next_scope_bindings: set[str] = set()
     calls_by_line: dict[int, list[tuple[str, bool]]] = {}
     line_offset = 0
-    for line_no, _, line in body_lines:
+    for line_idx, (line_no, _, line) in enumerate(body_lines):
         events: list[tuple[int, int, str, str | None]] = []
         for binding in LOCAL_BINDING_RE.finditer(line):
-            if is_macro_token(line_offset + binding.start()):
+            if is_macro_token(line_offset + binding.start()) or is_turbofish_type_arg(
+                line_offset + binding.start()
+            ):
                 continue
             statement_start = max(
                 line.rfind(";", 0, binding.start()),
@@ -1394,7 +1592,9 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
             )
             events.append((binding.start(), 1, kind, binding.group(1)))
         for closure in re.finditer(r"\|([^|\n]*)\|", line):
-            if is_macro_token(line_offset + closure.start()):
+            if is_macro_token(line_offset + closure.start()) or is_turbofish_type_arg(
+                line_offset + closure.start()
+            ):
                 continue
             for parameter in closure.group(1).split(","):
                 binding = re.match(
@@ -1406,13 +1606,26 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
                         (closure.end(), 1, "next_scope_binding", binding.group(1))
                     )
         for local_function in FUNCTION_RE.finditer(line):
-            if is_macro_token(line_offset + local_function.start()):
+            if is_macro_token(line_offset + local_function.start()) or is_turbofish_type_arg(
+                line_offset + local_function.start()
+            ):
                 continue
             events.append((local_function.start(), 1, "local_function", local_function.group(1)))
         for call in CALL_PATH_RE.finditer(line):
+            if (
+                is_turbofish_type_arg(line_offset + call.start())
+                or call.group(1) in RUST_NON_CALL_KEYWORDS
+            ):
+                continue
             events.append((call.start(), 2, "call", call.group(1)))
+        for col, tf_path in turbofish_events_by_idx.get(line_idx, ()):
+            events.append((col, 2, "call", tf_path))
+        for col, sym_path in asm_sym_events_by_idx.get(line_idx, ()):
+            events.append((col, 2, "call", sym_path))
         for position, char in enumerate(line):
-            if is_macro_token(line_offset + position):
+            if is_macro_token(line_offset + position) or is_turbofish_type_arg(
+                line_offset + position
+            ):
                 continue
             if char == "{":
                 events.append((position, 0, "open", None))
@@ -1455,6 +1668,7 @@ def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]
                     (target_expression, shadowed)
                 )
         line_offset += len(line) + 1
+    function._scoped_call_paths_cache = calls_by_line
     return calls_by_line
 
 
@@ -2482,6 +2696,9 @@ def build_profile_census(
         "terminal_host_callsites": [
             unique_terminal_calls[key] for key in sorted(unique_terminal_calls)
         ],
+        "exported_symbols_with_unknown_call_edges": sorted(
+            analysis["exported_with_unknown_edges"]
+        ),
         "unknown_reachable_call_edge_counts_by_reason": unknown_counts_by_reason,
         "unknown_reachable_call_edge_samples": compact_unknown_calls,
     }
@@ -3419,6 +3636,59 @@ pub extern "C" fn after_foreign_declaration() -> i32 { generic_helper(3, [0; 2])
         ),
         "bodyless foreign declaration absorbed a later function definition",
     )
+    turbofish_source = r'''
+fn host_dlsym_bridge<T, F>(symbol: &str, invoke: F) -> Option<T>
+where
+    F: FnOnce(*mut core::ffi::c_void) -> T,
+{
+    let ptr = crate::dlfcn_abi::dlsym(core::ptr::null_mut(), symbol.as_ptr().cast());
+    Some(invoke(ptr))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn exported_turbofish_caller(a: i32, b: i32) -> i32 {
+    let cmp_noise = a < b && b > (0);
+    if cmp_noise {
+        let _ = host_dlsym_bridge::<
+            i32,
+            unsafe extern "C" fn(*mut core::ffi::c_void) -> i32,
+        >("lookup", |_ptr| 7);
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
+    a < b && c > (a + 1)
+}
+'''
+    turbofish_functions = parse_functions(fake_path, turbofish_source)
+    tf_caller = next(
+        fn for fn in turbofish_functions if fn.exported_symbol == "exported_turbofish_caller"
+    )
+    tf_cmp_only = next(
+        fn for fn in turbofish_functions if fn.exported_symbol == "exported_comparison_only"
+    )
+    tf_calls = [
+        path
+        for rows in scoped_call_paths(tf_caller).values()
+        for path, shadowed in rows
+        if not shadowed
+    ]
+    cmp_calls = [
+        path
+        for rows in scoped_call_paths(tf_cmp_only).values()
+        for path, shadowed in rows
+        if not shadowed
+    ]
+    require(
+        "host_dlsym_bridge" in tf_calls and "fn" not in tf_calls,
+        "multiline turbofish call with fn pointer type argument was not extracted cleanly",
+    )
+    require(
+        cmp_calls == [],
+        "comparison operators `<` and `>` were misclassified as turbofish calls",
+    )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0
 
@@ -3450,6 +3720,11 @@ def main() -> int:
     if not output.is_absolute():
         output = root / output
 
+    try:
+        display_output = str(output.relative_to(root))
+    except ValueError:
+        display_output = str(output)
+
     payload = build_payload(root, abi_source_dir)
     if args.check:
         if not output.exists():
@@ -3458,7 +3733,7 @@ def main() -> int:
         existing = json.loads(output.read_text(encoding="utf-8"))
         if canonical(existing) != canonical(payload):
             print(f"FAIL: {output} is stale; regenerate with:")
-            print(f"  scripts/generate_host_delegation_census.py --output {output.relative_to(root)}")
+            print(f"  scripts/generate_host_delegation_census.py --output {display_output}")
             return 1
         print(
             "PASS: host delegation census current "
@@ -3470,7 +3745,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
-        f"Wrote {output.relative_to(root)} "
+        f"Wrote {display_output} "
         f"(symbols={payload['summary']['host_delegating_symbol_count']}, "
         f"callsites={payload['summary']['host_delegation_callsite_count']})"
     )

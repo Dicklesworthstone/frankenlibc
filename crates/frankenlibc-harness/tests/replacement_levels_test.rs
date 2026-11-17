@@ -106,26 +106,27 @@ fn source_commit_is_current(value: &str, current_head: &str) -> bool {
 }
 
 fn git_head(root: &Path) -> Result<String, String> {
-    let output = Command::new("git")
+    if let Ok(output) = Command::new("git")
         .arg("-C")
         .arg(root)
         .arg("rev-parse")
         .arg("HEAD")
         .output()
-        .map_err(|err| format!("git rev-parse HEAD should run: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git rev-parse HEAD failed with status {}",
-            output.status
-        ));
+        && output.status.success()
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+    {
+        let head = stdout.trim().to_owned();
+        if is_full_git_commit(&head) {
+            return Ok(head);
+        }
     }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|err| format!("git rev-parse HEAD emitted non-UTF8: {err}"))?;
-    let head = stdout.trim().to_owned();
-    if !is_full_git_commit(&head) {
-        return Err(format!("git HEAD must be a 40-hex commit, got {head:?}"));
+    if let Ok(rch_source) = std::env::var("RCH_BUILD_SOURCE") {
+        let trimmed = rch_source.trim().trim_end_matches("-dirty");
+        if is_full_git_commit(trimmed) {
+            return Ok(trimmed.to_owned());
+        }
     }
-    Ok(head)
+    Err("git rev-parse HEAD failed and RCH_BUILD_SOURCE did not carry a 40-hex commit".to_owned())
 }
 
 fn l1_crt_startup_tls_source_commit_policy(
@@ -1091,39 +1092,57 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
         .filter(|entry| entry["outcome"].as_str() == Some("blocked"))
         .filter_map(|entry| entry["id"].as_str())
         .collect();
-    // CRT and promotion controls must pass; the smoke obligation may be the
-    // only blocker, and only when the smoke evidence is not green.
-    let expected_blocked: Vec<&str> = if smoke_green {
-        Vec::new()
-    } else {
-        vec!["hardened_smoke_battery"]
-    };
+    let current_level = levels["current_level"]
+        .as_str()
+        .expect("current_level should be a string");
+    assert!(
+        matches!(current_level, "L0" | "L1"),
+        "expected current_level to be L0 (pre-promotion) or L1 (promoted), got {current_level:?}"
+    );
+    let promotion_promoted = current_level == "L1";
+    let mut expected_blocked = Vec::new();
+    if !smoke_green {
+        expected_blocked.push("hardened_smoke_battery");
+    }
+    if !promotion_promoted {
+        expected_blocked.push("promotion_claim_control");
+    }
     assert_eq!(
         blocked_obligations, expected_blocked,
-        "L1 objective gate may be blocked only by non-green smoke evidence"
+        "L1 objective gate may be blocked only by non-green smoke evidence or pre-promotion L0 claim control"
     );
     let promotion_obligation = obligations
         .iter()
         .find(|entry| entry["id"].as_str() == Some("promotion_claim_control"))
         .expect("L1 objective gate should bind explicit promotion control");
-    assert_eq!(promotion_obligation["outcome"].as_str(), Some("pass"));
+    assert_eq!(
+        promotion_obligation["outcome"].as_str(),
+        Some(if promotion_promoted {
+            "pass"
+        } else {
+            "blocked"
+        })
+    );
     assert_eq!(
         promotion_obligation["actual"]["current_level"].as_str(),
-        Some("L1")
+        Some(current_level)
     );
     assert_eq!(
         promotion_obligation["actual"]["release_tag_policy.current_release_level"].as_str(),
-        Some("L1")
+        Some(current_level)
     );
     assert_eq!(
         objective_gate["status"].as_str(),
-        Some(if smoke_green { "pass" } else { "blocked" }),
-        "the L1 objective gate is blocked exactly while its smoke obligation is"
+        Some(if smoke_green && promotion_promoted {
+            "pass"
+        } else {
+            "blocked"
+        }),
+        "the L1 objective gate passes iff smoke is green and promotion_claim_control is L1"
     );
-    assert_eq!(levels["current_level"].as_str(), Some("L1"));
     assert_eq!(
         levels["release_tag_policy"]["current_release_level"].as_str(),
-        Some("L1")
+        Some(current_level)
     );
 }
 

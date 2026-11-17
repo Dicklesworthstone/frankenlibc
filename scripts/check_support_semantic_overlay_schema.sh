@@ -56,14 +56,20 @@ def file_sha256(path):
 
 def git_head():
     try:
-        return subprocess.check_output(
+        head = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
+        if len(head) == 40 and all(ch in "0123456789abcdefABCDEF" for ch in head):
+            return head
     except Exception:
-        return "unknown"
+        pass
+    rch_source = os.environ.get("RCH_BUILD_SOURCE", "").strip().removesuffix("-dirty")
+    if len(rch_source) == 40 and all(ch in "0123456789abcdefABCDEF" for ch in rch_source):
+        return rch_source
+    return "unknown"
 
 
 def load_json(path, label):

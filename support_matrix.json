@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-11-12T04:05:00Z",
-  "source_commit": "e9760aa9ec0681dd2e63b24b78bf316aa8fa3fca",
+  "generated_at_utc": "2026-11-13T00:40:00Z",
+  "source_commit": "b746ad1498d573b930019295c7c6fce52c4df4d4",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
@@ -289,7 +289,7 @@
     },
     {
       "symbol": "__frankenlibc_startup_snapshot",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "startup_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native invariant snapshot export",
@@ -863,7 +863,7 @@
     },
     {
       "symbol": "__stack_chk_fail",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stack smashing detection abort",
@@ -2014,7 +2014,7 @@
     },
     {
       "symbol": "call_once",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
       "strict_semantics": "C11 call_once via pthread_once",
@@ -2773,8 +2773,8 @@
     {
       "symbol": "dirfd",
       "header": "<dirent.h>",
-      "status": "WrapsHostLibc",
-      "notes": "Delegates to libc dirfd",
+      "status": "Implemented",
+      "notes": "Returns underlying file descriptor for managed DIR stream",
       "module": "dirent_abi"
     },
     {
@@ -3475,11 +3475,11 @@
     },
     {
       "symbol": "execvpe",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc execvpe",
-      "hardened_semantics": "Passthrough to glibc execvpe",
+      "strict_semantics": "Native PATH-searching execve wrapper with ENOEXEC /bin/sh fallback",
+      "hardened_semantics": "Same native PATH-searching execve wrapper with membrane pointer validation",
       "default_stub": false
     },
     {
@@ -6371,16 +6371,16 @@
     },
     {
       "symbol": "gmtime",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Thread-local buffer wrapping gmtime_r. Returns pointer to static tm.",
       "hardened_semantics": "Same. Null pointer returns NULL.",
-      "default_stub": "Returns NULL"
+      "default_stub": false
     },
     {
       "symbol": "gmtime_r",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Pure Rust epoch_to_broken_down conversion to UTC; no syscall",
@@ -7614,12 +7614,12 @@
     },
     {
       "symbol": "localtime",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Static-tm wrapper over the native localtime_r TZ engine",
       "hardened_semantics": "Same. Null pointer returns NULL.",
-      "default_stub": "Returns NULL"
+      "default_stub": false
     },
     {
       "symbol": "localtime_r",
@@ -8013,7 +8013,7 @@
     {
       "symbol": "mbrtoc16",
       "header": "<uchar.h>",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C11 multibyte to char16_t (UTF-16 surrogate handling)",
       "module": "wchar_abi"
     },
@@ -8643,7 +8643,7 @@
     },
     {
       "symbol": "mtx_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "C11 mutex lock via pthread_mutex_lock",
@@ -8652,7 +8652,7 @@
     },
     {
       "symbol": "mtx_timedlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
       "strict_semantics": "C11 timed mutex lock via pthread_mutex_timedlock",
@@ -8670,7 +8670,7 @@
     },
     {
       "symbol": "mtx_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "C11 mutex unlock via pthread_mutex_unlock",
@@ -9286,11 +9286,11 @@
     },
     {
       "symbol": "posix_spawn",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawn",
-      "hardened_semantics": "Passthrough to glibc posix_spawn",
+      "strict_semantics": "Native fork+execve posix_spawn with file_actions and spawnattr execution",
+      "hardened_semantics": "Same native fork+execve posix_spawn with membrane pointer validation",
       "default_stub": false
     },
     {
@@ -9496,11 +9496,11 @@
     },
     {
       "symbol": "posix_spawnp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawnp",
-      "hardened_semantics": "Passthrough to glibc posix_spawnp",
+      "strict_semantics": "Native PATH-searching fork+execve posix_spawnp with file_actions and spawnattr execution",
+      "hardened_semantics": "Same native PATH-searching fork+execve posix_spawnp with membrane pointer validation",
       "default_stub": false
     },
     {
@@ -9933,11 +9933,11 @@
     },
     {
       "symbol": "pthread_barrier_wait",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise",
-      "hardened_semantics": "Passthrough",
+      "strict_semantics": "Native futex-backed barrier synchronization",
+      "hardened_semantics": "Native futex-backed barrier synchronization with null/state validation",
       "default_stub": false
     },
     {
@@ -10005,11 +10005,11 @@
     },
     {
       "symbol": "pthread_cond_clockwait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Clock-aware timed condvar wait",
-      "hardened_semantics": "Clock wait with null/clock validation",
+      "strict_semantics": "Clock-aware timed condvar wait with host cancellation-helper registration on host threads",
+      "hardened_semantics": "Clock wait with null/clock validation and host cancellation-helper registration on host threads",
       "default_stub": false
     },
     {
@@ -10041,20 +10041,20 @@
     },
     {
       "symbol": "pthread_cond_timedwait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Timed condvar wait with futex backend.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
+      "strict_semantics": "Timed condvar wait with futex backend and host cancellation-helper registration on host threads",
+      "hardened_semantics": "Same with null/timespec validation",
+      "default_stub": false
     },
     {
       "symbol": "pthread_cond_wait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "strict_semantics": "Native condvar wait with futex choreography; requires managed mutex and enforces association invariants",
-      "hardened_semantics": "Native condvar wait with deterministic validation, bounded wake/relock path, and explicit EINVAL on invalid association",
+      "strict_semantics": "Native condvar wait with futex choreography and host cancellation-helper registration on host threads",
+      "hardened_semantics": "Native condvar wait with deterministic validation, bounded wake/relock path, and host cancellation-helper registration on host threads",
       "default_stub": false
     },
     {
@@ -12489,7 +12489,7 @@
     },
     {
       "symbol": "sigemptyset",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Zeroes entire sigset_t structure; null pointer returns -1",
@@ -14602,11 +14602,11 @@
     },
     {
       "symbol": "telldir",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc telldir",
-      "hardened_semantics": "Passthrough to glibc telldir",
+      "strict_semantics": "Returns current directory stream position cookie from managed DIR stream",
+      "hardened_semantics": "Same with managed DIR pointer validation",
       "default_stub": false
     },
     {
@@ -14765,11 +14765,11 @@
     },
     {
       "symbol": "timegm",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to mktime; pure Rust broken_down_to_epoch; UTC",
-      "hardened_semantics": "Delegates to mktime with membrane validation",
+      "strict_semantics": "Pure Rust broken_down_to_epoch UTC normalization; no host libc delegation",
+      "hardened_semantics": "Pure Rust broken_down_to_epoch UTC normalization with membrane validation",
       "default_stub": false
     },
     {
@@ -14849,7 +14849,7 @@
     },
     {
       "symbol": "timespec_get",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "C11 timespec_get via clock_gettime(CLOCK_REALTIME); returns base on success",
@@ -16659,7 +16659,7 @@
       "symbol": "__isoc23_wcstol",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16667,7 +16667,7 @@
       "symbol": "__isoc23_wcstoul",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16675,7 +16675,7 @@
       "symbol": "__isoc23_wcstoll",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16683,7 +16683,7 @@
       "symbol": "__isoc23_wcstoull",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16691,7 +16691,7 @@
       "symbol": "__isoc23_wcstoimax",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16699,7 +16699,7 @@
       "symbol": "__isoc23_wcstoumax",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16707,7 +16707,7 @@
       "symbol": "__isoc23_wcstol_l",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16715,7 +16715,7 @@
       "symbol": "__isoc23_wcstoul_l",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16723,7 +16723,7 @@
       "symbol": "__isoc23_wcstoll_l",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -16731,7 +16731,7 @@
       "symbol": "__isoc23_wcstoull_l",
       "source": "wchar_abi.rs",
       "family": "wchar",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "C23/internal alias forwarding to existing implementation",
       "module": "wchar_abi"
     },
@@ -17402,7 +17402,7 @@
     },
     {
       "symbol": "__adjtimex",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17412,7 +17412,7 @@
     },
     {
       "symbol": "__arch_prctl",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17452,7 +17452,7 @@
     },
     {
       "symbol": "__bsd_getpgrp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18237,10 +18237,10 @@
     },
     {
       "symbol": "__pthread_once",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
+      "strict_semantics": "Native futex-backed once initialization forwarding to pthread_once"
     },
     {
       "symbol": "__pthread_register_cancel",
@@ -18270,10 +18270,10 @@
     },
     {
       "symbol": "__pthread_rwlock_rdlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
+      "strict_semantics": "Native futex-backed rwlock read lock forwarding to pthread_rwlock_rdlock"
     },
     {
       "symbol": "__pthread_rwlock_tryrdlock",
@@ -18289,17 +18289,17 @@
     },
     {
       "symbol": "__pthread_rwlock_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
+      "strict_semantics": "Native futex-backed rwlock unlock forwarding to pthread_rwlock_unlock"
     },
     {
       "symbol": "__pthread_rwlock_wrlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi",
-      "strict_semantics": "Native managed threading in standalone mode; host delegation otherwise"
+      "strict_semantics": "Native futex-backed rwlock write lock forwarding to pthread_rwlock_wrlock"
     },
     {
       "symbol": "__pthread_setspecific",
@@ -18794,13 +18794,13 @@
     },
     {
       "symbol": "__strtold_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtold_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -19145,7 +19145,7 @@
     },
     {
       "symbol": "_authenticate",
-      "status": "Stub",
+      "status": "WrapsHostLibc",
       "module": "rpc_abi"
     },
     {
@@ -19240,22 +19240,22 @@
     },
     {
       "symbol": "_pthread_cleanup_pop",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "_pthread_cleanup_pop_restore",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "_pthread_cleanup_push",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "_pthread_cleanup_push_defer",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
@@ -19375,12 +19375,12 @@
     },
     {
       "symbol": "bindresvport",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "callrpc",
-      "status": "Stub",
+      "status": "WrapsHostLibc",
       "module": "rpc_abi"
     },
     {
@@ -19425,7 +19425,7 @@
     },
     {
       "symbol": "clnt_create",
-      "status": "Stub",
+      "status": "WrapsHostLibc",
       "module": "rpc_abi"
     },
     {
@@ -19440,7 +19440,7 @@
     },
     {
       "symbol": "clnt_perror",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19455,12 +19455,12 @@
     },
     {
       "symbol": "clnt_sperror",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntraw_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19480,7 +19480,7 @@
     },
     {
       "symbol": "clntunix_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -20753,27 +20753,27 @@
     },
     {
       "symbol": "register_printf_function",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_modifier",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_specifier",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_type",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "registerrpc",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -21169,17 +21169,17 @@
     },
     {
       "symbol": "svcfd_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcraw_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svctcp_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -21194,17 +21194,17 @@
     },
     {
       "symbol": "svcudp_enablecache",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcunix_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcunixfd_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -25229,7 +25229,7 @@
     },
     {
       "symbol": "__clog10",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "math_abi",
       "perf_class": "zero_cost",
       "strict_semantics": true,
@@ -25238,7 +25238,7 @@
     },
     {
       "symbol": "__clog10f",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "math_abi",
       "perf_class": "zero_cost",
       "strict_semantics": true,
@@ -25247,7 +25247,7 @@
     },
     {
       "symbol": "__clog10l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "math_abi",
       "perf_class": "zero_cost",
       "strict_semantics": true,
@@ -33222,22 +33222,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2414,
+    "implemented": 2464,
     "raw_syscall": 408,
-    "wraps_host_libc": 1279,
+    "wraps_host_libc": 1247,
     "glibc_call_through": 0,
-    "stub": 18
+    "stub": 0
   },
-  "implemented": 2414,
+  "implemented": 2464,
   "raw_syscall": 408,
   "glibc_call_through": 0,
-  "stub": 18,
+  "stub": 0,
   "counts": {
-    "implemented": 2414,
+    "implemented": 2464,
     "raw_syscall": 408,
     "glibc_call_through": 0,
-    "stub": 18,
-    "wraps_host_libc": 1279
+    "stub": 0,
+    "wraps_host_libc": 1247
   },
-  "wraps_host_libc": 1279
+  "wraps_host_libc": 1247
 }

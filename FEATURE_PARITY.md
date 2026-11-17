@@ -3,9 +3,9 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-12, and it records the same base ABI source commit as `support_matrix.json` (`e9760aa9e`). The counts include the 2026-11-06 `fwide` host-dispatch amendment in `683a36f41`.
-Reality snapshot: total_exported=4119, implemented=2414, raw_syscall=408, wraps_host_libc=1279, glibc_call_through=0, stub=18.
-Counts below reflect recorded support matrix labels. Fresh maintenance still rejects 1,092 rows: 1,074 host-label/source mismatches and 18 stub/source mismatches awaiting reviewed evidence. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; these labels do not establish complete unsupported or implemented behavior.
+The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-13, and it records the same base ABI source commit as `support_matrix.json` (`b746ad149`).
+Reality snapshot: total_exported=4119, implemented=2464, raw_syscall=408, wraps_host_libc=1247, glibc_call_through=0, stub=0.
+Counts below reflect recorded support matrix labels validated against live source and host-delegation census v17 (`status_invalid = 0`; unproven native wrapper bodies remain conservatively classified under `WrapsHostLibc` until fixture or promotion-proof evidence is attached). Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; these labels do not establish complete unsupported or implemented behavior.
 Regenerate deterministically with:
 
 ```bash
@@ -15,13 +15,13 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 The current support matrix contains **4119 symbols**, classified as:
-- `Implemented`: 2414
+- `Implemented`: 2464
 - `RawSyscall`: 408
-- `WrapsHostLibc`: 1279
+- `WrapsHostLibc`: 1247
 - `GlibcCallThrough`: 0
-- `Stub`: 18
+- `Stub`: 0
 
-This means the checked taxonomy snapshot describes a **hybrid L0 interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and recorded unsupported contracts), not a full replacement profile. Conservative downgrade derivation is live; source/proof reconciliation and standalone admission remain open under `bd-rc0923-epic-eeuy4f.37`. Taxonomy counts are not semantic-parity evidence.
+This means the checked taxonomy snapshot describes a **hybrid L0 interposition profile** (mixed Rust-owned behavior, raw syscalls, and explicit host-glibc delegation, with zero explicit `Stub` rows), not a full replacement profile. Source/proof reconciliation is enforced by `scripts/check_support_matrix_maintenance.sh --strict`; integrated L1 promotion verification remains gated under `bd-rc0923-epic-eeuy4f.47`. Taxonomy counts are not semantic-parity evidence.
 
 Legend:
 - `Implemented`: Native Rust behavior, no host glibc dependency for that symbol
@@ -74,13 +74,13 @@ This file tracks the current staged parity profile, not a full replacement profi
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
 | `WrapsHostLibc` | `io_internal_abi`, `stdio_abi` |
 | `GlibcCallThrough` | none in current support matrix snapshot |
-| `Stub` | `rpc_abi` (14), `glibc_internal_abi` printf registration (4) |
+| `Stub` | none in current support matrix snapshot |
 
 ## Hard-Parts Truth Table
 
 Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`). The bullets below inherit that artifact's age unless a newer cited source says otherwise; they are not a fresh HEAD probe.
 
-- `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
+- `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path and native snapshot capture (`__frankenlibc_startup_snapshot`) are exported while support-taxonomy rows remain host-backed for `__libc_start_main` and `__frankenlibc_startup_phase0`. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
 - `resolver`: `IMPLEMENTED_PARTIAL` — numeric, files, and native DNS lookups plus native addrinfo-list disposal are implemented; `getaddrinfo`, `getnameinfo`, and `freeaddrinfo` remain host-backed in the support taxonomy while installed NSS modules are loaded through the host bridge. Deferred scope: NSS breadth, policy/concurrency closure, and full retry/cache/poisoning hardening campaign.
 - `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs and `_nss_files_*` have native rows while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`, and configured hosts modules share source-order/status actions across `getaddrinfo`, `getnameinfo`, and legacy hostent APIs via `gethostbyname4_r`, `gethostbyname3_r`, `gethostbyname2_r`, `gethostbyname_r`, and `gethostbyaddr2_r`/`gethostbyaddr_r`. Deferred scope: standalone module support plus NSS concurrency/cache-coherence closure under `bd-rc0923-epic-eeuy4f.19`.

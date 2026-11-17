@@ -32,9 +32,11 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
-fn gate_mutex() -> &'static Mutex<()> {
+fn lock_gate_mutex() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn workspace_root() -> PathBuf {
@@ -143,7 +145,7 @@ fn artifact_declares_claim_fields_inputs_replays_and_log_contract() {
 
 #[test]
 fn gate_passes_current_docs_and_emits_report_and_log() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let script = root.join("scripts/check_docs_semantic_claims.sh");
     assert!(script.exists(), "missing {}", script.display());
@@ -198,7 +200,7 @@ fn gate_passes_current_docs_and_emits_report_and_log() {
 
 #[test]
 fn missing_claim_field_fails() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     let mutated = source.replace("| `user_recommendation` |", "| `user_guidance` |");
@@ -224,7 +226,7 @@ fn missing_claim_field_fails() {
 
 #[test]
 fn forbidden_full_replacement_claim_fails() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("FEATURE_PARITY.md")).unwrap();
     let mutated = format!("{source}\n\nStub: 0 proves full standalone replacement today.\n");
@@ -251,7 +253,7 @@ fn forbidden_full_replacement_claim_fails() {
 
 #[test]
 fn stale_semantic_join_fails() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let canonical = root.join("tests/conformance/semantic_contract_symbol_join.v1.json");
     let mut join = load_json(&canonical);
@@ -276,7 +278,7 @@ fn stale_semantic_join_fails() {
 
 #[test]
 fn stale_overlay_taxonomy_counts_fails() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let canonical = root.join("tests/conformance/support_semantic_overlay.v1.json");
     let mut overlay = load_json(&canonical);
@@ -315,7 +317,7 @@ fn stale_overlay_taxonomy_counts_fails() {
 
 #[test]
 fn declared_source_identity_survives_a_worker_without_matching_git_metadata() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let absent_git = unique_temp_path("docs-semantic-absent-git");
     let source = "6188b9db38dd0a6bf8673fc40e70b0a90a531cf5";
@@ -342,7 +344,7 @@ fn declared_source_identity_survives_a_worker_without_matching_git_metadata() {
 
 #[test]
 fn malformed_declared_source_fails_instead_of_using_worker_head() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     for declared in [
         "",
@@ -364,7 +366,7 @@ fn malformed_declared_source_fails_instead_of_using_worker_head() {
 
 #[test]
 fn undeclared_source_requires_an_observed_git_head() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -441,7 +443,7 @@ fn undeclared_source_requires_an_observed_git_head() {
 
 #[test]
 fn operator_guides_reject_planted_l1_and_stale_claims() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let cases = [
         (
@@ -490,7 +492,7 @@ fn operator_guides_reject_planted_l1_and_stale_claims() {
 
 #[test]
 fn operator_guides_reject_missing_l0_scope_phrase() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("DEPLOYMENT.md")).unwrap();
     let mutated = source.replace(
@@ -516,7 +518,7 @@ fn operator_guides_reject_missing_l0_scope_phrase() {
 
 #[test]
 fn readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     let planted_lines = [
@@ -552,7 +554,7 @@ fn readme_rejects_planted_stale_dns_nss_build_allocator_and_fingerprint_claims()
 
 #[test]
 fn readme_rejects_removal_of_required_semantic_architecture_facts() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     for needle in [
@@ -583,7 +585,7 @@ fn readme_rejects_removal_of_required_semantic_architecture_facts() {
 
 #[test]
 fn dated_historical_snapshots_remain_permitted() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     let mutated = format!(
@@ -635,7 +637,7 @@ fn assert_log_contains_failure_signature(root: &Path, expected_sig: &str) {
 
 #[test]
 fn deployment_and_plan_reject_stale_smoke_and_stub_claims() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
 
     // (a.1) Inject stale Sept `189 pass / 1 xfail` (`a8a4110b`) line into DEPLOYMENT.md
@@ -657,8 +659,15 @@ fn deployment_and_plan_reject_stale_smoke_and_stub_claims() {
     assert_log_contains_failure_signature(&root, "cross_guide_smoke_drift");
 
     // (a.2) Inject stale `44 Stub` rollup into PLAN_TO_PORT_GLIBC_TO_RUST.md
+    let support = load_json(&root.join("support_matrix.json"));
+    let stub_count = support["summary"]["stub"].as_u64().expect("stub count");
+    let expected_stub_phrase = format!("{stub_count} Stub");
     let plan_src = std::fs::read_to_string(root.join("PLAN_TO_PORT_GLIBC_TO_RUST.md")).unwrap();
-    let plan_mutated = plan_src.replace("18 Stub", "44 Stub");
+    assert!(
+        plan_src.contains(&expected_stub_phrase),
+        "PLAN_TO_PORT_GLIBC_TO_RUST.md must contain `{expected_stub_phrase}`"
+    );
+    let plan_mutated = plan_src.replace(&expected_stub_phrase, "44 Stub");
     let plan_temp = unique_temp_path("docs-semantic-plan-stale-stub.md");
     std::fs::write(&plan_temp, plan_mutated).expect("write PLAN fixture");
 
@@ -675,7 +684,7 @@ fn deployment_and_plan_reject_stale_smoke_and_stub_claims() {
 
 #[test]
 fn readme_rejects_duplicate_contradictory_loc_table() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     let mutated = format!(
@@ -697,7 +706,7 @@ fn readme_rejects_duplicate_contradictory_loc_table() {
 
 #[test]
 fn readme_rejects_closed_bead_cited_as_open() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let source = std::fs::read_to_string(root.join("README.md")).unwrap();
     let mutated = source.replace(
@@ -735,7 +744,7 @@ fn readme_rejects_closed_bead_cited_as_open() {
 
 #[test]
 fn core_rejects_unapproved_unsafe_code_allow_module() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
     let temp_core_src = unique_temp_path("docs-semantic-core-src");
     copy_dir_recursive(&root.join("crates/frankenlibc-core/src"), &temp_core_src);
@@ -758,12 +767,21 @@ fn core_rejects_unapproved_unsafe_code_allow_module() {
 
 #[test]
 fn feature_parity_rejects_orphaned_source_commit_sha() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
 
     // (e.1) Mutate FEATURE_PARITY.md to cite orphaned SHA `b70205895`
+    let support = load_json(&root.join("support_matrix.json"));
+    let source_commit = support["source_commit"]
+        .as_str()
+        .expect("support_matrix source_commit");
+    let current_sha_needle = format!("(`{}`)", &source_commit[..9]);
     let fp_src = std::fs::read_to_string(root.join("FEATURE_PARITY.md")).unwrap();
-    let fp_mutated = fp_src.replace("(`e9760aa9e`)", "(`b70205895`)");
+    assert!(
+        fp_src.contains(&current_sha_needle),
+        "FEATURE_PARITY.md must cite current short SHA `{current_sha_needle}`"
+    );
+    let fp_mutated = fp_src.replace(&current_sha_needle, "(`b70205895`)");
     let fp_temp = unique_temp_path("docs-semantic-feature-orphaned-sha.md");
     std::fs::write(&fp_temp, fp_mutated).expect("write FEATURE_PARITY fixture");
 
@@ -804,7 +822,7 @@ fn feature_parity_rejects_orphaned_source_commit_sha() {
 
 #[test]
 fn closure_gate_rejects_ephemeral_data_tmp_receipt_and_companion_gates_pass() {
-    let _guard = gate_mutex().lock().unwrap();
+    let _guard = lock_gate_mutex();
     let root = workspace_root();
 
     // Verify semantic drift and claim reconciliation gates pass cleanly

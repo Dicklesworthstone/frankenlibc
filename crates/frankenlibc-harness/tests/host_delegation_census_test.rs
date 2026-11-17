@@ -606,3 +606,231 @@ fn gate_script_passes_and_emits_report_and_log() -> TestResult {
     assert_eq!(log_json["failure_signature"].as_str(), Some("none"));
     Ok(())
 }
+
+#[test]
+fn generator_propagates_turbofish_cfg_exclusive_macro_exports_and_rejects_comparisons() -> TestResult
+{
+    let root = workspace_root();
+    let source_dir = unique_synthetic_source_dir(&root, "turbofish-cfg-macro-source");
+    std::fs::create_dir_all(&source_dir)?;
+    std::fs::write(
+        source_dir.join("math_abi.rs"),
+        r##"
+fn generic_nss_bridge<T>(_flag: i32) -> i32 {
+    let _ = resolve_host_symbol_raw("dlopen");
+    0
+}
+
+#[cfg(not(feature = "standalone"))]
+fn cfg_branch_helper() -> i32 {
+    let _ = resolve_host_symbol_raw("dlsym");
+    0
+}
+
+#[cfg(feature = "standalone")]
+fn cfg_branch_helper() -> i32 {
+    0
+}
+
+fn plain_local(v: i32) -> i32 {
+    v
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn turbofish_nss_caller(x: i32) -> i32 {
+    generic_nss_bridge::<
+        (u64, u64),
+    >(x)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cfg_interpose_only_caller() -> i32 {
+    cfg_branch_helper()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn comparison_not_turbofish(a: i32, b: i32, c: i32, d: i32) -> i32 {
+    let ch = '\x22';
+    let _raw_c = cr#"resolve_host_symbol_raw("fake_raw_c")"#;
+    let _opt = Option::<fn(i32) -> i32>::None;
+    let arr = [1i32];
+    let _iter = arr.iter().copied().collect::<Vec<fn()>>();
+    if ch == '"' && a < b && c > d {
+        plain_local(a)
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn macro_turbofish_and_array_type_arg_caller(x: i32) -> i32 {
+    let generic_nss_bridge = core::mem::transmute::<[u8; 8], usize>({
+        let v = [0u8; 8];
+        let _ = dbg!(generic_nss_bridge::<[u8; 4]>(x));
+        v
+    });
+    generic_nss_bridge as i32
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn naked_asm_sym_caller() {
+    core::arch::naked_asm!("jmp {entry}", entry = sym cfg_branch_helper);
+}
+
+unary! {
+    macro_exported_caller macro_exported_callerf macro_exported_helper = |_x| generic_nss_bridge::<u8>(1) as f64;
+}
+"##,
+    )?;
+
+    let output_path = unique_output_path(&root, "turbofish-cfg-macro-output", "json");
+    let output = Command::new("python3")
+        .arg("scripts/generate_host_delegation_census.py")
+        .arg("--abi-source-dir")
+        .arg(&source_dir)
+        .arg("--output")
+        .arg(&output_path)
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "generator failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let data = load_json(&output_path)?;
+    assert_eq!(data["detector"]["version"].as_u64(), Some(18));
+
+    let deps_for = |profile: &str, symbol: &str| -> BTreeSet<String> {
+        data["profile_census"][profile]["host_dependencies_by_symbol"]
+            .get(symbol)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    assert!(
+        deps_for("interpose-release-linux-x86_64", "turbofish_nss_caller").contains("dlopen"),
+        "multiline turbofish helper call must propagate dlopen host dependency"
+    );
+    assert!(
+        deps_for(
+            "interpose-release-linux-x86_64",
+            "macro_turbofish_and_array_type_arg_caller"
+        )
+        .contains("dlopen"),
+        "macro-wrapped turbofish call inside [u8; 8] type-arg initializer must not be shadowed"
+    );
+    assert!(
+        deps_for("interpose-release-linux-x86_64", "naked_asm_sym_caller").contains("dlsym"),
+        "naked_asm! sym operand must propagate dlsym host dependency"
+    );
+    assert!(
+        deps_for("standalone-release-linux-x86_64", "naked_asm_sym_caller").is_empty(),
+        "standalone naked_asm! sym operand must follow standalone cfg target"
+    );
+    assert!(
+        deps_for(
+            "interpose-release-linux-x86_64",
+            "cfg_interpose_only_caller"
+        )
+        .contains("dlsym"),
+        "interpose cfg branch must record dlsym host dependency"
+    );
+    assert!(
+        deps_for(
+            "standalone-release-linux-x86_64",
+            "cfg_interpose_only_caller"
+        )
+        .is_empty(),
+        "standalone cfg branch must stay clean when host call is interpose-only"
+    );
+    assert!(
+        deps_for("interpose-release-linux-x86_64", "macro_exported_caller").contains("dlopen"),
+        "macro-expanded export must propagate generic helper host dependency"
+    );
+    assert!(
+        deps_for("interpose-release-linux-x86_64", "comparison_not_turbofish").is_empty(),
+        "comparison operators must not fabricate generic call edges"
+    );
+    let unknown_calls = data["unknown_call_edges"]
+        .as_array()
+        .expect("unknown_call_edges should be an array");
+    assert!(
+        !unknown_calls.iter().any(|row| {
+            row["caller_exported_symbol"].as_str() == Some("comparison_not_turbofish")
+        }),
+        "comparison expressions must not produce unknown call edges"
+    );
+
+    // Verify stale source-hash detection fails closed in --check mode.
+    let mut stale = data.clone();
+    stale["detector"]["source_tree_sha256"] = Value::String("0".repeat(64));
+    let stale_path = unique_output_path(&root, "stale-source-hash", "json");
+    std::fs::write(&stale_path, serde_json::to_vec_pretty(&stale)?)?;
+    let stale_check = Command::new("python3")
+        .arg("scripts/generate_host_delegation_census.py")
+        .arg("--abi-source-dir")
+        .arg(&source_dir)
+        .arg("--output")
+        .arg(&stale_path)
+        .arg("--check")
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        !stale_check.status.success(),
+        "stale source hash must fail census --check mode"
+    );
+    Ok(())
+}
+
+#[test]
+fn canonical_census_records_cancellation_and_cleanup_host_dependencies() -> TestResult {
+    let root = workspace_root();
+    let data = load_json(&artifact(&root))?;
+    assert_eq!(data["detector"]["version"].as_u64(), Some(18));
+
+    let interpose_deps = |symbol: &str| -> BTreeSet<String> {
+        data["profile_census"]["interpose-release-linux-x86_64"]["host_dependencies_by_symbol"]
+            .get(symbol)
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    for symbol in [
+        "__pthread_register_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_unregister_cancel",
+        "__pthread_unregister_cancel_restore",
+        "_pthread_cleanup_push",
+        "_pthread_cleanup_push_defer",
+        "_pthread_cleanup_pop",
+        "_pthread_cleanup_pop_restore",
+        "pthread_cond_wait",
+        "pthread_cond_timedwait",
+        "pthread_cond_clockwait",
+    ] {
+        let deps = interpose_deps(symbol);
+        assert!(
+            !deps.is_empty(),
+            "expected canonical host_dependencies_by_symbol to record interpose host edges for {symbol}"
+        );
+    }
+    Ok(())
+}

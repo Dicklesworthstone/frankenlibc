@@ -1,0 +1,68 @@
+
+running 59 tests
+test fortify_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test dirent_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test err_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test c11threads_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test generated_maintenance_dashboard_counts_match_symbol_rows ... ok
+test generated_report_accepts_glibc_internal_abi_clone_errno_tranche ... ok
+test generated_report_accepts_grp_abi_getgrent_files_tranche ... ok
+test fixture_coverage_ratchet_flags_evidence_free_implemented_promotion ... ok
+test generated_report_accepts_inet_abi_interface_index_tranche ... ok
+test generated_report_accepts_dirent_abi_readdir64_alias_tranche ... ok
+test generated_report_accepts_iconv_locale_bootstrap_bridge_tranche ... ok
+test generated_report_accepts_pwd_abi_getpwent_files_tranche ... ok
+test generated_report_accepts_resolv_abi_protocol_bridge_tranche ... ok
+test generated_report_accepts_locale_abi_catalog_bridge_tranche ... ok
+test generated_report_accepts_pwd_abi_gshadow_files_tranche ... ok
+test generated_report_accepts_stdio_abi_scanf_libio_tranche ... ok
+test generated_report_accepts_c11threads_abi_pthread_bridge_tranche ... ok
+test generated_report_resolves_math_cataloged_fenv_sources ... ok
+test glibc_internal_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test grp_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test inet_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test generated_report_accepts_setjmp_abi_phase1_tranche ... ok
+test locale_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test generated_report_accepts_err_abi_runtime_io_bridge_tranche ... ok
+test generated_report_accepts_wchar_abi_isoc_libio_codec_allocator_tranche ... ok
+test generated_report_accepts_rpc_abi_xdr_netname_allocator_errno_tranche ... ok
+test generated_report_accepts_string_abi_conversion_argz_regex_allocator_tranche ... ok
+test generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche ... ok
+test generated_report_accepts_math_abi_errno_bridge_tranche ... ok
+test maintenance_module_coverage_consistent ... ok
+test generated_report_accepts_fortify_abi_wrapper_libio_allocator_tranche ... ok
+test maintenance_report_has_no_implemented_host_census_symbols ... ok
+test maintenance_report_has_no_invalid_status_rows ... ok
+test maintenance_report_marks_native_sample_symbols_implemented ... ok
+test maintenance_report_reclassifies_host_delegating_symbols ... ok
+test maintenance_report_schema_complete ... ok
+test maintenance_status_validation_above_threshold ... ok
+test maintenance_generator_rejects_uncertain_and_upward_only_evidence ... ok
+test math_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test pwd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test pwd_gshadow_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test resolv_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test rpc_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test scanner_classifies_proofed_and_alternate_pattern_findings ... ok
+test setjmp_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test stdio_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test string_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test support_matrix_embedded_counts_match_symbol_rows ... ok
+test unistd_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test wchar_abi_promotion_tranche_manifest_has_strict_and_hardened_proof ... ok
+test fixture_coverage_ratchet_reports_module_mode_and_proof_class_deltas ... ok
+test maintenance_report_generates_successfully ... ok
+test math_abi_promotion_proof_manifest_requires_both_modes ... ok
+test injected_host_edge_invalidates_implemented_and_unproven_wraps_stays_conservative ... ok
+test maintenance_gate_does_not_rewrite_canonical_report ... ok
+test maintenance_gate_emits_structured_logs_with_required_fields has been running for over 60 seconds
+test maintenance_gate_fails_on_canonical_stable_section_drift has been running for over 60 seconds
+test maintenance_gate_loads_promotion_triage_manifest has been running for over 60 seconds
+test maintenance_gate_trace_flag_emits_symbol_status_snapshot_events has been running for over 60 seconds
+test maintenance_gate_emits_structured_logs_with_required_fields ... ok
+test maintenance_gate_fails_on_canonical_stable_section_drift ... ok
+test maintenance_gate_loads_promotion_triage_manifest ... ok
+test maintenance_gate_trace_flag_emits_symbol_status_snapshot_events ... ok
+
+test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 246.70s
+

@@ -89,10 +89,10 @@ with:
 - strict mode preserving ABI semantics by default,
 - hardened mode enabling deterministic repair under bounded risk/latency budgets.
 
-Implementation status (reconciled 2026-11-11 against the source-derived downgrade evidence in `support_matrix.json`; the earlier "3,705 Implemented / 100% native" status line in this spot was a stale 2026-05 snapshot and false as a present-tense claim):
-- **4,119 exported symbols classified**: 2,414 Implemented + 408 RawSyscall = 2,822 (68.5%) native coverage
-- **1,279 WrapsHostLibc, 0 GlibcCallThrough, 18 Stub** in support taxonomy
-- **L0 (Interpose)** deployment level per `replacement_levels.json`; L1 is blocked by the zero-stub and workload/performance gates
+Implementation status (reconciled 2026-11-13 against the source-derived maintenance evidence in `support_matrix.json`; the earlier "3,705 Implemented / 100% native" status line in this spot was a stale 2026-05 snapshot and false as a present-tense claim):
+- **4,119 exported symbols classified**: 2,464 Implemented + 408 RawSyscall = 2,872 (69.7%) native coverage
+- **1,247 WrapsHostLibc, 0 GlibcCallThrough, 0 Stub** in support taxonomy
+- **L0 (Interpose)** deployment level per `replacement_levels.json`; L1 promotion awaits integrated readiness verification (`bd-rc0923-epic-eeuy4f.47`)
 - Membrane live in `frankenlibc-membrane` for pointer validation
 - ~71 runtime-math control kernels implemented and wired
 - Sampled conformal (`risk_engine`), contextual ordering (`check_oracle`), and

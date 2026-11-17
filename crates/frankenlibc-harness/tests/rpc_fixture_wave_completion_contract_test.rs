@@ -340,8 +340,12 @@ fn checker_rejects_stale_rpc_readme_stub_wording() -> TestResult {
     let root = workspace_root()?;
     let readme = std::fs::read_to_string(root.join("README.md"))?;
     let bad_readme = readme.replace(
-        "| `rpc_abi.rs` | Native XDR plus deterministic legacy RPC safe defaults |",
-        "| `rpc_abi.rs` | RPC function stubs |",
+        "Native XDR plus deterministic legacy RPC safe defaults",
+        "RPC function stubs",
+    );
+    assert_ne!(
+        bad_readme, readme,
+        "README.md must contain expected native XDR/RPC wording before mutation"
     );
 
     let out_dir = unique_output_dir(&root, "rpc-fixture-wave-bad-readme")?;

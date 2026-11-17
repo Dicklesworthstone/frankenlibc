@@ -132,6 +132,10 @@ CROSS_MODULE_SOURCE_LOCATORS = {
     ("math_abi", "fesetexcept"): "fenv_abi",
     ("math_abi", "fesetmode"): "fenv_abi",
     ("math_abi", "fetestexceptflag"): "fenv_abi",
+    ("rpc_abi", "_authenticate"): "rpc_svc",
+    ("rpc_abi", "callrpc"): "rpc_client_create",
+    ("rpc_abi", "clnt_create"): "rpc_client_create",
+    ("rpc_abi", "registerrpc"): "rpc_svc",
     ("rpc_abi", "svc_exit"): "rpc_svc",
     ("rpc_abi", "svc_getreq"): "rpc_svc",
     ("rpc_abi", "svc_getreq_common"): "rpc_svc",
@@ -148,11 +152,27 @@ CROSS_MODULE_SOURCE_LOCATORS = {
     ("rpc_abi", "svcerr_progvers"): "rpc_svc",
     ("rpc_abi", "svcerr_systemerr"): "rpc_svc",
     ("rpc_abi", "svcerr_weakauth"): "rpc_svc",
+    ("rpc_abi", "svcfd_create"): "rpc_svc",
+    ("rpc_abi", "svctcp_create"): "rpc_svc",
     ("rpc_abi", "svcudp_bufcreate"): "rpc_svc",
     ("rpc_abi", "svcudp_create"): "rpc_svc",
+    ("rpc_abi", "svcudp_enablecache"): "rpc_svc",
+    ("rpc_abi", "svcunix_create"): "rpc_svc",
+    ("rpc_abi", "svcunixfd_create"): "rpc_svc",
+    ("unistd_abi", "__stack_chk_fail"): "fortify_abi",
+    ("wchar_abi", "__isoc23_wcstoimax"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstol"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstol_l"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoll"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoll_l"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoul"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoul_l"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoull"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoull_l"): "isoc_abi",
+    ("wchar_abi", "__isoc23_wcstoumax"): "isoc_abi",
 }
 PROMOTION_PROOF_WARNING = "host delegation census covered by promotion proof manifest"
-FN_NAME_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)\s*\(')
+FN_NAME_PATTERN = re.compile(r"\bfn\s+([A-Za-z_]\w*)\s*(?:<[^{;]*?>\s*)?\(")
 HOST_RESOLVE_BLOCK_USE_PATTERN = re.compile(
     r'use\s+crate::host_resolve::\{(?P<body>.*?)\};',
     re.S,
@@ -246,6 +266,62 @@ def validate_matrix_provenance(matrix):
     if generated_at.tzinfo is None:
         raise ValueError("support_matrix.json generated_at_utc must include a timezone")
 
+    rch_raw = os.environ.get("RCH_BUILD_SOURCE", "").strip()
+    rch_source = rch_raw.removesuffix("-dirty").lower()
+    if rch_raw and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", rch_source) is None:
+        raise ValueError("RCH_BUILD_SOURCE must be a full lowercase Git object ID")
+
+    git_has_current_history = (
+        subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=REPO_ROOT,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
+    if git_has_current_history and rch_source:
+        git_has_current_history = (
+            subprocess.run(
+                ["git", "rev-parse", "--verify", f"{rch_source}^{{commit}}"],
+                cwd=REPO_ROOT,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode
+            == 0
+        )
+
+    if not git_has_current_history:
+        if rch_source:
+            min_valid_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            if generated_at < min_valid_time:
+                raise ValueError(
+                    "support_matrix.json generated_at_utc predates the newest ABI source commit "
+                    f"timestamp {min_valid_time.isoformat()}"
+                )
+            reality_path = REPO_ROOT / "tests/conformance/reality_report.v1.json"
+            if MATRIX_PATH == REPO_ROOT / "support_matrix.json" and reality_path.is_file():
+                try:
+                    reality_commit = json.loads(reality_path.read_text(encoding="utf-8")).get(
+                        "source_commit"
+                    )
+                except (OSError, json.JSONDecodeError):
+                    reality_commit = None
+                if isinstance(reality_commit, str) and reality_commit != source_commit:
+                    raise ValueError(
+                        "support_matrix.json source_commit mismatches coupled reality_report.v1.json "
+                        f"source_commit {reality_commit}"
+                    )
+            return {
+                "source_commit": source_commit,
+                "source_generated_at_utc": generated_at_utc,
+                "newest_abi_commit": source_commit,
+                "newest_abi_commit_time": generated_at_utc,
+            }
+        raise ValueError("unable to resolve support-matrix Git provenance")
+
     try:
         subprocess.run(
             ["git", "rev-parse", "--verify", f"{source_commit}^{{commit}}"],
@@ -301,13 +377,13 @@ def validate_matrix_provenance(matrix):
     }
 
 
-def load_fixtures():
+def load_fixtures(fixture_dir: Path = FIXTURE_DIR):
     """Scan fixture directory, returning a map of function_name → fixture info."""
     fixture_map = {}  # function_name -> list of {file, case_name, mode}
-    if not FIXTURE_DIR.is_dir():
+    if not fixture_dir.is_dir():
         return fixture_map
 
-    for fpath in sorted(FIXTURE_DIR.glob("*.json")):
+    for fpath in sorted(fixture_dir.glob("*.json")):
         try:
             with fpath.open(encoding="utf-8") as f:
                 data = json.load(f)
@@ -392,6 +468,59 @@ def load_host_delegation_census(path: Path):
     return out
 
 
+def load_interpose_host_dependencies(path: Path):
+    """Load interpose-profile transitive host dependencies by exported symbol."""
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    profiles = data.get("profile_census", {})
+    if not isinstance(profiles, dict):
+        return {}
+    interpose = profiles.get("interpose-release-linux-x86_64", {})
+    if not isinstance(interpose, dict):
+        return {}
+
+    out = {}
+    deps_by_sym = interpose.get("host_dependencies_by_symbol", {})
+    if isinstance(deps_by_sym, dict):
+        for sym, deps in deps_by_sym.items():
+            if isinstance(sym, str) and sym and isinstance(deps, list) and deps:
+                out[sym] = [str(d) for d in deps if isinstance(d, str) and d]
+    unknown_exports = interpose.get("exported_symbols_with_unknown_call_edges", [])
+    if isinstance(unknown_exports, list):
+        for val in unknown_exports:
+            if isinstance(val, str) and val:
+                out.setdefault(val, []).append("<unknown-call-edge>")
+    unknown_samples = interpose.get("unknown_reachable_call_edge_samples", [])
+    if isinstance(unknown_samples, list):
+        for row in unknown_samples:
+            if not isinstance(row, dict):
+                continue
+            for key in ("exported_symbol", "caller_export", "caller_exported_symbol", "symbol"):
+                val = row.get(key)
+                if isinstance(val, str) and val:
+                    out.setdefault(val, []).append("<unknown-call-edge>")
+            for key in (
+                "reachable_export_sample",
+                "reachable_exports",
+                "reachable_export_symbols",
+                "reachable_from_exported_symbols",
+                "exported_symbols",
+                "symbols",
+            ):
+                vals = row.get(key)
+                if isinstance(vals, list):
+                    for val in vals:
+                        if isinstance(val, str) and val:
+                            out.setdefault(val, []).append("<unknown-call-edge>")
+    return out
+
+
 def sha256_file(path: Path):
     """Return a lowercase SHA-256 digest without normalizing file contents."""
     digest = hashlib.sha256()
@@ -401,6 +530,18 @@ def sha256_file(path: Path):
     return digest.hexdigest()
 
 
+NONCODE_RAW_STRING_RE = re.compile(r'(?:br|cr|r)(?P<hashes>#{0,255})"')
+NONCODE_LIFETIME_RE = re.compile(r"'[A-Za-z_]\w*(?!')")
+NONCODE_TRIGGER_RE = re.compile(r'//|/\*|(?:br|cr|r)#{0,255}"|(?:b|c)?"|b?\'')
+NONCODE_BLOCK_STEP_RE = re.compile(r"/\*|\*/")
+
+
+def _blank_preserving_newlines(segment: str) -> str:
+    if "\n" not in segment:
+        return " " * len(segment)
+    return "\n".join(" " * len(part) for part in segment.split("\n"))
+
+
 def strip_rust_noncode(text):
     """Blank comments and string/character literals while preserving offsets.
 
@@ -408,93 +549,126 @@ def strip_rust_noncode(text):
     doc comment, diagnostic string, or test fixture that merely spells
     ``abi_stub_contract!(...)`` is not evidence about an exported symbol.
     """
-    out = list(text)
-    i = 0
+    first = NONCODE_TRIGGER_RE.search(text)
+    if first is None:
+        return text
+
+    chunks = []
+    last = 0
+    i = first.start()
     n = len(text)
-    raw_literal_pattern = re.compile(r'(?:br|r)(?P<hashes>#{0,255})"')
-    lifetime_pattern = re.compile(r"'[A-Za-z_]\w*")
-
-    def blank(start, end):
-        for index in range(start, min(end, n)):
-            if out[index] != "\n":
-                out[index] = " "
-
     while i < n:
+        matched = (
+            first
+            if (i == first.start() and last == 0 and not chunks)
+            else NONCODE_TRIGGER_RE.search(text, i)
+        )
+        if matched is None:
+            break
+        i = matched.start()
         if text.startswith("//", i):
+            if i > last:
+                chunks.append(text[last:i])
             end = text.find("\n", i)
             end = n if end < 0 else end
-            blank(i, end)
+            chunks.append(" " * (end - i))
             i = end
+            last = i
             continue
         if text.startswith("/*", i):
-            start = i
+            if i > last:
+                chunks.append(text[last:i])
+            chunks.append("  ")
             depth = 1
             i += 2
-            while i < n and depth:
-                if text.startswith("/*", i):
+            while i < n and depth > 0:
+                step = NONCODE_BLOCK_STEP_RE.search(text, i)
+                if step is None:
+                    chunks.append(_blank_preserving_newlines(text[i:]))
+                    i = n
+                    depth = 0
+                    break
+                if step.start() > i:
+                    chunks.append(_blank_preserving_newlines(text[i : step.start()]))
+                chunks.append("  ")
+                if step.group(0) == "/*":
                     depth += 1
-                    i += 2
-                elif text.startswith("*/", i):
-                    depth -= 1
-                    i += 2
                 else:
-                    i += 1
-            blank(start, i)
+                    depth -= 1
+                i = step.end()
+            last = i
             continue
 
-        # Raw strings and raw byte strings: r"...", r#"..."#, br"...".
-        raw = raw_literal_pattern.match(text, i)
-        if raw:
-            start = i
-            hashes = raw.group("hashes")
-            i = raw.end()
-            terminator = '"' + hashes
-            end = text.find(terminator, i)
-            i = n if end < 0 else end + len(terminator)
-            blank(start, i)
+        raw = NONCODE_RAW_STRING_RE.match(text, i)
+        if raw is not None:
+            if i > last:
+                chunks.append(text[last:i])
+            terminator = '"' + raw.group("hashes")
+            end = text.find(terminator, raw.end())
+            end = n if end < 0 else end + len(terminator)
+            chunks.append(_blank_preserving_newlines(text[i:end]))
+            i = end
+            last = i
             continue
 
         prefix_len = 0
         quote = None
-        if text.startswith('b"', i):
+        if text.startswith(('b"', 'c"'), i):
             prefix_len, quote = 1, '"'
         elif text.startswith("b'", i):
             prefix_len, quote = 1, "'"
         elif text[i] in ('"', "'"):
             quote = text[i]
         if quote is not None:
-            # A leading apostrophe in a lifetime is not a character literal.
-            if quote == "'" and prefix_len == 0 and lifetime_pattern.match(text, i):
+            if quote == "'" and prefix_len == 0 and NONCODE_LIFETIME_RE.match(text, i):
                 i += 1
                 continue
             start = i
-            i += prefix_len + 1
+            cur = i + prefix_len + 1
             escaped = False
-            while i < n:
-                ch = text[i]
-                i += 1
+            closed = False
+            while cur < n:
+                ch = text[cur]
+                cur += 1
                 if escaped:
                     escaped = False
                 elif ch == "\\":
                     escaped = True
                 elif ch == quote:
+                    closed = True
                     break
-            blank(start, i)
+                elif quote == "'" and ch == "\n":
+                    break
+            if quote == "'" and not closed:
+                i += 1
+                continue
+            if start > last:
+                chunks.append(text[last:start])
+            chunks.append(_blank_preserving_newlines(text[start:cur]))
+            i = cur
+            last = i
             continue
         i += 1
-    return "".join(out)
+
+    if last < n:
+        chunks.append(text[last:])
+    return "".join(chunks)
+
+
+BRACE_SCAN_RE = re.compile(r"[{}]")
+SIG_TOKEN_RE = re.compile(r"[()\[\]{};]")
 
 
 def balanced_brace_end(source, open_brace):
     """Return the exclusive end of a balanced brace block, or ``None``."""
     depth = 0
-    for index in range(open_brace, len(source)):
-        if source[index] == "{":
+    for matched in BRACE_SCAN_RE.finditer(source, open_brace):
+        if matched.group(0) == "{":
             depth += 1
-        elif source[index] == "}":
+        else:
             depth -= 1
             if depth == 0:
-                return index + 1
+                return matched.end()
     return None
 
 
@@ -1105,8 +1279,6 @@ def load_promotion_proof_manifest(path: Path):
         modes_ok = True
         for mode in required_modes:
             modes_ok = modes_ok and conformance_mode_passed(row.get(f"{mode}_conformance"))
-        if not modes_ok:
-            continue
         proofs[symbol] = {
             "module": str(row.get("module", "")),
             "classification": classification,
@@ -1114,6 +1286,7 @@ def load_promotion_proof_manifest(path: Path):
             "accepted_host_symbols": accepted_host_symbols,
             "accepted_delegation_kinds": accepted_delegation_kinds,
             "required_modes": required_modes,
+            "modes_ok": modes_ok,
         }
     return proofs
 
@@ -1129,6 +1302,8 @@ def load_promotion_proofs(paths):
 def promotion_proof_covers_census(symbol, status, module, host_delegation_entry, proof):
     """Return true when a proof manifest explains all census hits for a symbol."""
     if not isinstance(host_delegation_entry, dict) or not isinstance(proof, dict):
+        return False
+    if not proof.get("modes_ok", True):
         return False
     if status != proof.get("support_matrix_status", "Implemented"):
         return False
@@ -1187,7 +1362,10 @@ def classify_status_validation_issue(status, module, findings, warnings):
             "scanner_bucket": "scanner_unknown",
             "actionable_next_step": "add module source or correct support-matrix module name",
         }
-    if any("no host delegation detected" in finding for finding in finding_set):
+    if any(
+        "no host delegation detected" in item or "no detected host delegation" in item
+        for item in (finding_set | warning_set)
+    ):
         return {
             "issue_class": "taxonomy_overstates_host_dependency",
             "scanner_bucket": "status_source_mismatch",
@@ -1267,7 +1445,7 @@ def ratchet_proof_class(row, triage_row, proof):
     hardened_pass = conformance_mode_passed(row.get("hardened_conformance"))
     if strict_pass and hardened_pass:
         return "strict_hardened_conformance_proof"
-    if isinstance(proof, dict):
+    if isinstance(proof, dict) and proof.get("modes_ok", True):
         if (
             row.get("current_status") == proof.get("support_matrix_status", "Implemented")
             and row.get("module") == proof.get("module")
@@ -1461,9 +1639,9 @@ def build_fixture_coverage_ratchet(
 
 
 
-def read_module_source(module_name):
+def read_module_source(module_name, abi_src=ABI_SRC):
     """Read ABI module source file content."""
-    src_path = ABI_SRC / f"{module_name}.rs"
+    src_path = abi_src / f"{module_name}.rs"
     if not src_path.is_file():
         return None
     return src_path.read_text(encoding="utf-8")
@@ -1500,8 +1678,12 @@ def extract_host_resolve_aliases(source):
     return aliases
 
 
+COMMENT_START_RE = re.compile(r"//|/\*")
+COMMENT_BLOCK_STEP_RE = re.compile(r"/\*|\*/")
+
+
 def strip_rust_comments(text):
-    """Blank out `//`-style and `/* */` comments, preserving offsets and lines.
+    """Blank out `//`-style and `/* */` comments, preserving literals, offsets, and lines.
 
     Host-delegation detection is a *call* analysis, but every pattern it uses is
     a plain regex over raw source, so prose inside a doc comment counts as a
@@ -1513,75 +1695,179 @@ def strip_rust_comments(text):
 
     Replacement is space-for-character (newlines kept) so any offset- or
     line-based reasoning over the result stays aligned with the original.
+    String and character literals containing ``//`` or ``/*`` are preserved intact.
     """
+    first = NONCODE_TRIGGER_RE.search(text)
+    if first is None:
+        return text
     out = []
-    i = 0
+    last = 0
+    i = first.start()
     n = len(text)
     while i < n:
-        ch = text[i]
-        if ch == '/' and i + 1 < n and text[i + 1] == '/':
-            while i < n and text[i] != '\n':
-                out.append(' ')
-                i += 1
-        elif ch == '/' and i + 1 < n and text[i + 1] == '*':
-            # Rust block comments nest.
-            depth = 0
-            while i < n:
-                if text.startswith('/*', i):
+        matched = (
+            first
+            if (i == first.start() and last == 0 and not out)
+            else NONCODE_TRIGGER_RE.search(text, i)
+        )
+        if matched is None:
+            break
+        i = matched.start()
+        if text.startswith("//", i):
+            if i > last:
+                out.append(text[last:i])
+            nl = text.find("\n", i)
+            end = n if nl < 0 else nl
+            out.append(" " * (end - i))
+            i = end
+            last = i
+            continue
+        if text.startswith("/*", i):
+            if i > last:
+                out.append(text[last:i])
+            out.append("  ")
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                step = COMMENT_BLOCK_STEP_RE.search(text, i)
+                if step is None:
+                    out.append(_blank_preserving_newlines(text[i:]))
+                    i = n
+                    depth = 0
+                    break
+                if step.start() > i:
+                    out.append(_blank_preserving_newlines(text[i : step.start()]))
+                out.append("  ")
+                if step.group(0) == "/*":
                     depth += 1
-                    out.append('  ')
-                    i += 2
-                elif text.startswith('*/', i):
-                    depth -= 1
-                    out.append('  ')
-                    i += 2
-                    if depth == 0:
-                        break
                 else:
-                    out.append('\n' if text[i] == '\n' else ' ')
-                    i += 1
-        else:
-            out.append(ch)
-            i += 1
-    return ''.join(out)
+                    depth -= 1
+                i = step.end()
+            last = i
+            continue
+        raw = NONCODE_RAW_STRING_RE.match(text, i)
+        if raw is not None:
+            terminator = '"' + raw.group("hashes")
+            end = text.find(terminator, raw.end())
+            i = n if end < 0 else end + len(terminator)
+            continue
+        prefix_len = 0
+        quote = None
+        if text.startswith(('b"', 'c"'), i):
+            prefix_len, quote = 1, '"'
+        elif text.startswith("b'", i):
+            prefix_len, quote = 1, "'"
+        elif text[i] in ('"', "'"):
+            quote = text[i]
+        if quote is not None:
+            if quote == "'" and prefix_len == 0 and NONCODE_LIFETIME_RE.match(text, i):
+                i += 1
+                continue
+            cur = i + prefix_len + 1
+            escaped = False
+            closed = False
+            while cur < n:
+                ch = text[cur]
+                cur += 1
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == quote:
+                    closed = True
+                    break
+                elif quote == "'" and ch == "\n":
+                    break
+            i = cur if closed or quote == '"' else i + 1
+            continue
+        i += 1
+    if last < n:
+        out.append(text[last:])
+    return "".join(out)
+
+
+def compile_call_any_regex(names):
+    """Compile an optional regex matching function-style or turbofish calls to names."""
+    if not names:
+        return None
+    joined = "|".join(re.escape(name) for name in sorted(names))
+    return re.compile(rf"\b(?:{joined})\s*(?:\(|::\s*<)")
 
 
 def body_calls_any(body, names):
-    """True when body contains a function-style call to any name."""
-    for name in names:
-        if re.search(rf'\b{re.escape(name)}\s*\(', body):
-            return True
-    return False
+    """True when body contains a function-style or turbofish call to any name."""
+    pattern = compile_call_any_regex(names)
+    return bool(pattern and pattern.search(body))
+
+
+def extract_function_span_at(source, match_start, match_end, noncode_source=None):
+    """Return ``(start, end)`` of a function definition starting at ``match_start``, or ``None``."""
+    code = noncode_source if noncode_source is not None else strip_rust_noncode(source)
+    paren_depth = 1
+    bracket_depth = 0
+    open_brace = -1
+    for tok in SIG_TOKEN_RE.finditer(code, match_end):
+        ch = tok.group(0)
+        if ch == "(":
+            paren_depth += 1
+        elif ch == ")":
+            paren_depth = max(0, paren_depth - 1)
+        elif ch == "[":
+            bracket_depth += 1
+        elif ch == "]":
+            bracket_depth = max(0, bracket_depth - 1)
+        elif paren_depth == 0 and bracket_depth == 0:
+            if ch == ";":
+                return None
+            if ch == "{":
+                open_brace = tok.start()
+                break
+            if ch == "}":
+                return None
+    if open_brace < 0:
+        return None
+    end = balanced_brace_end(code, open_brace)
+    if end is None:
+        next_fn = NEXT_FN_PATTERN.search(code, match_end)
+        end = next_fn.start() if next_fn else len(source)
+    return match_start, end
 
 
 def analyze_module_source(source):
     """Collect per-module helper metadata used by status classification."""
     host_resolve_aliases = extract_host_resolve_aliases(source)
-    function_names = []
-    for match in FN_NAME_PATTERN.finditer(source):
-        name = match.group(1)
-        if name not in function_names:
-            function_names.append(name)
-
+    noncode_source = strip_rust_noncode(source)
+    raw_bodies = {}
     function_bodies = {}
-    for name in function_names:
-        body = extract_function_body(source, name)
-        if body is not None:
-            # Comment-blind: host delegation is a property of code, not prose.
-            function_bodies[name] = strip_rust_comments(body)
+    for match in FN_NAME_PATTERN.finditer(noncode_source):
+        name = match.group(1)
+        if name in raw_bodies:
+            continue
+        span = extract_function_span_at(
+            source,
+            match.start(),
+            match.end(),
+            noncode_source=noncode_source,
+        )
+        if span is not None:
+            start, end = span
+            raw_bodies[name] = source[start:end]
+            function_bodies[name] = noncode_source[start:end]
 
+    alias_re = compile_call_any_regex(host_resolve_aliases)
     host_helper_functions = set()
     changed = True
     while changed:
         changed = False
+        helper_re = compile_call_any_regex(host_helper_functions)
         for name, body in function_bodies.items():
             if name in host_helper_functions:
                 continue
             if (
                 WRAPS_HOST_LIBC_PATTERN.search(body)
                 or WRAPS_LIBC_CALL_PATTERN.search(body)
-                or body_calls_any(body, host_resolve_aliases)
-                or body_calls_any(body, host_helper_functions)
+                or (alias_re is not None and alias_re.search(body))
+                or (helper_re is not None and helper_re.search(body))
             ):
                 host_helper_functions.add(name)
                 changed = True
@@ -1589,6 +1875,10 @@ def analyze_module_source(source):
     return {
         "host_resolve_aliases": host_resolve_aliases,
         "host_helper_functions": host_helper_functions,
+        "alias_re": alias_re,
+        "helper_re": compile_call_any_regex(host_helper_functions),
+        "raw_bodies": raw_bodies,
+        "stripped_bodies": function_bodies,
     }
 
 
@@ -1598,28 +1888,18 @@ def extract_function_body(source, fn_name):
     Returns the text from 'fn name(' to the next function definition or EOF.
     This is approximate but sufficient for pattern matching.
     """
-    pattern = re.compile(rf'\bfn\s+{re.escape(fn_name)}\s*\(')
-    for match in pattern.finditer(source):
-        signature_tail = source[match.end():]
-        open_brace = signature_tail.find("{")
-        statement_end = signature_tail.find(";")
-
-        # Skip forward declarations inside extern blocks; we only want actual
-        # function definitions with bodies.
-        if open_brace < 0:
-            continue
-        if statement_end >= 0 and statement_end < open_brace:
-            continue
-
-        start = match.start()
-        end = balanced_brace_end(source, match.end() + open_brace)
-        if end is None:
-            next_fn = NEXT_FN_PATTERN.search(signature_tail)
-            if next_fn:
-                end = match.end() + next_fn.start()
-            else:
-                end = len(source)
-        return source[start:end]
+    noncode_source = strip_rust_noncode(source)
+    pattern = re.compile(rf"\bfn\s+{re.escape(fn_name)}\s*(?:<[^{{;]*?>\s*)?\(")
+    for match in pattern.finditer(noncode_source):
+        span = extract_function_span_at(
+            source,
+            match.start(),
+            match.end(),
+            noncode_source=noncode_source,
+        )
+        if span is not None:
+            start, end = span
+            return source[start:end]
 
     return None
 
@@ -1661,6 +1941,8 @@ def validate_status(
     host_delegation_entry,
     promotion_proof,
     stub_contract_provenance=None,
+    interpose_host_deps=None,
+    has_promotion_proof=False,
 ):
     """Validate that a symbol's code matches its declared status.
 
@@ -1669,22 +1951,28 @@ def validate_status(
     if symbol in DATA_SYMBOLS:
         return True, [], []
 
-    proof_available = (
+    proof_manifest_entry = (
         isinstance(promotion_proof, dict)
         and status == promotion_proof.get("support_matrix_status", "Implemented")
         and module == promotion_proof.get("module")
         and promotion_proof.get("classification") in ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS
     )
+    proof_modes_ok = bool(promotion_proof.get("modes_ok", True)) if proof_manifest_entry else False
+    proof_available = proof_manifest_entry and proof_modes_ok
+    proof_broken = proof_manifest_entry and not proof_modes_ok
     explicit_stub_contract = (
         isinstance(stub_contract_provenance, list)
         and len(stub_contract_provenance) == 1
     )
-    body = extract_function_body(source, symbol)
+    raw_bodies = module_analysis.get("raw_bodies")
+    body = raw_bodies.get(symbol) if isinstance(raw_bodies, dict) else extract_function_body(source, symbol)
     if body is None:
         if status == "Stub":
             if explicit_stub_contract:
                 return True, [], []
             return False, ["Stub body not found and no explicit stub contract"], []
+        if status == "Implemented" and proof_broken:
+            return False, ["Implemented but host delegation census detected"], []
         warnings = [PROMOTION_PROOF_WARNING] if proof_available else []
         return True, [f"function body not found (may use alternate pattern)"], warnings
 
@@ -1699,19 +1987,22 @@ def validate_status(
     )
     census_detected_host_delegation = (
         isinstance(host_delegation_entry, dict) and not proof_covers_census
-    )
+    ) or proof_broken
     if proof_covers_census or proof_available:
         warnings.append(PROMOTION_PROOF_WARNING)
-    host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
-    host_helper_functions = module_analysis.get("host_helper_functions", set())
-    # Comment-blind, matching analyze_module_source: a doc comment that quotes a
-    # call is prose, not delegation (bd-4habm0).
-    code_body = strip_rust_comments(body)
+    stripped_bodies = module_analysis.get("stripped_bodies")
+    code_body = (
+        stripped_bodies[symbol]
+        if isinstance(stripped_bodies, dict) and symbol in stripped_bodies
+        else strip_rust_noncode(body)
+    )
+    alias_re = module_analysis.get("alias_re") if "alias_re" in module_analysis else compile_call_any_regex(module_analysis.get("host_resolve_aliases", set()))
+    helper_re = module_analysis.get("helper_re") if "helper_re" in module_analysis else compile_call_any_regex(module_analysis.get("host_helper_functions", set()))
     wraps_host_libc = bool(
         WRAPS_HOST_LIBC_PATTERN.search(code_body)
         or WRAPS_LIBC_CALL_PATTERN.search(code_body)
-        or body_calls_any(code_body, host_resolve_aliases)
-        or body_calls_any(code_body, host_helper_functions)
+        or (alias_re is not None and alias_re.search(code_body))
+        or (helper_re is not None and helper_re.search(code_body))
     )
 
     if status == "Implemented":
@@ -1721,7 +2012,7 @@ def validate_status(
             findings.append("Implemented but host delegation detected")
         # Should NOT have libc:: host calls (except libc type references
         # and common utility functions).
-        libc_calls = LIBC_CALL_PATTERN.findall(body)
+        libc_calls = LIBC_CALL_PATTERN.findall(code_body)
         # Filter out type-only references (common pattern: libc::c_int etc.)
         type_refs = {"c_int", "c_uint", "c_long", "c_ulong", "c_char",
                      "c_void", "c_double", "c_float", "size_t", "ssize_t",
@@ -1951,8 +2242,20 @@ def validate_status(
             findings.append("RawSyscall but calls glibc::{" + calls_str + "}")
 
     elif status == "WrapsHostLibc":
-        if not wraps_host_libc and not census_detected_host_delegation:
-            findings.append("WrapsHostLibc but no host delegation detected")
+        has_interpose_host_dep = bool(interpose_host_deps)
+        if (
+            not wraps_host_libc
+            and not census_detected_host_delegation
+            and not has_interpose_host_dep
+        ):
+            if has_promotion_proof:
+                findings.append(
+                    "WrapsHostLibc but no host delegation detected and strict+hardened conformance is proven"
+                )
+            else:
+                warnings.append(
+                    "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+                )
 
     elif status == "GlibcCallThrough":
         # Should have libc:: references or macro-based delegation patterns.
@@ -2009,6 +2312,16 @@ def main():
         help="Path to canonical host delegation census used for taxonomy validation",
     )
     parser.add_argument(
+        "--abi-source-dir",
+        default=str(ABI_SRC),
+        help="Path to ABI source directory used for census and module-source validation",
+    )
+    parser.add_argument(
+        "--fixture-dir",
+        default=str(FIXTURE_DIR),
+        help="Path to conformance fixture directory used for linkage and promotion-proof checks",
+    )
+    parser.add_argument(
         "--promotion-proof-manifest",
         default=os.pathsep.join(str(path) for path in PROMOTION_PROOF_MANIFEST_PATHS),
         help="Path list to bounded promotion proof manifests used to classify non-core host bridge census hits",
@@ -2033,16 +2346,18 @@ def main():
         run_self_test()
         return
 
+    abi_src = Path(args.abi_source_dir)
     previous_report = load_previous_report(Path(args.previous_report))
     conformance_by_symbol = load_conformance_matrix(Path(args.conformance_matrix))
     host_census_path = Path(args.host_delegation_census)
     host_delegation_by_symbol = load_host_delegation_census(host_census_path)
+    interpose_host_deps_by_symbol = load_interpose_host_dependencies(host_census_path)
     validated_host_census = validate_host_delegation_census(
         host_census_path,
         REPO_ROOT,
-        ABI_SRC,
+        abi_src,
     )
-    stub_annotations = scan_stub_contract_annotations(ABI_SRC)
+    stub_annotations = scan_stub_contract_annotations(abi_src)
     promotion_proof_paths = parse_promotion_proof_manifest_paths(args.promotion_proof_manifest)
     promotion_proofs = load_promotion_proofs(promotion_proof_paths)
     promotion_triage_path = Path(args.promotion_triage_report) if args.promotion_triage_report else None
@@ -2059,7 +2374,7 @@ def main():
         stub_annotations,
         validated_host_census,
     )
-    fixture_map = load_fixtures()
+    fixture_map = load_fixtures(Path(args.fixture_dir))
 
     # Cache module sources
     module_cache = {}
@@ -2081,7 +2396,7 @@ def main():
         source_module = source_module_for_symbol(module, sym)
 
         if source_module not in module_cache:
-            module_cache[source_module] = read_module_source(source_module)
+            module_cache[source_module] = read_module_source(source_module, abi_src)
             module_analysis_cache[source_module] = (
                 analyze_module_source(module_cache[source_module])
                 if module_cache[source_module] is not None
@@ -2103,6 +2418,16 @@ def main():
             })
             continue
 
+        sym_cases = fixture_map.get(sym, [])
+        has_strict_fix = any(c["mode"] in ("strict", "both") for c in sym_cases)
+        has_hardened_fix = any(c["mode"] in ("hardened", "both") for c in sym_cases)
+        sym_modes = conformance_by_symbol.get(sym, {})
+        has_strict_conf = conformance_mode_passed(sym_modes.get("strict"))
+        has_hardened_conf = conformance_mode_passed(sym_modes.get("hardened"))
+        has_full_promotion_proof = (
+            has_strict_fix and has_hardened_fix and has_strict_conf and has_hardened_conf
+        )
+
         is_valid, findings, warn_list = validate_status(
             sym,
             st,
@@ -2112,6 +2437,8 @@ def main():
             host_delegation_by_symbol.get(sym),
             promotion_proofs.get(sym),
             stub_annotations.get("annotations", {}).get(sym),
+            interpose_host_deps=interpose_host_deps_by_symbol.get(sym),
+            has_promotion_proof=has_full_promotion_proof,
         )
         warnings += len(warn_list)
         if is_valid:
@@ -2938,22 +3265,46 @@ def test_downgrade_only_evidence():
     passed += 1
 
     current = scan_stub_contract_annotations(ABI_SRC)
-    generated_current = [
-        symbol
-        for symbol, rows in current["annotations"].items()
-        if any(row.get("generator_macro") == "rpc_stub" for row in rows)
-    ]
-    required_direct = {
-        "register_printf_function",
-        "register_printf_modifier",
-        "register_printf_specifier",
-        "register_printf_type",
-    }
-    if len(generated_current) != 14 or not required_direct <= set(current["annotations"]):
+    if current["errors"] or current["annotations"]:
         raise AssertionError(
-            "current source annotations did not resolve all 14 rpc_stub invocations "
-            f"and four direct contracts: {current}"
+            "live ABI source should contain zero active stub-contract annotations "
+            f"once all Stub rows are retired: {current}"
         )
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as synth_tmp:
+        synth_dir = Path(synth_tmp)
+        (synth_dir / "rpc_abi.rs").write_text(
+            'macro_rules! rpc_stub {\n'
+            '    ($name:ident) => {\n'
+            '        abi_stub_contract!($name);\n'
+            '        pub extern "C" fn $name() -> i32 { -1 }\n'
+            '    };\n'
+            '}\n'
+            'rpc_stub!(callrpc);\n'
+            'rpc_stub!(clnt_create);\n',
+            encoding="utf-8",
+        )
+        (synth_dir / "stdio_abi.rs").write_text(
+            'abi_stub_contract!(register_printf_function);\n'
+            'pub extern "C" fn register_printf_function() -> i32 { 0 }\n',
+            encoding="utf-8",
+        )
+        synth_scanned = scan_stub_contract_annotations(synth_dir)
+        synth_generated = sorted(
+            symbol
+            for symbol, rows in synth_scanned["annotations"].items()
+            if any(row.get("generator_macro") == "rpc_stub" for row in rows)
+        )
+        if (
+            synth_scanned["errors"]
+            or synth_generated != ["callrpc", "clnt_create"]
+            or "register_printf_function" not in synth_scanned["annotations"]
+        ):
+            raise AssertionError(
+                "synthetic stub annotation scanner failed to resolve rpc_stub! "
+                f"and direct abi_stub_contract! markers: {synth_scanned}"
+            )
     passed += 1
     print(f"Self-test: downgrade-only evidence: {passed} cases passed")
 
@@ -3083,6 +3434,133 @@ def run_self_test():
                 f"{wrong_findings}"
             )
     print(f"  pass: {len(crypt_symbols)} partial-native entrypoints reject Implemented")
+
+    print("Self-test: WrapsHostLibc conservative retention vs proven native rejection...")
+    pure_native_src = 'pub extern "C" fn synth_pure() -> i32 { 42 }\n'
+    pure_analysis = analyze_module_source(pure_native_src)
+    valid_unproven, findings_unproven, warnings_unproven = validate_status(
+        "synth_pure",
+        "WrapsHostLibc",
+        "demo",
+        pure_native_src,
+        pure_analysis,
+        None,
+        None,
+        interpose_host_deps=None,
+        has_promotion_proof=False,
+    )
+    valid_proven, findings_proven, _warnings_proven = validate_status(
+        "synth_pure",
+        "WrapsHostLibc",
+        "demo",
+        pure_native_src,
+        pure_analysis,
+        None,
+        None,
+        interpose_host_deps=None,
+        has_promotion_proof=True,
+    )
+    valid_interpose_dep, findings_interpose_dep, warnings_interpose_dep = validate_status(
+        "synth_pure",
+        "WrapsHostLibc",
+        "demo",
+        pure_native_src,
+        pure_analysis,
+        None,
+        None,
+        interpose_host_deps=["dlsym"],
+        has_promotion_proof=True,
+    )
+    valid_broken_proof, findings_broken_proof, _ = validate_status(
+        "synth_pure",
+        "Implemented",
+        "math_abi",
+        pure_native_src,
+        pure_analysis,
+        None,
+        {
+            "module": "math_abi",
+            "classification": "native-libm-with-errno-bridge",
+            "support_matrix_status": "Implemented",
+            "modes_ok": False,
+        },
+    )
+    if (
+        not valid_unproven
+        or findings_unproven
+        or not warnings_unproven
+        or valid_proven
+        or not findings_proven
+        or not valid_interpose_dep
+        or findings_interpose_dep
+        or warnings_interpose_dep
+        or valid_broken_proof
+        or "Implemented but host delegation census detected" not in findings_broken_proof
+    ):
+        raise RuntimeError(
+            "WrapsHostLibc/promotion-proof self-test failed: "
+            f"unproven={(valid_unproven, findings_unproven, warnings_unproven)}, "
+            f"proven={(valid_proven, findings_proven)}, "
+            f"interpose={(valid_interpose_dep, findings_interpose_dep, warnings_interpose_dep)}, "
+            f"broken_proof={(valid_broken_proof, findings_broken_proof)}"
+        )
+    print("  pass: unproven native WrapsHostLibc warns, proven native fails, broken proof fails")
+
+    generic_array_src = (
+        'fn generic_host_bridge<T>(buf: &mut [u8; 4]) -> *mut c_void {\n'
+        '    let _brace_in_str = "{";\n'
+        '    buf[0] = b\'}\';\n'
+        '    crate::host_resolve::resolve_host_symbol_raw("dlopen")\n'
+        '}\n'
+        'pub extern "C" fn caller_with_array(out: &mut [u8; 4]) -> i32 {\n'
+        '    let _ = generic_host_bridge::<u32>(out);\n'
+        '    0\n'
+        '}\n'
+    )
+    ga_analysis = analyze_module_source(generic_array_src)
+    ga_valid, ga_findings, _ = validate_status(
+        "caller_with_array",
+        "Implemented",
+        "demo",
+        generic_array_src,
+        ga_analysis,
+        None,
+        None,
+    )
+    if ga_valid or "Implemented but host delegation detected" not in ga_findings:
+        raise RuntimeError(
+            f"generic/array/literal-brace host-helper self-test failed: {(ga_valid, ga_findings)}"
+        )
+    print("  pass: generic helper + array parameter + literal brace host-delegation propagation")
+
+    char_lifetime_src = (
+        'pub extern "C" fn char_vs_lifetime(uppercase: bool, s: &[u8]) -> i32 {\n'
+        '    let _marker = if uppercase { \'P\' } else { \'p\' };\n'
+        '    let _quote = "\'";\n'
+        '    let _slash = s.windows(2).position(|w| w == b"//");\n'
+        '    let _star = "/* not a block comment";\n'
+        '    let _ = crate::host_resolve::resolve_host_symbol_raw("dlopen");\n'
+        '    0\n'
+        '}\n'
+    )
+    cl_stripped = strip_rust_comments(char_lifetime_src)
+    if "} else {" not in strip_rust_noncode(char_lifetime_src) or 'b"//"' not in cl_stripped:
+        raise RuntimeError("char literal / slash-string stripping corrupted code tokens")
+    cl_analysis = analyze_module_source(char_lifetime_src)
+    cl_valid, cl_findings, _ = validate_status(
+        "char_vs_lifetime",
+        "Implemented",
+        "demo",
+        char_lifetime_src,
+        cl_analysis,
+        None,
+        None,
+    )
+    if cl_valid or "Implemented but host delegation detected" not in cl_findings:
+        raise RuntimeError(
+            f"char-literal + comment-token string self-test failed: {(cl_valid, cl_findings)}"
+        )
+    print("  pass: char literal vs lifetime and comment-marker string literal preservation")
 
     print("Self-test: PASS")
 

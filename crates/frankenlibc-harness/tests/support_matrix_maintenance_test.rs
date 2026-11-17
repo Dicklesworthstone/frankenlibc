@@ -65,6 +65,21 @@ fn generate_maintenance_report(output_path: &Path) -> std::process::Output {
         .expect("failed to execute maintenance validator")
 }
 
+fn shared_generated_maintenance_report() -> &'static serde_json::Value {
+    static REPORT: OnceLock<serde_json::Value> = OnceLock::new();
+    REPORT.get_or_init(|| {
+        let generated_path = unique_generated_report_path("shared_default_maintenance_report");
+        let output = generate_maintenance_report(&generated_path);
+        assert!(
+            output.status.success(),
+            "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        load_json(&generated_path)
+    })
+}
+
 #[test]
 fn maintenance_generator_rejects_uncertain_and_upward_only_evidence() {
     let root = repo_root();
@@ -592,16 +607,7 @@ fn maintenance_report_generates_successfully() {
 
 #[test]
 fn generated_report_resolves_math_cataloged_fenv_sources() {
-    let generated_path = unique_generated_report_path("fenv_cross_module_source_locator");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -751,16 +757,7 @@ fn generated_maintenance_dashboard_counts_match_symbol_rows() {
         *counts.entry(status).or_default() += 1;
     }
 
-    let generated_path = unique_generated_report_path("support_matrix_count_dashboard_test");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let dashboard_counts = report["coverage_dashboard"]["status_counts"]
         .as_object()
         .expect("coverage_dashboard.status_counts must be an object");
@@ -2327,14 +2324,7 @@ fn glibc_internal_abi_promotion_tranche_manifest_has_strict_and_hardened_proof()
 
 #[test]
 fn generated_report_accepts_math_abi_errno_bridge_tranche() {
-    let generated_path = unique_generated_report_path("math_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2368,14 +2358,7 @@ fn generated_report_accepts_math_abi_errno_bridge_tranche() {
 
 #[test]
 fn generated_report_accepts_err_abi_runtime_io_bridge_tranche() {
-    let generated_path = unique_generated_report_path("err_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2409,14 +2392,7 @@ fn generated_report_accepts_err_abi_runtime_io_bridge_tranche() {
 
 #[test]
 fn generated_report_accepts_locale_abi_catalog_bridge_tranche() {
-    let generated_path = unique_generated_report_path("locale_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2450,14 +2426,7 @@ fn generated_report_accepts_locale_abi_catalog_bridge_tranche() {
 
 #[test]
 fn generated_report_accepts_iconv_locale_bootstrap_bridge_tranche() {
-    let generated_path = unique_generated_report_path("iconv_locale_bootstrap_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2491,14 +2460,7 @@ fn generated_report_accepts_iconv_locale_bootstrap_bridge_tranche() {
 
 #[test]
 fn generated_report_accepts_resolv_abi_protocol_bridge_tranche() {
-    let generated_path = unique_generated_report_path("resolv_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2532,14 +2494,7 @@ fn generated_report_accepts_resolv_abi_protocol_bridge_tranche() {
 
 #[test]
 fn generated_report_accepts_dirent_abi_readdir64_alias_tranche() {
-    let generated_path = unique_generated_report_path("dirent_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2573,14 +2528,7 @@ fn generated_report_accepts_dirent_abi_readdir64_alias_tranche() {
 
 #[test]
 fn generated_report_accepts_grp_abi_getgrent_files_tranche() {
-    let generated_path = unique_generated_report_path("grp_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2614,14 +2562,7 @@ fn generated_report_accepts_grp_abi_getgrent_files_tranche() {
 
 #[test]
 fn generated_report_accepts_pwd_abi_getpwent_files_tranche() {
-    let generated_path = unique_generated_report_path("pwd_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2655,14 +2596,7 @@ fn generated_report_accepts_pwd_abi_getpwent_files_tranche() {
 
 #[test]
 fn generated_report_accepts_pwd_abi_gshadow_files_tranche() {
-    let generated_path = unique_generated_report_path("pwd_gshadow_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2696,14 +2630,7 @@ fn generated_report_accepts_pwd_abi_gshadow_files_tranche() {
 
 #[test]
 fn generated_report_accepts_inet_abi_interface_index_tranche() {
-    let generated_path = unique_generated_report_path("inet_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2737,14 +2664,7 @@ fn generated_report_accepts_inet_abi_interface_index_tranche() {
 
 #[test]
 fn generated_report_accepts_setjmp_abi_phase1_tranche() {
-    let generated_path = unique_generated_report_path("setjmp_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2778,14 +2698,7 @@ fn generated_report_accepts_setjmp_abi_phase1_tranche() {
 
 #[test]
 fn generated_report_accepts_c11threads_abi_pthread_bridge_tranche() {
-    let generated_path = unique_generated_report_path("c11threads_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2819,14 +2732,7 @@ fn generated_report_accepts_c11threads_abi_pthread_bridge_tranche() {
 
 #[test]
 fn generated_report_accepts_stdio_abi_scanf_libio_tranche() {
-    let generated_path = unique_generated_report_path("stdio_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2865,14 +2771,7 @@ fn generated_report_accepts_stdio_abi_scanf_libio_tranche() {
 
 #[test]
 fn generated_report_accepts_wchar_abi_isoc_libio_codec_allocator_tranche() {
-    let generated_path = unique_generated_report_path("wchar_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2911,14 +2810,7 @@ fn generated_report_accepts_wchar_abi_isoc_libio_codec_allocator_tranche() {
 
 #[test]
 fn generated_report_accepts_string_abi_conversion_argz_regex_allocator_tranche() {
-    let generated_path = unique_generated_report_path("string_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2952,14 +2844,7 @@ fn generated_report_accepts_string_abi_conversion_argz_regex_allocator_tranche()
 
 #[test]
 fn generated_report_accepts_fortify_abi_wrapper_libio_allocator_tranche() {
-    let generated_path = unique_generated_report_path("fortify_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -2993,14 +2878,7 @@ fn generated_report_accepts_fortify_abi_wrapper_libio_allocator_tranche() {
 
 #[test]
 fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
-    let generated_path = unique_generated_report_path("unistd_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -3050,14 +2928,7 @@ fn generated_report_accepts_unistd_abi_stackfail_lfs_errno_tranche() {
 
 #[test]
 fn generated_report_accepts_rpc_abi_xdr_netname_allocator_errno_tranche() {
-    let generated_path = unique_generated_report_path("rpc_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -3100,14 +2971,7 @@ fn generated_report_accepts_rpc_abi_xdr_netname_allocator_errno_tranche() {
 
 #[test]
 fn generated_report_accepts_glibc_internal_abi_clone_errno_tranche() {
-    let generated_path = unique_generated_report_path("glibc_internal_abi_promotion_tranche");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -3617,14 +3481,7 @@ fn fixture_coverage_ratchet_flags_evidence_free_implemented_promotion() {
 
 #[test]
 fn scanner_classifies_proofed_and_alternate_pattern_findings() {
-    let generated_path = unique_generated_report_path("scanner_classification");
-    let output = generate_maintenance_report(&generated_path);
-    assert!(
-        output.status.success(),
-        "Maintenance validator failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = load_json(&generated_path);
+    let report = shared_generated_maintenance_report();
     let issues = report["status_validation_issues"]
         .as_array()
         .expect("status_validation_issues should be an array");
@@ -3928,5 +3785,255 @@ fn maintenance_gate_fails_on_canonical_stable_section_drift() {
             .map(|keys| keys.iter().any(|key| key.as_str() == Some("summary")))
             .unwrap_or(false),
         "expected summary drift to be reported in mismatched_keys"
+    );
+}
+
+#[test]
+fn injected_host_edge_invalidates_implemented_and_unproven_wraps_stays_conservative() {
+    let root = repo_root();
+    let matrix = load_json(&root.join("support_matrix.json"));
+    assert_eq!(
+        matrix["counts"]["stub"].as_u64(),
+        Some(0),
+        "support_matrix.json must have zero Stub rows after Wave 9.3 reconciliation"
+    );
+    assert_eq!(
+        matrix["counts"]["glibc_call_through"].as_u64(),
+        Some(0),
+        "support_matrix.json must have zero GlibcCallThrough rows"
+    );
+
+    let canonical = load_json(&canonical_report_path());
+    let status_map = canonical["symbol_status_map"]
+        .as_object()
+        .expect("symbol_status_map must be an object");
+    for wrapper in [
+        "__pthread_register_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_unregister_cancel",
+        "__pthread_unregister_cancel_restore",
+        "_pthread_cleanup_push",
+        "_pthread_cleanup_push_defer",
+        "_pthread_cleanup_pop",
+        "_pthread_cleanup_pop_restore",
+        "pthread_cond_wait",
+        "pthread_cond_timedwait",
+        "pthread_cond_clockwait",
+        "_authenticate",
+        "callrpc",
+        "clnt_create",
+    ] {
+        assert_eq!(
+            status_map.get(wrapper).and_then(serde_json::Value::as_str),
+            Some("WrapsHostLibc"),
+            "{wrapper} must remain conservatively classified as WrapsHostLibc"
+        );
+    }
+
+    // 1. An unproven native body under WrapsHostLibc must remain valid (not auto-promoted).
+    let canonical_issues = canonical["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let conservative_symbol = canonical_issues
+        .iter()
+        .find(|issue| {
+            issue["status"].as_str() == Some("WrapsHostLibc")
+                && issue["valid"].as_bool() == Some(true)
+                && issue["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|w| {
+                        w.as_str()
+                            == Some(
+                                "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof",
+                            )
+                    })
+                })
+        })
+        .and_then(|issue| issue["symbol"].as_str())
+        .expect("expected at least one unproven native WrapsHostLibc row retained conservatively");
+
+    // 2. Supplying strict+hardened conformance proof for that WrapsHostLibc symbol must reject
+    // keeping it under WrapsHostLibc, while injecting a real interpose host dependency onto an
+    // Implemented symbol (`abs`) in ABI source must propagate through the census and invalidate
+    // its Implemented classification.
+    let temp_abi_dir =
+        unique_generated_report_path("mutated_abi_src_injected_edge").with_extension("abi_src");
+    std::fs::create_dir_all(&temp_abi_dir).expect("failed to create temporary ABI source dir");
+    let canonical_abi_dir = root.join("crates/frankenlibc-abi/src");
+    fn copy_abi_tree(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).expect("failed to create temporary ABI source dir");
+        for entry in std::fs::read_dir(src).expect("failed to read ABI dir") {
+            let entry = entry.expect("dir entry should read");
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+            if path.is_dir() {
+                copy_abi_tree(&path, &dest);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                if entry.file_name().to_str() == Some("stdlib_abi.rs") {
+                    let raw = std::fs::read_to_string(&path).expect("stdlib_abi.rs should read");
+                    let mutated = raw.replace(
+                        "pub extern \"C\" fn abs(n: c_int) -> c_int {\n    frankenlibc_core::stdlib::abs(n)\n}",
+                        "pub extern \"C\" fn abs(n: c_int) -> c_int {\n    crate::host_resolve::injected_abs_host_probe();\n    frankenlibc_core::stdlib::abs(n)\n}",
+                    );
+                    assert_ne!(
+                        mutated, raw,
+                        "stdlib_abi.rs abs() needle must match before host-edge injection"
+                    );
+                    std::fs::write(&dest, mutated).expect("mutated stdlib_abi.rs should write");
+                } else if entry.file_name().to_str() == Some("host_resolve.rs") {
+                    let mut raw =
+                        std::fs::read_to_string(&path).expect("host_resolve.rs should read");
+                    raw.push_str(
+                        "\npub(crate) fn injected_abs_host_probe() {\n    let _ = resolve_host_symbol_raw(\"abs\");\n}\n",
+                    );
+                    std::fs::write(&dest, raw).expect("mutated host_resolve.rs should write");
+                } else {
+                    std::fs::copy(&path, &dest).expect("ABI source file should copy");
+                }
+            }
+        }
+    }
+    copy_abi_tree(&canonical_abi_dir, &temp_abi_dir);
+
+    let mutated_census_path = unique_generated_report_path("mutated_host_census_injected_edge");
+    let census_out = Command::new("python3")
+        .args([
+            root.join("scripts/generate_host_delegation_census.py")
+                .to_str()
+                .unwrap(),
+            "--abi-source-dir",
+            temp_abi_dir.to_str().unwrap(),
+            "--output",
+            mutated_census_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to regenerate mutated host delegation census");
+    assert!(
+        census_out.status.success(),
+        "census generator failed on mutated ABI dir:\n{}",
+        String::from_utf8_lossy(&census_out.stderr)
+    );
+
+    let mut mutated_conformance =
+        load_json(&root.join("tests/conformance/conformance_matrix.v1.json"));
+    let sym_matrix = mutated_conformance["symbol_matrix"]
+        .as_array_mut()
+        .expect("symbol_matrix should be an array");
+    for mode in ["strict", "hardened"] {
+        sym_matrix.push(serde_json::json!({
+            "symbol": conservative_symbol,
+            "mode": mode,
+            "total": 4,
+            "passed": 4,
+            "failed": 0,
+            "errors": 0,
+            "pass_rate_percent": 100.0
+        }));
+    }
+    let mutated_conformance_path = unique_generated_report_path("mutated_conformance_proven_wraps");
+    std::fs::write(
+        &mutated_conformance_path,
+        serde_json::to_vec_pretty(&mutated_conformance)
+            .expect("mutated conformance matrix should serialize"),
+    )
+    .expect("failed to write mutated conformance matrix");
+
+    let temp_fixture_dir =
+        unique_generated_report_path("mutated_fixtures_proven_wraps").with_extension("fixtures");
+    std::fs::create_dir_all(&temp_fixture_dir).expect("failed to create temp fixture dir");
+    for entry in
+        std::fs::read_dir(root.join("tests/conformance/fixtures")).expect("read fixtures dir")
+    {
+        let entry = entry.expect("fixture entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            std::fs::copy(&path, temp_fixture_dir.join(entry.file_name()))
+                .expect("copy fixture file");
+        }
+    }
+    std::fs::write(
+        temp_fixture_dir.join("zz_synthetic_proven_wraps.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": "v1",
+            "family": "synthetic_proven_wraps",
+            "cases": [
+                {
+                    "name": "synthetic_both_mode_proof",
+                    "function": conservative_symbol,
+                    "mode": "both"
+                }
+            ]
+        }))
+        .expect("synthetic fixture should serialize"),
+    )
+    .expect("write synthetic fixture");
+
+    let mutated_report_path = unique_generated_report_path("mutated_maintenance_counterexample");
+    let output = Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            mutated_report_path.to_str().unwrap(),
+            "--abi-source-dir",
+            temp_abi_dir.to_str().unwrap(),
+            "--fixture-dir",
+            temp_fixture_dir.to_str().unwrap(),
+            "--host-delegation-census",
+            mutated_census_path.to_str().unwrap(),
+            "--conformance-matrix",
+            mutated_conformance_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator on counterexamples");
+    assert!(
+        output.status.success(),
+        "maintenance validator crashed on counterexamples:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mutated_report = load_json(&mutated_report_path);
+    assert!(
+        mutated_report["summary"]["status_invalid"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 2,
+        "injected host edge and proven WrapsHostLibc counterexample must both increment status_invalid"
+    );
+    let mutated_issues = mutated_report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    let abs_issue = mutated_issues
+        .iter()
+        .find(|issue| issue["symbol"].as_str() == Some("abs"))
+        .expect("abs must appear in status_validation_issues after injected host edge");
+    assert_eq!(abs_issue["valid"].as_bool(), Some(false));
+    assert!(
+        abs_issue["findings"].as_array().is_some_and(|findings| {
+            findings
+                .iter()
+                .any(|f| f.as_str() == Some("Implemented but host delegation census detected"))
+        }),
+        "injected cross-module host edge must propagate through census and invalidate Implemented symbol abs: {abs_issue:?}"
+    );
+
+    let proven_wraps_issue = mutated_issues
+        .iter()
+        .find(|issue| issue["symbol"].as_str() == Some(conservative_symbol))
+        .expect("proven WrapsHostLibc symbol must appear in status_validation_issues");
+    assert_eq!(proven_wraps_issue["valid"].as_bool(), Some(false));
+    assert!(
+        proven_wraps_issue["findings"].as_array().is_some_and(|findings| {
+            findings.iter().any(|f| {
+                f.as_str()
+                    == Some(
+                        "WrapsHostLibc but no host delegation detected and strict+hardened conformance is proven",
+                    )
+            })
+        }),
+        "proven native body under WrapsHostLibc must fail validation until promoted: {proven_wraps_issue:?}"
     );
 }
