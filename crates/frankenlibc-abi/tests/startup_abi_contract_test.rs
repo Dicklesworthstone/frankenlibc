@@ -148,6 +148,13 @@ fn with_startup_return_for_tests_env<R>(f: impl FnOnce() -> R) -> R {
     }
 
     let result = f();
+    let ret_env = unsafe {
+        frankenlibc_abi::stdlib_abi::getenv(c"FRANKENLIBC_STARTUP_RETURN_FOR_TESTS".as_ptr())
+    };
+    assert!(
+        !ret_env.is_null(),
+        "fixture __libc_start_main must preserve caller environ instead of publishing temporary stack envp"
+    );
 
     // SAFETY: same serialization argument as above.
     unsafe {

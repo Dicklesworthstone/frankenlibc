@@ -3291,6 +3291,60 @@ fn register_printf_callbacks_render_and_parse() {
             16
         );
         assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"5eedcafe12345678");
+
+        // Regression: PA_FLAG_LONG / PA_FLAG_SHORT combined with builtin PA_*
+        // base types (e.g. PA_STRING | PA_FLAG_LONG = 0x203, PA_DOUBLE | PA_FLAG_LONG = 0x207,
+        // PA_INT | PA_FLAG_SHORT = 0x400) must still consume their va_list slots
+        // without desynchronizing trailing format arguments.
+        unsafe extern "C" fn flagged_builtin_info(
+            _: *const Info,
+            n: usize,
+            types: *mut c_int,
+            sizes: *mut c_int,
+        ) -> c_int {
+            for (i, kind) in [0x203, 0x207, 0x400].into_iter().enumerate().take(n) {
+                unsafe {
+                    *types.add(i) = kind;
+                    if !sizes.is_null() {
+                        *sizes.add(i) = 0;
+                    }
+                }
+            }
+            3
+        }
+        unsafe extern "C" fn flagged_builtin_render(
+            stream: *mut c_void,
+            _: *const Info,
+            args: *const *const c_void,
+        ) -> c_int {
+            let s_ptr = unsafe { *(*args).cast::<*const c_char>() };
+            let f_val = unsafe { *(*args.add(1)).cast::<f64>() };
+            let h_val = unsafe { *(*args.add(2)).cast::<c_int>() };
+            unsafe { fprintf(stream, c"%s:%.1f:%d".as_ptr(), s_ptr, f_val, h_val) }
+        }
+        assert_eq!(
+            register_printf_specifier(
+                b'Y' as c_int,
+                flagged_builtin_render as *const () as *mut c_void,
+                flagged_builtin_info as *const () as *mut c_void
+            ),
+            0
+        );
+        let rc = snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%Y|%s".as_ptr(),
+            c"wide".as_ptr(),
+            2.5f64,
+            -7i32,
+            c"tail".as_ptr(),
+        );
+        assert_eq!(rc, 16);
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_bytes(), b"wide:2.5:-7|tail");
+        assert_eq!(
+            register_printf_specifier(b'Y' as c_int, ptr::null_mut(), ptr::null_mut()),
+            0
+        );
     }
 }
 

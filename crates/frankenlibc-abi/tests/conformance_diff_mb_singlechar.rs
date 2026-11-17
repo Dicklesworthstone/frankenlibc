@@ -411,6 +411,36 @@ fn diff_utf8_locale_multibyte_state_and_guard_page_bounds() {
             (-1, -1, (libc::EILSEQ, libc::EILSEQ))
         );
 
+        // Corrupted non-initial mbstate_t containing an already-invalid prefix
+        // (both FrankenLibC's `[count, b0, b1, ...]` layout with `[0xF0, b'A']`
+        // and glibc-style `{ count: 2, value: ... }` with single-byte/NUL `b0`)
+        // with 1 byte before `PROT_NONE` must reject immediately with `EILSEQ`
+        // without underflowing `len - pcount` or reading `s[1]` across the guard page.
+        #[repr(C, align(4))]
+        #[derive(Copy, Clone)]
+        struct RawMbState([u8; 8]);
+        let tail1 = base.cast::<u8>().add(4095);
+        *tail1 = 0x80;
+        for raw_bytes in [
+            [2, 0xF0, b'A', 0, 0, 0, 0, 0],
+            [2, 0, 0, 0, 0xF0, b'A', 0, 0],
+        ] {
+            let mut corrupt_ps = RawMbState(raw_bytes);
+            scope.host.clear_both_errnos();
+            let fl_corrupt = fl::mbrtowc(
+                (&mut fl_gwc as *mut i32).cast(),
+                tail1.cast(),
+                16,
+                (&mut corrupt_ps as *mut RawMbState).cast(),
+            );
+            let (fl_ce, _) = scope.host.errnos();
+            assert_eq!(
+                (fl_corrupt, fl_ce),
+                (usize::MAX, libc::EILSEQ),
+                "raw_bytes={raw_bytes:?}"
+            );
+        }
+
         assert_eq!(libc::munmap(base, 8192), 0);
     }
 }

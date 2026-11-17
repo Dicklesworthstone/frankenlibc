@@ -141,10 +141,11 @@ fn test_extern_symbols_audit_rejects_phantom_extern_and_broken_zz_probe() -> Tes
     std::fs::create_dir_all(&phantom_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&syntax_dir).map_err(|e| e.to_string())?;
 
-    // 1. Positive control: valid zz_*.rs probe referencing libgcc_s (_Unwind_Find_FDE) + libm (ynf).
+    // 1. Positive control: valid zz_*.rs probe referencing libgcc_s (_Unwind_Find_FDE) + libm (ynf),
+    // plus a doc comment mentioning a fake extern block (must NOT false-positive).
     std::fs::write(
         valid_dir.join("zz_valid_probe.rs"),
-        "unsafe extern \"C\" {\n    fn _Unwind_Find_FDE(pc: *const core::ffi::c_void) -> *const core::ffi::c_void;\n    fn ynf(n: i32, x: f32) -> f32;\n}\n#[test]\nfn smoke() {}\n",
+        "//! Example: `unsafe extern \"C\" { fn doc_only_nonexistent_sym_xyz(); }`\nunsafe extern \"C\" {\n    fn _Unwind_Find_FDE(pc: *const core::ffi::c_void) -> *const core::ffi::c_void;\n    fn ynf(n: i32, x: f32) -> f32;\n}\n#[test]\nfn smoke() {}\n",
     )
     .map_err(|e| e.to_string())?;
     let ok_out = std::process::Command::new("bash")
@@ -157,10 +158,10 @@ fn test_extern_symbols_audit_rejects_phantom_extern_and_broken_zz_probe() -> Tes
     assert!(ok_out.status.success(), "expected PASS, got:\n{ok_stdout}");
     assert!(ok_stdout.contains("zz_probes=1"));
 
-    // 2. Negative control A: phantom extern symbol fails while _Unwind_Find_FDE is NOT flagged.
+    // 2. Negative control A: phantom extern symbol in `unsafe extern "C-unwind"` fails while _Unwind_Find_FDE is NOT flagged.
     std::fs::write(
         phantom_dir.join("zz_phantom_probe.rs"),
-        "unsafe extern \"C\" {\n    fn _Unwind_Find_FDE(pc: *const core::ffi::c_void) -> *const core::ffi::c_void;\n    fn frankenlibc_nonexistent_phantom_symbol_xyz();\n}\n",
+        "unsafe extern \"C-unwind\" {\n    fn _Unwind_Find_FDE(pc: *const core::ffi::c_void) -> *const core::ffi::c_void;\n    fn frankenlibc_nonexistent_phantom_symbol_xyz();\n}\n",
     )
     .map_err(|e| e.to_string())?;
     let bad_ext = std::process::Command::new("bash")

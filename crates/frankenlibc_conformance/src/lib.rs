@@ -1716,7 +1716,7 @@ fn execute_rpc_legacy_network_case(
         impl_output,
         host_parity: true,
         note: Some(String::from(
-            "Sun RPC fixture uses FrankenLibC's deterministic legacy safe-default contract; ambient host RPC state is intentionally not consulted",
+            "Sun RPC fixture uses FrankenLibC's deterministic native RPC contract; ambient host RPC state is intentionally not consulted",
         )),
     })
 }
@@ -26260,23 +26260,28 @@ fn with_conformance_utc_tz<R>(f: impl FnOnce() -> R) -> R {
             Some(CStr::from_ptr(p).to_owned())
         }
     };
+    struct TzRestoreGuard(Option<CString>);
+    impl Drop for TzRestoreGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.0 {
+                    Some(val) => {
+                        frankenlibc_abi::stdlib_abi::setenv(c"TZ".as_ptr(), val.as_ptr(), 1);
+                    }
+                    None => {
+                        frankenlibc_abi::stdlib_abi::unsetenv(c"TZ".as_ptr());
+                    }
+                }
+                frankenlibc_abi::time_abi::tzset();
+            }
+        }
+    }
+    let _restore_tz = TzRestoreGuard(prev);
     unsafe {
         frankenlibc_abi::stdlib_abi::setenv(c"TZ".as_ptr(), c"UTC0".as_ptr(), 1);
         frankenlibc_abi::time_abi::tzset();
     }
-    let out = f();
-    unsafe {
-        match prev {
-            Some(val) => {
-                frankenlibc_abi::stdlib_abi::setenv(c"TZ".as_ptr(), val.as_ptr(), 1);
-            }
-            None => {
-                frankenlibc_abi::stdlib_abi::unsetenv(c"TZ".as_ptr());
-            }
-        }
-        frankenlibc_abi::time_abi::tzset();
-    }
-    out
+    f()
 }
 
 fn time_clock_ctime_actual(inputs: &serde_json::Value) -> Result<String, String> {

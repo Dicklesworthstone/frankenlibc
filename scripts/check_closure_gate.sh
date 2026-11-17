@@ -99,9 +99,10 @@ def receipt_member(base, value, error):
     return member
 
 
-def norm_build_path(value):
+def norm_build_path(value, base=None):
     p = pathlib.Path(value)
-    return os.path.normpath(str(p if p.is_absolute() else root / p))
+    anchor = base if base is not None else root
+    return os.path.normpath(str(p if p.is_absolute() else anchor / p))
 
 
 def contract_for(bid):
@@ -232,6 +233,7 @@ def capture(bid, out):
     out.mkdir(parents=True, exist_ok=False)
     gate = contract['gate']
     receipt = {'schema_version': 1, 'bead_id': bid, 'contract': contract,
+               'workspace_root': str(root),
                'runner_architecture': platform.machine(), 'build': None, 'execution': None,
                'artifacts': {}, 'artifact_files': {}, 'source_files': bound_files(contract)}
     if gate.get('build_command'):
@@ -297,20 +299,21 @@ def verify(bid, receipt_file):
         return result, stdout_file.read_text(errors='replace')
 
     build = None
+    build_root = pathlib.Path(receipt.get('workspace_root') or root)
     if gate.get('build_command'):
         build, build_stdout = phase('build', gate['build_command'])
         if pathlib.Path(gate['build_command'][0]).name == 'cargo':
             messages = [json.loads(line) for line in build_stdout.splitlines() if line.strip()]
             produced = [m for m in messages if m.get('reason') == 'compiler-artifact']
-            reported = {norm_build_path(p) for m in produced for p in m.get('filenames', [])}
-            require(all(norm_build_path(p) in reported for p in gate['artifacts']),
+            reported = {norm_build_path(p, build_root) for m in produced for p in m.get('filenames', [])}
+            require(all(norm_build_path(p, build_root) in reported for p in gate['artifacts']),
                     'artifact_not_reported_by_build')
             if contract['evidence_class'] == 'executed_unit':
                 target = gate['build_command'][gate['build_command'].index('--test') + 1]
                 require(any(m.get('target', {}).get('name') == target and
                             'test' in m.get('target', {}).get('kind', []) and
                             m.get('executable') and
-                            norm_build_path(m['executable']) == norm_build_path(gate['command'][0])
+                            norm_build_path(m['executable'], build_root) == norm_build_path(gate['command'][0], build_root)
                             for m in produced), 'executed_binary_not_produced_by_named_target')
     execution, stdout = phase('execution', gate['command'])
     if build:

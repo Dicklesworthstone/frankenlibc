@@ -521,8 +521,8 @@ fn startup_return_to_caller_for_tests() -> bool {
     false
 }
 
-fn finish_libc_start_main_success(rc: c_int) -> c_int {
-    if startup_return_to_caller_for_tests() {
+fn finish_libc_start_main_success(rc: c_int, return_to_caller: bool) -> c_int {
+    if return_to_caller {
         return rc;
     }
 
@@ -548,8 +548,13 @@ unsafe extern "C-unwind" fn host_delegate_main_wrapper(
     argv: *mut *mut c_char,
     envp: *mut *mut c_char,
 ) -> c_int {
+    let returns_to_host = delegated_main_returns_to_host();
     let resolved_envp = unsafe { resolve_startup_envp(argc, argv, envp) };
-    init_process_globals(argv, resolved_envp);
+    if returns_to_host {
+        init_program_name(argv);
+    } else {
+        init_process_globals(argv, resolved_envp);
+    }
     crate::host_resolve::bootstrap_host_symbols();
     unsafe { crate::io_internal_abi::bootstrap_host_libio_exports() };
     crate::stdio_abi::init_host_stdio_streams();
@@ -571,7 +576,7 @@ unsafe extern "C-unwind" fn host_delegate_main_wrapper(
     // SAFETY: host `__libc_start_main` invokes the wrapper with the user
     // process entrypoint ABI and argument vectors.
     let rc = unsafe { main_fn(argc, argv, resolved_envp) };
-    if delegated_main_returns_to_host() {
+    if returns_to_host {
         return rc;
     }
     // exit(main(...)) through fl's exit: returned to the host, glibc's exit
@@ -602,7 +607,11 @@ unsafe fn delegate_to_host_libc_start_main(
     stack_end: *mut c_void,
 ) -> Option<c_int> {
     let resolved_envp = unsafe { resolve_startup_envp(argc, ubp_av, environ) };
-    init_process_globals(ubp_av, resolved_envp);
+    if delegated_main_returns_to_host() {
+        init_program_name(ubp_av);
+    } else {
+        init_process_globals(ubp_av, resolved_envp);
+    }
     crate::host_resolve::bootstrap_host_symbols();
     crate::stdio_abi::init_host_stdio_streams();
     unsafe { crate::io_internal_abi::bootstrap_host_libio_exports() };
@@ -1034,6 +1043,7 @@ unsafe fn startup_phase0_impl(
     fini: Option<HookFn>,
     rtld_fini: Option<HookFn>,
     stack_end: *mut c_void,
+    auxv_from_kernel_stack: bool,
     publish_environment: bool,
 ) -> Result<c_int, ()> {
     let started = Instant::now();
@@ -1163,7 +1173,7 @@ unsafe fn startup_phase0_impl(
     };
 
     path.push(StartupCheckpoint::ScanAuxvVector);
-    let auxv_start = if publish_environment {
+    let auxv_start = if auxv_from_kernel_stack {
         // SAFETY: real process startup places auxv immediately after the
         // original envp terminator. stack_end is a stack boundary, not auxv.
         unsafe { envp.add(env_count + 1).cast() }
@@ -1228,7 +1238,7 @@ unsafe fn startup_phase0_impl(
 
     // Hand finalizers to exit before constructors: a constructor may terminate
     // the process itself. Fixtures still run their caller-owned hooks below.
-    let finalizers_run_by_exit = publish_environment && !startup_return_to_caller_for_tests();
+    let finalizers_run_by_exit = publish_environment;
     let host_main_runner = if finalizers_run_by_exit {
         crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
         prepare_owned_host_main_runner()
@@ -1240,7 +1250,7 @@ unsafe fn startup_phase0_impl(
         path.push(StartupCheckpoint::CallInitHook);
         // SAFETY: callback pointer provided by caller.
         unsafe { init_fn() };
-    } else if publish_environment {
+    } else if auxv_from_kernel_stack {
         path.push(StartupCheckpoint::CallInitHook);
         // SAFETY: use the same real kernel auxv validated and classified above,
         // along with the startup vectors; legacy init is absent.
@@ -1358,8 +1368,11 @@ pub unsafe extern "C" fn __libc_start_main(
     // Keep loader/init in bootstrap passthrough mode and flip runtime-ready at
     // the wrapped `main` boundary after host libc initialization completes.
 
+    let return_to_caller = startup_return_to_caller_for_tests();
+    let publish_environment = !return_to_caller;
+
     if use_owned_startup() {
-        if !ubp_av.is_null() && argc >= 0 {
+        if publish_environment && !ubp_av.is_null() && argc >= 0 {
             let normalized_argc = normalize_argc(argc);
             if let Some(argv_count) = unsafe { count_c_string_vector(ubp_av, MAX_STARTUP_SCAN) }
                 && argv_count >= normalized_argc
@@ -1379,9 +1392,19 @@ pub unsafe extern "C" fn __libc_start_main(
         // "started" sent such a program down the failure path and returned into
         // _start's trap instruction (JxrEncApp died with SIGSEGV).
         if let Ok(main_rc) = unsafe {
-            startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, true)
+            startup_phase0_impl(
+                main,
+                argc,
+                ubp_av,
+                init,
+                fini,
+                rtld_fini,
+                stack_end,
+                true,
+                publish_environment,
+            )
         } {
-            return finish_libc_start_main_success(main_rc);
+            return finish_libc_start_main_success(main_rc, return_to_caller);
         }
 
         let phase0 = startup_policy_snapshot_for_tests();
@@ -1401,7 +1424,7 @@ pub unsafe extern "C" fn __libc_start_main(
                 StartupCheckpoint::FallbackHost,
                 phase0.latency_ns,
             );
-            return finish_libc_start_main_success(host_rc);
+            return finish_libc_start_main_success(host_rc, return_to_caller);
         }
 
         if startup_failure_allows_host_fallback(phase0.failure_reason) {
@@ -1480,8 +1503,12 @@ pub unsafe extern "C" fn __frankenlibc_startup_phase0(
     stack_end: *mut c_void,
 ) -> c_int {
     // SAFETY: dedicated fixture path invokes the same validated implementation.
-    unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, false) }
-        .unwrap_or(-1)
+    unsafe {
+        startup_phase0_impl(
+            main, argc, ubp_av, init, fini, rtld_fini, stack_end, false, false,
+        )
+    }
+    .unwrap_or(-1)
 }
 
 // ===========================================================================

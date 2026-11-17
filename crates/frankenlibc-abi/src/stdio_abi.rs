@@ -1346,14 +1346,83 @@ fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
 static FIXED_MEM_CURSOR_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
+fn set_tls_fast_mem_read(
+    tls_cell: *const std::cell::Cell<(usize, u64, *const FastFixedMemRead)>,
+    id: usize,
+    cur_gen: u64,
+    cursor: Option<&Arc<FastFixedMemRead>>,
+) {
+    let next = match cursor {
+        Some(c) => (id, cur_gen, Arc::into_raw(Arc::clone(c))),
+        None => (0, 0, std::ptr::null()),
+    };
+    let (_, _, old_ptr) = unsafe { (*tls_cell).replace(next) };
+    if !old_ptr.is_null() {
+        // SAFETY: every non-null pointer in `TLS_FAST_MEM_READ` was created via
+        // `Arc::into_raw` and is owned exclusively by this thread's TLS slot.
+        unsafe { Arc::decrement_strong_count(old_ptr) };
+    }
+}
+
+#[inline(always)]
+fn with_st_fast_mem_read<R>(
+    tls_cell: *const std::cell::Cell<(usize, u64, *const FastFixedMemRead)>,
+    stream: usize,
+    cur_gen: u64,
+    f: impl FnOnce(&FastFixedMemRead) -> Option<R>,
+) -> Option<R> {
+    let (cp, cg, ptr) = unsafe { (*tls_cell).replace((0, 0, std::ptr::null())) };
+    if ptr.is_null() {
+        return None;
+    }
+    if cg != cur_gen {
+        unsafe { Arc::decrement_strong_count(ptr) };
+        return None;
+    }
+    if cp != stream {
+        if unsafe { (*tls_cell).get().2.is_null() } {
+            unsafe { (*tls_cell).set((cp, cg, ptr)) };
+        } else {
+            unsafe { Arc::decrement_strong_count(ptr) };
+        }
+        return None;
+    }
+    struct RestoreTlsGuard {
+        tls_cell: *const std::cell::Cell<(usize, u64, *const FastFixedMemRead)>,
+        cp: usize,
+        cg: u64,
+        ptr: *const FastFixedMemRead,
+    }
+    impl Drop for RestoreTlsGuard {
+        #[inline(always)]
+        fn drop(&mut self) {
+            let closed = unsafe { (*self.ptr).closed.load(Ordering::Relaxed) };
+            let cur_gen_now = REGISTRY_GEN.load(Ordering::Relaxed);
+            if !closed && self.cg == cur_gen_now && unsafe { (*self.tls_cell).get().2.is_null() } {
+                unsafe { (*self.tls_cell).set((self.cp, self.cg, self.ptr)) };
+            } else {
+                unsafe { Arc::decrement_strong_count(self.ptr) };
+            }
+        }
+    }
+    let _restore = RestoreTlsGuard {
+        tls_cell,
+        cp,
+        cg,
+        ptr,
+    };
+    f(unsafe { &*ptr })
+}
+
+#[inline]
 fn populate_fast_fixed_mem_read_tls(
     tls_cell: *const std::cell::Cell<(usize, u64, *const FastFixedMemRead)>,
     id: usize,
     cur_gen: u64,
-    cursor_ptr: *const FastFixedMemRead,
+    st_cursor: Option<&Arc<FastFixedMemRead>>,
     mt_cursor: Option<&Arc<FastFixedMemRead>>,
 ) {
-    unsafe { (*tls_cell).set((id, cur_gen, cursor_ptr)) };
+    set_tls_fast_mem_read(tls_cell, id, cur_gen, st_cursor);
     if let Some(cursor) = mt_cursor {
         TLS_REFCELL_MEM_CACHED.set(true);
         let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
@@ -1368,7 +1437,10 @@ fn populate_fast_fixed_mem_read_tls(
 #[inline]
 fn clear_fast_fixed_mem_read_tls(id: usize) {
     if TLS_FAST_MEM_READ.get().0 == id {
-        TLS_FAST_MEM_READ.set((0, 0, std::ptr::null()));
+        let (_, _, old_ptr) = TLS_FAST_MEM_READ.replace((0, 0, std::ptr::null()));
+        if !old_ptr.is_null() {
+            unsafe { Arc::decrement_strong_count(old_ptr) };
+        }
     }
     if !TLS_REFCELL_MEM_CACHED.get() {
         return;
@@ -1464,10 +1536,10 @@ fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
         let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
-        let (cp, cg, ptr) = unsafe { (*tls_cell).get() };
-        if cp == key && !ptr.is_null() && cg == cur_gen {
-            return unsafe { (*ptr).read_byte_st_with_anchor(tls_cell as usize) }
-                .map(|b| b as c_int);
+        if let Some(b) = with_st_fast_mem_read(tls_cell, key, cur_gen, |cursor| {
+            cursor.read_byte_st_with_anchor(tls_cell as usize)
+        }) {
+            return Some(b as c_int);
         }
     }
     if !TLS_REFCELL_MEM_CACHED.get() {
@@ -1490,8 +1562,10 @@ fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
 fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>) {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
-    if cursor.memory.owner_tls.load(Ordering::Acquire) == tls_cell as usize {
-        unsafe { (*tls_cell).set((stream as usize, cur_gen, Arc::as_ptr(cursor))) };
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && cursor.memory.owner_tls.load(Ordering::Acquire) == tls_cell as usize
+    {
+        set_tls_fast_mem_read(tls_cell, stream as usize, cur_gen, Some(cursor));
     } else {
         cursor.memory.owner_tls.store(0, Ordering::Release);
     }
@@ -1502,19 +1576,13 @@ fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>
 }
 
 /// Single-threaded POD TLS fast path for `fread` on read-only `fmemopen` streams.
-///
-/// # Safety
-/// Caller must have verified `__libc_single_threaded != 0`.
 #[inline]
-unsafe fn try_fread_fast_fixed_mem_st(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+fn try_fread_fast_fixed_mem_st(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
     let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
-    let (cp, cg, ptr) = unsafe { (*tls_cell).get() };
-    if cp != stream as usize || ptr.is_null() || cg != REGISTRY_GEN.load(Ordering::Acquire) {
-        return None;
-    }
-    // SAFETY: single-threaded process, `cg == REGISTRY_GEN`, and every cursor
-    // removal bumps `REGISTRY_GEN` and clears `TLS_FAST_MEM_READ` before drop.
-    unsafe { (*ptr).read_bytes_st_with_anchor(dst, tls_cell as usize) }
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    with_st_fast_mem_read(tls_cell, stream as usize, cur_gen, |cursor| {
+        cursor.read_bytes_st_with_anchor(dst, tls_cell as usize)
+    })
 }
 
 /// Pointer-keyed fmemopen bulk-read fast path — the `fread` sibling of
@@ -1548,9 +1616,11 @@ fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Op
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
-        let (cp, cg, ptr) = TLS_FAST_MEM_READ.get();
-        if cp == key && !ptr.is_null() && cg == cur_gen {
-            return unsafe { (*ptr).read_line(dst) };
+        let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+        if let Some(n) =
+            with_st_fast_mem_read(tls_cell, key, cur_gen, |cursor| cursor.read_line(dst))
+        {
+            return Some(n);
         }
     }
     if !TLS_REFCELL_MEM_CACHED.get() {
@@ -2843,19 +2913,21 @@ impl StdioForkGuard {
 fn try_lock_static_slot_aux_for_fork(
     single_threaded: bool,
 ) -> Result<Vec<std::sync::MutexGuard<'static, StaticSlotAux>>, ()> {
-    if single_threaded || !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+    if single_threaded {
         return Ok(Vec::new());
     }
-    let mut guards = Vec::new();
-    for slot in 3..io_internal_abi::STREAM_REGISTRY_CAPACITY {
-        if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 0 {
-            let guard = match STATIC_SLOT_AUX[slot].try_lock() {
-                Ok(g) => g,
-                Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
-                Err(std::sync::TryLockError::WouldBlock) => return Err(()),
-            };
-            guards.push(guard);
-        }
+    let mut guards = Vec::with_capacity(io_internal_abi::STREAM_REGISTRY_CAPACITY - 3);
+    for aux in STATIC_SLOT_AUX
+        .iter()
+        .take(io_internal_abi::STREAM_REGISTRY_CAPACITY)
+        .skip(3)
+    {
+        let guard = match aux.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Err(()),
+        };
+        guards.push(guard);
     }
     Ok(guards)
 }
@@ -4879,6 +4951,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
 
 #[inline]
 fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
+    crate::glibc_internal_abi::note_current_thread_activity();
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0 {
         return None;
     }
@@ -4894,6 +4967,7 @@ fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
             .as_ref()
             .filter(|(stored_id, _)| *stored_id == id)?;
         let mut s = cell_ref.stream.try_lock()?;
+        absorb_read_window(&mut s);
         if s.is_error() || !s.pending_flush().is_empty() || s.read_window().is_some() {
             return None;
         }
@@ -6382,6 +6456,15 @@ pub(crate) unsafe fn fputs_unlocked_for_caller(
 // fread / fwrite
 // ---------------------------------------------------------------------------
 
+#[inline(always)]
+fn valid_strict_raw_span(ptr: *mut c_void, total: usize) -> bool {
+    !ptr.is_null()
+        && total > 0
+        && total <= isize::MAX as usize
+        && (ptr as usize).checked_add(total).is_some()
+        && !runtime_policy::mode().heals_enabled()
+}
+
 /// POSIX `fread`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fread(
@@ -6391,22 +6474,16 @@ pub unsafe extern "C-unwind" fn fread(
     stream: *mut c_void,
 ) -> usize {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
-        && !ptr.is_null()
+        && let Some(total) = size.checked_mul(nmemb)
+        && valid_strict_raw_span(ptr, total)
     {
         let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
-        let (cp, cg, cursor_ptr) = unsafe { (*tls_cell).get() };
-        if cp == stream as usize
-            && !cursor_ptr.is_null()
-            && let Some(total) = size.checked_mul(nmemb)
-            && total > 0
-            && cg == REGISTRY_GEN.load(Ordering::Acquire)
-        {
-            let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
-            if let Some(n) =
-                unsafe { (*cursor_ptr).read_bytes_st_with_anchor(dst, tls_cell as usize) }
-            {
-                return fread_elements_from_bytes(n, size, nmemb, total);
-            }
+        let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+        if let Some(n) = with_st_fast_mem_read(tls_cell, stream as usize, cur_gen, |cursor| {
+            cursor.read_bytes_st_with_anchor(dst, tls_cell as usize)
+        }) {
+            return fread_elements_from_bytes(n, size, nmemb, total);
         }
     }
     unsafe {
@@ -6444,12 +6521,11 @@ pub(crate) unsafe fn fread_for_caller(
     // invoke no user callbacks, syscalls, or `pthread_create` and therefore
     // cannot contend on or alter the recursive `FILE` lock state.
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
-        && !ptr.is_null()
         && let Some(total) = size.checked_mul(nmemb)
-        && total > 0
+        && valid_strict_raw_span(ptr, total)
     {
         let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
-        if let Some(n) = unsafe { try_fread_fast_fixed_mem_st(stream, dst) } {
+        if let Some(n) = try_fread_fast_fixed_mem_st(stream, dst) {
             return fread_elements_from_bytes(n, size, nmemb, total);
         }
         if try_fread_fast_by_stream(stream, dst) {
@@ -6481,10 +6557,10 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
     // Single-threaded inline fast path: fill the whole request from the cached fd stream's
     // buffer if it's all there (skip membrane + lock + lookup + host check). Pointer-keyed
     // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
-    {
+    if valid_strict_raw_span(ptr, total) {
         let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
         if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
-            && let Some(n) = unsafe { try_fread_fast_fixed_mem_st(stream, dst) }
+            && let Some(n) = try_fread_fast_fixed_mem_st(stream, dst)
         {
             return fread_elements_from_bytes(n, size, nmemb, total);
         }
@@ -6521,7 +6597,8 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
         }
         return rc;
     }
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, total, true, false, 0);
+    let (safety_mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, id, total, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -6529,6 +6606,37 @@ pub(crate) unsafe fn fread_unlocked_for_caller(
             runtime_policy::scaled_cost(15, total),
             true,
         );
+        return 0;
+    }
+    let mut total = total;
+    if repair_enabled(safety_mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(ptr as usize)
+        && total > bound
+    {
+        let clamped = (bound / size) * size;
+        global_healing_policy().record(
+            "stdio",
+            "fread",
+            &HealingAction::ClampSize {
+                requested: total,
+                clamped,
+            },
+            RepairLogContext::new(0, Some(ptr as usize)),
+        );
+        if clamped == 0 {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return 0;
+        }
+        total = clamped;
+    }
+    let max_addr_span = usize::MAX - (ptr as usize);
+    total = total.min(isize::MAX as usize).min(max_addr_span);
+    if total == 0 {
         return 0;
     }
     let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
@@ -8813,7 +8921,7 @@ unsafe fn extension_read_argument(
         // GNU's argument union holds a POINTER to custom storage, and the
         // renderer's args array points to that pointer slot (one extra level).
         arg.bits = arg.storage.as_ptr() as u64;
-    } else if matches!(kind.kind, 0x106 | 0x107) {
+    } else if matches!(base, 6 | 7) && (kind.kind & 0x100 != 0) {
         let spec = FormatSpec::new(
             FormatFlags::default(),
             Width::None,
@@ -8846,14 +8954,17 @@ unsafe fn extension_read_argument(
             );
         }
         arg.extended = true;
-    } else if kind.kind == 6 || kind.kind == 7 {
+    } else if matches!(base, 6 | 7) {
         // C default argument promotions pass both PA_FLOAT and PA_DOUBLE in
-        // a double slot; GNU callbacks receive that promoted double object.
+        // a double slot; GNU callbacks receive that promoted double object
+        // even when PA_FLAG_LONG (%lf) is combined with PA_DOUBLE.
         let value = unsafe { va_read_one_fp(ap) };
         arg.bits = value.to_bits();
-    } else if matches!(kind.kind, 0..=5 | 0x100 | 0x200 | 0x400) {
+    } else {
+        // Integer/char/string/pointer base types (0..=5), with any PA_FLAG_SHORT,
+        // PA_FLAG_LONG, or PA_FLAG_LONG_LONG modifier bits.
         arg.bits = unsafe { va_read_one_gp(ap) };
-        if kind.kind == 0x400 {
+        if base == 0 && (kind.kind & 0x400 != 0) && (kind.kind & 0x300 == 0) {
             arg.bits = (arg.bits as i16 as i64) as u64;
         }
     }
@@ -16741,21 +16852,22 @@ pub unsafe extern "C-unwind" fn freopen(
     // Native freopen keeps the FILE handle (and its recursive lock) alive
     // while replacing the stream underneath it, including failure paths.
     // Resolve and acquire before taking the stream registry mutex.
-    let _file_lock = unsafe { StdioLockGuard::acquire(stream) };
+    let file_lock = unsafe { StdioLockGuard::acquire(stream) };
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
 
     // Close the old stream. Lock ordering: registry → cell (freopen only); no path
     // acquires the registry while holding a cell lock, so this nesting cannot deadlock.
     let mut target_fd = -1;
     let mut process_child = None;
-    if let Some(old_cell) = reg.remove_stream(id) {
+    let mut deferred_cookie_close = false;
+    let removed_old_stream = if let Some(old_cell) = reg.remove_stream(id) {
         let mut old_guard = old_cell.lock();
         let old = &mut *old_guard;
         retire_read_window(old);
-        if fixed_mem_cookie(id).is_some() {
+        if is_cookie_stream(id) {
             let _ = unsafe { flush_cookie_stream(id, old) };
             unregister_fast_fixed_mem_read(id);
-            let _ = unsafe { cookie_stream_close(id) };
+            deferred_cookie_close = true;
         }
         if old.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, old);
@@ -16800,14 +16912,21 @@ pub unsafe extern "C-unwind" fn freopen(
                 (process_child, _) = close_stream_descriptor(id, old_fd);
             }
         }
-    }
+        true
+    } else {
+        false
+    };
 
-    // Replacing a process stream consumes its child ownership too. Waiting
-    // under the stream registry would block unrelated closes, so release it
-    // only for this process-stream case; ordinary freopen stays serialized.
-    if let Some(pid) = process_child {
+    // Release the stream registry lock before running user `fopencookie` close
+    // callbacks or `waitpid` on a replaced `popen` child.
+    if deferred_cookie_close || process_child.is_some() {
         drop(reg);
-        let _ = wait_popen_child(pid);
+        if deferred_cookie_close {
+            let _ = unsafe { cookie_stream_close(id) };
+        }
+        if let Some(pid) = process_child {
+            let _ = wait_popen_child(pid);
+        }
         reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     }
 
@@ -16827,6 +16946,15 @@ pub unsafe extern "C-unwind" fn freopen(
         if target_fd < 0 {
             // No descriptor to reopen through (memory-backed stream, or one
             // whose fd was already gone).
+            drop(reg);
+            drop(file_lock);
+            if removed_old_stream
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                maybe_unregister_dynamic_native_stream(id as *mut c_void);
+            }
             unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return std::ptr::null_mut();
@@ -16848,6 +16976,7 @@ pub unsafe extern "C-unwind" fn freopen(
     } {
         Ok(f) => f,
         Err(e) => {
+            drop(reg);
             // The NULL-pathname path deliberately kept the old descriptor open
             // to reopen through it; if that reopen failed there is no stream
             // left to own it, so close it here rather than leak. Standard
@@ -16858,11 +16987,18 @@ pub unsafe extern "C-unwind" fn freopen(
                 && id != STDOUT_SENTINEL
                 && id != STDERR_SENTINEL
             {
-                drop(reg);
                 let (child, _) = close_stream_descriptor(id, target_fd);
                 if let Some(pid) = child {
                     let _ = wait_popen_child(pid);
                 }
+            }
+            drop(file_lock);
+            if removed_old_stream
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                maybe_unregister_dynamic_native_stream(id as *mut c_void);
             }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
             unsafe { set_abi_errno(e) };
@@ -18052,7 +18188,6 @@ pub struct CookieIoFuncs {
 /// own accesses with stream I/O and keep borrowed storage alive until close.
 struct FixedMemCookie {
     inner: parking_lot::Mutex<FixedMemCookieInner>,
-    st_active: AtomicBool,
     owner_tls: AtomicUsize,
     read_capacity: AtomicUsize,
     readable: AtomicBool,
@@ -18119,6 +18254,12 @@ fn recycle_fmemopen_objects(mut cell: StreamCell, mut cursor: Arc<FastFixedMemRe
         inner.cursor.reset(0, 0, false);
         true
     } else {
+        if let Some(cursor_mut) = Arc::get_mut(&mut cursor)
+            && let Some(mem_mut) = Arc::get_mut(&mut cursor_mut.memory)
+        {
+            let buf = mem_mut.inner.get_mut().cursor.take_input_buffer();
+            return_pooled_fixed_mem_input(buf);
+        }
         false
     };
     if can_recycle {
@@ -18157,15 +18298,6 @@ fn return_pooled_fixed_mem_input(mut buf: Vec<u8>) {
     });
 }
 
-struct StActiveGuard<'a>(&'a AtomicBool);
-
-impl Drop for StActiveGuard<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
 impl FixedMemCookie {
     #[inline]
     fn lock_inner(&self) -> parking_lot::MutexGuard<'_, FixedMemCookieInner> {
@@ -18175,21 +18307,14 @@ impl FixedMemCookie {
     #[inline]
     fn read_into_st_with_anchor(&self, dst: &mut [u8], tls_anchor: usize) -> usize {
         if self.owner_tls.load(Ordering::Relaxed) == tls_anchor
-            && !self.inner.is_locked()
-            && !self.st_active.load(Ordering::Relaxed)
+            && let Some(mut inner) = self.inner.try_lock()
         {
-            self.st_active.store(true, Ordering::Release);
-            let _guard = StActiveGuard(&self.st_active);
             let prefetch = self.read_capacity.load(Ordering::Relaxed);
-            // SAFETY: caller verified `__libc_single_threaded != 0`, `owner_tls`
-            // matches the calling thread's `TLS_FAST_MEM_READ` anchor, `self.inner`
-            // is unlocked, and `st_active` guards against same-thread signal-handler
-            // reentry.
             let FixedMemCookieInner {
                 cursor,
                 borrowed,
                 owned,
-            } = unsafe { &mut *self.inner.data_ptr() };
+            } = &mut *inner;
             return cursor.read_with_refill(dst, None, prefetch, |start, count, output| {
                 if let Some(data) = owned {
                     output.extend_from_slice(&data[start..start + count]);
@@ -18997,20 +19122,37 @@ pub unsafe extern "C" fn fmemopen(
         return std::ptr::null_mut();
     }
 
-    // Fast-parse common single-character modes ("r", "w") inline; fall back to
-    // full `scan_c_str_len` + `parse_mode` for compound/modifier modes.
-    let b0 = unsafe { *mode.cast::<u8>() };
-    let open_flags = if b0 == b'r' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
-        OpenFlags {
-            readable: true,
-            ..Default::default()
-        }
-    } else if b0 == b'w' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
-        OpenFlags {
-            writable: true,
-            create: true,
-            truncate: true,
-            ..Default::default()
+    let heals_enabled = runtime_policy::mode().heals_enabled();
+
+    // Fast-parse common single-character modes ("r", "w") inline in strict mode;
+    // hardened mode always validates `mode` through `scan_c_str_len` so 0/1-byte
+    // or quarantined allocations never suffer a 2-byte inline peek.
+    let open_flags = if !heals_enabled {
+        let b0 = unsafe { *mode.cast::<u8>() };
+        if b0 == b'r' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
+            OpenFlags {
+                readable: true,
+                ..Default::default()
+            }
+        } else if b0 == b'w' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
+            OpenFlags {
+                writable: true,
+                create: true,
+                truncate: true,
+                ..Default::default()
+            }
+        } else {
+            let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+            if !mode_terminated {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return std::ptr::null_mut();
+            }
+            let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
+            let Some(flags) = parse_mode(mode_bytes) else {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return std::ptr::null_mut();
+            };
+            flags
         }
     } else {
         let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
@@ -19031,6 +19173,23 @@ pub unsafe extern "C" fn fmemopen(
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
+    let mut size = size;
+    if heals_enabled
+        && !buf.is_null()
+        && let Some(bound) = known_remaining(buf as usize)
+        && size > bound
+    {
+        global_healing_policy().record(
+            "stdio",
+            "fmemopen",
+            &HealingAction::ClampSize {
+                requested: size,
+                clamped: bound,
+            },
+            RepairLogContext::new(0, Some(buf as usize)),
+        );
+        size = bound;
+    }
     let content_len = if open_flags.truncate {
         0
     } else if open_flags.append {
@@ -19046,6 +19205,23 @@ pub unsafe extern "C" fn fmemopen(
         }
     } else {
         size
+    };
+
+    // Allocate internal backing fallibly BEFORE registering a static/native slot
+    // so an oversized `fmemopen(NULL, size, ...)` fails cleanly with `ENOMEM`
+    // rather than aborting across `extern "C"` or leaking a registered slot.
+    let mut owned = if buf.is_null() {
+        let mut backing = Vec::new();
+        if size > 0 {
+            if backing.try_reserve_exact(size).is_err() {
+                unsafe { set_abi_errno(errno::ENOMEM) };
+                return std::ptr::null_mut();
+            }
+            backing.resize(size, 0);
+        }
+        Some(backing)
+    } else {
+        None
     };
 
     let Some(handle) = io_internal_abi::register_memory_handle(
@@ -19071,7 +19247,6 @@ pub unsafe extern "C" fn fmemopen(
     } else {
         0
     };
-    let mut owned = buf.is_null().then(|| vec![0; size]);
     let read_only = open_flags.readable && !open_flags.writable;
     let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
     let tls_anchor = tls_cell as usize;
@@ -19091,7 +19266,6 @@ pub unsafe extern "C" fn fmemopen(
         inner.cursor.reset(size, content_len, open_flags.append);
         inner.borrowed = buf as usize;
         inner.owned = owned.take();
-        *mem_mut.st_active.get_mut() = false;
         *mem_mut.owner_tls.get_mut() = tls_anchor;
         *mem_mut.read_capacity.get_mut() = 8192;
         *mem_mut.readable.get_mut() = open_flags.readable;
@@ -19123,7 +19297,6 @@ pub unsafe extern "C" fn fmemopen(
                 borrowed: buf as usize,
                 owned,
             }),
-            st_active: AtomicBool::new(false),
             owner_tls: AtomicUsize::new(tls_anchor),
             read_capacity: AtomicUsize::new(8192),
             readable: AtomicBool::new(open_flags.readable),
@@ -19153,7 +19326,11 @@ pub unsafe extern "C" fn fmemopen(
 
     let single_threaded =
         crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
-    let st_cursor_ptr = fast_cursor.as_ref().map(Arc::as_ptr);
+    let st_cursor = if single_threaded {
+        fast_cursor.clone()
+    } else {
+        None
+    };
     let mt_cursor = if single_threaded {
         None
     } else {
@@ -19201,8 +19378,14 @@ pub unsafe extern "C" fn fmemopen(
         let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
         reg.insert_cell(id, cell)
     };
-    if let Some(cursor_ptr) = st_cursor_ptr {
-        populate_fast_fixed_mem_read_tls(tls_cell, id, cur_gen, cursor_ptr, mt_cursor.as_ref());
+    if st_cursor.is_some() || mt_cursor.is_some() {
+        populate_fast_fixed_mem_read_tls(
+            tls_cell,
+            id,
+            cur_gen,
+            st_cursor.as_ref(),
+            mt_cursor.as_ref(),
+        );
     }
 
     if !buf.is_null() && open_flags.truncate && open_flags.readable && size > 0 {
@@ -19332,7 +19515,9 @@ pub unsafe extern "C" fn fopencookie(
             let mut aux = lock_static_slot_aux(slot);
             aux.id = id;
             aux.cookie = Some(info);
-            aux.fast_mem_read = None;
+            if aux.fast_mem_read.take().is_some() {
+                FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+            }
         }
         STATIC_SLOT_COOKIE_KIND[slot].store(2, Ordering::Release);
         COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);

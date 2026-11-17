@@ -63,15 +63,21 @@ def load_json(path: pathlib.Path):
 
 
 def git_head() -> str:
+    declared = os.environ.get("RCH_BUILD_SOURCE", "").strip().removesuffix("-dirty").lower()
+    if len(declared) in {40, 64} and all(ch in "0123456789abcdef" for ch in declared):
+        return declared
     try:
-        return subprocess.check_output(
+        head = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
+        if len(head) in {40, 64} and all(ch in "0123456789abcdefABCDEF" for ch in head):
+            return head.lower()
     except Exception:
-        return "unknown"
+        pass
+    return "unknown"
 
 
 def now_utc() -> str:

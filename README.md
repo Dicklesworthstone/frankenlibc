@@ -703,7 +703,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,087 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (2,114 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -3968,7 +3968,7 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,872 native/direct-syscall rows (69.7%), 1,247 host-backed wrapper rows (30.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,902 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 245,884 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 246,111 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 86,661 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,174,994 lines including generated codec tables |
 | Runtime math controllers | 71 modules |

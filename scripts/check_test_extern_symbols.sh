@@ -84,6 +84,9 @@ for path in libs:
     tag = re.search(r"lib(\w+?)\.so", p.name).group(1)[0]  # m, c, p(thr), r, d, u, g
     out = subprocess.run(["nm", "-D", "--defined-only", str(p)],
                          capture_output=True, text=True)
+    if out.returncode != 0:
+        print(f"ERROR: nm failed on {p} (exit {out.returncode}): {out.stderr.strip()}", file=sys.stderr)
+        sys.exit(2)
     for line in out.stdout.splitlines():
         parts = line.split(maxsplit=2)
         if len(parts) == 3 and parts[1] in "TWIDRViBDGS":
@@ -101,6 +104,22 @@ DECL = re.compile(
     r'(?:#\[[^\]]*\]\s*)*(?:pub\s+)?(?:unsafe\s+)?(?:fn|static)(?:\s+mut)?\s+'
     r'([A-Za-z_][A-Za-z0-9_]*)')
 
+COMMENT_OR_STRING_RE = re.compile(
+    r'(?:br|cr|r)(?P<h>#{0,16})".*?"(?P=h)|(?:b|c)?"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
+    re.S,
+)
+
+
+def strip_comments_and_raw_strings(src: str) -> str:
+    def _repl(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        if tok.startswith(("//", "/*", "r", "br", "cr")):
+            return "\n" * tok.count("\n")
+        return tok
+
+    return COMMENT_OR_STRING_RE.sub(_repl, src)
+
+
 decls: dict[str, set[str]] = {}   # symbol -> files
 zz_probes: list[pathlib.Path] = []
 files_scanned = 0
@@ -109,9 +128,10 @@ for root in scan_paths:
     for path in sorted(pathlib.Path(root).rglob("*.rs")):
         if path.name.startswith("zz_"):
             zz_probes.append(path)
-        text = path.read_text(encoding="utf-8", errors="replace")
+        raw_text = path.read_text(encoding="utf-8", errors="replace")
+        text = strip_comments_and_raw_strings(raw_text)
         files_scanned += 1
-        for m in re.finditer(r'unsafe\s+extern\s+"C"\s*\{', text):
+        for m in re.finditer(r'unsafe\s+extern\s+"C(?:-unwind)?"\s*\{', text):
             blocks_found += 1
             start = m.end() - 1
             depth = 0
@@ -125,11 +145,6 @@ for root in scan_paths:
                         end = i
                         break
             body = text[m.end():end]
-            # Strip comments so prose like "static buffer" in a doc comment is not
-            # mistaken for a declaration. (Strings inside extern blocks only carry
-            # link_name attrs, which have no "//" — acceptable for a screen.)
-            body = re.sub(r'//[^\n]*', '', body)
-            body = re.sub(r'/\*.*?\*/', '', body, flags=re.S)
             # Attributes immediately preceding the block apply to the whole block
             # (e.g. #[link(name = "m")]); #[link_name] sits per-declaration.
             head = text[max(0, m.start() - 400):m.start()]
@@ -141,7 +156,7 @@ for root in scan_paths:
                     n = nm.group(1)
                     block_libs.add(re.sub(r"^lib", "", n)[0])
             for dm in re.finditer(
-                r'((?:#\s*\[[^\]]*\]\s*)*)(?:pub\s+)?(?:unsafe\s+)?(?:fn|static)'
+                r'((?:#\s*\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:(?:unsafe|safe)\s+)?(?:fn|static)'
                 r'(?:\s+mut)?\s+([A-Za-z_][A-Za-z0-9_]*)', body):
                 attrs, name = dm.group(1), dm.group(2)
                 ln = ATTR_LINK_NAME.search(attrs)

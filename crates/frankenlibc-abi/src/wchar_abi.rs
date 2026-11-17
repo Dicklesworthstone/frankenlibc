@@ -3834,9 +3834,7 @@ mod codec {
         let codec = active_multibyte_codec();
         if !matches!(codec, MultibyteCodec::Utf8) {
             if pcount > 0 {
-                out[..pcount].copy_from_slice(pending_prefix);
-                out[pcount] = unsafe { *s };
-                return &out[..=pcount];
+                return &[];
             }
             out[0] = unsafe { *s };
             return &out[..1];
@@ -3856,7 +3854,10 @@ mod codec {
         } else {
             out[..pcount].copy_from_slice(pending_prefix);
             let expected = utf8_lead_expected_len(out[0]);
-            let needed = expected.saturating_sub(pcount).max(1);
+            if expected <= pcount || out[1..pcount].iter().any(|&b| (b & 0xC0) != 0x80) {
+                return &[];
+            }
+            let needed = expected - pcount;
             let take = n.min(needed).min(6 - pcount);
             for idx in 0..take {
                 let b = unsafe { *s.add(idx) };
@@ -4768,12 +4769,20 @@ pub unsafe extern "C" fn mbrtowc(
         )
     };
     let total = decode_slice.len();
+    if pcount > 0 && total == 0 {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
+    }
 
     // RFC 3629-strict decode: `Incomplete` (truncated-but-valid prefix) ->
     // accumulate and return (size_t)-2; `Invalid` -> EILSEQ. The decoder is the
     // single source of truth shared with mbtowc and the conformance harness.
     match codec::utf8_decode_step(decode_slice) {
         wchar_core::Utf8Step::Char { wc, len } => {
+            if len <= pcount && pcount > 0 {
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return usize::MAX;
+            }
             // `len` is the whole char length; bytes consumed FROM THIS CALL are
             // the ones beyond what `ps` already held.
             let from_call = len - pcount;

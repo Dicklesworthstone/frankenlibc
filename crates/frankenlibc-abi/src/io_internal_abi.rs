@@ -582,6 +582,16 @@ impl NativeFileLocked {
         open_flags: u32,
         buf_mode: NativeFileBufMode,
     ) {
+        let fd = match &backing {
+            NativeFileBacking::Fd(fd) => *fd,
+            NativeFileBacking::MemoryFixed { .. } | NativeFileBacking::MemoryGrowing { .. } => -1,
+        };
+        let mut fingerprint = [0u8; 16];
+        fingerprint[..4].copy_from_slice(&NATIVE_FILE_MAGIC.to_le_bytes());
+        fingerprint[4..8].copy_from_slice(&fd.to_le_bytes());
+        fingerprint[8..12].copy_from_slice(&open_flags.to_le_bytes());
+        fingerprint[12..16].copy_from_slice(&(NATIVE_FILE_MAGIC ^ open_flags).to_le_bytes());
+
         self.magic = NATIVE_FILE_MAGIC;
         self.backing = backing;
         self.buffer_base = ptr::null_mut();
@@ -593,7 +603,11 @@ impl NativeFileLocked {
         self.error = false;
         self.ungetc = None;
         self.healing_budget = 0;
+        // SAFETY: glibc's mbstate_t is a plain old data state carrier.
+        self._mbstate = unsafe { std::mem::zeroed() };
         self.open_flags = open_flags;
+        self.fingerprint = fingerprint;
+        self.runtime_math_hooks = NativeFileRuntimeMathHooks::new();
         self.popen_child_pid = None;
     }
 
@@ -1078,6 +1092,7 @@ impl NativeFile {
 
     fn reset_locked_state(state: &mut NativeFileLocked) {
         state.magic = 0;
+        state.backing = NativeFileBacking::Fd(-1);
         state.buffer_base = ptr::null_mut();
         state.buffer_pos = ptr::null_mut();
         state.buffer_end = ptr::null_mut();
@@ -1085,11 +1100,14 @@ impl NativeFile {
         state.eof = false;
         state.error = false;
         state.ungetc = None;
+        // SAFETY: glibc's mbstate_t is plain old data.
+        state._mbstate = unsafe { std::mem::zeroed() };
         state.open_flags = 0;
         state.generation = state.generation.saturating_add(1);
         state.healing_budget = 0;
         state.fingerprint = [0; 16];
         state.runtime_math_hooks = NativeFileRuntimeMathHooks::new();
+        state.popen_child_pid = None;
     }
 
     fn reset_unlocked_fields(&mut self) {
@@ -1885,16 +1903,9 @@ impl NativeStreamRegistry {
         if slot.file._frankenlibc_state.static_lock_slot != (index + 1) as u16 {
             slot.file = NativeFile::new_in_static_slot(index, header_fd);
         } else {
+            slot.file.reset_unlocked_fields();
             slot.file._io_file._fileno = header_fd;
-            slot.file._io_file._mode = 0;
-            slot.file._io_file._offset = 0;
-            slot.file._io_file._old_offset = 0;
-            slot.file._io_file._flags2 = 0;
             slot.file.vtable = ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t;
-            slot.file
-                ._frankenlibc_state
-                .orientation
-                .store(0, Ordering::Relaxed);
         }
         slot.file._io_file._flags =
             GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
@@ -2013,6 +2024,15 @@ impl NativeStreamRegistry {
         if slot.state != SLOT_OCCUPIED {
             return false;
         };
+        if index < STREAM_REGISTRY_CAPACITY && !local_test_instance {
+            // Unpublish lock-free occupancy BEFORE mutating `slot.file` fields so
+            // concurrent lock-free readers (`occupied_static_native_slot_lockfree`
+            // / `verify_native_file`) never observe a half-cleared `NativeFile`.
+            STATIC_SLOT_OCCUPIED[index].store(0, Ordering::Release);
+        }
+        if index < NATIVE_STDIO_SLOT_ADDR.len() {
+            NATIVE_STDIO_SLOT_ADDR[index].store(0, Ordering::Release);
+        }
         // Unlink from _chain list.
         let file_ptr: *mut NativeFile = &mut slot.file;
         // SAFETY: _IO_list_all is protected by the registry mutex.
@@ -2040,36 +2060,14 @@ impl NativeStreamRegistry {
             && slot.file._frankenlibc_state.static_lock_slot == (index + 1) as u16
         {
             slot.state = SLOT_FREE;
-            slot.file._io_file._flags = 0;
-            slot.file._io_file._fileno = -1;
-            slot.file._io_file._mode = 0;
-            slot.file._io_file._offset = 0;
-            slot.file._io_file._old_offset = 0;
-            slot.file._io_file._flags2 = 0;
-            slot.file
-                .sync_glibc_buffer_head(ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
-            slot.file.set_chain(ptr::null_mut());
-            slot.file.vtable = ptr::null_mut();
-            slot.file
-                ._frankenlibc_state
-                .orientation
-                .store(0, Ordering::Relaxed);
+            slot.file.reset_unlocked_fields();
         } else {
             *slot = StreamSlot::empty();
         }
-        if index < STREAM_REGISTRY_CAPACITY {
-            if !local_test_instance {
-                STATIC_SLOT_OCCUPIED[index].store(0, Ordering::Release);
-            }
-            if index >= 3 && (self.next_free_hint == 0 || index < self.next_free_hint) {
-                self.next_free_hint = index;
-            }
-        }
-        // Keep the lock-free `native_stdio_fd_for_ptr` table exact. `register` never hands
-        // out a reserved slot (it starts at 3), so this is unreachable today; it exists so
-        // the table cannot outlive the slot's occupancy if that ever changes.
-        if index < NATIVE_STDIO_SLOT_ADDR.len() {
-            NATIVE_STDIO_SLOT_ADDR[index].store(0, Ordering::Release);
+        if (3..STREAM_REGISTRY_CAPACITY).contains(&index)
+            && (self.next_free_hint == 0 || index < self.next_free_hint)
+        {
+            self.next_free_hint = index;
         }
         true
     }

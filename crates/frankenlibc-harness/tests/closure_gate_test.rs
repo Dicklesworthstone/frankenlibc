@@ -968,11 +968,17 @@ fn cargo_receipt_binds_named_artifact_and_rebuilds_backdated_source() {
         .find(|v| v["reason"] == "compiler-artifact" && v["target"]["name"] == "behavior")
         .expect("Cargo must identify the executable it built");
     let binary = artifact["executable"].as_str().unwrap().to_owned();
+    let binary_rel = Path::new(&binary)
+        .strip_prefix(&root)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
     let contract = &mut f.matrix["entries"][0]["row"]["closure_evidence"];
     contract["configuration"]["features"] = json!(["default"]);
     contract["gate"]["build_command"] = json!(build);
-    contract["gate"]["command"] = json!([&binary, "--test-threads=1"]);
-    contract["gate"]["artifacts"] = json!([&binary]);
+    contract["gate"]["command"] = json!([&binary_rel, "--test-threads=1"]);
+    contract["gate"]["artifacts"] = json!([&binary_rel]);
     for input in [
         root.join("Cargo.toml"),
         root.join("Cargo.lock"),
@@ -1203,11 +1209,17 @@ fn relocated_clean_checkout_verifies_cargo_receipt_without_build_tree() {
         .find(|v| v["reason"] == "compiler-artifact" && v["target"]["name"] == "behavior")
         .expect("Cargo must identify built test binary");
     let binary = artifact["executable"].as_str().unwrap().to_owned();
+    let binary_rel = Path::new(&binary)
+        .strip_prefix(&root)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
     let contract = &mut f.matrix["entries"][0]["row"]["closure_evidence"];
     contract["configuration"]["features"] = json!(["default"]);
     contract["gate"]["build_command"] = json!(build);
-    contract["gate"]["command"] = json!([&binary, "--test-threads=1"]);
-    contract["gate"]["artifacts"] = json!([&binary]);
+    contract["gate"]["command"] = json!([&binary_rel, "--test-threads=1"]);
+    contract["gate"]["artifacts"] = json!([&binary_rel]);
     for input in [
         root.join("Cargo.toml"),
         root.join("Cargo.lock"),

@@ -95,7 +95,7 @@ pub unsafe extern "C" fn bind(sockfd: c_int, addr: *const libc::sockaddr, addrle
         return -1;
     }
 
-    if sockfd >= 0 && (addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize)) {
+    if addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -245,15 +245,15 @@ pub(crate) unsafe fn connect_cp(sockfd: c_int, addr: *const libc::sockaddr, addr
         return -1;
     }
 
-    if sockfd >= 0 && (addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize)) {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen)
+            if !addr.is_null() && !tracked_region_fits(addr.cast(), addrlen as usize) {
+                return Err(errno::EFAULT);
+            }
+            match raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) {
+                Err(errno::EINVAL) if addr.is_null() => Err(errno::EFAULT),
+                other => other,
+            }
         })
     } {
         Ok(()) => (0, false),

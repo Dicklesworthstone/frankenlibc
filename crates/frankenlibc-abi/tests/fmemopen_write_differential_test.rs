@@ -923,18 +923,124 @@ fn fmemopen_preserves_single_threaded_fast_path_until_second_thread_enters() {
         "repeated single-threaded fmemopen+fread+fclose must preserve __libc_single_threaded == 1"
     );
 
-    std::thread::spawn(|| unsafe {
-        let mut buf = *b"mt";
-        let fp = fl::fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr());
-        assert!(!fp.is_null());
-        assert_eq!(fl::fclose(fp), 0);
+    let st_fp_raw = unsafe { fl::fmemopen(data.as_mut_ptr().cast(), data.len(), c"r".as_ptr()) };
+    assert!(!st_fp_raw.is_null());
+    unsafe {
+        let mut chunk = [0u8; 64];
+        assert_eq!(fl::fread(chunk.as_mut_ptr().cast(), 1, 64, st_fp_raw), 64);
+    }
+    let st_fp_addr = st_fp_raw as usize;
+
+    std::thread::spawn(move || unsafe {
+        assert_eq!(fl::fclose(st_fp_addr as *mut libc::c_void), 0);
     })
     .join()
-    .expect("join second thread");
+    .expect("join second thread closing ST-opened fmemopen stream");
 
     assert_eq!(
         frankenlibc_abi::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire),
         0,
-        "second host thread entering fmemopen must clear __libc_single_threaded to 0"
+        "second host thread entering fclose must clear __libc_single_threaded to 0"
     );
+}
+
+#[test]
+fn fmemopen_fast_close_flushes_published_write_window() {
+    let mut fl_buf = [0xffu8; 32];
+    let mut lc_buf = [0xffu8; 32];
+    unsafe {
+        let fl_fp = fl::fmemopen(fl_buf.as_mut_ptr().cast(), fl_buf.len(), c"w".as_ptr());
+        let lc_fp = fmemopen(lc_buf.as_mut_ptr().cast(), lc_buf.len(), c"w".as_ptr());
+        assert!(!fl_fp.is_null() && !lc_fp.is_null());
+
+        assert_eq!(fl::fputc(b'A' as i32, fl_fp), b'A' as i32);
+        assert_eq!(libc::fputc(b'A' as i32, lc_fp), b'A' as i32);
+        assert_eq!(fl::fflush(fl_fp), 0);
+        assert_eq!(fflush(lc_fp), 0);
+
+        // Second fputc writes into the published _IO_write_ptr/_IO_write_end window;
+        // fclose must absorb and flush that window + NUL terminator before retiring.
+        assert_eq!(fl::fputc(b'B' as i32, fl_fp), b'B' as i32);
+        assert_eq!(libc::fputc(b'B' as i32, lc_fp), b'B' as i32);
+        assert_eq!(fl::fclose(fl_fp), 0);
+        assert_eq!(fclose(lc_fp), 0);
+    }
+    assert_eq!(&fl_buf[..3], b"AB\0");
+    assert_eq!(&fl_buf[..3], &lc_buf[..3]);
+}
+
+#[test]
+fn fmemopen_null_backing_huge_size_returns_enomem_without_leaking_slots() {
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+        let huge = fl::fmemopen(std::ptr::null_mut(), 1usize << 61, c"r".as_ptr());
+        assert!(
+            huge.is_null(),
+            "oversized NULL-backed fmemopen must fail cleanly"
+        );
+        assert_eq!(
+            *frankenlibc_abi::errno_abi::__errno_location(),
+            libc::ENOMEM
+        );
+
+        // Verify static slots were not leaked on ENOMEM failure.
+        for _ in 0..300 {
+            let mut small = *b"ok";
+            let fp = fl::fmemopen(small.as_mut_ptr().cast(), small.len(), c"r".as_ptr());
+            assert!(!fp.is_null());
+            assert_eq!(fl::fclose(fp), 0);
+        }
+    }
+}
+
+#[test]
+fn freopen_on_fopencookie_clears_cookie_metadata_and_failed_freopen_reclaims_slot() {
+    unsafe extern "C-unwind" fn cookie_read(
+        _cookie: *mut libc::c_void,
+        buf: *mut libc::c_char,
+        size: usize,
+    ) -> isize {
+        if size == 0 {
+            return 0;
+        }
+        unsafe { *buf = b'C' as libc::c_char };
+        1
+    }
+
+    let tmp_path = std::env::temp_dir().join(format!(
+        "fl_freopen_cookie_{}_{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(&tmp_path, b"FILE").expect("write temp file");
+    let c_path = CString::new(tmp_path.to_str().unwrap()).unwrap();
+
+    unsafe {
+        let funcs = fl::CookieIoFuncs {
+            read: Some(cookie_read),
+            write: None,
+            seek: None,
+            close: None,
+        };
+        let fp = fl::fopencookie(std::ptr::null_mut(), c"r".as_ptr(), funcs);
+        assert!(!fp.is_null());
+        assert_eq!(fl::fgetc(fp), b'C' as i32);
+
+        let reopened = fl::freopen(c_path.as_ptr(), c"r".as_ptr(), fp);
+        assert_eq!(reopened, fp, "freopen on cookie stream should reuse handle");
+        let mut out = [0u8; 4];
+        assert_eq!(fl::fread(out.as_mut_ptr().cast(), 1, 4, reopened), 4);
+        assert_eq!(
+            &out, b"FILE",
+            "reopened fd stream must not read stale cookie"
+        );
+
+        let bad_path = c"/definitely/nonexistent/frankenlibc_freopen_missing_file";
+        let failed = fl::freopen(bad_path.as_ptr(), c"r".as_ptr(), reopened);
+        assert!(failed.is_null());
+    }
+    let _ = std::fs::remove_file(&tmp_path);
 }

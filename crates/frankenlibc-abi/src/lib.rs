@@ -398,6 +398,14 @@ unsafe extern "C" fn frankenlibc_abi_stdio_init_entry(
     envp: *mut *mut std::ffi::c_char,
 ) {
     unsafe { startup_abi::preseed_auxv_from_init_array(argc, argv, envp) };
+    #[cfg(not(feature = "standalone"))]
+    {
+        // Prewarm the host `__errno_location` cache during `.init_array` so
+        // `ErrnoTransparencyGuard` on contended locks and telemetry paths always
+        // preserves host `errno` (even under `dlopen` or test binaries) without
+        // ever calling `dlvsym` under lock contention.
+        let _ = host_resolve::host_errno_location_raw();
+    }
     // SAFETY: this runs during process initialization before user code and
     // publishes the stdio globals/aliases onto stable NativeFile storage while
     // patching host libio exit handling for the exported _IO symbols.
