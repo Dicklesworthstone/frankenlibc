@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-ny3hsa",
+  "contract": {
+    "behavior": "Eliminate fixed segment-wrapper framing overhead (entrypoint_scope, CAS reentry guard, decide/observe, and Drop epilogue) on strict small malloc/free across sz=16..1024",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/malloc_abi.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+    ],
+    "source": {
+      "commit": "1446b85efb1acf61833d2bccca6e8d6e1a0a9613",
+      "files": {
+        "crates/frankenlibc-abi/src/malloc_abi.rs": "627ca94584664cbbc3fe715b2ddc2b9e4f77e222b5b873f93d4316a020c8b01e",
+        "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs": "950908aded5e53df5d8a4c9ac83f83541f0a4485cf4c55894fb2c0a0f977ff67"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-17T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/malloc_mt_and_calloc_gate_test",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+        "-o",
+        "target/closure_bins/malloc_mt_and_calloc_gate_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/malloc_mt_and_calloc_gate_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "malloc_mt_and_calloc_hot_path_contracts_are_wired",
+        "malloc_mt_fork_and_calloc_live_preload_gate_passes"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+      "-o",
+      "target/closure_bins/malloc_mt_and_calloc_gate_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T02:42:24.135545+00:00",
+    "finished_at": "2026-11-18T02:42:24.400503+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/malloc_mt_and_calloc_gate_test",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T02:42:24.402168+00:00",
+    "finished_at": "2026-11-18T02:42:32.540304+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "a5a8563d296339f7b7077666e38da9eefd0de5c9f44fd5464a80a931c47262a6",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/malloc_mt_and_calloc_gate_test": "62e68897e26ce3d6576f80ff0ad2ab05a31dc65208d9c847c760ade8a703de20"
+  },
+  "artifact_files": {
+    "target/closure_bins/malloc_mt_and_calloc_gate_test": "artifact-0"
+  },
+  "source_files": {
+    "crates/frankenlibc-abi/src/malloc_abi.rs": "627ca94584664cbbc3fe715b2ddc2b9e4f77e222b5b873f93d4316a020c8b01e",
+    "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs": "950908aded5e53df5d8a4c9ac83f83541f0a4485cf4c55894fb2c0a0f977ff67"
+  },
+  "executable_sha256": "62e68897e26ce3d6576f80ff0ad2ab05a31dc65208d9c847c760ade8a703de20"
+}

@@ -33137,6 +33137,153 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-ny3hsa",
+      "title": "[perf][malloc] the residual ~26ns is the segment path's own wrapper, not the arena — successor to the refuted bd-e0y02p",
+      "priority": 2,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "STRICT_HOT_MODE_STATE + KEY_SLOT_DIR + SegmentMagazine + zero-Drop extern C tail helpers eliminating the ~26ns fixed wrapper overhead across sz=16..1024"
+        },
+        "e2e_scripts": {
+          "required": false,
+          "scope": ""
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "malloc_mt_and_calloc_gate_test + 95/95 ABI allocator tests"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "not_required"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-ny3hsa",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test malloc_mt_and_calloc_gate_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "Eliminates the ~26ns fixed wrapper overhead on segment-served small allocations across sz=16..1024 (6.22x-6.28x -> 1.413x-1.527x <= 2.0x host glibc)"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified on release libfrankenlibc_abi.so SHA256 ab5e759deb38fd990391ef1d75f7967abe0705a1d1bc2d3688cfdfe404c70b3c: 9-round order-rotated deployed malloc+free ratios sz=16 1.525x, sz=64 1.413x, sz=256 1.478x, sz=1024 1.527x (down from 6.263x/6.233x/6.277x/6.218x).",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Eliminate fixed segment-wrapper framing overhead (entrypoint_scope, CAS reentry guard, decide/observe, and Drop epilogue) on strict small malloc/free across sz=16..1024",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/malloc_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+          ],
+          "source": {
+            "commit": "1446b85efb1acf61833d2bccca6e8d6e1a0a9613",
+            "files": {
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "627ca94584664cbbc3fe715b2ddc2b9e4f77e222b5b873f93d4316a020c8b01e",
+              "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs": "950908aded5e53df5d8a4c9ac83f83541f0a4485cf4c55894fb2c0a0f977ff67"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-17T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/malloc_mt_and_calloc_gate_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+              "-o",
+              "target/closure_bins/malloc_mt_and_calloc_gate_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/malloc_mt_and_calloc_gate_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "malloc_mt_and_calloc_hot_path_contracts_are_wired",
+              "malloc_mt_fork_and_calloc_live_preload_gate_passes"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {
@@ -33149,6 +33296,7 @@
     "bd-li7fb3": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json",
     "bd-otip6a": "tests/conformance/closure_receipts/bd-otip6a/receipt.json",
     "bd-rc0923-epic-eeuy4f.26": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json",
-    "bd-f874go": "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+    "bd-f874go": "tests/conformance/closure_receipts/bd-f874go/receipt.json",
+    "bd-ny3hsa": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
   }
 }
