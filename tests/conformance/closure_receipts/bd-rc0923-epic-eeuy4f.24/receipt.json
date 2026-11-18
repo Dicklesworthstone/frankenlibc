@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rc0923-epic-eeuy4f.24",
+  "contract": {
+    "behavior": "Deferred and asynchronous pthread_cancel across hosted and native-thread backends, RIP-guarded __fl_syscall_cancel_arch blocking-syscall interruption, owned-startup main-thread unwind boundary + last-thread exit(0), shared-TCB host allocator/TLS safety, thrd_join caller-origin preservation, and CAS-synchronized static mutex/condvar adoption",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-core/src/syscall/raw.rs",
+      "crates/frankenlibc-core/src/pthread/tls.rs",
+      "crates/frankenlibc-core/src/pthread/thread.rs",
+      "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "crates/frankenlibc-abi/src/signal_abi.rs",
+      "crates/frankenlibc-abi/src/startup_abi.rs",
+      "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "crates/frankenlibc-abi/src/c11threads_abi.rs",
+      "scripts/check_pthread_cancel_native_parity.sh"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs"
+    ],
+    "source": {
+      "commit": "41e0ba7b5c1243543261db5d03c599282993203e",
+      "files": {
+        "crates/frankenlibc-core/src/syscall/raw.rs": "d9c4eac191f3203676964f200a642b3333288c10c80cc76138397f216d1ef342",
+        "crates/frankenlibc-core/src/pthread/tls.rs": "354e33de529dbd43a95dec2f7c6ab9fdaabd2ada0c8c234ca5c9bcc035e5d76f",
+        "crates/frankenlibc-core/src/pthread/thread.rs": "de0907000d6be782faa598702c03043f550c0edaafa029595aebbf478c488a04",
+        "crates/frankenlibc-abi/src/pthread_abi.rs": "f9166103606f18ddfb6e2a9f8776be48ab3cebf2ac9f139ff410de4fada9f283",
+        "crates/frankenlibc-abi/src/signal_abi.rs": "45c7200b989adf3ced49f5ba5f5afef68a88fc87fc3da40f7927f60d57ef999f",
+        "crates/frankenlibc-abi/src/startup_abi.rs": "b4f5d34977164ce8ef1550694b664ef866f77e6858b131cc913b92236c726ea9",
+        "crates/frankenlibc-abi/src/malloc_abi.rs": "62f9b274da22347294ac70805525f593e0e6377b2d61c0c0b014b07d67a27172",
+        "crates/frankenlibc-abi/src/c11threads_abi.rs": "6be2b79e4ba14be5bf78f43679a93c6df1e82b5910ff5cd9c37214c28086dec9",
+        "scripts/check_pthread_cancel_native_parity.sh": "9de2c768a7c0d10857a664c0e67d3e3270a895be9e9fe1edfcd4c3bb803a877b",
+        "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs": "2d6c26434cf24ec895c01f9ac7270fa298f3fd474a5e53e25ce640a09223fce8"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-17T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/pthread_cancel_native_parity_test",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs",
+        "-o",
+        "target/closure_bins/pthread_cancel_native_parity_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/pthread_cancel_native_parity_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "native_syscall_cancellation_and_startup_unwind_contracts_are_wired",
+        "pthread_cancel_native_and_hosted_e2e_parity_gate_passes"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs",
+      "-o",
+      "target/closure_bins/pthread_cancel_native_parity_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T23:53:36.088650+00:00",
+    "finished_at": "2026-11-17T23:53:36.404415+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/pthread_cancel_native_parity_test",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-17T23:53:36.407862+00:00",
+    "finished_at": "2026-11-17T23:54:30.497362+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "5f8618264565d30df767e67bab9f298f4e1e188d9999a4e616e7028ecf7727f1",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/pthread_cancel_native_parity_test": "026b420712984d49816531519a5972fc465c044650e131b7593bb77b0dc32155"
+  },
+  "artifact_files": {
+    "target/closure_bins/pthread_cancel_native_parity_test": "artifact-0"
+  },
+  "source_files": {
+    "crates/frankenlibc-core/src/syscall/raw.rs": "d9c4eac191f3203676964f200a642b3333288c10c80cc76138397f216d1ef342",
+    "crates/frankenlibc-core/src/pthread/tls.rs": "354e33de529dbd43a95dec2f7c6ab9fdaabd2ada0c8c234ca5c9bcc035e5d76f",
+    "crates/frankenlibc-core/src/pthread/thread.rs": "de0907000d6be782faa598702c03043f550c0edaafa029595aebbf478c488a04",
+    "crates/frankenlibc-abi/src/pthread_abi.rs": "f9166103606f18ddfb6e2a9f8776be48ab3cebf2ac9f139ff410de4fada9f283",
+    "crates/frankenlibc-abi/src/signal_abi.rs": "45c7200b989adf3ced49f5ba5f5afef68a88fc87fc3da40f7927f60d57ef999f",
+    "crates/frankenlibc-abi/src/startup_abi.rs": "b4f5d34977164ce8ef1550694b664ef866f77e6858b131cc913b92236c726ea9",
+    "crates/frankenlibc-abi/src/malloc_abi.rs": "62f9b274da22347294ac70805525f593e0e6377b2d61c0c0b014b07d67a27172",
+    "crates/frankenlibc-abi/src/c11threads_abi.rs": "6be2b79e4ba14be5bf78f43679a93c6df1e82b5910ff5cd9c37214c28086dec9",
+    "scripts/check_pthread_cancel_native_parity.sh": "9de2c768a7c0d10857a664c0e67d3e3270a895be9e9fe1edfcd4c3bb803a877b",
+    "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs": "2d6c26434cf24ec895c01f9ac7270fa298f3fd474a5e53e25ce640a09223fce8"
+  },
+  "executable_sha256": "026b420712984d49816531519a5972fc465c044650e131b7593bb77b0dc32155"
+}

@@ -1,0 +1,539 @@
+//! C11 `<threads.h>` ABI entrypoints.
+//!
+//! Thin wrappers over the existing pthread_abi implementations.
+//! C11 threads map 1:1 onto POSIX threads with different return value conventions.
+
+use std::cell::Cell;
+use std::ffi::c_int;
+use std::ffi::c_void;
+
+use frankenlibc_core::syscall as raw_syscall;
+
+use crate::malloc_abi::known_remaining;
+
+// ---------------------------------------------------------------------------
+// C11 thread return codes
+// ---------------------------------------------------------------------------
+
+const THRD_SUCCESS: c_int = 0;
+const THRD_ERROR: c_int = 2;
+const THRD_NOMEM: c_int = 3;
+const THRD_TIMEDOUT: c_int = 4;
+const THRD_BUSY: c_int = 1;
+
+// ---------------------------------------------------------------------------
+// C11 mutex type flags
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+const MTX_PLAIN: c_int = 0;
+#[allow(dead_code)]
+const MTX_RECURSIVE: c_int = 1;
+const MTX_TIMED: c_int = 2;
+
+// ---------------------------------------------------------------------------
+// C11 opaque types — same layout as pthread equivalents on glibc/Linux
+// ---------------------------------------------------------------------------
+
+type ThrdT = libc::pthread_t;
+type MtxT = libc::pthread_mutex_t;
+type CndT = libc::pthread_cond_t;
+type TssT = libc::pthread_key_t;
+type OnceFlag = libc::pthread_once_t;
+
+// C11 thread start function: int (*)(void *), unlike pthread's void* (*)(void *)
+type ThrdStartT = unsafe extern "C" fn(*mut c_void) -> c_int;
+type TssDtorT = unsafe extern "C" fn(*mut c_void);
+
+// Runtime mode is immutable after its first resolution. Keep the C11 mutex
+// hot path out of the runtime-policy framing after that first call while still
+// retaining the hardened allocation check when the process selected it.
+thread_local! {
+    static MTX_TRYLOCK_STRICT_FASTPATH: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: convert pthread errno to C11 thread return code
+// ---------------------------------------------------------------------------
+
+fn pthread_rc_to_thrd(rc: c_int) -> c_int {
+    match rc {
+        0 => THRD_SUCCESS,
+        libc::ETIMEDOUT => THRD_TIMEDOUT,
+        libc::EBUSY => THRD_BUSY,
+        libc::EAGAIN => THRD_NOMEM,
+        libc::ENOMEM => THRD_NOMEM,
+        _ => THRD_ERROR,
+    }
+}
+
+#[inline]
+fn tracked_required_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| core::mem::size_of::<T>() <= remaining)
+}
+
+#[inline]
+fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
+    ptr.is_null() || tracked_required_object_fits(ptr)
+}
+
+#[inline(always)]
+fn mtx_trylock_strict_fastpath() -> bool {
+    MTX_TRYLOCK_STRICT_FASTPATH
+        .try_with(|cached| match cached.get() {
+            Some(strict) => strict,
+            None => {
+                let mode = crate::runtime_policy::mode();
+                let strict = mode.validation_enabled() && !mode.heals_enabled();
+                // `mode()` returns strict during an intentionally reentrant
+                // resolution. Do not pin that provisional answer: the atomic
+                // predicate remains false until strict is fully published.
+                if strict && !crate::runtime_policy::strict_passthrough_active() {
+                    false
+                } else {
+                    cached.set(Some(strict));
+                    strict
+                }
+            }
+        })
+        // TLS can be unavailable during thread teardown. Preserve the existing
+        // bootstrap-safe atomic predicate for that exceptional path.
+        .unwrap_or_else(|_| crate::runtime_policy::strict_passthrough_active())
+}
+
+// ===========================================================================
+// Thread management (thrd_*)
+// ===========================================================================
+
+// thrd_create — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_create` — create a new thread.
+///
+/// The C11 start function returns `int` while pthread uses `void*`.
+/// We wrap the start function to bridge the calling convention.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn thrd_create(
+    thr: *mut ThrdT,
+    func: Option<ThrdStartT>,
+    arg: *mut c_void,
+) -> c_int {
+    if !tracked_required_object_fits(thr) {
+        return THRD_ERROR;
+    }
+    let func = match func {
+        Some(func) => func,
+        None => return THRD_ERROR,
+    };
+
+    // We need to wrap the C11 start function (returns int) into a pthread
+    // start function (returns void*). We heap-allocate a trampoline context.
+    struct TrampolineCtx {
+        func: ThrdStartT,
+        arg: *mut c_void,
+    }
+    // SAFETY: TrampolineCtx is a plain struct with no drop glue concerns.
+    unsafe impl Send for TrampolineCtx {}
+
+    unsafe extern "C-unwind" fn trampoline(ctx_ptr: *mut c_void) -> *mut c_void {
+        let ctx = unsafe { Box::from_raw(ctx_ptr as *mut TrampolineCtx) };
+        let func = ctx.func;
+        let arg = ctx.arg;
+        // Release the start context before entering user code. thrd_exit and
+        // cancellation need not return here; the native backend can terminate
+        // the thread without unwinding Rust frames at all.
+        drop(ctx);
+        // SAFETY: C and C-unwind use the same machine calling convention. A
+        // foreign C start routine can call thrd_exit/pthread_exit or reach a
+        // cancellation point, so its invocation must permit forced unwind.
+        // Keep the public C callback type compatible with existing Rust callers.
+        let func: unsafe extern "C-unwind" fn(*mut c_void) -> c_int =
+            unsafe { std::mem::transmute(func) };
+        let rc = unsafe { func(arg) };
+        rc as usize as *mut c_void
+    }
+
+    let ctx = Box::new(TrampolineCtx { func, arg });
+    let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
+
+    // SAFETY: pthread_create's callback slot is expressed as plain C, but
+    // passes the same function pointer to the thread backend. Do not change
+    // the trampoline itself to C: its frame must permit forced unwind.
+    let start: unsafe extern "C" fn(*mut c_void) -> *mut c_void = unsafe {
+        std::mem::transmute(trampoline as unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void)
+    };
+    let rc =
+        unsafe { crate::pthread_abi::pthread_create(thr, std::ptr::null(), Some(start), ctx_ptr) };
+    if rc != 0 {
+        // Clean up on failure — reclaim the Box.
+        drop(unsafe { Box::from_raw(ctx_ptr as *mut TrampolineCtx) });
+    }
+    pthread_rc_to_thrd(rc)
+}
+
+// thrd_join — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_join` — wait for thread termination. Like pthread_join, this
+/// is a cancellation point; forced unwind must pass through the wrapper.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int {
+    if !tracked_optional_object_fits(res) {
+        return THRD_ERROR;
+    }
+
+    let caller = core::intrinsics::return_address() as usize;
+    let mut retval: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe { crate::pthread_abi::pthread_join_for_caller(thr, &mut retval, caller) };
+    if rc == 0 && !res.is_null() {
+        unsafe { *res = retval as usize as c_int };
+    }
+    pthread_rc_to_thrd(rc)
+}
+
+// thrd_detach — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_detach` — detach a thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn thrd_detach(thr: ThrdT) -> c_int {
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_detach(thr) })
+}
+
+// thrd_exit — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_exit` — terminate the calling thread, allowing the pthread
+/// backend to unwind through this frame and execute user cleanup handlers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn thrd_exit(res: c_int) -> ! {
+    unsafe { crate::pthread_abi::pthread_exit(res as usize as *mut c_void) }
+}
+
+// thrd_current — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_current` — return the calling thread's ID.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn thrd_current() -> ThrdT {
+    crate::pthread_abi::native_pthread_self()
+}
+
+// thrd_equal — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_equal` — compare two thread IDs.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn thrd_equal(lhs: ThrdT, rhs: ThrdT) -> c_int {
+    unsafe { crate::pthread_abi::pthread_equal(lhs, rhs) }
+}
+
+// thrd_sleep — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_sleep` — sleep for a duration.
+///
+/// Returns 0 on success, -1 if interrupted by a signal, or a negative value on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn thrd_sleep(
+    duration: *const libc::timespec,
+    remaining: *mut libc::timespec,
+) -> c_int {
+    if !tracked_required_object_fits(duration) || !tracked_optional_object_fits(remaining) {
+        return -2;
+    }
+    // Keep the window in this exported frame: delegating to the exported
+    // nanosleep would look like internal libc I/O to the caller-origin guard
+    // and suppress cancellation. The shared window also handles cancellation
+    // arriving during an owned native thread's sleep.
+    let result = unsafe {
+        crate::pthread_abi::cancellation_point_nanosleep(
+            duration as *const u8,
+            remaining as *mut u8,
+        )
+    };
+    match result {
+        0 => 0,
+        e => {
+            if e == libc::EINTR {
+                -1
+            } else {
+                -2
+            }
+        }
+    }
+}
+
+// thrd_yield — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `thrd_yield` — yield the processor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn thrd_yield() {
+    raw_syscall::sys_sched_yield();
+}
+
+// ===========================================================================
+// Mutex (mtx_*)
+// ===========================================================================
+
+// mtx_init — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `mtx_init` — create a mutex.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mtx_init(mtx: *mut MtxT, typ: c_int) -> c_int {
+    if !tracked_required_object_fits(mtx) {
+        return THRD_ERROR;
+    }
+    if typ & !(MTX_TIMED | MTX_RECURSIVE) != 0 {
+        return THRD_ERROR;
+    }
+
+    let mut attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { crate::pthread_abi::pthread_mutexattr_init(&mut attr) };
+    if rc != 0 {
+        return pthread_rc_to_thrd(rc);
+    }
+
+    // C11 MTX_RECURSIVE flag means recursive mutex.
+    if typ & MTX_RECURSIVE != 0 {
+        let rc = unsafe {
+            crate::pthread_abi::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE)
+        };
+        if rc != 0 {
+            unsafe { crate::pthread_abi::pthread_mutexattr_destroy(&mut attr) };
+            return pthread_rc_to_thrd(rc);
+        }
+    }
+
+    let rc = unsafe { crate::pthread_abi::pthread_mutex_init(mtx, &attr) };
+    unsafe { crate::pthread_abi::pthread_mutexattr_destroy(&mut attr) };
+    pthread_rc_to_thrd(rc)
+}
+
+// mtx_lock — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `mtx_lock` — lock a mutex.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mtx_lock(mtx: *mut MtxT) -> c_int {
+    if !tracked_required_object_fits(mtx) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_lock(mtx) })
+}
+
+// mtx_trylock — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `mtx_trylock` — try to lock a mutex without blocking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mtx_trylock(mtx: *mut MtxT) -> c_int {
+    // Strict mode trusts caller-owned object bounds, while the delegated pthread
+    // implementation still rejects null and misaligned mutex pointers. Hardened
+    // mode retains the tracked-allocation size check before any object access.
+    if !mtx_trylock_strict_fastpath() && !tracked_required_object_fits(mtx) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_trylock(mtx) })
+}
+
+// mtx_timedlock — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `mtx_timedlock` — lock a mutex with timeout.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mtx_timedlock(mtx: *mut MtxT, ts: *const libc::timespec) -> c_int {
+    if !tracked_required_object_fits(mtx) || !tracked_required_object_fits(ts) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_timedlock(mtx, ts) })
+}
+
+// mtx_unlock — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `mtx_unlock` — unlock a mutex.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mtx_unlock(mtx: *mut MtxT) -> c_int {
+    if !tracked_required_object_fits(mtx) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_unlock(mtx) })
+}
+
+// mtx_destroy — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `mtx_destroy` — destroy a mutex.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mtx_destroy(mtx: *mut MtxT) {
+    if tracked_required_object_fits(mtx) {
+        unsafe { crate::pthread_abi::pthread_mutex_destroy(mtx) };
+    }
+}
+
+// ===========================================================================
+// Condition variables (cnd_*)
+// ===========================================================================
+
+// cnd_init — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `cnd_init` — create a condition variable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cnd_init(cond: *mut CndT) -> c_int {
+    if !tracked_required_object_fits(cond) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_init(cond, std::ptr::null()) })
+}
+
+// cnd_signal — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `cnd_signal` — wake one thread waiting on a condition variable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cnd_signal(cond: *mut CndT) -> c_int {
+    if !tracked_required_object_fits(cond) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_signal(cond) })
+}
+
+// cnd_broadcast — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `cnd_broadcast` — wake all threads waiting on a condition variable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cnd_broadcast(cond: *mut CndT) -> c_int {
+    if !tracked_required_object_fits(cond) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_broadcast(cond) })
+}
+
+// cnd_wait — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `cnd_wait` — wait on a condition variable. A cancellation point, as
+/// in glibc (it is `pthread_cond_wait`), so the unwind passes through it.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
+    if !tracked_required_object_fits(cond) || !tracked_required_object_fits(mtx) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait_cp(cond, mtx) })
+}
+
+// cnd_timedwait — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `cnd_timedwait` — wait on a condition variable with timeout. A
+/// cancellation point, as `cnd_wait` is.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn cnd_timedwait(
+    cond: *mut CndT,
+    mtx: *mut MtxT,
+    ts: *const libc::timespec,
+) -> c_int {
+    if !tracked_required_object_fits(cond)
+        || !tracked_required_object_fits(mtx)
+        || !tracked_required_object_fits(ts)
+    {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait_cp(cond, mtx, ts) })
+}
+
+// cnd_destroy — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `cnd_destroy` — destroy a condition variable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cnd_destroy(cond: *mut CndT) {
+    if tracked_required_object_fits(cond) {
+        unsafe { crate::pthread_abi::pthread_cond_destroy(cond) };
+    }
+}
+
+// ===========================================================================
+// Thread-specific storage (tss_*)
+// ===========================================================================
+
+// tss_create — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `tss_create` — create thread-specific storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tss_create(key: *mut TssT, dtor: Option<TssDtorT>) -> c_int {
+    if !tracked_required_object_fits(key) {
+        return THRD_ERROR;
+    }
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_key_create(key, dtor) })
+}
+
+// tss_get — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `tss_get` — get thread-specific storage value.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn tss_get(key: TssT) -> *mut c_void {
+    unsafe { crate::pthread_abi::pthread_getspecific(key) }
+}
+
+// tss_set — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `tss_set` — set thread-specific storage value.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tss_set(key: TssT, val: *mut c_void) -> c_int {
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_setspecific(key, val) })
+}
+
+// tss_delete — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `tss_delete` — delete thread-specific storage key.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tss_delete(key: TssT) {
+    unsafe { crate::pthread_abi::pthread_key_delete(key) };
+}
+
+// ===========================================================================
+// call_once
+// ===========================================================================
+
+// call_once — Implemented
+// ---------------------------------------------------------------------------
+
+/// C11 `call_once` — execute a callable exactly once.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn call_once(
+    flag: *mut OnceFlag,
+    func: Option<unsafe extern "C-unwind" fn()>,
+) {
+    if !tracked_required_object_fits(flag) || func.is_none() {
+        return;
+    }
+    // C11 call_once returns void (unlike pthread_once which returns int).
+    unsafe { crate::pthread_abi::pthread_once(flag, func) };
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+// MOVED: the five assertions that lived here now run in
+// tests/c11threads_abi_test.rs (bd-xh08pf).
+//
+// This module is declared `#[cfg(not(test))]` in lib.rs, so the inline
+// `#[cfg(test)]` block was dead by construction and had never executed. Three
+// tests moved unchanged. The other two read module-private items
+// (`pthread_rc_to_thrd`, the `THRD_*`/`MTX_*` constants); rather than widen the
+// ABI surface to keep them compiling, they were rewritten to assert the same
+// contract through public entry points, which is what callers actually observe.
+// tests/no_dead_inline_tests.rs enforces that no new block appears here.

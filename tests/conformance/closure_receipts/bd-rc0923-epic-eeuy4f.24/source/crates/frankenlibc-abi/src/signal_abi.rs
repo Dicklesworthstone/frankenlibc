@@ -1,0 +1,2671 @@
+//! ABI layer for `<signal.h>` functions.
+//!
+//! Validates via `frankenlibc_core::signal` helpers, then calls `libc` for
+//! actual signal delivery.
+
+use std::cell::UnsafeCell;
+use std::ffi::{c_int, c_void};
+use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+
+use frankenlibc_core::errno;
+use frankenlibc_core::signal as signal_core;
+use frankenlibc_core::syscall;
+use frankenlibc_core::syscall as raw_syscall;
+use frankenlibc_membrane::hji_reachability::{HjiReachabilityController, ReachState};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
+
+use crate::errno_abi::set_abi_errno;
+use crate::runtime_policy;
+
+/// Highest signal number this ABI tracks per thread.
+///
+/// 64 = `SIGRTMAX` on Linux. It was 128, and the upper half was unreachable: the kernel
+/// cannot deliver a signal above `SIGRTMAX`, and `sigaction` on one already fails — a
+/// differential against live glibc confirms both reject 65, 100, 128 and 129 identically.
+///
+/// The cost of tracking them was not small. `DEFERRED_SIGNALS` is
+/// `[DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1]` and each slot embeds a whole
+/// `libc::ucontext_t` (with its 512-byte fpregs area) plus a `siginfo_t`, so the array was
+/// **142,416 bytes of per-thread TLS — 72% of this library's entire 197,688-byte `PT_TLS`
+/// block**, against glibc's 136 bytes total. Halving the bound removes ~70 KB per thread.
+///
+/// That block is what stands between fl and initial-exec TLS: attribution of hardened
+/// `strlen` puts `__tls_get_addr` at 336 Ir, 18.4% of the entry, and initial-exec would
+/// remove it — but a dlopen'd object using initial-exec must fit the loader's surplus
+/// static TLS, which 197 KB cannot. (Note `dlopen` itself works today precisely BECAUSE fl
+/// uses global-dynamic TLS; the blocker is the model switch, not `dlopen` as such.)
+///
+/// `take_deferred_signals` also scans `1..=MAX_TRACKED_SIGNAL` on every flush, so this
+/// halves that loop as well.
+const MAX_TRACKED_SIGNAL: usize = 64;
+const HJI_WARMUP_OBSERVATIONS: usize = 64;
+const SIGNAL_ABBREVS: [&[u8]; 32] = [
+    b"\0",       // 0 (not returned by sigabbrev_np)
+    b"HUP\0",    // 1
+    b"INT\0",    // 2
+    b"QUIT\0",   // 3
+    b"ILL\0",    // 4
+    b"TRAP\0",   // 5
+    b"ABRT\0",   // 6
+    b"BUS\0",    // 7
+    b"FPE\0",    // 8
+    b"KILL\0",   // 9
+    b"USR1\0",   // 10
+    b"SEGV\0",   // 11
+    b"USR2\0",   // 12
+    b"PIPE\0",   // 13
+    b"ALRM\0",   // 14
+    b"TERM\0",   // 15
+    b"STKFLT\0", // 16
+    b"CHLD\0",   // 17
+    b"CONT\0",   // 18
+    b"STOP\0",   // 19
+    b"TSTP\0",   // 20
+    b"TTIN\0",   // 21
+    b"TTOU\0",   // 22
+    b"URG\0",    // 23
+    b"XCPU\0",   // 24
+    b"XFSZ\0",   // 25
+    b"VTALRM\0", // 26
+    b"PROF\0",   // 27
+    b"WINCH\0",  // 28
+    b"POLL\0",   // 29
+    b"PWR\0",    // 30
+    b"SYS\0",    // 31
+];
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const SA_RESTORER_FLAG: c_int = 0x04000000;
+
+fn sigabbrev_bytes(sig: c_int) -> Option<&'static [u8]> {
+    if sig <= 0 {
+        return None;
+    }
+    SIGNAL_ABBREVS.get(sig as usize).copied()
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct KernelSigaction {
+    sa_handler: usize,
+    sa_flags: usize,
+    sa_restorer: usize,
+    sa_mask: libc::c_ulong,
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+impl KernelSigaction {
+    const fn zeroed() -> Self {
+        Self {
+            sa_handler: 0,
+            sa_flags: 0,
+            sa_restorer: 0,
+            sa_mask: 0,
+        }
+    }
+}
+
+// The x86_64 Linux signal restorer: the kernel returns here when a handler
+// returns, and it must issue a bare rt_sigreturn. Unwinders (libgcc, used by
+// glibc's backtrace) look up a return address's FDE at `ra - 1`; with the
+// restorer at a function boundary that lands in the PREVIOUS function's FDE,
+// and backtrace() from a signal handler stopped there -- or crashed, inside
+// a SIGSEGV handler (CPython's faulthandler). glibc's __restore_rt is
+// preceded by a nop for this reason. Here the nop has no FDE either, so the
+// unwinder falls back to recognizing the exact bytes at `ra`
+// (48 c7 c0 0f 00 00 00 0f 05: mov $15,%rax; syscall) and reads the
+// interrupted registers from the ucontext the kernel pushed.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+std::arch::global_asm!(
+    ".pushsection .text.frankenlibc_signal_restorer,\"ax\",@progbits",
+    ".p2align 4",
+    "nop",
+    ".globl frankenlibc_signal_restorer",
+    ".hidden frankenlibc_signal_restorer",
+    ".type frankenlibc_signal_restorer,@function",
+    "frankenlibc_signal_restorer:",
+    "mov rax, 15",
+    "syscall",
+    "ud2",
+    ".size frankenlibc_signal_restorer, . - frankenlibc_signal_restorer",
+    ".popsection",
+);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+unsafe extern "C" {
+    fn frankenlibc_signal_restorer();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn signal_restorer_trampoline_addr() -> usize {
+    frankenlibc_signal_restorer as *const () as usize
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn sigset_first_word(set: &libc::sigset_t) -> libc::c_ulong {
+    // SAFETY: rt_sigaction consumes only the first kernel-sized word.
+    unsafe { *(set as *const libc::sigset_t).cast::<libc::c_ulong>() }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn write_sigset_first_word(set: &mut libc::sigset_t, value: libc::c_ulong) {
+    // SAFETY: the caller zero-initializes the rest of the sigset_t storage.
+    unsafe {
+        *(set as *mut libc::sigset_t).cast::<libc::c_ulong>() = value;
+    }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
+    KernelSigaction {
+        sa_handler: act.sa_sigaction,
+        sa_flags: act.sa_flags as usize,
+        sa_restorer: act.sa_restorer.map_or(0usize, |restorer| restorer as usize),
+        sa_mask: sigset_first_word(&act.sa_mask),
+    }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn kernel_to_user_sigaction(act: &KernelSigaction) -> libc::sigaction {
+    let mut user = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    user.sa_sigaction = act.sa_handler;
+    user.sa_flags = act.sa_flags as c_int;
+    if act.sa_restorer != 0 {
+        // SAFETY: kernel-provided restorer address is surfaced verbatim.
+        user.sa_restorer =
+            unsafe { std::mem::transmute::<usize, Option<extern "C" fn()>>(act.sa_restorer) };
+    }
+    write_sigset_first_word(&mut user.sa_mask, act.sa_mask);
+    user
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SignalSafetyClassification {
+    Safe = 0,
+    DeferSignal = 1,
+    MaskRequired = 2,
+}
+
+impl SignalSafetyClassification {
+    const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Safe,
+            1 => Self::DeferSignal,
+            _ => Self::MaskRequired,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum SignalCriticalSectionKind {
+    MallocArenaLockAcquire = 0,
+    MallocFastbinMutation = 1,
+    MallocLargebinLink = 2,
+    PtrValidatorTlsCache = 3,
+    PtrValidatorArenaLookup = 4,
+    PtrValidatorFingerprint = 5,
+    PtrValidatorCanaryCheck = 6,
+    RuntimePolicyDecision = 7,
+    SetjmpContextTransfer = 8,
+    StdioRegistryFlush = 9,
+}
+
+impl SignalCriticalSectionKind {
+    const COUNT: usize = Self::StdioRegistryFlush as usize + 1;
+    const ALL: [Self; Self::COUNT] = [
+        Self::MallocArenaLockAcquire,
+        Self::MallocFastbinMutation,
+        Self::MallocLargebinLink,
+        Self::PtrValidatorTlsCache,
+        Self::PtrValidatorArenaLookup,
+        Self::PtrValidatorFingerprint,
+        Self::PtrValidatorCanaryCheck,
+        Self::RuntimePolicyDecision,
+        Self::SetjmpContextTransfer,
+        Self::StdioRegistryFlush,
+    ];
+
+    const fn risk_ppm(self) -> u32 {
+        match self {
+            Self::MallocArenaLockAcquire => 820_000,
+            Self::MallocFastbinMutation => 780_000,
+            Self::MallocLargebinLink => 860_000,
+            Self::PtrValidatorTlsCache => 180_000,
+            Self::PtrValidatorArenaLookup => 420_000,
+            Self::PtrValidatorFingerprint => 510_000,
+            Self::PtrValidatorCanaryCheck => 560_000,
+            Self::RuntimePolicyDecision => 320_000,
+            Self::SetjmpContextTransfer => 900_000,
+            Self::StdioRegistryFlush => 470_000,
+        }
+    }
+
+    const fn latency_ns(self) -> u64 {
+        match self {
+            Self::MallocArenaLockAcquire => 90_000,
+            Self::MallocFastbinMutation => 70_000,
+            Self::MallocLargebinLink => 120_000,
+            Self::PtrValidatorTlsCache => 400,
+            Self::PtrValidatorArenaLookup => 5_000,
+            Self::PtrValidatorFingerprint => 12_000,
+            Self::PtrValidatorCanaryCheck => 18_000,
+            Self::RuntimePolicyDecision => 2_000,
+            Self::SetjmpContextTransfer => 140_000,
+            Self::StdioRegistryFlush => 35_000,
+        }
+    }
+
+    const fn symbol(self) -> &'static str {
+        match self {
+            Self::MallocArenaLockAcquire => "malloc",
+            Self::MallocFastbinMutation => "free",
+            Self::MallocLargebinLink => "realloc",
+            Self::PtrValidatorTlsCache => "ptr_validator_tls",
+            Self::PtrValidatorArenaLookup => "ptr_validator_arena",
+            Self::PtrValidatorFingerprint => "ptr_validator_fingerprint",
+            Self::PtrValidatorCanaryCheck => "ptr_validator_canary",
+            Self::RuntimePolicyDecision => "runtime_policy",
+            Self::SetjmpContextTransfer => "siglongjmp",
+            Self::StdioRegistryFlush => "fflush",
+        }
+    }
+
+    const fn range_label(self) -> &'static str {
+        match self {
+            Self::MallocArenaLockAcquire => "malloc.arena_lock_acquire",
+            Self::MallocFastbinMutation => "malloc.fastbin_mutation",
+            Self::MallocLargebinLink => "malloc.largebin_link",
+            Self::PtrValidatorTlsCache => "membrane.tls_cache",
+            Self::PtrValidatorArenaLookup => "membrane.arena_lookup",
+            Self::PtrValidatorFingerprint => "membrane.fingerprint",
+            Self::PtrValidatorCanaryCheck => "membrane.canary_check",
+            Self::RuntimePolicyDecision => "runtime_policy.decide",
+            Self::SetjmpContextTransfer => "setjmp.context_transfer",
+            Self::StdioRegistryFlush => "stdio.registry_flush",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignalSafetyRange {
+    pub symbol: &'static str,
+    pub range_label: &'static str,
+    pub classification: SignalSafetyClassification,
+}
+
+pub const SIGNAL_SAFETY_MAP: [SignalSafetyRange; 10] = [
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::MallocArenaLockAcquire.symbol(),
+        range_label: SignalCriticalSectionKind::MallocArenaLockAcquire.range_label(),
+        classification: SignalSafetyClassification::MaskRequired,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::MallocFastbinMutation.symbol(),
+        range_label: SignalCriticalSectionKind::MallocFastbinMutation.range_label(),
+        classification: SignalSafetyClassification::DeferSignal,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::MallocLargebinLink.symbol(),
+        range_label: SignalCriticalSectionKind::MallocLargebinLink.range_label(),
+        classification: SignalSafetyClassification::MaskRequired,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::PtrValidatorTlsCache.symbol(),
+        range_label: SignalCriticalSectionKind::PtrValidatorTlsCache.range_label(),
+        classification: SignalSafetyClassification::Safe,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::PtrValidatorArenaLookup.symbol(),
+        range_label: SignalCriticalSectionKind::PtrValidatorArenaLookup.range_label(),
+        classification: SignalSafetyClassification::DeferSignal,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::PtrValidatorFingerprint.symbol(),
+        range_label: SignalCriticalSectionKind::PtrValidatorFingerprint.range_label(),
+        classification: SignalSafetyClassification::DeferSignal,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::PtrValidatorCanaryCheck.symbol(),
+        range_label: SignalCriticalSectionKind::PtrValidatorCanaryCheck.range_label(),
+        classification: SignalSafetyClassification::DeferSignal,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::RuntimePolicyDecision.symbol(),
+        range_label: SignalCriticalSectionKind::RuntimePolicyDecision.range_label(),
+        classification: SignalSafetyClassification::Safe,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::SetjmpContextTransfer.symbol(),
+        range_label: SignalCriticalSectionKind::SetjmpContextTransfer.range_label(),
+        classification: SignalSafetyClassification::MaskRequired,
+    },
+    SignalSafetyRange {
+        symbol: SignalCriticalSectionKind::StdioRegistryFlush.symbol(),
+        range_label: SignalCriticalSectionKind::StdioRegistryFlush.range_label(),
+        classification: SignalSafetyClassification::DeferSignal,
+    },
+];
+
+struct SignalHandlerSlot {
+    handler: AtomicUsize,
+    flags: AtomicUsize,
+}
+
+impl SignalHandlerSlot {
+    const fn new() -> Self {
+        Self {
+            handler: AtomicUsize::new(0),
+            flags: AtomicUsize::new(0),
+        }
+    }
+}
+
+const DEFERRED_SIGINFO_SLOTS: usize = 4;
+
+struct DeferredSiginfoSlot {
+    signum: AtomicU8,
+    siginfo: UnsafeCell<MaybeUninit<libc::siginfo_t>>,
+}
+
+impl DeferredSiginfoSlot {
+    const fn new() -> Self {
+        Self {
+            signum: AtomicU8::new(0),
+            siginfo: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+}
+
+struct DeferredSignalTable {
+    counts: [std::sync::atomic::AtomicU16; MAX_TRACKED_SIGNAL + 1],
+    siginfos: [DeferredSiginfoSlot; DEFERRED_SIGINFO_SLOTS],
+}
+
+impl DeferredSignalTable {
+    const fn new() -> Self {
+        Self {
+            counts: [const { std::sync::atomic::AtomicU16::new(0) }; MAX_TRACKED_SIGNAL + 1],
+            siginfos: [const { DeferredSiginfoSlot::new() }; DEFERRED_SIGINFO_SLOTS],
+        }
+    }
+}
+
+struct DeferredSignalReplay {
+    signum: c_int,
+    count: u32,
+    siginfo: Option<libc::siginfo_t>,
+}
+
+static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
+    [const { SignalHandlerSlot::new() }; MAX_TRACKED_SIGNAL + 1];
+
+#[cfg(feature = "owned-tls-cache")]
+struct SignalTls {
+    critical_depth: AtomicU32,
+    classification: AtomicU8,
+    deferred_signals: DeferredSignalTable,
+    deferred_pending: AtomicU64,
+}
+
+#[cfg(feature = "owned-tls-cache")]
+// SAFETY: `OwnedTlsCache` serializes slot lookup behind a mutex and returns
+// only the slot for the current kernel TID, preserving the previous per-thread
+// access discipline for these signal controller fields.
+unsafe impl Send for SignalTls {}
+
+#[cfg(feature = "owned-tls-cache")]
+fn new_signal_tls() -> SignalTls {
+    SignalTls {
+        critical_depth: AtomicU32::new(0),
+        classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
+        deferred_signals: DeferredSignalTable::new(),
+        deferred_pending: AtomicU64::new(0),
+    }
+}
+
+#[cfg(feature = "owned-tls-cache")]
+static SIGNAL_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<SignalTls> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_signal_tls);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
+    static SIGNAL_CLASSIFICATION: AtomicU8 =
+        const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
+    static DEFERRED_SIGNALS: DeferredSignalTable = const { DeferredSignalTable::new() };
+    static DEFERRED_PENDING: AtomicU64 = const { AtomicU64::new(0) };
+}
+
+fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.critical_depth))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SIGNAL_CRITICAL_DEPTH.with(f)
+    }
+}
+
+fn with_signal_classification<R>(f: impl FnOnce(&AtomicU8) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.classification))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SIGNAL_CLASSIFICATION.with(f)
+    }
+}
+
+fn with_deferred_signals<R>(f: impl FnOnce(&DeferredSignalTable) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_signals))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DEFERRED_SIGNALS.with(f)
+    }
+}
+
+/// Per-thread summary of `DEFERRED_SIGNALS`: bit `signum - 1` is set after a
+/// deferral bumps that signal's count, and cleared (all at once) before the
+/// counts are read. Every critical-section exit -- every hardened malloc and
+/// free -- flushes, and nearly always nothing is pending; scanning all 64
+/// slots to learn that was ~460 instructions, 18% of a hardened malloc+free
+/// (bd-rc0923-epic-eeuy4f.9).
+fn with_deferred_pending<R>(f: impl FnOnce(&AtomicU64) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_pending))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DEFERRED_PENDING.with(f)
+    }
+}
+
+static SIGNAL_DEFERRED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
+static SIGNAL_FLUSHED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
+static SIGNAL_IMMEDIATE_DELIVERIES: AtomicU64 = AtomicU64::new(0);
+
+fn signal_slot(signum: c_int) -> Option<&'static SignalHandlerSlot> {
+    if (1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
+        Some(&SIGNAL_HANDLER_SLOTS[signum as usize])
+    } else {
+        None
+    }
+}
+
+fn is_default_or_ignore_handler(handler: usize) -> bool {
+    handler == libc::SIG_DFL || handler == libc::SIG_IGN
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn signal_handler_trampoline_addr() -> usize {
+    signal_handler_trampoline as *const () as usize
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn signal_siginfo_trampoline_addr() -> usize {
+    signal_siginfo_trampoline as *const () as usize
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn is_signal_trampoline(handler: usize) -> bool {
+    handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
+}
+
+pub(crate) const NATIVE_SIGCANCEL: c_int = 32;
+static NATIVE_SIGCANCEL_INSTALLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static PREV_SIGCANCEL_HANDLER: AtomicUsize = AtomicUsize::new(0);
+static PREV_SIGCANCEL_FLAGS: AtomicUsize = AtomicUsize::new(0);
+
+struct CancelWindowSignalDepthGuard;
+
+impl CancelWindowSignalDepthGuard {
+    #[inline]
+    fn enter() -> Self {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        frankenlibc_core::syscall::note_signal_handler_for_cancel_window(true);
+        Self
+    }
+}
+
+impl Drop for CancelWindowSignalDepthGuard {
+    #[inline]
+    fn drop(&mut self) {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        frankenlibc_core::syscall::note_signal_handler_for_cancel_window(false);
+    }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+unsafe extern "C-unwind" fn native_sigcancel_trampoline(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    context: *mut c_void,
+) {
+    if !context.is_null() {
+        let (begin, insn, abort) = frankenlibc_core::syscall::native_cancel_syscall_pc_range();
+        #[cfg(target_arch = "x86_64")]
+        let pc = unsafe {
+            (*context.cast::<libc::ucontext_t>()).uc_mcontext.gregs[libc::REG_RIP as usize] as usize
+        };
+        #[cfg(target_arch = "aarch64")]
+        let pc = unsafe { (*context.cast::<libc::ucontext_t>()).uc_mcontext.pc as usize };
+
+        if (begin..insn).contains(&pc) {
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                (*context.cast::<libc::ucontext_t>()).uc_mcontext.gregs[libc::REG_RIP as usize] =
+                    abort as i64;
+            }
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                (*context.cast::<libc::ucontext_t>()).uc_mcontext.pc = abort as u64;
+            }
+            return;
+        }
+
+        if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+            // SAFETY: calling thread owns its live ThreadHandle; touch zero compiler TLS.
+            let enabled = unsafe { (*handle).cancel_state.load(Ordering::Relaxed) } == 0;
+            let async_type = unsafe { (*handle).cancel_type.load(Ordering::Relaxed) } == 1;
+            let exiting = unsafe { (*handle).exit_started.load(Ordering::Relaxed) } != 0;
+            if enabled
+                && async_type
+                && !exiting
+                && !crate::pthread_abi::address_is_inside_this_object(pc)
+            {
+                unsafe { crate::pthread_abi::pthread_testcancel() };
+            }
+            return;
+        }
+
+        if !crate::pthread_abi::host_cancellation_thread() {
+            if crate::pthread_abi::unregistered_native_async_cancel_ready()
+                && !crate::pthread_abi::address_is_inside_this_object(pc)
+            {
+                unsafe { crate::pthread_abi::pthread_testcancel() };
+            }
+            return;
+        }
+    } else if !crate::pthread_abi::host_cancellation_thread() {
+        return;
+    }
+
+    let prev = PREV_SIGCANCEL_HANDLER.load(Ordering::Acquire);
+    if prev != 0 && !is_default_or_ignore_handler(prev) {
+        let prev_flags = PREV_SIGCANCEL_FLAGS.load(Ordering::Relaxed);
+        if prev_flags & (libc::SA_SIGINFO as usize) != 0 {
+            let f: unsafe extern "C-unwind" fn(c_int, *mut libc::siginfo_t, *mut c_void) =
+                unsafe { std::mem::transmute(prev) };
+            unsafe { f(signum, info, context) };
+        } else {
+            let f: unsafe extern "C-unwind" fn(c_int) = unsafe { std::mem::transmute(prev) };
+            unsafe { f(signum) };
+        }
+    }
+}
+
+/// Lazily install the `!SA_RESTART | SA_SIGINFO` kernel handler on signal 32
+/// (`NATIVE_SIGCANCEL`) when native cancellation is active. Never called on
+/// pure hosted paths; chains to any preexisting host handler if mixed in tests.
+pub(crate) fn ensure_native_sigcancel_installed() {
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        if NATIVE_SIGCANCEL_INSTALLED.load(Ordering::Acquire) {
+            return;
+        }
+        let our_handler = native_sigcancel_trampoline as *const () as usize;
+        let mut current = KernelSigaction::zeroed();
+        if unsafe {
+            raw_syscall::sys_rt_sigaction(
+                NATIVE_SIGCANCEL,
+                std::ptr::null(),
+                std::ptr::from_mut(&mut current).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_ok()
+            && current.sa_handler != 0
+            && current.sa_handler != our_handler
+            && !is_default_or_ignore_handler(current.sa_handler)
+        {
+            PREV_SIGCANCEL_FLAGS.store(current.sa_flags, Ordering::Relaxed);
+            PREV_SIGCANCEL_HANDLER.store(current.sa_handler, Ordering::Release);
+        }
+
+        let mut act = KernelSigaction {
+            sa_handler: our_handler,
+            sa_flags: libc::SA_SIGINFO as usize,
+            sa_restorer: 0,
+            sa_mask: 0,
+        };
+        #[cfg(target_arch = "x86_64")]
+        {
+            act.sa_flags |= SA_RESTORER_FLAG as usize;
+            act.sa_restorer = signal_restorer_trampoline_addr();
+        }
+        if unsafe {
+            raw_syscall::sys_rt_sigaction(
+                NATIVE_SIGCANCEL,
+                std::ptr::from_ref(&act).cast(),
+                std::ptr::null_mut(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_ok()
+        {
+            NATIVE_SIGCANCEL_INSTALLED.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Child waits can use bounded native cancellation only without deliverable
+/// caught signals. The kernel must retain control of wait's SA_RESTART rules
+/// when any unblocked handler is installed, including preinstalled handlers.
+/// Called with signals blocked; `original_mask` is the wait's entry mask.
+pub(crate) fn supports_native_child_wait(original_mask: u64) -> bool {
+    for signum in 1..=64 {
+        if signal_core::glibc_reserved_signal(signum) {
+            continue;
+        }
+        if original_mask & (1u64 << (signum - 1)) != 0 {
+            continue;
+        }
+        let mut action = KernelSigaction::zeroed();
+        // SAFETY: query only, into owned kernel-layout storage. This does not
+        // resolve host symbols, allocate, or change any signal disposition.
+        if unsafe {
+            raw_syscall::sys_rt_sigaction(
+                signum,
+                std::ptr::null(),
+                std::ptr::from_mut(&mut action).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_err()
+            || !is_default_or_ignore_handler(action.sa_handler)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// The HJI reachability verdict for entering a `kind` critical section, not
+/// nested and nested (`depth > 1`): the state a freshly built
+/// `HjiReachabilityController` settles on after `HJI_WARMUP_OBSERVATIONS`
+/// observations of the kind's constant (risk, latency, adverse) inputs.
+///
+/// Those inputs are compile-time constants, so the verdicts are too; this
+/// table is pinned against the live controller by the signal_abi_test gate
+/// `hji_classification_table_matches_the_controller`, which fails if the
+/// controller or a kind's inputs change. Computing them at run time had two
+/// costs: every malloc and free ran 128 controller updates (~64% of hardened
+/// malloc+free's 4.3 us, bd-rc0923-epic-eeuy4f.9), and once cached per
+/// process, the first computation of a kind could come after the program
+/// capped RLIMIT_AS, where the controller's allocation aborted the process
+/// (gnulib test-printf-posix2, inside realloc); building all 20 before main
+/// instead cost every hardened process ~1.7M instructions.
+const HJI_CLASSIFICATION_TABLE: [[SignalSafetyClassification; 2];
+    SignalCriticalSectionKind::COUNT] = {
+    use SignalSafetyClassification::{MaskRequired as M, Safe as S};
+    // [not nested, nested], in SignalCriticalSectionKind order.
+    [
+        [M, M], // MallocArenaLockAcquire
+        [M, M], // MallocFastbinMutation
+        [M, M], // MallocLargebinLink
+        [S, S], // PtrValidatorTlsCache
+        [S, S], // PtrValidatorArenaLookup
+        [S, S], // PtrValidatorFingerprint
+        [S, S], // PtrValidatorCanaryCheck
+        [S, S], // RuntimePolicyDecision
+        [M, M], // SetjmpContextTransfer
+        [S, S], // StdioRegistryFlush
+    ]
+};
+
+fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
+    let depth = with_signal_critical_depth(|value| value.load(Ordering::Relaxed));
+    HJI_CLASSIFICATION_TABLE[kind as usize][usize::from(depth > 1)]
+}
+
+/// What the table pins: the live controller's verdict.
+fn compute_hji_classification(
+    kind: SignalCriticalSectionKind,
+    adverse: bool,
+) -> SignalSafetyClassification {
+    let mut controller = HjiReachabilityController::new();
+    for _ in 0..HJI_WARMUP_OBSERVATIONS {
+        controller.observe(kind.risk_ppm(), kind.latency_ns(), adverse);
+    }
+    match controller.state() {
+        ReachState::Safe => SignalSafetyClassification::Safe,
+        ReachState::Approaching | ReachState::Calibrating => {
+            SignalSafetyClassification::DeferSignal
+        }
+        ReachState::Breached => SignalSafetyClassification::MaskRequired,
+    }
+}
+
+/// Every (kind, nested) entry where [`HJI_CLASSIFICATION_TABLE`] disagrees
+/// with the live controller, as `kind:nested table=.. live=..` (empty when
+/// the table is current). For the signal_abi_test gate.
+#[doc(hidden)]
+pub fn hji_classification_table_mismatches_for_tests() -> Vec<String> {
+    let mut mismatches = Vec::new();
+    for kind in SignalCriticalSectionKind::ALL {
+        for adverse in [false, true] {
+            let table = HJI_CLASSIFICATION_TABLE[kind as usize][usize::from(adverse)];
+            let live = compute_hji_classification(kind, adverse);
+            if table != live {
+                mismatches.push(format!("{kind:?}:{adverse} table={table:?} live={live:?}"));
+            }
+        }
+    }
+    mismatches
+}
+
+fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
+    if !(1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
+        return;
+    }
+    let sig_u8 = signum as u8;
+    with_deferred_signals(|pending| {
+        if !info.is_null() {
+            let slot_idx = pending
+                .siginfos
+                .iter()
+                .position(|s| s.signum.load(Ordering::Relaxed) == sig_u8)
+                .or_else(|| {
+                    pending
+                        .siginfos
+                        .iter()
+                        .position(|s| s.signum.load(Ordering::Relaxed) == 0)
+                })
+                .unwrap_or((signum as usize) % DEFERRED_SIGINFO_SLOTS);
+            let slot = &pending.siginfos[slot_idx];
+            slot.signum.store(0, Ordering::Relaxed);
+            // SAFETY: the kernel owns `info` for the duration of the signal
+            // trampoline. We snapshot it into thread-local storage before
+            // returning so deferred replay can hand the user handler the
+            // original metadata instead of `NULL`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(info, (*slot.siginfo.get()).as_mut_ptr(), 1);
+            }
+            slot.signum.store(sig_u8, Ordering::Release);
+        } else {
+            for slot in &pending.siginfos {
+                if slot.signum.load(Ordering::Relaxed) == sig_u8 {
+                    slot.signum.store(0, Ordering::Relaxed);
+                }
+            }
+        }
+        // The interrupted frame's `ucontext_t` is deliberately NOT stored: a
+        // deferred replay runs later, outside that frame, so a handler that
+        // reads or edits `uc_mcontext` could not affect the frame it would
+        // "return to" anyway. Storing one per signal per thread cost ~70 KB of
+        // static TLS on every thread, which made host `pthread_create` reject
+        // ordinary small stacks with EINVAL (glibc carves static TLS out of the
+        // thread stack; node/libuv 32-64 KiB stacks failed under preload —
+        // bd-rc0923-epic-eeuy4f.9). Replay passes a fresh context instead.
+        let _ = context;
+        let _ = pending.counts[signum as usize].try_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |cur| Some(cur.saturating_add(1)),
+        );
+    });
+    // After the count: a flush that sees this bit is guaranteed to see the
+    // count; one that cleared the mask earlier leaves the bit for the next.
+    with_deferred_pending(|mask| mask.fetch_or(1u64 << (signum - 1), Ordering::Release));
+    SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+}
+
+fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
+    // Only this thread and its own signal handlers touch the mask and slots. A
+    // plain load first keeps the common nothing-pending exit free of a locked
+    // RMW; a handler that defers after the swap leaves its bit for the next
+    // flush, and one that ran before it is in `bits`.
+    let mut bits = with_deferred_pending(|mask| {
+        if mask.load(Ordering::Relaxed) == 0 {
+            0
+        } else {
+            mask.swap(0, Ordering::Acquire)
+        }
+    });
+    if bits == 0 {
+        return Vec::new();
+    }
+    with_deferred_signals(|pending| {
+        let mut out = Vec::new();
+        while bits != 0 {
+            let signum = bits.trailing_zeros() as c_int + 1;
+            bits &= bits - 1;
+            let count = u32::from(pending.counts[signum as usize].swap(0, Ordering::Relaxed));
+            if count != 0 {
+                let sig_u8 = signum as u8;
+                let mut siginfo = None;
+                for slot in &pending.siginfos {
+                    if slot
+                        .signum
+                        .compare_exchange(sig_u8, 0, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        // SAFETY: the slot was populated before `signum` was
+                        // published, and clearing `signum` gives the caller
+                        // exclusive ownership of this snapshot.
+                        siginfo = Some(unsafe { (*slot.siginfo.get()).assume_init_read() });
+                        break;
+                    }
+                }
+                out.push(DeferredSignalReplay {
+                    signum,
+                    count,
+                    siginfo,
+                });
+            }
+        }
+        out
+    })
+}
+
+unsafe fn dispatch_registered_handler(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    context: *mut c_void,
+) {
+    let Some(slot) = signal_slot(signum) else {
+        return;
+    };
+    let handler = slot.handler.load(Ordering::Relaxed);
+    if handler == 0 || is_default_or_ignore_handler(handler) {
+        return;
+    }
+    let flags = slot.flags.load(Ordering::Relaxed) as c_int;
+    if flags & libc::SA_SIGINFO != 0 {
+        // SAFETY: the handler pointer was installed by the caller via sigaction with SA_SIGINFO.
+        let handler: extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) =
+            unsafe { std::mem::transmute(handler) };
+        handler(signum, info, context);
+    } else {
+        // SAFETY: the handler pointer was installed by the caller via signal/sigaction.
+        let handler: extern "C" fn(c_int) = unsafe { std::mem::transmute(handler) };
+        handler(signum);
+    }
+}
+
+unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
+    // This must be the first operation: the classification/depth reads below
+    // resolve Rust TLS and that resolution may allocate on a thread's first
+    // signal. Mark signal context before any such allocation can occur.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
+    let classification = with_signal_classification(|value| {
+        SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
+    });
+    if with_signal_critical_depth(|value| value.load(Ordering::Relaxed)) > 0
+        && !matches!(classification, SignalSafetyClassification::Safe)
+    {
+        queue_deferred_signal(signum, std::ptr::null_mut(), std::ptr::null_mut());
+        return;
+    }
+    SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+    let _cancel_depth = CancelWindowSignalDepthGuard::enter();
+    // SAFETY: dispatch uses the stored user handler for this signal number.
+    unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
+}
+
+unsafe extern "C" fn signal_siginfo_trampoline(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    context: *mut c_void,
+) {
+    // Keep marker installation ahead of every TLS access, matching the simple
+    // trampoline above.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
+    let classification = with_signal_classification(|value| {
+        SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
+    });
+    if with_signal_critical_depth(|value| value.load(Ordering::Relaxed)) > 0
+        && !matches!(classification, SignalSafetyClassification::Safe)
+    {
+        queue_deferred_signal(signum, info, context);
+        return;
+    }
+    SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+    let _cancel_depth = CancelWindowSignalDepthGuard::enter();
+    // SAFETY: dispatch uses the stored user handler for this signal number.
+    unsafe { dispatch_registered_handler(signum, info, context) };
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn rewrite_old_sigaction(oldact_ref: &mut libc::sigaction, prev_handler: usize, prev_flags: usize) {
+    if is_signal_trampoline(oldact_ref.sa_sigaction) && prev_handler != 0 {
+        oldact_ref.sa_sigaction = prev_handler;
+        #[cfg(target_arch = "x86_64")]
+        {
+            let kernel_flags = oldact_ref.sa_flags;
+            oldact_ref.sa_flags = (prev_flags as c_int) | (kernel_flags & SA_RESTORER_FLAG);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            oldact_ref.sa_flags = prev_flags as c_int;
+        }
+    }
+}
+
+pub struct SignalCriticalSectionGuard {
+    active: bool,
+}
+
+impl Drop for SignalCriticalSectionGuard {
+    fn drop(&mut self) {
+        if self.active {
+            exit_signal_critical_section();
+            self.active = false;
+        }
+    }
+}
+
+#[must_use]
+pub fn enter_signal_critical_section(
+    kind: SignalCriticalSectionKind,
+) -> SignalCriticalSectionGuard {
+    with_signal_critical_depth(|depth| {
+        depth.fetch_add(1, Ordering::Relaxed);
+    });
+    let classification = handler_dispatch_classification(kind);
+    with_signal_classification(|value| value.store(classification.as_u8(), Ordering::Relaxed));
+    SignalCriticalSectionGuard { active: true }
+}
+
+pub fn exit_signal_critical_section() {
+    let should_flush = with_signal_critical_depth(|depth| {
+        let current = depth.load(Ordering::Relaxed);
+        if current == 0 {
+            return false;
+        }
+        let next = current - 1;
+        depth.store(next, Ordering::Relaxed);
+        next == 0
+    });
+    if !should_flush {
+        return;
+    }
+    with_signal_classification(|value| {
+        value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed)
+    });
+    let has_pending = with_deferred_pending(|mask| mask.load(Ordering::Relaxed) != 0);
+    if has_pending {
+        flush_deferred_signals_slow();
+    }
+}
+
+/// Replay signals deferred while this thread was inside a signal-critical
+/// section.
+///
+/// Kept `#[cold]` and `#[inline(never)]`: `replay_context` (`ucontext_t`,
+/// 968 bytes) + `siginfo_t` (128 bytes) live on this frame. When inlined into
+/// [`exit_signal_critical_section`], LLVM hoisted a 2,280-byte (`0x8e8`) stack
+/// allocation into `exit_signal_critical_section`'s prologue — paid on every
+/// hardened `malloc`/`calloc`/`free`, and enough to push a 32 KiB-stack thread
+/// (node/libuv) across its guard page during TLS setup.
+#[cold]
+#[inline(never)]
+fn flush_deferred_signals_slow() {
+    for deferred in take_deferred_signals() {
+        for _ in 0..deferred.count {
+            SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+            let mut siginfo = deferred.siginfo.as_ref().map(|snapshot| {
+                // SAFETY: `siginfo_t` is plain kernel data; copying the
+                // snapshot preserves the original deferred-delivery view for
+                // each replayed handler invocation.
+                unsafe { std::ptr::read(snapshot) }
+            });
+            // SA_SIGINFO handlers may rely on a non-null context; give them a
+            // replay-time one carrying the current signal mask (see the note
+            // in the deferral path on why the delivery frame is not stored).
+            // SAFETY: `ucontext_t` is plain data; all-zero is a valid value.
+            let mut replay_context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+            // SAFETY: querying the mask writes only into the provided sigset.
+            let _ = unsafe {
+                frankenlibc_core::syscall::sys_rt_sigprocmask(
+                    libc::SIG_BLOCK,
+                    std::ptr::null(),
+                    (&raw mut replay_context.uc_sigmask).cast::<u8>(),
+                    8,
+                )
+            };
+            // Replayed callbacks are user signal handlers too. They can call
+            // allocator and evidence entrypoints while the flush originates
+            // from a critical-section exit, so give them the same lock-free
+            // allocation/signal marker as immediate trampoline delivery.
+            let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
+            // SAFETY: deferred delivery replays the previously registered handler on the same thread.
+            unsafe {
+                dispatch_registered_handler(
+                    deferred.signum,
+                    siginfo
+                        .as_mut()
+                        .map_or(std::ptr::null_mut(), |info| info as *mut libc::siginfo_t),
+                    (&raw mut replay_context).cast::<c_void>(),
+                )
+            };
+        }
+    }
+}
+
+#[doc(hidden)]
+pub fn current_signal_classification_for_test() -> SignalSafetyClassification {
+    with_signal_classification(|value| {
+        SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
+    })
+}
+
+#[doc(hidden)]
+pub unsafe fn invoke_signal_handler_for_test(signum: c_int) {
+    let flags = signal_slot(signum)
+        .map(|slot| slot.flags.load(Ordering::Relaxed) as c_int)
+        .unwrap_or(0);
+    if flags & libc::SA_SIGINFO != 0 {
+        // SAFETY: this test hook exercises the same trampoline path used by the kernel.
+        unsafe { signal_siginfo_trampoline(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
+    } else {
+        // SAFETY: this test hook exercises the same trampoline path used by the kernel.
+        unsafe { signal_handler_trampoline(signum) };
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignalDeliveryMetrics {
+    pub deferred: u64,
+    pub flushed: u64,
+    pub immediate: u64,
+}
+
+#[doc(hidden)]
+pub fn reset_signal_delivery_metrics_for_test() {
+    SIGNAL_DEFERRED_DELIVERIES.store(0, Ordering::Relaxed);
+    SIGNAL_FLUSHED_DELIVERIES.store(0, Ordering::Relaxed);
+    SIGNAL_IMMEDIATE_DELIVERIES.store(0, Ordering::Relaxed);
+}
+
+#[doc(hidden)]
+pub fn signal_delivery_metrics_for_test() -> SignalDeliveryMetrics {
+    SignalDeliveryMetrics {
+        deferred: SIGNAL_DEFERRED_DELIVERIES.load(Ordering::Relaxed),
+        flushed: SIGNAL_FLUSHED_DELIVERIES.load(Ordering::Relaxed),
+        immediate: SIGNAL_IMMEDIATE_DELIVERIES.load(Ordering::Relaxed),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// signal
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn signal(signum: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
+    let sig_err = libc::SIG_ERR;
+
+    let (_mode, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return sig_err;
+    }
+
+    if !signal_core::catchable_signal(signum) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return sig_err;
+    }
+
+    let mut act = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    act.sa_sigaction = handler as libc::sighandler_t;
+    let mut oldact = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    let rc = unsafe { sigaction(signum, &act as *const libc::sigaction, &mut oldact) };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    if adverse {
+        sig_err
+    } else {
+        oldact.sa_sigaction
+    }
+}
+
+// ---------------------------------------------------------------------------
+// raise
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // POSIX: sig 0 is the null signal — tgkill performs only the permission
+    // and thread-existence checks, matching glibc's pthread_kill semantics.
+    if !signal_core::valid_signal(signum) && signum != 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // Linux/glibc `raise(3)` targets the calling thread, not an arbitrary
+    // process thread. Using tgkill keeps delivery synchronous enough for
+    // same-thread handler expectations and matches host behavior under the
+    // multithreaded test harness.
+    let pid = syscall::sys_getpid();
+    let tid = raw_syscall::sys_gettid();
+    let rc = match raw_syscall::sys_tgkill(pid, tid, signum) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// kill
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
+    if !signal_core::valid_signal(signum) && signum != 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::record_semantic_deny(
+            "kill",
+            ApiFamily::Signal,
+            0,
+            0,
+            false,
+            errno::EINVAL,
+            "invalid_signal_number",
+        );
+        if !frankenlibc_membrane::heal::runtime_log_signal_context().requires_signal_safe_path() {
+            runtime_policy::observe(ApiFamily::Signal, ValidationProfile::Fast, 5, true);
+        }
+        return -1;
+    }
+
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = match raw_syscall::sys_kill(pid, signum) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// killpg
+// ---------------------------------------------------------------------------
+
+/// Send a signal to a process group.
+///
+/// Equivalent to `kill(-pgrp, sig)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn killpg(pgrp: libc::pid_t, signum: c_int) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if pgrp < 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !signal_core::valid_signal(signum) && signum != 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // killpg(pgrp, sig) == kill(-pgrp, sig); for pgrp==0 means own process group.
+    let target = if pgrp == 0 { 0 } else { -pgrp };
+    let rc = match raw_syscall::sys_kill(target, signum) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// sigprocmask
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigprocmask(
+    how: c_int,
+    set: *const libc::sigset_t,
+    oldset: *mut libc::sigset_t,
+) -> c_int {
+    let _ = crate::malloc_abi::signal_handler_context_now();
+    let (_, decision) = runtime_policy::decide(ApiFamily::Signal, how as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+
+    // glibc deletes SIGCANCEL (32) and SIGSETXID (33) from every set handed to
+    // sigprocmask, so a caller can never block the signals its own thread
+    // cancellation and setxid broadcast ride on. Substitute a filtered copy only
+    // when one of those bits is actually set, matching glibc's own shape: the
+    // common call passes the caller's pointer straight through untouched.
+    //
+    // Only word 0 matters — `kernel_sigset_size` is 8, so that is all the kernel
+    // reads, and both reserved bits (31 and 32) live in it.
+    let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
+    let filtered: libc::c_ulong;
+    let mut effective_set = set as *const u8;
+    if !set.is_null() {
+        // SAFETY: a non-null `sigset_t` is at least one `c_ulong` wide, and
+        // glibc's `__sigprocmask` reads the caller's set here for the same
+        // membership test, so this dereferences no more than the incumbent.
+        let word0 = unsafe { *(set as *const libc::c_ulong) };
+        if word0 & reserved != 0 {
+            filtered = word0 & !reserved;
+            effective_set = (&raw const filtered).cast::<u8>();
+        }
+    }
+
+    let rc = match unsafe {
+        raw_syscall::sys_rt_sigprocmask(how, effective_set, oldset as *mut u8, kernel_sigset_size)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 8, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// pthread_sigmask (identical to sigprocmask on Linux)
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_sigmask(
+    how: c_int,
+    set: *const libc::sigset_t,
+    oldset: *mut libc::sigset_t,
+) -> c_int {
+    // pthread_sigmask operates on the same per-thread mask as sigprocmask, BUT
+    // uses the pthread return convention: 0 on success, a POSITIVE error number
+    // on failure, with the global errno left UNCHANGED (glibc returns the raw
+    // syscall errno, never -1). sigprocmask uses the -1/errno convention, so
+    // translate: capture the error number and restore the caller's errno.
+    let saved = unsafe { *crate::errno_abi::__errno_location() };
+    let rc = unsafe { sigprocmask(how, set, oldset) };
+    if rc == 0 {
+        0
+    } else {
+        let err = unsafe { *crate::errno_abi::__errno_location() };
+        unsafe { set_abi_errno(saved) };
+        err
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sigemptyset
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigemptyset(set: *mut libc::sigset_t) -> c_int {
+    if set.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // Zero the entire sigset_t structure.
+    unsafe {
+        std::ptr::write_bytes(set as *mut u8, 0, std::mem::size_of::<libc::sigset_t>());
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// sigfillset
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigfillset(set: *mut libc::sigset_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if set.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // Set all bits in the sigset_t structure, then clear the two signals glibc
+    // reserves internally (32 = SIGCANCEL -> bit 31, 33 = SIGSETXID -> bit 32 of
+    // word 0), matching glibc's sigfillset (word[0] == 0xfffffffe7fffffff).
+    unsafe {
+        std::ptr::write_bytes(set as *mut u8, 0xFF, std::mem::size_of::<libc::sigset_t>());
+        let words = set as *mut libc::c_ulong;
+        *words &= !((1u64 << 31) | (1u64 << 32)) as libc::c_ulong;
+    }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// sigaddset
+// ---------------------------------------------------------------------------
+
+#[inline(always)]
+unsafe fn sigaddset_valid(set: *mut libc::sigset_t, signum: c_int) {
+    // sigset_t is an array of unsigned longs. Signal N maps to:
+    //   word = (N-1) / bits_per_word, bit = (N-1) % bits_per_word
+    let idx = (signum - 1) as usize;
+    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
+    let word = idx / bits_per_word;
+    let bit = idx % bits_per_word;
+    let words = set as *mut libc::c_ulong;
+    // SAFETY: the caller established a non-null `sigset_t`, a signal in
+    // 1..=64, and excluded glibc's reserved signals 32 and 33.
+    unsafe { *words.add(word) |= 1usize.wrapping_shl(bit as u32) as libc::c_ulong };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    // Strict mode forces Signal decisions to Allow. Preserve every ABI input
+    // check and the exact bit update, but skip the runtime-kernel evidence
+    // round trip. Hardened mode retains the full policy path below.
+    if runtime_policy::strict_passthrough_active() {
+        if set.is_null()
+            || !signal_core::valid_signal(signum)
+            || signal_core::glibc_reserved_signal(signum)
+        {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        // SAFETY: null, range, and reserved-signal checks are complete above.
+        unsafe { sigaddset_valid(set, signum) };
+        return 0;
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // glibc rejects out-of-range signals AND the two reserved internal signals
+    // 32/33 (SIGCANCEL/SIGSETXID) with EINVAL.
+    if set.is_null()
+        || !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // SAFETY: null, range, and reserved-signal checks are complete above.
+    unsafe { sigaddset_valid(set, signum) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// sigdelset
+// ---------------------------------------------------------------------------
+
+#[inline(always)]
+unsafe fn sigdelset_valid(set: *mut libc::sigset_t, signum: c_int) {
+    let idx = (signum - 1) as usize;
+    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
+    let word = idx / bits_per_word;
+    let bit = idx % bits_per_word;
+    let words = set as *mut libc::c_ulong;
+    // SAFETY: the caller established a non-null `sigset_t`, a signal in
+    // 1..=64, and excluded glibc's reserved signals 32 and 33.
+    unsafe { *words.add(word) &= !(1usize.wrapping_shl(bit as u32) as libc::c_ulong) };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    // Strict mode forces Signal decisions to Allow. Preserve every ABI input
+    // check and the exact bit update, but skip the runtime-kernel evidence
+    // round trip. Hardened mode retains the full policy path below.
+    if runtime_policy::strict_passthrough_active() {
+        if set.is_null()
+            || !signal_core::valid_signal(signum)
+            || signal_core::glibc_reserved_signal(signum)
+        {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        // SAFETY: null, range, and reserved-signal checks are complete above.
+        unsafe { sigdelset_valid(set, signum) };
+        return 0;
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // glibc rejects out-of-range signals AND the two reserved internal signals
+    // 32/33 (SIGCANCEL/SIGSETXID) with EINVAL.
+    if set.is_null()
+        || !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // SAFETY: null, range, and reserved-signal checks are complete above.
+    unsafe { sigdelset_valid(set, signum) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// sigismember
+// ---------------------------------------------------------------------------
+
+#[inline(always)]
+unsafe fn sigismember_valid(set: *const libc::sigset_t, signum: c_int) -> c_int {
+    let idx = (signum - 1) as usize;
+    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
+    let word = idx / bits_per_word;
+    let bit = idx % bits_per_word;
+    let words = set as *const libc::c_ulong;
+    // SAFETY: the caller established a non-null `sigset_t` and a signal in
+    // 1..=64, so `word` selects storage within that object.
+    let val = unsafe { *words.add(word) };
+    i32::from((val & (1usize.wrapping_shl(bit as u32) as libc::c_ulong)) != 0)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) -> c_int {
+    // In strict mode `decide()` always overrides Signal decisions to Allow and
+    // `observe()` cannot change this pure lookup. Keep the explicit ABI input
+    // checks, but avoid the runtime-kernel evidence round trip. Hardened mode
+    // retains the full pointer-validation and observation path below.
+    if runtime_policy::strict_passthrough_active() {
+        if set.is_null() || !signal_core::valid_signal(signum) {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        // SAFETY: null and signal-range checks are complete above.
+        return unsafe { sigismember_valid(set, signum) };
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        false,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if set.is_null() || !signal_core::valid_signal(signum) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // SAFETY: null and signal-range checks are complete above.
+    let result = unsafe { sigismember_valid(set, signum) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    result
+}
+
+// ---------------------------------------------------------------------------
+// pause
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pause() -> c_int {
+    unsafe { pause_cp() }
+}
+
+/// Body of [`pause`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn pause_cp() -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Signal, 0, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // A handled signal produces EINTR even with SA_RESTART. Preserve other
+    // kernel errors instead of reporting a signal that never arrived.
+    let result = unsafe { crate::pthread_abi::cancellation_point_pause() };
+    unsafe { set_abi_errno(result.err().unwrap_or(errno::EINTR)) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
+    -1
+}
+
+// ---------------------------------------------------------------------------
+// sigsuspend
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
+    unsafe { sigsuspend_cp(mask) }
+}
+
+/// Body of [`sigsuspend`] and its aliases (see [`pause_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigsuspend_cp(mask: *const libc::sigset_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Signal, mask as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if mask.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    // A handled signal produces EINTR; unreadable non-null mask storage must
+    // preserve the kernel's EFAULT and leave the caller's original mask intact.
+    let result = unsafe {
+        crate::pthread_abi::cancellation_point_sigsuspend(mask.cast(), kernel_sigset_size)
+    };
+    unsafe { set_abi_errno(result.err().unwrap_or(errno::EINTR)) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
+    -1
+}
+
+// ---------------------------------------------------------------------------
+// sigaltstack
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigaltstack(
+    ss: *const libc::stack_t,
+    old_ss: *mut libc::stack_t,
+) -> c_int {
+    // Fast path for SS_DISABLE during cleanup: skip all TLS-touching policy code
+    // to avoid potential corruption during thread/process exit. This is critical
+    // for avoiding crashes when Rust's runtime disables the signal stack.
+    let is_disable = !ss.is_null() && unsafe { (*ss).ss_flags } & libc::SS_DISABLE != 0;
+    if is_disable {
+        return match unsafe { raw_syscall::sys_sigaltstack(ss as *const u8, old_ss as *mut u8) } {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Signal, ss as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = match unsafe { raw_syscall::sys_sigaltstack(ss as *const u8, old_ss as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    rc
+}
+
+/// glibc reserved-namespace alias for [`sigaltstack`].
+///
+/// # Safety
+///
+/// Same as [`sigaltstack`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigaltstack(
+    ss: *const libc::stack_t,
+    old_ss: *mut libc::stack_t,
+) -> c_int {
+    unsafe { sigaltstack(ss, old_ss) }
+}
+
+// ---------------------------------------------------------------------------
+// sigaction
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigaction(
+    signum: c_int,
+    act: *const libc::sigaction,
+    oldact: *mut libc::sigaction,
+) -> c_int {
+    let (_mode, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    // glibc: out-of-range signals and its internal SIGCANCEL/SIGSETXID
+    // (32, 33 -- which the host's threads really use in interpose mode) are
+    // EINVAL; SIGKILL/SIGSTOP only when a new action is given, so querying
+    // every handler from 1 to NSIG succeeds.
+    let uncatchable = signum == libc::SIGKILL || signum == libc::SIGSTOP;
+    if !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+        || (uncatchable && !act.is_null())
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    {
+        let _ = (act, oldact);
+        unsafe { set_abi_errno(errno::ENOSYS) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
+        -1
+    }
+
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
+        // not libc's userspace `sigset_t` size.
+        let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+        let mut kernel_act = KernelSigaction::zeroed();
+        let mut kernel_oldact = KernelSigaction::zeroed();
+        let kernel_act_ptr = if act.is_null() {
+            std::ptr::null()
+        } else {
+            // SAFETY: act was supplied by the caller for this syscall wrapper.
+            kernel_act = user_to_kernel_sigaction(unsafe { &*act });
+            let user_handler = kernel_act.sa_handler;
+            if !is_default_or_ignore_handler(user_handler) {
+                if kernel_act.sa_flags & libc::SA_SIGINFO as usize != 0 {
+                    kernel_act.sa_handler = signal_siginfo_trampoline_addr();
+                } else {
+                    kernel_act.sa_handler = signal_handler_trampoline_addr();
+                }
+                #[cfg(target_arch = "x86_64")]
+                if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0
+                    || kernel_act.sa_restorer == 0
+                {
+                    kernel_act.sa_flags |= SA_RESTORER_FLAG as usize;
+                    kernel_act.sa_restorer = signal_restorer_trampoline_addr();
+                }
+            }
+            &kernel_act as *const KernelSigaction
+        };
+        let kernel_oldact_ptr = if oldact.is_null() {
+            std::ptr::null_mut()
+        } else {
+            &mut kernel_oldact as *mut KernelSigaction
+        };
+        let (prev_handler, prev_flags) = signal_slot(signum)
+            .map(|slot| {
+                (
+                    slot.handler.load(Ordering::Relaxed),
+                    slot.flags.load(Ordering::Relaxed),
+                )
+            })
+            .unwrap_or((0, 0));
+
+        // Pre-compute the user handler+flags that the trampoline will dispatch
+        // before installing the kernel-level trampoline, so delivery cannot see
+        // a stale handler slot.
+        let (new_handler, new_flags) = if act.is_null() {
+            (prev_handler, prev_flags)
+        } else {
+            let raw_handler = kernel_act.sa_handler;
+            if is_default_or_ignore_handler(raw_handler) {
+                (raw_handler, kernel_act.sa_flags)
+            } else {
+                // SAFETY: act is non-null in this branch.
+                let user_act = unsafe { &*act };
+                (user_act.sa_sigaction, user_act.sa_flags as usize)
+            }
+        };
+        if !act.is_null()
+            && let Some(slot) = signal_slot(signum)
+        {
+            slot.handler.store(new_handler, Ordering::Relaxed);
+            slot.flags.store(new_flags, Ordering::Relaxed);
+        }
+
+        let rc = match unsafe {
+            raw_syscall::sys_rt_sigaction(
+                signum,
+                kernel_act_ptr as *const u8,
+                kernel_oldact_ptr as *mut u8,
+                kernel_sigset_size,
+            )
+        } {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+        let adverse = rc != 0;
+        if adverse {
+            // Roll back the slot to its pre-call state so the trampoline never
+            // dispatches a handler that the kernel never accepted.
+            if !act.is_null()
+                && let Some(slot) = signal_slot(signum)
+            {
+                slot.handler.store(prev_handler, Ordering::Relaxed);
+                slot.flags.store(prev_flags, Ordering::Relaxed);
+            }
+        } else if !oldact.is_null() {
+            let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
+            rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
+            // SAFETY: oldact is caller-provided writable storage.
+            unsafe { *oldact = user_oldact };
+        }
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+        rc
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Additional signal functions — native raw-syscall implementation
+// ---------------------------------------------------------------------------
+
+/// `sigpending` — get pending signals via `rt_sigpending` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
+    if set.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT as c_int) };
+        return -1;
+    }
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    // SAFETY: rt_sigpending writes to the provided set pointer.
+    match unsafe { raw_syscall::sys_rt_sigpending(set as *mut u8, kernel_sigset_size) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+/// `sigwait` — wait for a signal from `set` via `rt_sigtimedwait` syscall.
+/// Returns 0 on success with the signal number stored in `*sig`. A POSIX
+/// cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait_cp(set, sig) }
+}
+
+/// Body of [`sigwait`] and its aliases (see [`pause_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigwait_cp(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    if set.is_null() || sig.is_null() {
+        return libc::EINVAL;
+    }
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    // SAFETY: the cancellation adapter keeps waiting until a signal from `set`
+    // is pending. Native enabled waits use bounded kernel slices so a request
+    // arriving after entry can act; other paths retain an indefinite syscall.
+    //
+    // POSIX/glibc sigwait does NOT report EINTR to the caller: if the wait is
+    // interrupted by a signal not in `set` (a handler ran), the kernel returns
+    // EINTR but glibc restarts the wait. We mirror that by looping — sigwait's
+    // only defined error is EINVAL. (rt_sigtimedwait can return EINTR even when
+    // SA_RESTART is set, so this loop is required for parity.)
+    loop {
+        match unsafe {
+            crate::pthread_abi::cancellation_point_sigwait(set.cast(), kernel_sigset_size)
+        } {
+            Ok(signo) if signo > 0 => {
+                // SAFETY: sig is non-null; we checked above.
+                unsafe { *sig = signo };
+                return 0;
+            }
+            Ok(_) => continue,
+            Err(e) if e == libc::EINTR => continue,
+            Err(e) => return e,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy/obsolete signal functions — implemented natively
+// ---------------------------------------------------------------------------
+
+/// `siginterrupt` — allow signals to interrupt system calls (obsolete).
+/// Implemented natively via sigaction.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
+    let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
+    // SAFETY: get current action for the signal.
+    if let Err(e) = unsafe {
+        raw_syscall::sys_rt_sigaction(
+            sig,
+            std::ptr::null(),
+            &mut sa as *mut libc::sigaction as *mut u8,
+            std::mem::size_of::<libc::c_ulong>(),
+        )
+    } {
+        unsafe { set_abi_errno(e) };
+        return -1;
+    }
+    if flag != 0 {
+        sa.sa_flags &= !libc::SA_RESTART;
+    } else {
+        sa.sa_flags |= libc::SA_RESTART;
+    }
+    // SAFETY: set the modified action.
+    match unsafe {
+        raw_syscall::sys_rt_sigaction(
+            sig,
+            &sa as *const libc::sigaction as *const u8,
+            std::ptr::null_mut(),
+            std::mem::size_of::<libc::c_ulong>(),
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+/// `sighold` — add signal to process signal mask (XSI obsolete).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
+    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe { sigemptyset(&mut set) };
+    if unsafe { sigaddset(&mut set, sig) } != 0 {
+        return -1;
+    }
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    match unsafe {
+        raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_BLOCK,
+            &set as *const libc::sigset_t as *const u8,
+            std::ptr::null_mut(),
+            kernel_sigset_size,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+/// `sigrelse` — remove signal from process signal mask (XSI obsolete).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigrelse(sig: c_int) -> c_int {
+    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe { sigemptyset(&mut set) };
+    if unsafe { sigaddset(&mut set, sig) } != 0 {
+        return -1;
+    }
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    match unsafe {
+        raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_UNBLOCK,
+            &set as *const libc::sigset_t as *const u8,
+            std::ptr::null_mut(),
+            kernel_sigset_size,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+/// `sigignore` — set signal disposition to SIG_IGN (XSI obsolete).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
+    // The KERNEL accepts signals 32 and 33 in rt_sigaction — they are ordinary
+    // real-time signals as far as it is concerned. It is glibc that reserves
+    // them for SIGCANCEL/SIGSETXID, and its sigignore rejects them with EINVAL.
+    // Going straight to the syscall therefore SUCCEEDS where glibc fails, so
+    // the libc-level rule has to be applied here.
+    //
+    // sighold and sigrelse get this for free by routing through sigaddset,
+    // which already refuses reserved signals; sigignore builds a sigaction
+    // directly and so bypassed it. Measured on live glibc 2.42: all three
+    // return -1/EINVAL for 0, -1, 32, 33, 65 and 9999, and 0 for 64. bd-5zrf92.
+    if !signal_core::valid_signal(sig) || signal_core::glibc_reserved_signal(sig) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
+    sa.sa_sigaction = libc::SIG_IGN;
+    sa.sa_flags = 0;
+    unsafe { sigemptyset(&mut sa.sa_mask) };
+    match unsafe {
+        raw_syscall::sys_rt_sigaction(
+            sig,
+            &sa as *const libc::sigaction as *const u8,
+            std::ptr::null_mut(),
+            std::mem::size_of::<libc::c_ulong>(),
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+/// `psiginfo` — print signal info to stderr.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std::ffi::c_char) {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        info as usize,
+        std::mem::size_of::<libc::siginfo_t>(),
+        false,
+        info.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return;
+    }
+
+    if info.is_null() {
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return;
+    }
+    // Optional "<msg>: " prefix (omitted when msg is NULL or empty). Validate
+    // the caller pointer per fl's safety model; bail without printing if it is
+    // not NUL-terminated within the known bounds.
+    let mut out = String::new();
+    if !msg.is_null() {
+        let (msg_len, terminated) = unsafe {
+            crate::util::scan_c_string(msg, crate::malloc_abi::known_remaining(msg as usize))
+        };
+        if !terminated {
+            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+            return;
+        }
+        if msg_len > 0 {
+            let msg_bytes = unsafe { std::slice::from_raw_parts(msg as *const u8, msg_len) };
+            if let Ok(s) = std::str::from_utf8(msg_bytes) {
+                out.push_str(s);
+                out.push_str(": ");
+            }
+        }
+    }
+
+    out.push_str(&format_psiginfo_body(info));
+    unsafe { crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+}
+
+/// Format the signal-description portion of `psiginfo` output (everything after
+/// the optional "<msg>: " prefix, including the trailing newline), byte-exact
+/// vs glibc's `psiginfo` (stdio-common/psiginfo.c, C locale). bd-765exy.
+fn format_psiginfo_body(info: *const libc::siginfo_t) -> String {
+    // si_signo / si_code are public struct fields; the union payload
+    // (si_pid/si_uid/si_status/si_addr/si_band) lives at fixed offsets in the
+    // kernel `siginfo_t` layout, identical across the LP64 targets fl supports.
+    let signo = unsafe { (*info).si_signo };
+    let code = unsafe { (*info).si_code };
+    let base = info as *const u8;
+    let read_i32 = |off: usize| unsafe { (base.add(off) as *const i32).read_unaligned() };
+    let read_u32 = |off: usize| unsafe { (base.add(off) as *const u32).read_unaligned() };
+    let read_usize = |off: usize| unsafe { (base.add(off) as *const usize).read_unaligned() };
+    let read_i64 = |off: usize| unsafe { (base.add(off) as *const i64).read_unaligned() };
+
+    // Description from fl's __sys_siglist-equivalent table (signals 1..=31).
+    let desc: Option<&str> = {
+        let p = unsafe { sigdescr_np(signo) };
+        if p.is_null() {
+            None
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(p) }.to_str().ok()
+        }
+    };
+    let rtmin = libc::SIGRTMIN();
+    let rtmax = libc::SIGRTMAX();
+    // glibc's RT range is half-open: [SIGRTMIN, SIGRTMAX). SIGRTMAX itself
+    // prints as "Unknown signal N".
+    let is_rt = signo >= rtmin && signo < rtmax;
+
+    if desc.is_none() && !is_rt {
+        return format!("Unknown signal {signo}\n");
+    }
+
+    let mut out = String::new();
+    match desc {
+        Some(d) => out.push_str(&format!("{d} (")),
+        None => {
+            // Real-time signal: glibc names it relative to the nearer end.
+            let name = if signo - rtmin < rtmax - signo {
+                if signo == rtmin {
+                    "SIGRTMIN".to_string()
+                } else {
+                    format!("SIGRTMIN+{}", signo - rtmin)
+                }
+            } else if signo == rtmax {
+                "SIGRTMAX".to_string()
+            } else {
+                format!("SIGRTMAX-{}", rtmax - signo)
+            };
+            out.push_str(&name);
+            out.push_str(" (");
+        }
+    }
+
+    // si_code -> description: per-signal code tables (1-based) take priority,
+    // else the SI_* sender classes; otherwise the raw numeric code.
+    match psiginfo_code_string(signo, code) {
+        Some(s) => {
+            out.push_str(s);
+            out.push(' ');
+        }
+        None => out.push_str(&format!("{code} ")),
+    }
+
+    // Trailing payload + closing paren, by signal class.
+    if signo == libc::SIGILL
+        || signo == libc::SIGFPE
+        || signo == libc::SIGSEGV
+        || signo == libc::SIGBUS
+    {
+        // glibc prints the fault address with %p: "(nil)" for NULL.
+        let addr = read_usize(16);
+        let p = if addr == 0 {
+            "(nil)".to_string()
+        } else {
+            format!("0x{addr:x}")
+        };
+        out.push_str(&format!("[{p}])\n"));
+    } else if signo == libc::SIGCHLD {
+        let pid = read_i32(16) as i64;
+        let uid = read_u32(20) as i64;
+        let status = read_i32(24);
+        out.push_str(&format!("{pid} {status} {uid})\n"));
+    } else if signo == libc::SIGPOLL {
+        let band = read_i64(16);
+        out.push_str(&format!("{band})\n"));
+    } else {
+        let pid = read_i32(16) as i64;
+        let uid = read_u32(20) as i64;
+        out.push_str(&format!("{pid} {uid})\n"));
+    }
+    out
+}
+
+/// glibc's `si_code`-to-string mapping (stdio-common/psiginfo-data.h, C locale).
+/// The per-signal tables are 1-based on `si_code`; values outside them fall back
+/// to the SI_* sender classes. (The "Floating-poing" spelling is glibc's own.)
+fn psiginfo_code_string(signo: c_int, code: c_int) -> Option<&'static str> {
+    const ILL: &[&str] = &[
+        "Illegal opcode",
+        "Illegal operand",
+        "Illegal addressing mode",
+        "Illegal trap",
+        "Privileged opcode",
+        "Privileged register",
+        "Coprocessor error",
+        "Internal stack error",
+    ];
+    const FPE: &[&str] = &[
+        "Integer divide by zero",
+        "Integer overflow",
+        "Floating-point divide by zero",
+        "Floating-point overflow",
+        "Floating-point underflow",
+        "Floating-poing inexact result",
+        "Invalid floating-point operation",
+        "Subscript out of range",
+    ];
+    const SEGV: &[&str] = &[
+        "Address not mapped to object",
+        "Invalid permissions for mapped object",
+    ];
+    const BUS: &[&str] = &[
+        "Invalid address alignment",
+        "Nonexisting physical address",
+        "Object-specific hardware error",
+    ];
+    const TRAP: &[&str] = &["Process breakpoint", "Process trace trap"];
+    const CHLD: &[&str] = &[
+        "Child has exited",
+        "Child has terminated abnormally and did not create a core file",
+        "Child has terminated abnormally and created a core file",
+        "Traced child has trapped",
+        "Child has stopped",
+        "Stopped child has continued",
+    ];
+    const POLL: &[&str] = &[
+        "Data input available",
+        "Output buffers available",
+        "Input message available",
+        "I/O error",
+        "High priority input available",
+        "Device disconnected",
+    ];
+    let table: &[&str] = match signo {
+        libc::SIGILL => ILL,
+        libc::SIGFPE => FPE,
+        libc::SIGSEGV => SEGV,
+        libc::SIGBUS => BUS,
+        libc::SIGTRAP => TRAP,
+        libc::SIGCHLD => CHLD,
+        libc::SIGPOLL => POLL,
+        _ => &[],
+    };
+    if !table.is_empty() && code >= 1 && (code as usize) <= table.len() {
+        return Some(table[(code - 1) as usize]);
+    }
+    // SI_* sender classes (Linux values).
+    Some(match code {
+        0 => "Signal sent by kill()",                          // SI_USER
+        -1 => "Signal sent by sigqueue()",                     // SI_QUEUE
+        -2 => "Signal generated by the expiration of a timer", // SI_TIMER
+        -4 => "Signal generated by the completion of an asynchronous I/O request", // SI_ASYNCIO
+        -3 => "Signal generated by the arrival of a message on an empty message queue", // SI_MESGQ
+        -6 => "Signal sent by tkill()",                        // SI_TKILL
+        -60 => "Signal generated by the completion of an asynchronous name lookup request", // SI_ASYNCNL
+        -5 => "Signal generated by the completion of an I/O request", // SI_SIGIO
+        0x80 => "Signal sent by the kernel",                          // SI_KERNEL
+        _ => return None,
+    })
+}
+
+/// `sigabbrev_np` — return abbreviated signal name (GNU extension).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigabbrev_np(sig: c_int) -> *const std::ffi::c_char {
+    sigabbrev_bytes(sig).map_or(std::ptr::null(), |bytes| bytes.as_ptr().cast())
+}
+
+/// `sigdescr_np` — return signal description string (GNU extension).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigdescr_np(sig: c_int) -> *const std::ffi::c_char {
+    static DESCS: &[&[u8]] = &[
+        b"Unknown signal 0\0",         // 0
+        b"Hangup\0",                   // 1
+        b"Interrupt\0",                // 2
+        b"Quit\0",                     // 3
+        b"Illegal instruction\0",      // 4
+        b"Trace/breakpoint trap\0",    // 5
+        b"Aborted\0",                  // 6
+        b"Bus error\0",                // 7
+        b"Floating point exception\0", // 8
+        b"Killed\0",                   // 9
+        b"User defined signal 1\0",    // 10
+        b"Segmentation fault\0",       // 11
+        b"User defined signal 2\0",    // 12
+        b"Broken pipe\0",              // 13
+        b"Alarm clock\0",              // 14
+        b"Terminated\0",               // 15
+        b"Stack fault\0",              // 16
+        b"Child exited\0",             // 17
+        b"Continued\0",                // 18
+        b"Stopped (signal)\0",         // 19
+        b"Stopped\0",                  // 20
+        b"Stopped (tty input)\0",      // 21
+        b"Stopped (tty output)\0",     // 22
+        b"Urgent I/O condition\0",     // 23
+        b"CPU time limit exceeded\0",  // 24
+        b"File size limit exceeded\0", // 25
+        b"Virtual timer expired\0",    // 26
+        b"Profiling timer expired\0",  // 27
+        b"Window changed\0",           // 28
+        b"I/O possible\0",             // 29
+        b"Power failure\0",            // 30
+        b"Bad system call\0",          // 31
+    ];
+    if sig <= 0 || sig as usize >= DESCS.len() {
+        return std::ptr::null();
+    }
+    DESCS[sig as usize].as_ptr().cast()
+}
+
+/// `sigandset` — compute intersection of two signal sets (GNU).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigandset(
+    dest: *mut libc::sigset_t,
+    left: *const libc::sigset_t,
+    right: *const libc::sigset_t,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        dest as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        dest.is_null() || left.is_null() || right.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if dest.is_null() || left.is_null() || right.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // SAFETY: sigset_t on Linux is an array of unsigned longs.
+    unsafe {
+        let d = dest as *mut u64;
+        let l = left as *const u64;
+        let r = right as *const u64;
+        let n = std::mem::size_of::<libc::sigset_t>() / 8;
+        for i in 0..n {
+            *d.add(i) = *l.add(i) & *r.add(i);
+        }
+    }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    0
+}
+
+/// `sigorset` — compute union of two signal sets (GNU).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigorset(
+    dest: *mut libc::sigset_t,
+    left: *const libc::sigset_t,
+    right: *const libc::sigset_t,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        dest as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        dest.is_null() || left.is_null() || right.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if dest.is_null() || left.is_null() || right.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // SAFETY: sigset_t on Linux is an array of unsigned longs.
+    unsafe {
+        let d = dest as *mut u64;
+        let l = left as *const u64;
+        let r = right as *const u64;
+        let n = std::mem::size_of::<libc::sigset_t>() / 8;
+        for i in 0..n {
+            *d.add(i) = *l.add(i) | *r.add(i);
+        }
+    }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    0
+}
+
+/// `sigisemptyset` — test if signal set is empty (GNU).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigisemptyset(set: *const libc::sigset_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        false,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
+    if set.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+    // SAFETY: sigset_t on Linux is an array of unsigned longs.
+    unsafe {
+        let s = set as *const u64;
+        let n = std::mem::size_of::<libc::sigset_t>() / 8;
+        for i in 0..n {
+            if *s.add(i) != 0 {
+                runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+                return 0; // Not empty
+            }
+        }
+    }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    1 // Empty
+}
+
+/// `__libc_current_sigrtmin` — return minimum real-time signal number.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_current_sigrtmin() -> c_int {
+    // glibc on Linux/x86_64 exposes SIGRTMIN as 34 after reserving 32 and 33.
+    34
+}
+
+/// `__libc_current_sigrtmax` — return maximum real-time signal number.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_current_sigrtmax() -> c_int {
+    // SIGRTMAX on Linux x86_64 = 64.
+    64
+}
+
+// ---------------------------------------------------------------------------
+// raise_default_signal (NetBSD libutil graceful-shutdown helper)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `raise_default_signal(sig)` — atomically replace the
+/// current handler for `sig` with `SIG_DFL`, raise the signal,
+/// then restore the prior handler. Used by graceful-shutdown code
+/// so that, e.g., a child process catching `SIGTERM` for cleanup
+/// can re-raise it under the default action and have the parent
+/// shell see the correct WTERMSIG exit status.
+///
+/// Algorithm (matching NetBSD libutil's reference impl):
+/// 1. Block `sig` to make the swap-and-raise atomic.
+/// 2. Install `SIG_DFL` and remember the previous `sigaction`.
+/// 3. Raise `sig` (kernel queues it because we hold it blocked).
+/// 4. Restore the prior signal mask (delivers the queued signal
+///    under `SIG_DFL`; if the default is term/core the process
+///    exits and the rest of this function never runs).
+/// 5. If we got control back (default action was ignore, e.g.
+///    `SIGCHLD`), restore the saved handler.
+///
+/// Returns 0 on success, -1 with errno set on failure.
+///
+/// # Safety
+///
+/// `sig` must be a valid signal number. No additional caller
+/// obligations beyond those of `sigaction`/`sigprocmask`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn raise_default_signal(sig: c_int) -> c_int {
+    if !signal_core::valid_signal(sig) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Build a mask that contains just `sig`.
+    let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let mut omask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        sigemptyset(&mut mask);
+        sigaddset(&mut mask, sig);
+    }
+
+    // 1. Block sig.
+    if unsafe { sigprocmask(libc::SIG_BLOCK, &mask, &mut omask) } == -1 {
+        return -1;
+    }
+
+    // 2. Install SIG_DFL, remembering the old handler.
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
+    unsafe { sigemptyset(&mut act.sa_mask) };
+    act.sa_flags = 0;
+    act.sa_sigaction = libc::SIG_DFL;
+
+    let mut error: c_int = 0;
+    if unsafe { sigaction(sig, &act, &mut oact) } == -1 {
+        error = -1;
+        // Fall through to restore the mask before returning.
+    } else {
+        // 3. Raise the signal (still blocked, so kernel queues it).
+        if unsafe { raise(sig) } != 0 {
+            error = -1;
+        }
+    }
+
+    // 4. Restore mask. If unblocking the queued sig terminates the
+    //    process under SIG_DFL we never reach the next line.
+    if unsafe { sigprocmask(libc::SIG_SETMASK, &omask, std::ptr::null_mut()) } == -1 && error == 0 {
+        error = -1;
+    }
+
+    // 5. Restore the saved handler. (Reached only if SIG_DFL was
+    //    "ignore" for this sig.)
+    if unsafe { sigaction(sig, &oact, std::ptr::null_mut()) } == -1 && error == 0 {
+        error = -1;
+    }
+
+    error
+}
+
+// ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __sigprocmask / __sigwait / __pause / __raise / __kill / __killpg /
+// __sigignore / __sighold / __sigrelse
+// ---------------------------------------------------------------------------
+
+/// glibc reserved-namespace alias for [`sigprocmask`].
+///
+/// # Safety
+///
+/// Same as [`sigprocmask`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigprocmask(
+    how: c_int,
+    set: *const libc::sigset_t,
+    oldset: *mut libc::sigset_t,
+) -> c_int {
+    unsafe { sigprocmask(how, set, oldset) }
+}
+
+/// glibc reserved-namespace alias for [`sigwait`].
+///
+/// # Safety
+///
+/// Same as [`sigwait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait_cp(set, sig) }
+}
+
+/// glibc reserved-namespace alias for [`pause`].
+///
+/// # Safety
+///
+/// Same as [`pause`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pause() -> c_int {
+    unsafe { pause_cp() }
+}
+
+/// glibc reserved-namespace alias for [`raise`].
+///
+/// # Safety
+///
+/// Same as [`raise`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __raise(signum: c_int) -> c_int {
+    unsafe { raise(signum) }
+}
+
+/// glibc reserved-namespace alias for [`kill`].
+///
+/// # Safety
+///
+/// Same as [`kill`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __kill(pid: libc::pid_t, signum: c_int) -> c_int {
+    unsafe { kill(pid, signum) }
+}
+
+/// glibc reserved-namespace alias for [`killpg`].
+///
+/// # Safety
+///
+/// Same as [`killpg`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __killpg(pgrp: libc::pid_t, signum: c_int) -> c_int {
+    unsafe { killpg(pgrp, signum) }
+}
+
+/// glibc reserved-namespace alias for [`sigignore`].
+///
+/// # Safety
+///
+/// Same as [`sigignore`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigignore(sig: c_int) -> c_int {
+    unsafe { sigignore(sig) }
+}
+
+/// glibc reserved-namespace alias for [`sighold`].
+///
+/// # Safety
+///
+/// Same as [`sighold`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sighold(sig: c_int) -> c_int {
+    unsafe { sighold(sig) }
+}
+
+/// glibc reserved-namespace alias for [`sigrelse`].
+///
+/// # Safety
+///
+/// Same as [`sigrelse`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigrelse(sig: c_int) -> c_int {
+    unsafe { sigrelse(sig) }
+}

@@ -32355,6 +32355,185 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.24",
+      "title": "[RC-0923] pthread_cancel never acts in fl cancellation points (blocked read/sleep/cond_wait hang) and C cleanup-handler registration is a no-op stub",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "abi",
+        "pthread",
+        "rc-20260923",
+        "reality-check"
+      ],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "RIP-guarded __fl_syscall_cancel_arch cancellation windows, native SIGCANCEL (signal 32) trampoline, owned-startup main-thread unwind boundary + last-thread exit(0), shared-TCB host allocator/TLS safety, thrd_join caller-origin preservation, and CAS-synchronized static mutex/condvar adoption"
+        },
+        "e2e_scripts": {
+          "required": true,
+          "scope": "bash scripts/check_pthread_cancel_native_parity.sh"
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "fixture_pthread_cancel, system-signals (6 modes), fixture_cancel_forced_unwind (+ 7 /proc/self/task/<tid>/syscall probes), fixture_c11_thread_cancel_lifecycle (15 cases), and fixture_stdio_cancel (180 C/C++ narrow+wide cases) across hosted + native thread backends and strict + hardened modes"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "complete",
+          "artifacts": "scripts/check_pthread_cancel_native_parity.sh"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "scripts/check_pthread_cancel_native_parity.sh"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 5,
+        "complete": 5,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.24",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test pthread_cancel_native_parity_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [
+          "bash scripts/check_pthread_cancel_native_parity.sh"
+        ],
+        "expected_assertions": [
+          "Hosted and native-thread (FRANKENLIBC_THREAD_NATIVE=1) backends interrupt in-flight blocking syscalls via RIP-guarded __fl_syscall_cancel_arch + signal 32 without post-commit double-delivery, unwind C cleanup handlers and C++ abi::__forced_unwind / catch (...), unwind main cleanly with last-thread exit(0), preserve thrd_join caller-origin, and match host glibc stdout/stderr/exit across strict + hardened modes"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-core/src/syscall/raw.rs",
+          "crates/frankenlibc-core/src/pthread/tls.rs",
+          "crates/frankenlibc-core/src/pthread/thread.rs",
+          "crates/frankenlibc-abi/src/pthread_abi.rs",
+          "crates/frankenlibc-abi/src/signal_abi.rs",
+          "crates/frankenlibc-abi/src/startup_abi.rs",
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-abi/src/c11threads_abi.rs",
+          "scripts/check_pthread_cancel_native_parity.sh",
+          "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified on default release libfrankenlibc_abi.so SHA256 e013293ad2a3a071fa15024d8df7b00f66a85bfeb548e8474547365d72646718 and --features owned-tls-cache release build.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Deferred and asynchronous pthread_cancel across hosted and native-thread backends, RIP-guarded __fl_syscall_cancel_arch blocking-syscall interruption, owned-startup main-thread unwind boundary + last-thread exit(0), shared-TCB host allocator/TLS safety, thrd_join caller-origin preservation, and CAS-synchronized static mutex/condvar adoption",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-core/src/syscall/raw.rs",
+            "crates/frankenlibc-core/src/pthread/tls.rs",
+            "crates/frankenlibc-core/src/pthread/thread.rs",
+            "crates/frankenlibc-abi/src/pthread_abi.rs",
+            "crates/frankenlibc-abi/src/signal_abi.rs",
+            "crates/frankenlibc-abi/src/startup_abi.rs",
+            "crates/frankenlibc-abi/src/malloc_abi.rs",
+            "crates/frankenlibc-abi/src/c11threads_abi.rs",
+            "scripts/check_pthread_cancel_native_parity.sh"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs"
+          ],
+          "source": {
+            "commit": "41e0ba7b5c1243543261db5d03c599282993203e",
+            "files": {
+              "crates/frankenlibc-core/src/syscall/raw.rs": "d9c4eac191f3203676964f200a642b3333288c10c80cc76138397f216d1ef342",
+              "crates/frankenlibc-core/src/pthread/tls.rs": "354e33de529dbd43a95dec2f7c6ab9fdaabd2ada0c8c234ca5c9bcc035e5d76f",
+              "crates/frankenlibc-core/src/pthread/thread.rs": "de0907000d6be782faa598702c03043f550c0edaafa029595aebbf478c488a04",
+              "crates/frankenlibc-abi/src/pthread_abi.rs": "f9166103606f18ddfb6e2a9f8776be48ab3cebf2ac9f139ff410de4fada9f283",
+              "crates/frankenlibc-abi/src/signal_abi.rs": "45c7200b989adf3ced49f5ba5f5afef68a88fc87fc3da40f7927f60d57ef999f",
+              "crates/frankenlibc-abi/src/startup_abi.rs": "b4f5d34977164ce8ef1550694b664ef866f77e6858b131cc913b92236c726ea9",
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "62f9b274da22347294ac70805525f593e0e6377b2d61c0c0b014b07d67a27172",
+              "crates/frankenlibc-abi/src/c11threads_abi.rs": "6be2b79e4ba14be5bf78f43679a93c6df1e82b5910ff5cd9c37214c28086dec9",
+              "scripts/check_pthread_cancel_native_parity.sh": "9de2c768a7c0d10857a664c0e67d3e3270a895be9e9fe1edfcd4c3bb803a877b",
+              "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs": "2d6c26434cf24ec895c01f9ac7270fa298f3fd474a5e53e25ce640a09223fce8"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-17T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/pthread_cancel_native_parity_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/pthread_cancel_native_parity_test.rs",
+              "-o",
+              "target/closure_bins/pthread_cancel_native_parity_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/pthread_cancel_native_parity_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "native_syscall_cancellation_and_startup_unwind_contracts_are_wired",
+              "pthread_cancel_native_and_hosted_e2e_parity_gate_passes"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {
@@ -32362,6 +32541,7 @@
     "bd-reality-202609-lx578q.6.5": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.6.5/receipt.json",
     "bd-rc0923-epic-eeuy4f.47": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json",
     "bd-reality-202609-lx578q.4": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4-r3/receipt.json",
-    "bd-rc0923-epic-eeuy4f.13": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json"
+    "bd-rc0923-epic-eeuy4f.13": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json",
+    "bd-rc0923-epic-eeuy4f.24": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
   }
 }

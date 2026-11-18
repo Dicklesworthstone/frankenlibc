@@ -1,0 +1,7 @@
+
+running 2 tests
+test native_syscall_cancellation_and_startup_unwind_contracts_are_wired ... ok
+test pthread_cancel_native_and_hosted_e2e_parity_gate_passes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 54.05s
+
