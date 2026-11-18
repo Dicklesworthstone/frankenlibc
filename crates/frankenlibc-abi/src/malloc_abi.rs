@@ -416,11 +416,11 @@ static REENTRY_SLOTS_SLAB: DemandSlab<11> = DemandSlab::new(REENTRY_SLOTS_BYTES)
 static BOOTSTRAP_REENTRY_SLOT: AllocatorReentrySlot = AllocatorReentrySlot::new();
 static BOOTSTRAP_SLOT_CLAIMED: AtomicBool = AtomicBool::new(false);
 
-const KEY_SLOT_DIR_LEN: usize = 4096;
+const KEY_SLOT_DIR_LEN: usize = 512;
 /// Direct-mapped `(thread_key -> *const AllocatorReentrySlot)` hint directory
-/// (`32 KiB` `.bss`, 0 `.tbss` / 0 dynamic-TLS relocations). Multiplication-free
-/// `((key >> 12) + (key >> 21)) & 4095` is a bijection across 4,096 consecutive
-/// `0x801000`-strided (`gcd(2053, 4096) == 1`) and `0x200000`-strided (`gcd(513, 4096) == 1`)
+/// (`4 KiB` single page `.bss`, 0 `.tbss` / 0 dynamic-TLS relocations). Multiplication-free
+/// `((key >> 12) + (key >> 21)) & 511` is a bijection across 512 consecutive
+/// `0x801000`-strided (`gcd(2053, 512) == 1`) and `0x200000`-strided (`gcd(513, 512) == 1`)
 /// pthread TCBs, and every non-zero entry points to an immortal `KEY_CLAIMED_TID`
 /// slot verified by `slot.thread_key == key` (`key != 0`).
 static KEY_SLOT_DIR: [AtomicUsize; KEY_SLOT_DIR_LEN] =
@@ -557,12 +557,7 @@ fn record_key_slot_dir(key: usize, slot: &'static AllocatorReentrySlot) {
         return;
     }
     let encoded = slot as *const AllocatorReentrySlot as usize;
-    let _ = KEY_SLOT_DIR[key_slot_dir_index(key)].compare_exchange(
-        0,
-        encoded,
-        Ordering::Release,
-        Ordering::Relaxed,
-    );
+    KEY_SLOT_DIR[key_slot_dir_index(key)].store(encoded, Ordering::Release);
 }
 
 #[cold]
@@ -4934,19 +4929,8 @@ unsafe fn record_strict_fast_alloc_stats_and_finish(
 ) -> *mut c_void {
     if hot_mode == STRICT_HOT_MODE_ST {
         // SAFETY: caller holds `slot.allocator_depth` 0->1 and `STRICT_HOT_MODE_ST`
-        // implies `!MULTI_THREADED`.
-        let pending = unsafe { &mut (*slot.segment_local.get()).stats };
-        if !slot.st_stats_dirty.load(Ordering::Relaxed) {
-            slot.st_stats_dirty.store(true, Ordering::Relaxed);
-        }
-        pending.allocation_events = pending.allocation_events.saturating_add(1);
-        pending.total_allocated = pending.total_allocated.saturating_add(req);
-        pending.active_allocations = pending.active_allocations.saturating_add(1);
-        pending.live_bytes = pending.live_bytes.saturating_add(req);
-        pending.peak_usage = pending.peak_usage.max(pending.live_bytes);
-        pending.per_size_class[class_index] = pending.per_size_class[class_index].saturating_add(1);
-        slot.allocator_depth.store(0, Ordering::Release);
-        return user_base as *mut c_void;
+        // implies `!MULTI_THREADED`; tail-called out-of-line so MT stays compact on fall-through.
+        return unsafe { finish_alloc_st_fast(slot, user_base, req, class_index) };
     }
     if slot.st_stats_dirty.load(Ordering::Relaxed) {
         // SAFETY: caller holds `slot.allocator_depth` 0->1; helper adopts and drops guard.
@@ -4969,6 +4953,29 @@ unsafe fn record_strict_fast_alloc_stats_and_finish(
         // SAFETY: caller holds `slot.allocator_depth` 0->1; helper adopts and drops guard.
         return unsafe { finish_alloc_mt_fold(slot, user_base) };
     }
+    slot.allocator_depth.store(0, Ordering::Release);
+    user_base as *mut c_void
+}
+
+#[inline(never)]
+unsafe extern "C" fn finish_alloc_st_fast(
+    slot_ptr: *const AllocatorReentrySlot,
+    user_base: usize,
+    req: usize,
+    class_index: usize,
+) -> *mut c_void {
+    // SAFETY: caller holds `slot.allocator_depth` 0->1 and `STRICT_HOT_MODE_ST` implies `!MULTI_THREADED`.
+    let slot = unsafe { &*slot_ptr };
+    let pending = unsafe { &mut (*slot.segment_local.get()).stats };
+    if !slot.st_stats_dirty.load(Ordering::Relaxed) {
+        slot.st_stats_dirty.store(true, Ordering::Relaxed);
+    }
+    pending.allocation_events = pending.allocation_events.saturating_add(1);
+    pending.total_allocated = pending.total_allocated.saturating_add(req);
+    pending.active_allocations = pending.active_allocations.saturating_add(1);
+    pending.live_bytes = pending.live_bytes.saturating_add(req);
+    pending.peak_usage = pending.peak_usage.max(pending.live_bytes);
+    pending.per_size_class[class_index] = pending.per_size_class[class_index].saturating_add(1);
     slot.allocator_depth.store(0, Ordering::Release);
     user_base as *mut c_void
 }
@@ -5014,25 +5021,8 @@ unsafe fn record_strict_fast_free_stats_and_finish(
     debug_assert!(class_index < MALLOC_STATS_BIN_COUNT);
     if hot_mode == STRICT_HOT_MODE_ST {
         // SAFETY: caller holds `slot.allocator_depth` 0->1 and `STRICT_HOT_MODE_ST`
-        // implies `!MULTI_THREADED`.
-        let pending = unsafe { &mut (*slot.segment_local.get()).stats };
-        if pending.active_allocations > 0
-            && pending.live_bytes >= size
-            && pending.per_size_class[class_index] > 0
-        {
-            if !slot.st_stats_dirty.load(Ordering::Relaxed) {
-                slot.st_stats_dirty.store(true, Ordering::Relaxed);
-            }
-            pending.free_events = pending.free_events.saturating_add(1);
-            pending.total_freed = pending.total_freed.saturating_add(size);
-            pending.active_allocations -= 1;
-            pending.live_bytes -= size;
-            pending.per_size_class[class_index] -= 1;
-            slot.allocator_depth.store(0, Ordering::Release);
-            return;
-        }
-        // SAFETY: caller holds `slot.allocator_depth` 0->1; helper adopts and drops guard.
-        unsafe { finish_free_st_overflow(slot, size, class_index) };
+        // implies `!MULTI_THREADED`; tail-called out-of-line so MT stays compact on fall-through.
+        unsafe { finish_free_st_fast(slot, size, class_index) };
         return;
     }
     if slot.st_stats_dirty.load(Ordering::Relaxed) {
@@ -5059,6 +5049,34 @@ unsafe fn record_strict_fast_free_stats_and_finish(
         return;
     }
     slot.allocator_depth.store(0, Ordering::Release);
+}
+
+#[inline(never)]
+unsafe extern "C" fn finish_free_st_fast(
+    slot_ptr: *const AllocatorReentrySlot,
+    size: usize,
+    class_index: usize,
+) {
+    // SAFETY: caller holds `slot.allocator_depth` 0->1 and `STRICT_HOT_MODE_ST` implies `!MULTI_THREADED`.
+    let slot = unsafe { &*slot_ptr };
+    let pending = unsafe { &mut (*slot.segment_local.get()).stats };
+    if pending.active_allocations > 0
+        && pending.live_bytes >= size
+        && pending.per_size_class[class_index] > 0
+    {
+        if !slot.st_stats_dirty.load(Ordering::Relaxed) {
+            slot.st_stats_dirty.store(true, Ordering::Relaxed);
+        }
+        pending.free_events = pending.free_events.saturating_add(1);
+        pending.total_freed = pending.total_freed.saturating_add(size);
+        pending.active_allocations -= 1;
+        pending.live_bytes -= size;
+        pending.per_size_class[class_index] -= 1;
+        slot.allocator_depth.store(0, Ordering::Release);
+        return;
+    }
+    // SAFETY: caller holds `slot.allocator_depth` 0->1; helper adopts and drops guard.
+    unsafe { finish_free_st_overflow(slot, size, class_index) };
 }
 
 #[cold]
@@ -6331,6 +6349,14 @@ pub(crate) fn clear_current_thread_exit_slot_state() {
     if let Some(slot) = current_allocator_reentry_slot() {
         slot.signal_handler_sp.store(0, Ordering::Relaxed);
         slot.last_fast_pcc_packed.store(0, Ordering::Relaxed);
+        if let Some(key) = current_thread_key() {
+            let _ = KEY_SLOT_DIR[key_slot_dir_index(key)].compare_exchange(
+                slot as *const AllocatorReentrySlot as usize,
+                0,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
+        }
     }
 }
 
@@ -7636,15 +7662,6 @@ unsafe extern "C" fn malloc_slow(size: usize) -> *mut c_void {
         {
             return unsafe { malloc_strict_pcc_path(reentry_guard.slot, req) };
         }
-        if !cfg!(test)
-            && !cfg!(feature = "owned-tls-cache")
-            && !cfg!(feature = "standalone")
-            && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
-            && GLOBAL_ALLOC_STATS.get().is_some()
-            && runtime_policy::explicit_strict_passthrough_resolved()
-        {
-            refresh_strict_hot_mode();
-        }
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
         // to preserve process compatibility while hardened mode exercises the
         // membrane allocator and repair pipeline.
@@ -7665,6 +7682,15 @@ unsafe extern "C" fn malloc_slow(size: usize) -> *mut c_void {
                     fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                     record_alloc_stats(Some(reentry_guard.slot), req);
                 }
+            }
+            if !cfg!(test)
+                && !cfg!(feature = "owned-tls-cache")
+                && !cfg!(feature = "standalone")
+                && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
+                && GLOBAL_ALLOC_STATS.get().is_some()
+                && runtime_policy::explicit_strict_passthrough_resolved()
+            {
+                refresh_strict_hot_mode();
             }
         }
         return out;
@@ -7830,6 +7856,8 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
                             unsafe { finish_strict_invalid_pointer(slot) };
                             return;
                         }
+                        let class_index = (cell.class_index.load(Ordering::Relaxed) as usize)
+                            & (NUM_SIZE_CLASSES - 1);
                         const _: () = assert!(SEGMENT_SIDECAR_STRIDE == (1 << 19));
                         let meta_offset =
                             SEGMENT_ARENA_SIZE + (segment_index << 19) + (slot_index << 1);
@@ -7854,8 +7882,6 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
                             }
                             return;
                         }
-                        let class_index = (cell.class_index.load(Ordering::Relaxed) as usize)
-                            & (NUM_SIZE_CLASSES - 1);
                         debug_assert!(
                             small_bin_index(requested).is_some_and(|c| c.get() <= class_index),
                             "segment slot class {} cannot hold its own requested size {}",
@@ -8222,16 +8248,115 @@ unsafe fn free_membrane_path(
 /// # Safety
 ///
 /// Caller must eventually `free` the returned pointer exactly once.
-#[inline(never)]
+/// Zeroes a recycled 16-byte-aligned segment slot of `req` requested bytes
+/// (`1 <= req <= MAX_SMALL_SIZE`, where the backing slot capacity is a multiple
+/// of 16 `>= req`). Uses baseline SSE2 16-byte aligned stores for `req <= 256`
+/// so small `calloc` calls never self-interpose through `memset@PLT`.
+#[inline(always)]
+unsafe fn zero_recycled_segment_slot(user_base: usize, req: usize) {
+    debug_assert!((1..=MAX_SMALL_SIZE).contains(&req));
+    debug_assert_eq!(user_base & 15, 0);
+    #[cfg(target_arch = "x86_64")]
+    {
+        if req <= 256 {
+            use core::arch::x86_64::{__m128i, _mm_setzero_si128, _mm_store_si128};
+            let z = unsafe { _mm_setzero_si128() };
+            let p = user_base as *mut __m128i;
+            let vecs = (req + 15) >> 4;
+            let mut i = 0usize;
+            while i < vecs {
+                // SAFETY: `user_base` is 16-byte aligned and `vecs * 16 <= bin_size(class_index)`.
+                unsafe { _mm_store_si128(p.add(i), z) };
+                i += 1;
+            }
+            return;
+        }
+    }
+    // SAFETY: `user_base` owns at least `req` writable bytes.
+    unsafe { std::ptr::write_bytes(user_base as *mut u8, 0, req) };
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
+    let hot_state = STRICT_HOT_MODE_STATE.load(Ordering::Relaxed);
+    if hot_state.wrapping_sub(1) < 2 && (nmemb | size) < (1usize << 32) {
+        let prod = nmemb.wrapping_mul(size);
+        if prod <= MAX_SMALL_SIZE
+            && let Some(key) = current_thread_key()
+            && let Some(slot) = lookup_key_slot_dir(key)
+            && (slot.signal_handler_sp.load(Ordering::Relaxed)
+                | (slot.allocator_depth.load(Ordering::Relaxed) as usize))
+                == 0
+        {
+            let hot_mode = hot_state as u8;
+            // SAFETY: see `malloc` — `slot` is uniquely owned by this live thread.
+            slot.allocator_depth.store(1, Ordering::Relaxed);
+            core::sync::atomic::compiler_fence(Ordering::AcqRel);
+            let req = prod.max(1);
+            let class_index = local_small_bin_index_unchecked(prod);
+            let mag = unsafe { &mut (*slot.segment_local.get()).magazines[class_index] };
+            if let Some(arena_base) = segment_arena_base_if_ready()
+                && let Some(entry) = mag.pop()
+            {
+                let (user_base, meta) = entry.decode(arena_base);
+                debug_assert!(req <= bin_size(class_index));
+                unsafe { zero_recycled_segment_slot(user_base, req) };
+                meta.requested_size.store(req as u16, Ordering::Release);
+                bump_path_counter(&SEGMENT_PATH_ALLOCS);
+                return unsafe {
+                    record_strict_fast_alloc_stats_and_finish(
+                        slot,
+                        hot_mode,
+                        user_base,
+                        req,
+                        class_index,
+                    )
+                };
+            }
+            return unsafe { calloc_strict_refill_from_slot(slot, hot_mode, req, class_index) };
+        }
+    }
+    unsafe { calloc_slow(nmemb, size) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn calloc_strict_refill_from_slot(
+    slot_ptr: *const AllocatorReentrySlot,
+    _hot_mode: u8,
+    req: usize,
+    class_index: usize,
+) -> *mut c_void {
+    // SAFETY: caller transferred ownership of `slot.allocator_depth == 1`.
+    let guard = AllocatorReentryGuard {
+        slot: unsafe { &*slot_ptr },
+    };
+    let local_state = unsafe { &mut *guard.slot.segment_local.get() };
+    if let Some((out, resolved_class)) = segment_allocate_slow(local_state, class_index, req, true)
+    {
+        bump_path_counter(&SEGMENT_PATH_ALLOCS);
+        record_alloc_stats_binned(Some(guard.slot), req, resolved_class);
+        return out;
+    }
+    let out = unsafe { native_libc_calloc_with_slot(guard.slot, 1, req) };
+    if !out.is_null() {
+        bump_path_counter(&FALLBACK_PATH_ALLOCS);
+        fallback_insert_sized_for_slot(guard.slot, out, req);
+        record_alloc_stats(Some(guard.slot), req);
+    }
+    out
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn calloc_slow(nmemb: usize, size: usize) -> *mut c_void {
     let Some(total) = nmemb.checked_mul(size).map(|total| total.max(1)) else {
         unsafe { set_abi_errno(ENOMEM as c_int) };
         return std::ptr::null_mut();
     };
     if reject_oversize_request(total) {
         return std::ptr::null_mut();
-    }
+    };
 
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
@@ -8254,6 +8379,15 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
                     fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
                     record_alloc_stats(Some(reentry_guard.slot), total);
                 }
+            }
+            if !cfg!(test)
+                && !cfg!(feature = "owned-tls-cache")
+                && !cfg!(feature = "standalone")
+                && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
+                && GLOBAL_ALLOC_STATS.get().is_some()
+                && runtime_policy::explicit_strict_passthrough_resolved()
+            {
+                refresh_strict_hot_mode();
             }
         }
         return out;
