@@ -32837,6 +32837,306 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-rc0923-epic-eeuy4f.26",
+      "title": "[RC-0923] multi-threaded malloc is 36x-490x slower than glibc: gettid syscall per call + global stats spinlock",
+      "priority": 0,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [
+        "bd-rc0923-epic-eeuy4f"
+      ],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "TCB-keyed 512-entry single-page KEY_SLOT_DIR bijection, 256B SegmentMagazines, disjoint SlotMtCounters with out-of-line ST helpers, and fixture_fork_mt + 4-worker concurrent malloc/free parity"
+        },
+        "e2e_scripts": {
+          "required": false,
+          "scope": ""
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "tests/integration/fixture_fork_mt.c byte-identical output in strict + hardened modes + 4-worker mtm churn"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "not_required"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rc0923-epic-eeuy4f.26",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test malloc_mt_and_calloc_gate_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "mtm.c 0w/1w/4w/8w within 2.0x of host glibc (unpinned 1.139x/0.965x/1.590x/1.471x; pinned 1.942x/1.869x/1.798x; warm 4w 1.500x, 8w 1.468x), 95/95 allocator tests green, and fixture_fork_mt byte-exact in strict + hardened"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified on release libfrankenlibc_abi.so SHA256 ab5e759deb38fd990391ef1d75f7967abe0705a1d1bc2d3688cfdfe404c70b3c via 9-round and 15-round 3-way Latin-square A/B/C vs incumbent 49a887c15 and host glibc, malloc_abi_test (88/88), conformance_diff_malloc_stats_binning (5/5), conformance_diff_malloc_info_sizes (2/2), check_baseline_isa.sh (28/28 Nehalem + qemu64), and ld_preload_smoke.sh (360/360 pass).",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "TCB-keyed 512-entry single-page KEY_SLOT_DIR bijection, 256B SegmentMagazines, disjoint SlotMtCounters, and out-of-line ST helpers achieving <=2.0x host glibc multi-threaded malloc/free throughput across 1, 4, and 8 workers",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/malloc_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+          ],
+          "source": {
+            "commit": "388e330c829e4dbc36b33c81b82044d5275ad5e4",
+            "files": {
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "627ca94584664cbbc3fe715b2ddc2b9e4f77e222b5b873f93d4316a020c8b01e",
+              "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs": "950908aded5e53df5d8a4c9ac83f83541f0a4485cf4c55894fb2c0a0f977ff67"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-17T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/malloc_mt_and_calloc_gate_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+              "-o",
+              "target/closure_bins/malloc_mt_and_calloc_gate_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/malloc_mt_and_calloc_gate_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "malloc_mt_and_calloc_hot_path_contracts_are_wired",
+              "malloc_mt_fork_and_calloc_live_preload_gate_passes"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-f874go",
+      "title": "perf: deployed calloc gap is ~35x host-heap-isolation artifact + ~2x membrane (NOT 71x); fl_native bench arm added",
+      "priority": 2,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [
+        "malloc",
+        "no-gaps",
+        "perf"
+      ],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "calloc STRICT_HOT_MODE_STATE SegmentMagazine fast path with baseline SSE2 recycled-slot zeroing, fresh MAP_ANONYMOUS zero-page elision, and overflow ENOMEM preservation"
+        },
+        "e2e_scripts": {
+          "required": false,
+          "scope": ""
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "Recycled dirty-slot calloc zero-fill sweep across 1..4096B + overflow ENOMEM + 4-worker concurrent calloc/malloc/free churn in strict + hardened"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "not_required"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-f874go",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test malloc_mt_and_calloc_gate_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "Deployed calloc(1, n)+free satisfies <=2.0x host glibc across 16B..1MiB (16B: 16.51ns / 1.406x, 64B: 17.50ns / 1.191x, 256B: 18.23ns / 0.698x, 4096B: 50.63ns / 0.505x, 262144B: 1.297x, 1MiB: 0.968x) while zeroing recycled dirty slots across all size classes"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/malloc_abi.rs",
+          "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified via 9-round 3-way Latin-square A/B/C vs incumbent 49a887c15 (16B 0.671x, 64B 0.619x, 256B 0.785x) and host glibc (all 6 sizes 16B..1MiB <= 1.406x, beating glibc at 256B, 4KiB, and 1MiB) on release libfrankenlibc_abi.so SHA256 ab5e759deb38fd990391ef1d75f7967abe0705a1d1bc2d3688cfdfe404c70b3c.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-f874go/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Wire calloc onto STRICT_HOT_MODE_STATE SegmentMagazine fast path with baseline SSE2 recycled-slot zeroing so deployed calloc+free runs <=2.0x host glibc across 16B..1MiB",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/malloc_abi.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs"
+          ],
+          "source": {
+            "commit": "388e330c829e4dbc36b33c81b82044d5275ad5e4",
+            "files": {
+              "crates/frankenlibc-abi/src/malloc_abi.rs": "627ca94584664cbbc3fe715b2ddc2b9e4f77e222b5b873f93d4316a020c8b01e",
+              "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs": "950908aded5e53df5d8a4c9ac83f83541f0a4485cf4c55894fb2c0a0f977ff67"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-17T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/malloc_mt_and_calloc_gate_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/malloc_mt_and_calloc_gate_test.rs",
+              "-o",
+              "target/closure_bins/malloc_mt_and_calloc_gate_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/malloc_mt_and_calloc_gate_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "malloc_mt_and_calloc_hot_path_contracts_are_wired",
+              "malloc_mt_fork_and_calloc_live_preload_gate_passes"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {
@@ -32847,6 +33147,8 @@
     "bd-rc0923-epic-eeuy4f.13": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json",
     "bd-rc0923-epic-eeuy4f.24": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json",
     "bd-li7fb3": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json",
-    "bd-otip6a": "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+    "bd-otip6a": "tests/conformance/closure_receipts/bd-otip6a/receipt.json",
+    "bd-rc0923-epic-eeuy4f.26": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json",
+    "bd-f874go": "tests/conformance/closure_receipts/bd-f874go/receipt.json"
   }
 }

@@ -183,7 +183,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 ## Checked Taxonomy State
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
-`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-17, bound to ABI source `1b6b712f8`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
+`tests/conformance/reality_report.v1.json` is the base snapshot from 2026-11-18, bound to ABI source `388e330c8`. The matrix includes conditional host-backed cancellation helpers as well as installed NSS modules that use the host dynamic loader. These are recorded classifications validated against live source and host-delegation census v18 (`status_invalid = 0`), not semantic-parity evidence: unproven native wrapper rows remain conservatively retained under `WrapsHostLibc` until fixture or promotion-proof evidence is attached.
 Reality snapshot: total_exported=4119, implemented=2464, raw_syscall=408, wraps_host_libc=1247, glibc_call_through=0, stub=0.
 
 Declared replacement level: **L1 — Hardened Interpose**.
@@ -246,7 +246,7 @@ The committed curated preload snapshot has 360 pass / 0 fail / 4 optional skips 
 
 ### Known broken or not yet freshly evidenced under preload
 
-- Multi-threaded allocation throughput and per-thread cache architecture remain open (`bd-rc0923-epic-eeuy4f.26`).
+- Multi-threaded segment-magazine allocation throughput and `calloc` recycled-slot zeroing are wired (`bd-rc0923-epic-eeuy4f.26` and `bd-f874go`, resolved; `mtm.c` `1w`/`4w`/`8w` and `calloc` `16B..1MiB` within `2.0x` of host glibc), while deeper framing/RMW consolidation remains tracked under `bd-dcrhgl` and `bd-65p87u`.
 - `fork`/exit and fork/exec page-fault overhead was reduced via zero-initialized `.bss` allocator slots (`bd-rc0923-epic-eeuy4f.25`, resolved), though strict `fork`/exit remains ~1.4x–1.5x glibc.
 - Pathname `dlopen` host-fallback and `dladdr`/`dlinfo`/`dl_iterate_phdr` metadata routing are wired (`bd-rc0923-epic-eeuy4f.3`, resolved), though standalone host-free dynamic linking (`CRT`/loader ownership) remains outside interpose scope (`bd-reality-202609-lx578q.6.1`).
 - Blocked-syscall cancellation (`__fl_syscall_cancel_arch` + `NATIVE_SIGCANCEL`), owned-startup `main` unwind/last-thread `exit(0)`, and C/C++/C11/`stdio` cleanup parity are wired across hosted and `FRANKENLIBC_THREAD_NATIVE=1` backends (`bd-rc0923-epic-eeuy4f.24`, resolved), though standalone `CLONE_SETTLS` TCB allocation remains tracked under `bd-reality-202609-lx578q.6.1`.
@@ -1499,7 +1499,7 @@ Qualitative summary; numeric truth lives in `support_matrix.json` and the mainte
 |---|---|---|---|
 | `string` | Strong native ownership | Full classified surface, hardened single-pass kernels, tracked-region bound sweep, internal-alias differentials | Continued metamorphic and fuzz coverage expansion |
 | `stdio` | Native end-to-end | Full printf engine, scanf, FILE I/O, `_IO_*` internals, memstreams, vis() family | Edge-case stress closure |
-| `malloc` | Split deployed paths | Strict mode uses the segment allocator with host fallback; hardened mode normally uses the generational arena. Bootstrap/reentry and uninitialized-pipeline fallbacks bypass that arena. The core slab/magazine model is not the deployed provider | Multi-threaded allocation architecture and performance (`bd-rc0923-epic-eeuy4f.26`) |
+| `malloc` | Split deployed paths | Strict mode uses the segment allocator with host fallback; hardened mode normally uses the generational arena. Bootstrap/reentry and uninitialized-pipeline fallbacks bypass that arena. The core slab/magazine model is not the deployed provider | Standalone core slab/magazine consolidation and residual framing reduction (`bd-dcrhgl`, `bd-65p87u`) |
 | `pthread` | Mixed native + host-backed | Native mutex/condvar/rwlock paths; thread creation, join, and cancellation use host NPTL by default under preload | Native lifecycle/cancellation and stress closure |
 | `resolver` | Native resolver with bounded NSS coverage | Numeric, `/etc/hosts`, nsswitch `hosts:` ordering, native UDP/TCP DNS, CNAME/PTR, multi-address addrinfo, IDNA, b64 | NSS module breadth and policy/concurrency closure (`bd-rc0923-epic-eeuy4f.19`) |
 | `locale` | Native bootstrap | C/POSIX, `setlocale`, `localeconv`, `nl_langinfo`, ctype/wchar locale variants, catgets | Full localedata breadth |
@@ -3967,8 +3967,8 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,872 native/direct-syscall rows (69.7%), 1,247 host-backed wrapper rows (30.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,907 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 248,688 lines |
+| Tracked Rust files in `crates/` | 2,908 |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 248,822 lines |
 | `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,103 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,177,645 lines including generated codec tables |
 | Runtime math controllers | 71 modules |

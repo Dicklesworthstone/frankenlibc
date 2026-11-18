@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-17T23:37:40Z",
-  "source_commit": "1b6b712f88cadb17a25759a4cbe3a64f6de3f94a",
-  "source_generated_at_utc": "2026-11-17T23:40:00Z",
-  "newest_abi_commit": "1b6b712f88cadb17a25759a4cbe3a64f6de3f94a",
-  "newest_abi_commit_time": "2026-11-17T18:30:06-05:00",
+  "generated_at": "2026-11-18T02:36:58Z",
+  "source_commit": "388e330c829e4dbc36b33c81b82044d5275ad5e4",
+  "source_generated_at_utc": "2026-11-18T02:35:00Z",
+  "newest_abi_commit": "388e330c829e4dbc36b33c81b82044d5275ad5e4",
+  "newest_abi_commit_time": "2026-11-17T21:27:38-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -64,7 +64,7 @@
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
     "promotion_proof_symbol_count": 256,
-    "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
+    "promotion_triage_manifest_path": "/data/projects/frankenlibc/target/conformance/support_matrix_promotion_triage.v1.json",
     "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
@@ -126,10 +126,10 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "c86f369487a0e3ea0fc124979d982eb9634ac37c3274f8d9e53b6ad758abdfe2",
+        "artifact_sha256": "6c51cf57ddd2d58d094b22c6998dd0e75fbd00f3e7fb707d56b22fd0d2cce531",
         "schema_version": "host_delegation_census.v1",
         "detector_version": 18,
-        "source_tree_sha256": "e9d92bbbca6131c3ab5f1d39f9ec13d2b23f3feafbae62633d28eb2521930823"
+        "source_tree_sha256": "c697578ea8f4d076432ec9e78b9957ce385843bd31515a92dc4ffa151ad7da76"
       }
     },
     "summary": {
@@ -12328,7 +12328,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8227",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8280",
             "host_symbols": [
               "calloc"
             ],
@@ -12337,7 +12337,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:calloc:8227:001"
+              "malloc_abi:calloc:8280:001"
             ]
           }
         }
@@ -21114,7 +21114,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7793",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7819",
             "host_symbols": [
               "free"
             ],
@@ -21123,7 +21123,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:free:7793:001"
+              "malloc_abi:free:7819:001"
             ]
           }
         }
@@ -28424,7 +28424,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7530",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7556",
             "host_symbols": [
               "malloc"
             ],
@@ -28433,7 +28433,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:malloc:7530:001"
+              "malloc_abi:malloc:7556:001"
             ]
           }
         }
@@ -34678,7 +34678,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8335",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8469",
             "host_symbols": [
               "realloc"
             ],
@@ -34687,7 +34687,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:realloc:8335:001"
+              "malloc_abi:realloc:8469:001"
             ]
           }
         }
