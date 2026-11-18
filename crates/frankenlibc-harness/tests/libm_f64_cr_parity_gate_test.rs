@@ -48,12 +48,23 @@ fn binary64_coremath_dispatch_and_trig_wiring_are_complete() {
 #[test]
 fn libm_f64_cr_quadmath_and_glibc_parity_gate_passes() {
     let root = workspace_root();
-    let lib = root.join("target/release/libfrankenlibc_abi.so");
-    if !lib.is_file() {
-        return;
+    let explicit_lib = std::env::var_os("FRANKENLIBC_LIBM_TEST_LIB").map(PathBuf::from);
+    let lib = explicit_lib
+        .clone()
+        .unwrap_or_else(|| root.join("target/release/libfrankenlibc_abi.so"));
+    if explicit_lib.is_some() {
+        assert!(
+            lib.is_file(),
+            "FRANKENLIBC_LIBM_TEST_LIB must point to an existing release libfrankenlibc_abi.so: {}",
+            lib.display()
+        );
     }
 
-    let tmp = std::env::temp_dir().join(format!("fl_libm_f64_gate_{}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("fl_libm_f64_gate_{}_{nanos}", std::process::id()));
     fs::create_dir_all(&tmp).expect("temp dir creatable");
     let probe_c = tmp.join("probe_f64.c");
     let probe_bin = tmp.join("probe_f64");
@@ -62,6 +73,8 @@ fn libm_f64_cr_quadmath_and_glibc_parity_gate_passes() {
         &probe_c,
         r#"#define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
+#include <fenv.h>
 #include <gnu/libc-version.h>
 #include <math.h>
 #include <quadmath.h>
@@ -77,13 +90,15 @@ static uint64_t ulp_diff_f64(double a, double b) {
     if (isnan(a) && isnan(b)) return 0;
     if (isnan(a) || isnan(b)) return UINT64_MAX;
     uint64_t ua = d2u(a), ub = d2u(b);
-    if (((ua | ub) & 0x7fffffffffffffffULL) == 0) return (ua == ub) ? 0 : 1;
     if ((ua >> 63) != (ub >> 63)) return UINT64_MAX;
     return (ua > ub) ? (ua - ub) : (ub - ua);
 }
 
 typedef double (*d1_t)(double);
 typedef double (*d2_t)(double, double);
+typedef void (*sincos_t)(double, double *, double *);
+typedef double (*lgamma_r_t)(double, int *);
+typedef int *(*errno_loc_t)(void);
 typedef __float128 (*q1_t)(__float128);
 
 static __float128 my_exp10q(__float128 x) { return powq(10.0Q, x); }
@@ -164,6 +179,10 @@ int main(int argc, char **argv) {
                         sp->name, x, d2u(fv), d2u(qv), d2u(gv), uq, sp->max_uq, ug);
                 return 1;
             }
+            if (gl_ge_243 && ug > sp->max_uq + 3) {
+                fprintf(stderr, "FAIL %s(%.17g) ug=%lu > %lu vs glibc 2.43+\n", sp->name, x, ug, sp->max_uq + 3);
+                return 1;
+            }
         }
         if (sp->require_cr_exact && cr_diffs != 0) {
             fprintf(stderr, "FAIL %s expected 0 CR diffs vs __float128, got %u/%u\n", sp->name, cr_diffs, N);
@@ -179,10 +198,78 @@ int main(int argc, char **argv) {
         }
     }
 
+    d1_t fl_sin = (d1_t)dlsym(fl, "sin");
+    d1_t fl_cos = (d1_t)dlsym(fl, "cos");
+    d1_t fl_asin = (d1_t)dlsym(fl, "asin");
+    d1_t fl_acos = (d1_t)dlsym(fl, "acos");
+    sincos_t fl_sincos = (sincos_t)dlsym(fl, "sincos");
+    lgamma_r_t fl_lgamma_r = (lgamma_r_t)dlsym(fl, "lgamma_r");
+    lgamma_r_t gl_lgamma_r = (lgamma_r_t)dlsym(gl, "lgamma_r");
     d2_t fl_atan2 = (d2_t)dlsym(fl, "atan2");
     d2_t gl_atan2 = (d2_t)dlsym(gl, "atan2");
     d2_t fl_pow = (d2_t)dlsym(fl, "pow");
     d2_t gl_pow = (d2_t)dlsym(gl, "pow");
+    errno_loc_t fl_errno = (errno_loc_t)dlsym(fl, "__errno_location");
+    if (!fl_sin || !fl_cos || !fl_asin || !fl_acos || !fl_sincos ||
+        !fl_lgamma_r || !gl_lgamma_r || !fl_atan2 || !gl_atan2 || !fl_pow || !gl_pow || !fl_errno) {
+        fprintf(stderr, "missing binary/multi-output f64 libm symbol\n");
+        return 2;
+    }
+
+    /* Special values, signed zeros, domain errors, tiny & near-endpointasin/acos, and exact subnormal midpoints: */
+    if (d2u(fl_asin(0.0)) != 0 || d2u(fl_asin(-0.0)) != (1ULL << 63) ||
+        d2u(fl_asin(1.0)) != 0x3ff921fb54442d18ULL || d2u(fl_asin(-1.0)) != 0xbff921fb54442d18ULL ||
+        !isnan(fl_asin(1.5)) || !isnan(fl_asin(INFINITY)) ||
+        d2u(fl_acos(1.0)) != 0 || d2u(fl_acos(-1.0)) != 0x400921fb54442d18ULL || !isnan(fl_acos(-1.5)) ||
+        d2u(fl_atan2(-0.0, 1.0)) != (1ULL << 63) || d2u(fl_atan2(-0.0, -1.0)) != 0xc00921fb54442d18ULL ||
+        d2u(fl_atan2(u2d((24ULL << 52) | (1ULL << 51)), u2d(1098ULL << 52))) != 1ULL ||
+        d2u(fl_atan2(u2d(0x01c2c00000000000ULL), u2d(0x44ce000000000000ULL))) != 2ULL) {
+        fprintf(stderr, "FAIL special/subnormal-midpoint f64 check\n");
+        return 1;
+    }
+    for (int k = 1; k <= 4096; k++) {
+        double near1 = 1.0 - (double)k * 0x1p-52;
+        double tiny1 = (double)k * 0x1p-40;
+        double tiny2 = (double)k * 0x1p-60;
+        double subn = u2d((uint64_t)k);
+        double xs[6] = {near1, -near1, tiny1, -tiny1, tiny2, subn};
+        for (int j = 0; j < 6; j++) {
+            if (ulp_diff_f64(fl_asin(xs[j]), (double)asinq((__float128)xs[j])) != 0 ||
+                ulp_diff_f64(fl_acos(xs[j]), (double)acosq((__float128)xs[j])) != 0) {
+                fprintf(stderr, "FAIL boundary asin/acos at %.17g\n", xs[j]);
+                return 1;
+            }
+        }
+    }
+    *fl_errno() = 0;
+    double inf_s = 0.0, inf_c = 0.0;
+    fl_sincos(INFINITY, &inf_s, &inf_c);
+    if (!isnan(inf_s) || !isnan(inf_c) || *fl_errno() != EDOM) {
+        fprintf(stderr, "FAIL sincos(INFINITY) EDOM: errno=%d\n", *fl_errno());
+        return 1;
+    }
+
+    /* Directed rounding + FE_INEXACT checks on subnormal atan2 and irrational pi/2 return: */
+    feclearexcept(FE_ALL_EXCEPT);
+    double p2_rne = fl_asin(1.0);
+    if (d2u(p2_rne) != 0x3ff921fb54442d18ULL || !fetestexcept(FE_INEXACT)) {
+        fprintf(stderr, "FAIL asin(1.0) FE_INEXACT\n");
+        return 1;
+    }
+    fesetround(FE_UPWARD);
+    uint64_t up_tiny = d2u(fl_atan2(u2d(1ULL), u2d(0x7fe0000000000000ULL)));
+    uint64_t up_p2 = d2u(fl_asin(1.0));
+    fesetround(FE_TOWARDZERO);
+    uint64_t tz_ulp = d2u(fl_atan2(u2d(24ULL << 52), u2d(1098ULL << 52)));
+    fesetround(FE_DOWNWARD);
+    uint64_t dn_neg = d2u(fl_atan2(-u2d(1ULL), u2d(0x7fe0000000000000ULL)));
+    fesetround(FE_TONEAREST);
+    if (up_tiny != 1ULL || up_p2 != 0x3ff921fb54442d19ULL || tz_ulp != 0ULL ||
+        dn_neg != ((1ULL << 63) | 1ULL)) {
+        fprintf(stderr, "FAIL directed rounding: up_tiny=%lx up_p2=%lx tz_ulp=%lx dn_neg=%lx\n",
+                up_tiny, up_p2, tz_ulp, dn_neg);
+        return 1;
+    }
 
     for (uint32_t i = 0; i < N; i++) {
         st ^= st << 13; st ^= st >> 7; st ^= st << 17;
@@ -208,6 +295,25 @@ int main(int argc, char **argv) {
             return 1;
         }
 
+        double sx = -100.0 + ((double)(ry >> 11) * 0x1p-53) * 200.0;
+        double fs = 0.0, fc = 0.0;
+        fl_sincos(sx, &fs, &fc);
+        if (d2u(fs) != d2u(fl_sin(sx)) || d2u(fc) != d2u(fl_cos(sx))) {
+            fprintf(stderr, "FAIL sincos(%.17g)\n", sx);
+            return 1;
+        }
+
+        double lx = -10.5 + ((double)(rx >> 11) * 0x1p-53) * 200.0;
+        if (floor(lx) == lx && lx <= 0.0) lx += 0.125;
+        int fsgn = 0, gsgn = 0;
+        double flg = fl_lgamma_r(lx, &fsgn);
+        double glg = gl_lgamma_r(lx, &gsgn);
+        (void)glg;
+        if (ulp_diff_f64(flg, (double)lgammaq((__float128)lx)) != 0 || fsgn != gsgn) {
+            fprintf(stderr, "FAIL lgamma_r(%.17g): sgn=%d/%d\n", lx, fsgn, gsgn);
+            return 1;
+        }
+
         double pb = 0.01 + ((double)(ry >> 11) * 0x1p-53) * 10.0;
         double pe = -5.0 + ((double)(rx >> 11) * 0x1p-53) * 10.0;
         if (gl_ge_243 && ulp_diff_f64(fl_pow(pb, pe), gl_pow(pb, pe)) != 0) {
@@ -220,7 +326,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("PASS: libm_f64_cr_parity verified (6.75M evaluations across 27 f64 functions, 0 non-CR on all CORE-MATH/CR kernels)\n");
+    printf("PASS: libm_f64_cr_parity verified (7.25M evaluations across 29 f64 functions, 0 non-CR on all CORE-MATH/CR kernels)\n");
     return 0;
 }
 "#,
@@ -228,13 +334,17 @@ int main(int argc, char **argv) {
     .expect("probe_f64.c written");
 
     let st = Command::new("cc")
-        .args(["-O3", "-std=c11"])
+        .args(["-O3", "-std=c11", "-Wall", "-Wextra", "-Werror"])
         .arg(&probe_c)
         .args(["-lquadmath", "-ldl", "-lm", "-o"])
         .arg(&probe_bin)
         .status()
         .expect("cc probe_f64");
     assert!(st.success(), "failed compiling probe_f64.c");
+
+    if !lib.is_file() {
+        return;
+    }
 
     for mode in ["strict", "hardened"] {
         let out = Command::new(&probe_bin)

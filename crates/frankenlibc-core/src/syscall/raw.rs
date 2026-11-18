@@ -7,9 +7,10 @@
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-const CANCEL_SYSCALL_SLOTS: usize = 256;
+const CANCEL_SYSCALL_SLOTS: usize = 1024;
 const CANCEL_SLOT_EMPTY: i32 = 0;
 const CANCEL_SLOT_TOMBSTONE: i32 = -1;
+const CANCEL_SLOT_CLAIMING: i32 = -2;
 
 #[repr(C)]
 struct CancelSyscallArgs {
@@ -163,9 +164,10 @@ fn current_stack_pointer() -> usize {
     sp
 }
 
+/// Allocation-free, TLS-free raw `SYS_gettid` for signal handlers and cancel windows.
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
-fn raw_gettid_nocancel() -> i32 {
+pub fn raw_gettid_nocancel() -> i32 {
     let ret: usize;
     // SAFETY: SYS_gettid (186 on x86_64) takes no arguments and never fails.
     unsafe {
@@ -180,9 +182,10 @@ fn raw_gettid_nocancel() -> i32 {
     ret as i32
 }
 
+/// Allocation-free, TLS-free raw `SYS_gettid` for signal handlers and cancel windows.
 #[inline(always)]
 #[cfg(target_arch = "aarch64")]
-fn raw_gettid_nocancel() -> i32 {
+pub fn raw_gettid_nocancel() -> i32 {
     let ret: usize;
     // SAFETY: SYS_gettid (178 on aarch64) takes no arguments and never fails.
     unsafe {
@@ -202,64 +205,85 @@ pub fn native_cancel_syscall_any_active() -> bool {
     NATIVE_CANCEL_WINDOW_DEPTH.load(Ordering::Relaxed) != 0
 }
 
+static CANCEL_SYSCALL_EVER_USED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// Arm the interruptible native cancellation syscall trap for `tid`.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: usize) {
     if tid <= 0 || cancel_word.is_null() {
         return;
     }
+    CANCEL_SYSCALL_EVER_USED.store(true, Ordering::Release);
     let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
-    let mut first_tombstone: Option<usize> = None;
-    for i in 0..CANCEL_SYSCALL_SLOTS {
-        let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
-        let stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
-        if stored == tid {
-            ACTIVE_CANCEL_STATE[idx].store(0, Ordering::Release);
-            ACTIVE_CANCEL_SIGNAL_RESET(idx);
-            ACTIVE_CANCEL_RSPS[idx].store(window_rsp, Ordering::Release);
-            ACTIVE_CANCEL_WORDS[idx].store(cancel_word as usize, Ordering::Release);
-            return;
-        }
-        if stored == CANCEL_SLOT_TOMBSTONE {
-            if first_tombstone.is_none() {
-                first_tombstone = Some(idx);
+    'retry: for _ in 0..16 {
+        let mut first_tombstone: Option<usize> = None;
+        for i in 0..CANCEL_SYSCALL_SLOTS {
+            let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
+            let mut stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
+            while stored == CANCEL_SLOT_CLAIMING {
+                core::hint::spin_loop();
+                stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
             }
-            continue;
-        }
-        if stored == CANCEL_SLOT_EMPTY {
-            let (target, expected) = match first_tombstone {
-                Some(tomb) => (tomb, CANCEL_SLOT_TOMBSTONE),
-                None => (idx, CANCEL_SLOT_EMPTY),
-            };
-            if ACTIVE_CANCEL_TIDS[target]
-                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                ACTIVE_CANCEL_STATE[target].store(0, Ordering::Release);
-                ACTIVE_SIGNAL_DEPTH[target].store(0, Ordering::Release);
-                ACTIVE_CANCEL_RSPS[target].store(window_rsp, Ordering::Release);
-                ACTIVE_CANCEL_WORDS[target].store(cancel_word as usize, Ordering::Release);
-                NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
+            if stored == tid {
+                ACTIVE_CANCEL_STATE[idx].store(0, Ordering::Release);
+                ACTIVE_CANCEL_SIGNAL_RESET(idx);
+                ACTIVE_CANCEL_RSPS[idx].store(window_rsp, Ordering::Release);
+                ACTIVE_CANCEL_WORDS[idx].store(cancel_word as usize, Ordering::Release);
                 return;
             }
-            first_tombstone = None;
+            if stored == CANCEL_SLOT_TOMBSTONE {
+                if first_tombstone.is_none() {
+                    first_tombstone = Some(idx);
+                }
+                continue;
+            }
+            if stored == CANCEL_SLOT_EMPTY {
+                let (target, expected) = match first_tombstone {
+                    Some(tomb) => (tomb, CANCEL_SLOT_TOMBSTONE),
+                    None => (idx, CANCEL_SLOT_EMPTY),
+                };
+                if ACTIVE_CANCEL_TIDS[target]
+                    .compare_exchange(
+                        expected,
+                        CANCEL_SLOT_CLAIMING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    ACTIVE_CANCEL_STATE[target].store(0, Ordering::Relaxed);
+                    ACTIVE_SIGNAL_DEPTH[target].store(0, Ordering::Relaxed);
+                    ACTIVE_CANCEL_RSPS[target].store(window_rsp, Ordering::Relaxed);
+                    ACTIVE_CANCEL_WORDS[target].store(cancel_word as usize, Ordering::Relaxed);
+                    NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
+                    ACTIVE_CANCEL_TIDS[target].store(tid, Ordering::Release);
+                    return;
+                }
+                continue 'retry;
+            }
         }
-    }
-    if let Some(tomb) = first_tombstone
-        && ACTIVE_CANCEL_TIDS[tomb]
-            .compare_exchange(
-                CANCEL_SLOT_TOMBSTONE,
-                tid,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
-    {
-        ACTIVE_CANCEL_STATE[tomb].store(0, Ordering::Release);
-        ACTIVE_SIGNAL_DEPTH[tomb].store(0, Ordering::Release);
-        ACTIVE_CANCEL_RSPS[tomb].store(window_rsp, Ordering::Release);
-        ACTIVE_CANCEL_WORDS[tomb].store(cancel_word as usize, Ordering::Release);
-        NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
+        if let Some(tomb) = first_tombstone {
+            if ACTIVE_CANCEL_TIDS[tomb]
+                .compare_exchange(
+                    CANCEL_SLOT_TOMBSTONE,
+                    CANCEL_SLOT_CLAIMING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                ACTIVE_CANCEL_STATE[tomb].store(0, Ordering::Relaxed);
+                ACTIVE_SIGNAL_DEPTH[tomb].store(0, Ordering::Relaxed);
+                ACTIVE_CANCEL_RSPS[tomb].store(window_rsp, Ordering::Relaxed);
+                ACTIVE_CANCEL_WORDS[tomb].store(cancel_word as usize, Ordering::Relaxed);
+                NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
+                ACTIVE_CANCEL_TIDS[tomb].store(tid, Ordering::Release);
+                return;
+            }
+            continue 'retry;
+        }
+        return;
     }
 }
 
@@ -334,7 +358,8 @@ pub fn note_signal_handler_for_cancel_window(entering: bool) {
 
 /// Clear all inherited active cancel-syscall slots in a fork child.
 pub fn reset_native_cancel_syscalls_after_fork() {
-    if NATIVE_CANCEL_WINDOW_DEPTH.swap(0, Ordering::AcqRel) == 0 {
+    NATIVE_CANCEL_WINDOW_DEPTH.store(0, Ordering::Release);
+    if !CANCEL_SYSCALL_EVER_USED.swap(false, Ordering::AcqRel) {
         return;
     }
     for i in 0..CANCEL_SYSCALL_SLOTS {

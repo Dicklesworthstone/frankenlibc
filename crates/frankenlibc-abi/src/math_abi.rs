@@ -1404,6 +1404,9 @@ pub unsafe extern "C" fn remquo(x: f64, y: f64, quo: *mut c_int) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sincos(x: f64, sin_out: *mut f64, cos_out: *mut f64) {
     let (s, c) = frankenlibc_core::math::sincos(x);
+    if x.is_infinite() {
+        set_domain_errno();
+    }
     if !sin_out.is_null() {
         // SAFETY: caller guarantees `sin_out` points to valid writable `double`.
         unsafe { *sin_out = s };
@@ -3337,6 +3340,9 @@ pub unsafe extern "C" fn remquof(x: f32, y: f32, quo: *mut c_int) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sincosf(x: f32, sin_out: *mut f32, cos_out: *mut f32) {
     let (s, c) = frankenlibc_core::math::sincosf(x);
+    if x.is_infinite() {
+        set_domain_errno();
+    }
     if !sin_out.is_null() {
         // SAFETY: caller guarantees `sin_out` points to valid writable `float`.
         unsafe { *sin_out = s };

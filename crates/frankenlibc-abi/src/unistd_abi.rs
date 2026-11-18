@@ -15500,10 +15500,26 @@ pub(crate) unsafe fn sigtimedwait_cp(
     info: *mut c_void,
     timeout: *const libc::timespec,
 ) -> c_int {
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_set = unsafe {
+        crate::signal_abi::filter_reserved_sigset_for_wait(set as *const u8, &mut filtered_word)
+    };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_set = {
+        let _ = &mut filtered_word;
+        set as *const u8
+    };
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_rt_sigtimedwait(
-                set as *const u8,
+                effective_set,
                 info as *mut u8,
                 timeout as *const u8,
                 std::mem::size_of::<libc::c_ulong>(),
@@ -15526,10 +15542,26 @@ pub unsafe extern "C-unwind" fn sigwaitinfo(set: *const c_void, info: *mut c_voi
 /// Body of [`sigwaitinfo`] and its alias (see [`read_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn sigwaitinfo_cp(set: *const c_void, info: *mut c_void) -> c_int {
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_set = unsafe {
+        crate::signal_abi::filter_reserved_sigset_for_wait(set as *const u8, &mut filtered_word)
+    };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_set = {
+        let _ = &mut filtered_word;
+        set as *const u8
+    };
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_rt_sigtimedwait(
-                set as *const u8,
+                effective_set,
                 info as *mut u8,
                 std::ptr::null(),
                 std::mem::size_of::<libc::c_ulong>(),

@@ -2693,7 +2693,8 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
             .get_or_init(|| (0..CAP).map(|_| DecisionCardSlot::new()).collect());
         let slot = &slots[idx];
         debug_assert_eq!(card.decision_id, decision_id);
-        *slot.card.lock() = card;
+        let mut guard = slot.card.lock();
+        *guard = card;
         slot.published_decision_id
             .store(decision_id, Ordering::Release);
     }
@@ -2794,9 +2795,10 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
             .get_or_init(|| (0..CAP).map(|_| EvidenceSlot::new()).collect());
         let slot = &slots[idx];
         debug_assert_eq!(record.seqno(), seqno);
-        // Write record under the slot mutex, then publish the seqno.
-        // Readers will Acquire-load seqno and then lock/copy record.
-        *slot.record.lock() = record;
+        // Write record and publish seqno under the slot mutex so out-of-order
+        // wrap-around writers never pair a newer seqno with an older payload.
+        let mut guard = slot.record.lock();
+        *guard = record;
         slot.published_seqno.store(seqno, Ordering::Release);
     }
 

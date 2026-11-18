@@ -139,9 +139,16 @@ fn pthread_cancel_native_and_hosted_e2e_parity_gate_passes() {
         return;
     }
 
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let out_dir =
+        std::env::temp_dir().join(format!("fl_cancel_parity_{}_{nanos}", std::process::id()));
     let output = Command::new("bash")
         .arg(&gate_script)
         .arg(&lib)
+        .env("FRANKENLIBC_CANCEL_PARITY_OUT_DIR", &out_dir)
         .current_dir(&root)
         .output()
         .expect("failed to invoke check_pthread_cancel_native_parity.sh");

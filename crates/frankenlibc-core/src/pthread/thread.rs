@@ -110,7 +110,7 @@ fn decrement_live_native_threads() -> bool {
 /// via `pthread_exit` / cancellation) while its stack is still mapped.
 pub unsafe fn maybe_exit_process_as_last_native_thread() {
     if decrement_live_native_threads() {
-        let raw = LAST_THREAD_EXIT_HOOK.load(Ordering::Acquire);
+        let raw = LAST_THREAD_EXIT_HOOK.swap(0, Ordering::AcqRel);
         if raw != 0 {
             // SAFETY: `set_last_thread_exit_hook` stores a valid `LastThreadExitHook`.
             let hook: LastThreadExitHook = unsafe { core::mem::transmute(raw) };

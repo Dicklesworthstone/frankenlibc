@@ -99,8 +99,196 @@ for probe in \
   for mode in strict hardened; do
     timeout --kill-after=2s 15s env LD_PRELOAD="$library" \
       FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=1 \
-      "$out/fixture_cancel_forced_unwind" "$probe" "$library" > "$out/probe-${mode}-${probe}.out"
+      "$out/fixture_cancel_forced_unwind" "$probe" "$library" \
+      > "$out/probe-${mode}-${probe}.out" 2> "$out/probe-${mode}-${probe}.err"
     grep -qx "pthread-native-unwind:${probe}:PASS" "$out/probe-${mode}-${probe}.out"
+    test ! -s "$out/probe-${mode}-${probe}.err"
+  done
+done
+
+# 3b. Asynchronous cancellation (PTHREAD_CANCEL_ASYNCHRONOUS) CPU-spin + sigmask
+# restoration + main-thread async cancellation across hosted and native backends.
+cat > "$out/async_cancel_probe.cpp" <<'EOF'
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <pthread.h>
+#include <signal.h>
+#include <unistd.h>
+
+static std::atomic<int> g_spin_ready{0};
+static std::atomic<int> g_c_cleanup_ran{0};
+static std::atomic<int> g_cpp_dtor_ran{0};
+static std::atomic<int> g_user_sigmask_ok{0};
+static std::atomic<int> g_nested_cancel_ok{0};
+
+__attribute__((noinline)) static void spin_forever() {
+    while (true) {
+        asm volatile("" ::: "memory");
+    }
+}
+
+struct RaiiWitness {
+    std::atomic<int> *flag;
+    ~RaiiWitness() { flag->store(1, std::memory_order_release); }
+};
+
+struct NestedPipeCtx {
+    int rfd;
+    std::atomic<int> *entered;
+};
+
+static void *nested_reader(void *arg) {
+    auto *ctx = static_cast<NestedPipeCtx *>(arg);
+    ctx->entered->store(1, std::memory_order_release);
+    char ch = 0;
+    ssize_t n = read(ctx->rfd, &ch, 1);
+    (void)n;
+    return nullptr;
+}
+
+static void worker_cleanup(void *) {
+    g_c_cleanup_ran.store(1, std::memory_order_release);
+    sigset_t cur;
+    sigemptyset(&cur);
+    if (pthread_sigmask(SIG_SETMASK, nullptr, &cur) == 0 &&
+        sigismember(&cur, SIGUSR1) == 1 &&
+        sigismember(&cur, SIGUSR2) == 0) {
+        g_user_sigmask_ok.store(1, std::memory_order_release);
+    }
+    int fds[2] = {-1, -1};
+    if (pipe(fds) == 0) {
+        std::atomic<int> entered{0};
+        NestedPipeCtx ctx{fds[0], &entered};
+        pthread_t child{};
+        if (pthread_create(&child, nullptr, nested_reader, &ctx) == 0) {
+            while (entered.load(std::memory_order_acquire) == 0) {
+                usleep(1000);
+            }
+            usleep(5000);
+            if (pthread_cancel(child) == 0) {
+                void *res = nullptr;
+                if (pthread_join(child, &res) == 0 && res == PTHREAD_CANCELED) {
+                    g_nested_cancel_ok.store(1, std::memory_order_release);
+                }
+            }
+        }
+        close(fds[0]);
+        close(fds[1]);
+    }
+}
+
+static void *async_spin_worker(void *) {
+    RaiiWitness guard{&g_cpp_dtor_ran};
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
+    pthread_sigmask(SIG_BLOCK, &mask, nullptr);
+    int rc = 0;
+    pthread_cleanup_push(worker_cleanup, nullptr);
+    rc = pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr);
+    if (rc == 0) {
+        g_spin_ready.store(1, std::memory_order_release);
+        void (*volatile spin_fn)() = spin_forever;
+        spin_fn();
+    }
+    pthread_cleanup_pop(0);
+    return reinterpret_cast<void *>(static_cast<intptr_t>(rc));
+}
+
+struct MainCancelCtx {
+    pthread_t main_thr;
+    std::atomic<int> *ready;
+};
+
+static std::atomic<int> g_main_cleanup_ran{0};
+static void main_cleanup(void *) {
+    g_main_cleanup_ran.store(1, std::memory_order_release);
+}
+static void main_atexit_check() {
+    if (g_main_cleanup_ran.load(std::memory_order_acquire) == 1) {
+        const char msg[] = "async-main-cancel:PASS\n";
+        ssize_t n = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
+        (void)n;
+    }
+}
+
+static void *main_canceller(void *arg) {
+    auto *ctx = static_cast<MainCancelCtx *>(arg);
+    pthread_detach(pthread_self());
+    while (ctx->ready->load(std::memory_order_acquire) == 0) {
+        usleep(1000);
+    }
+    usleep(5000);
+    pthread_cancel(ctx->main_thr);
+    return nullptr;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && std::strcmp(argv[1], "main-async") == 0) {
+        std::atexit(main_atexit_check);
+        static std::atomic<int> s_main_ready{0};
+        static MainCancelCtx ctx{pthread_self(), &s_main_ready};
+        pthread_t helper{};
+        if (pthread_create(&helper, nullptr, main_canceller, &ctx) != 0) {
+            return 2;
+        }
+        pthread_cleanup_push(main_cleanup, nullptr);
+        if (pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr) != 0) {
+            return 3;
+        }
+        s_main_ready.store(1, std::memory_order_release);
+        void (*volatile spin_fn)() = spin_forever;
+        spin_fn();
+        pthread_cleanup_pop(0);
+        return 1;
+    }
+
+    pthread_t th{};
+    if (pthread_create(&th, nullptr, async_spin_worker, nullptr) != 0) {
+        return 2;
+    }
+    while (g_spin_ready.load(std::memory_order_acquire) == 0) {
+        usleep(1000);
+    }
+    usleep(5000);
+    if (pthread_cancel(th) != 0) {
+        return 3;
+    }
+    void *res = nullptr;
+    if (pthread_join(th, &res) != 0 || res != PTHREAD_CANCELED) {
+        std::fprintf(stderr, "async join failed: res=%p\n", res);
+        return 4;
+    }
+    if (g_c_cleanup_ran.load() != 1 || g_cpp_dtor_ran.load() != 1 ||
+        g_user_sigmask_ok.load() != 1 || g_nested_cancel_ok.load() != 1) {
+        std::fprintf(stderr, "async flags: c=%d cpp=%d sigmask=%d nested=%d\n",
+                     g_c_cleanup_ran.load(), g_cpp_dtor_ran.load(),
+                     g_user_sigmask_ok.load(), g_nested_cancel_ok.load());
+        return 5;
+    }
+    std::printf("async-worker-cancel:PASS\n");
+    return 0;
+}
+EOF
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+  "$out/async_cancel_probe.cpp" -o "$out/async_cancel_probe"
+
+for backend in 0 1; do
+  for mode in strict hardened; do
+    timeout --kill-after=2s 10s env LD_PRELOAD="$library" \
+      FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE="$backend" \
+      "$out/async_cancel_probe" > "$out/async-w-b${backend}-${mode}.out" 2> "$out/async-w-b${backend}-${mode}.err"
+    grep -qx "async-worker-cancel:PASS" "$out/async-w-b${backend}-${mode}.out"
+    test ! -s "$out/async-w-b${backend}-${mode}.err"
+
+    timeout --kill-after=2s 10s env LD_PRELOAD="$library" \
+      FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE="$backend" \
+      "$out/async_cancel_probe" main-async > "$out/async-m-b${backend}-${mode}.out" 2> "$out/async-m-b${backend}-${mode}.err"
+    grep -qx "async-main-cancel:PASS" "$out/async-m-b${backend}-${mode}.out"
+    test ! -s "$out/async-m-b${backend}-${mode}.err"
   done
 done
 

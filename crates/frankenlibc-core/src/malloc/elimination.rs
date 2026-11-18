@@ -885,6 +885,11 @@ fn try_lock_no_poison<T>(mutex: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
 }
 
 fn current_thread_tag() -> u64 {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if crate::pthread::tls::native_threads_may_exist() {
+        let tid = crate::syscall::raw_gettid_nocancel().max(1) as u64;
+        return tid.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    }
     THREAD_TAG.with(|tag| *tag)
 }
 
@@ -893,10 +898,18 @@ fn allocate_thread_tag() -> u64 {
 }
 
 fn slot_hint<const SLOTS: usize>() -> usize {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if crate::pthread::tls::native_threads_may_exist() {
+        return (crate::syscall::raw_gettid_nocancel().max(1) as usize) % SLOTS;
+    }
     SLOT_HINT.with(|hint| hint.get() % SLOTS)
 }
 
 fn remember_next_slot<const SLOTS: usize>(next: usize) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if crate::pthread::tls::native_threads_may_exist() {
+        return;
+    }
     SLOT_HINT.with(|hint| hint.set(next % SLOTS));
 }
 

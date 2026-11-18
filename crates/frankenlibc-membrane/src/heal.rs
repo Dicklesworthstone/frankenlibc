@@ -230,21 +230,101 @@ pub fn runtime_log_signal_context() -> RuntimeSignalContext {
     runtime_signal_context()
 }
 
+const NATIVE_LOG_REENTRY_SLOTS: usize = 64;
+static NATIVE_EMITTING_HEALING_TIDS: [std::sync::atomic::AtomicI32; NATIVE_LOG_REENTRY_SLOTS] =
+    [const { std::sync::atomic::AtomicI32::new(0) }; NATIVE_LOG_REENTRY_SLOTS];
+static NATIVE_WRITING_RUNTIME_TIDS: [std::sync::atomic::AtomicI32; NATIVE_LOG_REENTRY_SLOTS] =
+    [const { std::sync::atomic::AtomicI32::new(0) }; NATIVE_LOG_REENTRY_SLOTS];
+
+#[inline]
+#[allow(unsafe_code)]
+fn raw_native_tid() -> i32 {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        let ret: usize;
+        // SAFETY: SYS_gettid (186 on x86_64) takes no arguments and never fails.
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                inlateout("rax") 186usize => ret,
+                lateout("rcx") _,
+                lateout("r11") _,
+                options(nostack, preserves_flags),
+            );
+        }
+        ret as i32
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        let ret: usize;
+        // SAFETY: SYS_gettid (178 on aarch64) takes no arguments and never fails.
+        unsafe {
+            core::arch::asm!(
+                "svc 0",
+                in("x8") 178usize,
+                lateout("x0") ret,
+                options(nostack),
+            );
+        }
+        ret as i32
+    }
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    {
+        1
+    }
+}
+
 /// A thread-bound reentry guard. A rejected nested entry must not clear the
 /// outer operation's flag. Drop also restores the flag on an unwind.
 struct LogReentryGuard {
-    flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>,
+    flag: Option<&'static std::thread::LocalKey<std::cell::Cell<bool>>>,
+    native_slot: Option<&'static std::sync::atomic::AtomicI32>,
     _not_send: std::marker::PhantomData<*const ()>,
 }
 
 impl LogReentryGuard {
     fn enter(flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>) -> Option<Self> {
+        if crate::tls_cache::compiler_tls_disabled() {
+            let tid = raw_native_tid().max(1);
+            let table = if std::ptr::eq(flag, &EMITTING_HEALING_LOG) {
+                &NATIVE_EMITTING_HEALING_TIDS
+            } else {
+                &NATIVE_WRITING_RUNTIME_TIDS
+            };
+            let start = (tid as u32 as usize) % NATIVE_LOG_REENTRY_SLOTS;
+            for i in 0..NATIVE_LOG_REENTRY_SLOTS {
+                if table[(start + i) % NATIVE_LOG_REENTRY_SLOTS].load(Ordering::Acquire) == tid {
+                    return None;
+                }
+            }
+            for i in 0..NATIVE_LOG_REENTRY_SLOTS {
+                let idx = (start + i) % NATIVE_LOG_REENTRY_SLOTS;
+                if table[idx]
+                    .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    return Some(Self {
+                        flag: None,
+                        native_slot: Some(&table[idx]),
+                        _not_send: std::marker::PhantomData,
+                    });
+                }
+                if table[idx].load(Ordering::Acquire) == tid {
+                    return None;
+                }
+            }
+            return None;
+        }
         flag.try_with(|active| {
             if active.replace(true) {
                 None
             } else {
                 Some(Self {
-                    flag,
+                    flag: Some(flag),
+                    native_slot: None,
                     _not_send: std::marker::PhantomData,
                 })
             }
@@ -256,7 +336,11 @@ impl LogReentryGuard {
 
 impl Drop for LogReentryGuard {
     fn drop(&mut self) {
-        let _ = self.flag.try_with(|active| active.set(false));
+        if let Some(slot) = self.native_slot {
+            slot.store(0, Ordering::Release);
+        } else if let Some(flag) = self.flag {
+            let _ = flag.try_with(|active| active.set(false));
+        }
     }
 }
 

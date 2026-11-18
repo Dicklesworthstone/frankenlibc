@@ -1422,6 +1422,9 @@ fn populate_fast_fixed_mem_read_tls(
     st_cursor: Option<&Arc<FastFixedMemRead>>,
     mt_cursor: Option<&Arc<FastFixedMemRead>>,
 ) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
     set_tls_fast_mem_read(tls_cell, id, cur_gen, st_cursor);
     if let Some(cursor) = mt_cursor {
         TLS_REFCELL_MEM_CACHED.set(true);
@@ -1434,15 +1437,45 @@ fn populate_fast_fixed_mem_read_tls(
     }
 }
 
+/// Drain creator-thread compiler-TLS `stdio` caches before spawning the first
+/// native `clone` thread without `CLONE_SETTLS`, so no child thread sharing
+/// `%fs` can ever observe or race on a cached `Arc` / `RefCell`.
+pub(crate) fn drain_creator_compiler_tls_for_native_threads() {
+    let (_, _, old_ptr) = TLS_FAST_MEM_READ.replace((0, 0, std::ptr::null()));
+    if !old_ptr.is_null() {
+        // SAFETY: `old_ptr` came from `Arc::into_raw` on this creator thread before any native clone.
+        unsafe { Arc::decrement_strong_count(old_ptr) };
+    }
+    TLS_REFCELL_MEM_CACHED.set(false);
+    let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+        if let Ok(mut guard) = cache.try_borrow_mut() {
+            *guard = None;
+        }
+    });
+    let _ = FGETC_MEM_PTR_CACHE.try_with(|cache| {
+        if let Ok(mut guard) = cache.try_borrow_mut() {
+            *guard = None;
+        }
+    });
+    let _ = STREAM_CELL_CACHE.try_with(|cache| {
+        if let Ok(mut guard) = cache.try_borrow_mut() {
+            *guard = [None, None, None];
+        }
+    });
+}
+
 #[inline]
 fn clear_fast_fixed_mem_read_tls(id: usize) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
     if TLS_FAST_MEM_READ.get().0 == id {
         let (_, _, old_ptr) = TLS_FAST_MEM_READ.replace((0, 0, std::ptr::null()));
         if !old_ptr.is_null() {
             unsafe { Arc::decrement_strong_count(old_ptr) };
         }
     }
-    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
+    if !TLS_REFCELL_MEM_CACHED.get() {
         return;
     }
     let mut any_left = false;
@@ -2478,6 +2511,9 @@ fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
 /// the slow path's buffered-read step (decide/observe skipped exactly like the
 /// established ST fast paths). Empty buffer / any miss ⇒ `None` ⇒ slow path refills.
 fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return None;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     let cached = STREAM_CELL_CACHE.try_with(|c| {
@@ -2503,6 +2539,9 @@ fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
 /// inline success; `false` on any miss (not cached / would flush / mem / cookie) ⇒ caller
 /// falls through to the full per-stream-locked path.
 fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return false;
+    }
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     let written = STREAM_CELL_CACHE.try_with(|c| {
@@ -2628,7 +2667,10 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
 /// under the registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
 fn write_cache_store(stream: *mut c_void, id: usize, ptr: *mut StdioStream) {
-    if wide_io_active() || unsafe { (*ptr).effective_orientation() } >= 0 {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0
+        || wide_io_active()
+        || unsafe { (*ptr).effective_orientation() } >= 0
+    {
         return;
     }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);

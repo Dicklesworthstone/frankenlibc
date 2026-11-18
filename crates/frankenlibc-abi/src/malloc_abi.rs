@@ -512,13 +512,19 @@ fn compute_desired_strict_hot_mode() -> u64 {
 pub(crate) fn refresh_strict_hot_mode() {
     let desired = compute_desired_strict_hot_mode();
     let mut cur = STRICT_HOT_MODE_STATE.load(Ordering::Acquire);
-    while let Err(actual) = STRICT_HOT_MODE_STATE.compare_exchange_weak(
-        cur,
-        (cur & !3) | desired,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    ) {
-        cur = actual;
+    loop {
+        if (cur & 3) == desired {
+            return;
+        }
+        match STRICT_HOT_MODE_STATE.compare_exchange_weak(
+            cur,
+            (cur & !3) | desired,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return,
+            Err(actual) => cur = actual,
+        }
     }
 }
 
@@ -793,6 +799,9 @@ pub(crate) fn note_native_thread_backend() {
     MULTI_THREADED.store(true, Ordering::SeqCst);
     crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
     frankenlibc_membrane::tls_cache::disable_compiler_tls_cache_for_native_threads();
+    if !NATIVE_THREAD_BACKEND.load(Ordering::Acquire) {
+        crate::stdio_abi::drain_creator_compiler_tls_for_native_threads();
+    }
     if !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst) {
         refresh_strict_hot_mode();
     }
@@ -3720,15 +3729,51 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
         return out;
     }
-    // In standalone mode, all allocations are from bump allocator
+    // In standalone mode, bump blocks are handled above; copy arena blocks or fail cleanly.
     #[cfg(feature = "standalone")]
     {
-        return unsafe { bump_alloc(size) };
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+        let Some(old_size) = arena_block_size_lockfree(ptr) else {
+            unsafe { set_abi_errno(ENOMEM as c_int) };
+            return std::ptr::null_mut();
+        };
+        let out = unsafe { bump_alloc(size) };
+        if !out.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                );
+            }
+        }
+        return out;
     }
     #[cfg(not(feature = "standalone"))]
     {
         let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_REALLOC) else {
-            return unsafe { bump_alloc(size) };
+            if size == 0 {
+                return std::ptr::null_mut();
+            }
+            let Some(old_size) =
+                fallback_size_lockfree(ptr).or_else(|| arena_block_size_lockfree(ptr))
+            else {
+                unsafe { set_abi_errno(ENOMEM as c_int) };
+                return std::ptr::null_mut();
+            };
+            let out = unsafe { bump_alloc(size) };
+            if !out.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        ptr.cast::<u8>(),
+                        out.cast::<u8>(),
+                        old_size.min(size),
+                    );
+                }
+            }
+            return out;
         };
         let host_ptr = if let Some(&host_ptr) = HOST_REALLOC_FN.get() {
             host_ptr
@@ -4586,6 +4631,9 @@ impl MallocForkGuard {
         let child_tid = raw_syscall::sys_gettid().max(1);
         if self._native_host_alloc.is_some() {
             HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID.store(child_tid, Ordering::Relaxed);
+        } else {
+            HOST_ALLOCATOR_NATIVE_THREAD_DEPTH.store(0, Ordering::Relaxed);
+            HOST_ALLOCATOR_NATIVE_THREAD_OWNER_TID.store(0, Ordering::Release);
         }
         LAST_THREAD_CACHE.store(0, Ordering::Relaxed);
         for entry in &KEY_SLOT_DIR {
@@ -5890,6 +5938,47 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     None
 }
 
+/// Async-signal-safe, lock-free seqlock size lookup in `FALLBACK_ALLOC_TABLE`
+/// for reentrant / signal-handler `realloc` calls. Never acquires
+/// `FALLBACK_ALLOC_TABLE_LOCK` and immediately returns `None` if the current
+/// thread was interrupted while holding the table lock.
+fn fallback_size_lockfree(ptr: *mut c_void) -> Option<usize> {
+    let key = fallback_key(ptr)?;
+    if current_allocator_reentry_slot()
+        .is_some_and(|slot| slot.in_fallback_table.load(Ordering::Acquire))
+    {
+        return None;
+    }
+    for _ in 0..4 {
+        let before = FALLBACK_ALLOC_TABLE_SEQ.load(Ordering::Acquire);
+        if before & 1 == 0 {
+            let start = fallback_start_index(key);
+            let mut found = None;
+            for i in 0..1024 {
+                let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
+                let Some(entry) = fallback_slot_if_ready(idx) else {
+                    break;
+                };
+                let slot = entry.ptr.load(Ordering::Acquire);
+                if slot == key {
+                    let size = entry.size.load(Ordering::Acquire);
+                    found = (size != 0).then_some(size);
+                    break;
+                }
+                if slot == FALLBACK_SLOT_EMPTY {
+                    break;
+                }
+            }
+            core::sync::atomic::fence(Ordering::Acquire);
+            if FALLBACK_ALLOC_TABLE_SEQ.load(Ordering::Relaxed) == before {
+                return found;
+            }
+        }
+        core::hint::spin_loop();
+    }
+    None
+}
+
 /// Bench hook (swing-2 de-risking): the real FALLBACK size-table insert. Lets a
 /// per-crate bench isolate the size-tracking cost that an inline header would replace.
 #[doc(hidden)]
@@ -6349,6 +6438,7 @@ pub(crate) fn clear_current_thread_exit_slot_state() {
     if let Some(slot) = current_allocator_reentry_slot() {
         slot.signal_handler_sp.store(0, Ordering::Relaxed);
         slot.last_fast_pcc_packed.store(0, Ordering::Relaxed);
+        slot.wide_io_depth.store(0, Ordering::Relaxed);
         if let Some(key) = current_thread_key() {
             let _ = KEY_SLOT_DIR[key_slot_dir_index(key)].compare_exchange(
                 slot as *const AllocatorReentrySlot as usize,
@@ -6835,12 +6925,16 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         return unsafe { realloc_segment_owned(None, ptr, size.max(1)) };
     }
     if fallback_table_entered_on_this_thread() {
-        // No table access here (see `fallback_table_entered_on_this_thread`):
-        // a bump block's size is in its header, and so is a hardened-arena
-        // block's (its verified fingerprint); any other block's is unknown,
-        // so fail and leave it intact, as realloc may.
+        // No table lock here (see `fallback_table_entered_on_this_thread`):
+        // inspect bump header, lock-free hardened-arena fingerprint, or
+        // lock-free fallback seqlock snapshot; any other block's size is
+        // unknown, so fail with ENOMEM and leave it intact, as realloc may.
         let bump_size = unsafe { bump_allocation_size(ptr) };
-        let Some(old_size) = bump_size.or_else(|| arena_block_size_lockfree(ptr)) else {
+        let Some(old_size) = bump_size
+            .or_else(|| arena_block_size_lockfree(ptr))
+            .or_else(|| fallback_size_lockfree(ptr))
+        else {
+            unsafe { set_abi_errno(ENOMEM as c_int) };
             return std::ptr::null_mut();
         };
         let out = unsafe { bump_alloc(size) };
@@ -7686,6 +7780,7 @@ unsafe extern "C" fn malloc_slow(size: usize) -> *mut c_void {
             if !cfg!(test)
                 && !cfg!(feature = "owned-tls-cache")
                 && !cfg!(feature = "standalone")
+                && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed)
                 && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
                 && GLOBAL_ALLOC_STATS.get().is_some()
                 && runtime_policy::explicit_strict_passthrough_resolved()
@@ -8050,6 +8145,7 @@ unsafe extern "C" fn free_slow(ptr: *mut c_void) {
         && !cfg!(test)
         && !cfg!(feature = "owned-tls-cache")
         && !cfg!(feature = "standalone")
+        && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed)
         && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
         && GLOBAL_ALLOC_STATS.get().is_some()
         && runtime_policy::explicit_strict_passthrough_resolved()
@@ -8383,6 +8479,7 @@ unsafe extern "C" fn calloc_slow(nmemb: usize, size: usize) -> *mut c_void {
             if !cfg!(test)
                 && !cfg!(feature = "owned-tls-cache")
                 && !cfg!(feature = "standalone")
+                && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed)
                 && (STRICT_HOT_MODE_STATE.load(Ordering::Relaxed) & 3) == 0
                 && GLOBAL_ALLOC_STATS.get().is_some()
                 && runtime_policy::explicit_strict_passthrough_resolved()

@@ -50,6 +50,8 @@ const TLS_SLOT_EMPTY: i32 = 0;
 ///
 /// Thread IDs are strictly positive, so `-1` is never a real TID.
 const TLS_SLOT_TOMBSTONE: i32 = -1;
+/// Transient marker while an inserter initializes payload words before publishing `tid`.
+const TLS_SLOT_CLAIMING: i32 = -2;
 
 const EAGAIN: i32 = 11;
 const EINVAL: i32 = 22;
@@ -377,58 +379,77 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
         return core::ptr::null_mut();
     }
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
-    let mut first_tombstone: Option<usize> = None;
     let mut owned_ptr: *mut TlsEntry = core::ptr::null_mut();
 
-    for i in 0..TLS_TABLE_SLOTS {
-        let idx = (start + i) % TLS_TABLE_SLOTS;
-        let current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
-        if current == tid {
-            if !owned_ptr.is_null() {
-                // SAFETY: owned_ptr was allocated in this call and never stored.
-                unsafe { drop_fallback_tls_block(owned_ptr) };
+    'retry: for _ in 0..16 {
+        let mut first_tombstone: Option<usize> = None;
+        for i in 0..TLS_TABLE_SLOTS {
+            let idx = (start + i) % TLS_TABLE_SLOTS;
+            let mut current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
+            while current == TLS_SLOT_CLAIMING {
+                core::hint::spin_loop();
+                current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
             }
-            return FALLBACK_TLS_PTRS[idx].load(Ordering::Acquire) as *mut TlsEntry;
+            if current == tid {
+                if !owned_ptr.is_null() {
+                    // SAFETY: owned_ptr was allocated in this call and never stored.
+                    unsafe { drop_fallback_tls_block(owned_ptr) };
+                }
+                return FALLBACK_TLS_PTRS[idx].load(Ordering::Acquire) as *mut TlsEntry;
+            }
+
+            if current == TLS_SLOT_TOMBSTONE {
+                if first_tombstone.is_none() {
+                    first_tombstone = Some(idx);
+                }
+                continue;
+            }
+
+            if current == TLS_SLOT_EMPTY {
+                let (target, expected) = match first_tombstone {
+                    Some(tomb) => (tomb, TLS_SLOT_TOMBSTONE),
+                    None => (idx, TLS_SLOT_EMPTY),
+                };
+                if FALLBACK_TLS_TIDS[target]
+                    .compare_exchange(
+                        expected,
+                        TLS_SLOT_CLAIMING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    if owned_ptr.is_null() {
+                        owned_ptr = fallback_tls_block_for_slot(target);
+                    }
+                    FALLBACK_TLS_PTRS[target].store(owned_ptr as usize, Ordering::Relaxed);
+                    FALLBACK_TLS_TIDS[target].store(tid, Ordering::Release);
+                    return owned_ptr;
+                }
+                continue 'retry;
+            }
         }
 
-        if current == TLS_SLOT_TOMBSTONE {
-            if first_tombstone.is_none() {
-                first_tombstone = Some(idx);
-            }
-            continue;
-        }
-
-        if current == TLS_SLOT_EMPTY {
-            let target = first_tombstone.unwrap_or(idx);
-            let expected = if first_tombstone.is_some() {
-                TLS_SLOT_TOMBSTONE
-            } else {
-                TLS_SLOT_EMPTY
-            };
-            if FALLBACK_TLS_TIDS[target]
-                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
+        if let Some(tomb_idx) = first_tombstone {
+            if FALLBACK_TLS_TIDS[tomb_idx]
+                .compare_exchange(
+                    TLS_SLOT_TOMBSTONE,
+                    TLS_SLOT_CLAIMING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
                 .is_ok()
             {
                 if owned_ptr.is_null() {
-                    owned_ptr = fallback_tls_block_for_slot(target);
+                    owned_ptr = fallback_tls_block_for_slot(tomb_idx);
                 }
-                FALLBACK_TLS_PTRS[target].store(owned_ptr as usize, Ordering::Release);
+                FALLBACK_TLS_PTRS[tomb_idx].store(owned_ptr as usize, Ordering::Relaxed);
+                FALLBACK_TLS_TIDS[tomb_idx].store(tid, Ordering::Release);
                 return owned_ptr;
             }
-            first_tombstone = None;
+            continue 'retry;
         }
-    }
-
-    if let Some(tomb_idx) = first_tombstone
-        && FALLBACK_TLS_TIDS[tomb_idx]
-            .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    {
-        if owned_ptr.is_null() {
-            owned_ptr = fallback_tls_block_for_slot(tomb_idx);
-        }
-        FALLBACK_TLS_PTRS[tomb_idx].store(owned_ptr as usize, Ordering::Release);
-        return owned_ptr;
+        break;
     }
 
     if !owned_ptr.is_null() {
@@ -477,53 +498,66 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
         return false;
     };
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
-    let mut first_tombstone: Option<usize> = None;
-    for i in 0..TLS_TABLE_SLOTS {
-        let idx = (start + i) % TLS_TABLE_SLOTS;
-        let current = TLS_TIDS[idx].load(Ordering::Acquire);
-        if current == tid {
-            // Already registered (shouldn't happen, but handle gracefully).
-            publish_tls_slot(idx, values_ptr, generation);
-            return true;
-        }
-
-        if current == TLS_SLOT_TOMBSTONE {
-            if first_tombstone.is_none() {
-                first_tombstone = Some(idx);
+    'retry: for _ in 0..16 {
+        let mut first_tombstone: Option<usize> = None;
+        for i in 0..TLS_TABLE_SLOTS {
+            let idx = (start + i) % TLS_TABLE_SLOTS;
+            let mut current = TLS_TIDS[idx].load(Ordering::Acquire);
+            while current == TLS_SLOT_CLAIMING {
+                core::hint::spin_loop();
+                current = TLS_TIDS[idx].load(Ordering::Acquire);
             }
-            continue;
-        }
-
-        if current == TLS_SLOT_EMPTY {
-            if let Some(tomb_idx) = first_tombstone {
-                if TLS_TIDS[tomb_idx]
-                    .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
-                    .is_ok()
-                {
-                    publish_tls_slot(tomb_idx, values_ptr, generation);
-                    return true;
-                }
-                first_tombstone = None;
-                continue;
-            }
-
-            if TLS_TIDS[idx]
-                .compare_exchange(TLS_SLOT_EMPTY, tid, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
+            if current == tid {
+                // Already registered (shouldn't happen, but handle gracefully).
                 publish_tls_slot(idx, values_ptr, generation);
                 return true;
             }
+
+            if current == TLS_SLOT_TOMBSTONE {
+                if first_tombstone.is_none() {
+                    first_tombstone = Some(idx);
+                }
+                continue;
+            }
+
+            if current == TLS_SLOT_EMPTY {
+                let (target, expected) = match first_tombstone {
+                    Some(tomb_idx) => (tomb_idx, TLS_SLOT_TOMBSTONE),
+                    None => (idx, TLS_SLOT_EMPTY),
+                };
+                if TLS_TIDS[target]
+                    .compare_exchange(
+                        expected,
+                        TLS_SLOT_CLAIMING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    publish_tls_slot(target, values_ptr, generation);
+                    TLS_TIDS[target].store(tid, Ordering::Release);
+                    return true;
+                }
+                continue 'retry;
+            }
         }
-    }
-    // Table full. Best effort: if we observed a tombstone, retry claiming it.
-    if let Some(tomb_idx) = first_tombstone
-        && TLS_TIDS[tomb_idx]
-            .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    {
-        publish_tls_slot(tomb_idx, values_ptr, generation);
-        return true;
+        if let Some(tomb_idx) = first_tombstone {
+            if TLS_TIDS[tomb_idx]
+                .compare_exchange(
+                    TLS_SLOT_TOMBSTONE,
+                    TLS_SLOT_CLAIMING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                publish_tls_slot(tomb_idx, values_ptr, generation);
+                TLS_TIDS[tomb_idx].store(tid, Ordering::Release);
+                return true;
+            }
+            continue 'retry;
+        }
+        return false;
     }
     false
 }
@@ -674,70 +708,98 @@ fn ensure_unregistered_cancel_slot(tid: i32) -> Option<usize> {
     }
     UNREGISTERED_CANCEL_USED.store(true, Ordering::Release);
     let start = (tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
-    let mut first_tombstone: Option<usize> = None;
+    'retry: for _ in 0..16 {
+        let mut first_tombstone: Option<usize> = None;
+        for i in 0..UNREGISTERED_CANCEL_SLOTS {
+            let idx = (start + i) % UNREGISTERED_CANCEL_SLOTS;
+            let mut stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
+            while stored == TLS_SLOT_CLAIMING {
+                core::hint::spin_loop();
+                stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
+            }
+            if stored == tid {
+                return Some(idx);
+            }
+            if stored == TLS_SLOT_TOMBSTONE {
+                if first_tombstone.is_none() {
+                    first_tombstone = Some(idx);
+                }
+                continue;
+            }
+            if stored == TLS_SLOT_EMPTY {
+                let (target, expected) = match first_tombstone {
+                    Some(tomb) => (tomb, TLS_SLOT_TOMBSTONE),
+                    None => (idx, TLS_SLOT_EMPTY),
+                };
+                let generation = NEXT_CANCEL_GENERATION
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                        next.checked_add(2)
+                    })
+                    .ok()?;
+                if UNREGISTERED_CANCEL_TIDS[target]
+                    .compare_exchange(
+                        expected,
+                        TLS_SLOT_CLAIMING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    UNREGISTERED_CANCEL_FLAGS[target].store(0, Ordering::Relaxed);
+                    UNREGISTERED_CANCEL_WORDS[target].store(generation, Ordering::Relaxed);
+                    UNREGISTERED_CANCEL_TIDS[target].store(tid, Ordering::Release);
+                    return Some(target);
+                }
+                continue 'retry;
+            }
+        }
+        if let Some(tomb) = first_tombstone {
+            let generation = NEXT_CANCEL_GENERATION
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    next.checked_add(2)
+                })
+                .ok()?;
+            if UNREGISTERED_CANCEL_TIDS[tomb]
+                .compare_exchange(
+                    TLS_SLOT_TOMBSTONE,
+                    TLS_SLOT_CLAIMING,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                UNREGISTERED_CANCEL_FLAGS[tomb].store(0, Ordering::Relaxed);
+                UNREGISTERED_CANCEL_WORDS[tomb].store(generation, Ordering::Relaxed);
+                UNREGISTERED_CANCEL_TIDS[tomb].store(tid, Ordering::Release);
+                return Some(tomb);
+            }
+            continue 'retry;
+        }
+        return None;
+    }
+    None
+}
+
+/// Async-signal-safe, lock-free check whether an unregistered native thread
+/// (`tid`) currently has asynchronous cancellation enabled and active.
+#[inline]
+pub fn unregistered_native_async_cancel_ready_for_tid(tid: i32) -> bool {
+    if tid <= 0 || !UNREGISTERED_CANCEL_USED.load(Ordering::Acquire) {
+        return false;
+    }
+    let start = (tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
     for i in 0..UNREGISTERED_CANCEL_SLOTS {
         let idx = (start + i) % UNREGISTERED_CANCEL_SLOTS;
         let stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
         if stored == tid {
-            if UNREGISTERED_CANCEL_WORDS[idx].load(Ordering::Acquire) != 0 {
-                return Some(idx);
-            }
-            let generation = NEXT_CANCEL_GENERATION
-                .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                    next.checked_add(2)
-                })
-                .ok()?;
-            let _ = UNREGISTERED_CANCEL_WORDS[idx].compare_exchange(
-                0,
-                generation,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-            return Some(idx);
-        }
-        if stored == TLS_SLOT_TOMBSTONE {
-            if first_tombstone.is_none() {
-                first_tombstone = Some(idx);
-            }
-            continue;
+            let flags = UNREGISTERED_CANCEL_FLAGS[idx].load(Ordering::Acquire);
+            return (flags & (CANCEL_FLAG_ASYNC | CANCEL_FLAG_DISABLED)) == CANCEL_FLAG_ASYNC;
         }
         if stored == TLS_SLOT_EMPTY {
-            let (target, expected) = match first_tombstone {
-                Some(tomb) => (tomb, TLS_SLOT_TOMBSTONE),
-                None => (idx, TLS_SLOT_EMPTY),
-            };
-            let generation = NEXT_CANCEL_GENERATION
-                .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                    next.checked_add(2)
-                })
-                .ok()?;
-            if UNREGISTERED_CANCEL_TIDS[target]
-                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                UNREGISTERED_CANCEL_FLAGS[target].store(0, Ordering::Release);
-                UNREGISTERED_CANCEL_WORDS[target].store(generation, Ordering::Release);
-                return Some(target);
-            }
-            first_tombstone = None;
+            break;
         }
     }
-    if let Some(tomb) = first_tombstone {
-        let generation = NEXT_CANCEL_GENERATION
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
-                next.checked_add(2)
-            })
-            .ok()?;
-        if UNREGISTERED_CANCEL_TIDS[tomb]
-            .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            UNREGISTERED_CANCEL_FLAGS[tomb].store(0, Ordering::Release);
-            UNREGISTERED_CANCEL_WORDS[tomb].store(generation, Ordering::Release);
-            return Some(tomb);
-        }
-    }
-    None
+    false
 }
 
 /// Obtain a `CancellationWait` descriptor for an unregistered native thread

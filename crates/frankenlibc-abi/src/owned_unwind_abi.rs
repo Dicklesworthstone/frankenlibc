@@ -2244,6 +2244,37 @@ fn step_x86_64_cursor_with_mode(
         return Ok(Some((next, record.fde.signal_frame)));
     }
 
+    // Linux x86_64 signal restorer (`mov $15, %rax; syscall` = 48 c7 c0 0f 00 00 00 0f 05)
+    // has no `.eh_frame` FDE; step directly across `rt_sigframe`'s `ucontext_t` at `cursor.rsp`
+    // (matching libgcc `x86_64_fallback_frame_state`, including `sigaltstack` frames).
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if (4096..(1usize << 57)).contains(&cursor.ip)
+        && (4096..(1usize << 57)).contains(&cursor.rsp)
+        && cursor.rsp.is_multiple_of(core::mem::align_of::<usize>())
+    {
+        const RT_SIGRETURN_X86_64: [u8; 9] = [0x48, 0xc7, 0xc0, 0x0f, 0x00, 0x00, 0x00, 0x0f, 0x05];
+        // SAFETY: `cursor.ip` is a return address inside an executable text mapping.
+        let code = unsafe { core::slice::from_raw_parts(cursor.ip as *const u8, 9) };
+        if code == RT_SIGRETURN_X86_64 {
+            // SAFETY: after popping `pretcode`, `cursor.rsp` points to the kernel's `ucontext_t`.
+            let uc = unsafe { &*(cursor.rsp as *const libc::ucontext_t) };
+            let gregs = &uc.uc_mcontext.gregs;
+            let next = X86PhysicalCursor {
+                ip: gregs[libc::REG_RIP as usize] as usize,
+                rsp: gregs[libc::REG_RSP as usize] as usize,
+                rbp: gregs[libc::REG_RBP as usize] as usize,
+                rbx: gregs[libc::REG_RBX as usize] as usize,
+                r12: gregs[libc::REG_R12 as usize] as usize,
+                r13: gregs[libc::REG_R13 as usize] as usize,
+                r14: gregs[libc::REG_R14 as usize] as usize,
+                r15: gregs[libc::REG_R15 as usize] as usize,
+            };
+            if next.ip != 0 && (next.rsp != cursor.rsp || next.ip != cursor.ip) {
+                return Ok(Some((next, true)));
+            }
+        }
+    }
+
     // Fallback for hand-written stubs without `.eh_frame`: step `%rbp` chain if valid.
     let Some(stack_limit) = cursor.rsp.checked_add(MAX_STACK_SCAN_BYTES) else {
         return Ok(None);

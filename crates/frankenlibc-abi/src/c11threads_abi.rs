@@ -3,7 +3,6 @@
 //! Thin wrappers over the existing pthread_abi implementations.
 //! C11 threads map 1:1 onto POSIX threads with different return value conventions.
 
-use std::cell::Cell;
 use std::ffi::c_int;
 use std::ffi::c_void;
 
@@ -48,9 +47,10 @@ type TssDtorT = unsafe extern "C" fn(*mut c_void);
 // Runtime mode is immutable after its first resolution. Keep the C11 mutex
 // hot path out of the runtime-policy framing after that first call while still
 // retaining the hardened allocation check when the process selected it.
-thread_local! {
-    static MTX_TRYLOCK_STRICT_FASTPATH: Cell<Option<bool>> = const { Cell::new(None) };
-}
+// Uses a process-wide atomic (`0 = unknown, 1 = non-strict, 2 = strict`) so
+// native threads sharing `%fs` never race on a non-atomic `Cell`.
+static MTX_TRYLOCK_STRICT_FASTPATH: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(0);
 
 // ---------------------------------------------------------------------------
 // Helper: convert pthread errno to C11 thread return code
@@ -81,26 +81,28 @@ fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
 
 #[inline(always)]
 fn mtx_trylock_strict_fastpath() -> bool {
-    MTX_TRYLOCK_STRICT_FASTPATH
-        .try_with(|cached| match cached.get() {
-            Some(strict) => strict,
-            None => {
-                let mode = crate::runtime_policy::mode();
-                let strict = mode.validation_enabled() && !mode.heals_enabled();
-                // `mode()` returns strict during an intentionally reentrant
-                // resolution. Do not pin that provisional answer: the atomic
-                // predicate remains false until strict is fully published.
-                if strict && !crate::runtime_policy::strict_passthrough_active() {
-                    false
-                } else {
-                    cached.set(Some(strict));
-                    strict
-                }
-            }
-        })
-        // TLS can be unavailable during thread teardown. Preserve the existing
-        // bootstrap-safe atomic predicate for that exceptional path.
-        .unwrap_or_else(|_| crate::runtime_policy::strict_passthrough_active())
+    if !cfg!(test) {
+        match MTX_TRYLOCK_STRICT_FASTPATH.load(core::sync::atomic::Ordering::Relaxed) {
+            1 => return false,
+            2 => return true,
+            _ => {}
+        }
+    }
+    let mode = crate::runtime_policy::mode();
+    let strict = mode.validation_enabled() && !mode.heals_enabled();
+    // `mode()` returns strict during an intentionally reentrant
+    // resolution. Do not pin that provisional answer: the atomic
+    // predicate remains false until strict is fully published.
+    if strict && !crate::runtime_policy::strict_passthrough_active() {
+        return false;
+    }
+    if !cfg!(test) {
+        MTX_TRYLOCK_STRICT_FASTPATH.store(
+            if strict { 2 } else { 1 },
+            core::sync::atomic::Ordering::Relaxed,
+        );
+    }
+    strict
 }
 
 // ===========================================================================

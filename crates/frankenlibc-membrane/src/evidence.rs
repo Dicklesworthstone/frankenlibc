@@ -304,7 +304,10 @@ impl StdioEvidenceRingBuffer {
     }
 
     pub fn append(&self, mut row: StdioEvidenceRow) -> io::Result<u64> {
-        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let seq = self
+            .next_seq
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
         row.finalize_for_emission(seq);
 
         {

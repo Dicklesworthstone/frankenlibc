@@ -318,13 +318,15 @@ pub(crate) fn set_current_native_unwind_boundary(boundary: usize) {
 }
 
 fn any_registered_host_thread_alive() -> bool {
+    let self_tid = core_self_tid();
     let tids: Vec<i32> = HOST_THREAD_TID_REGISTRY
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .values()
         .copied()
         .collect();
-    tids.into_iter().any(thread_tid_appears_alive)
+    tids.into_iter()
+        .any(|tid| tid != self_tid && thread_tid_appears_alive(tid))
 }
 
 unsafe extern "C" fn native_last_thread_exit_hook() {
@@ -463,7 +465,9 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
         // All force-native entrypoints update the global flag before installing
         // a TLS override. The deployed cache-hit path can therefore avoid
         // borrowing the larger pthread TLS state unless the global flag is set.
-        if global_force_native_threading_enabled() {
+        if crate::malloc_abi::native_thread_backend_active()
+            || global_force_native_threading_enabled()
+        {
             return None;
         }
         if let Some(cached_self) = PTHREAD_SELF_FAST
@@ -489,7 +493,7 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
 #[inline]
 fn remember_current_pthread_self(value: libc::pthread_t) {
     #[cfg(not(feature = "owned-tls-cache"))]
-    if !force_native_threading_enabled() {
+    if !crate::malloc_abi::native_thread_backend_active() && !force_native_threading_enabled() {
         let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(value));
     }
     let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = value);
@@ -5572,6 +5576,10 @@ pub unsafe extern "C" fn pthread_setspecific(
 /// callbacks from start_thread) that runs fl's destructors. The main thread is
 /// skipped: glibc does not run key destructors at process exit.
 fn ensure_host_thread_key_teardown() {
+    if crate::malloc_abi::native_thread_backend_active() || global_force_native_threading_enabled()
+    {
+        return;
+    }
     thread_local! {
         static DECIDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
@@ -6694,14 +6702,6 @@ fn cancel_async_for_current_thread() -> bool {
     with_pthread_tls(|tls| tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE)
 }
 
-pub(crate) fn unregistered_native_async_cancel_ready() -> bool {
-    with_pthread_tls(|tls| {
-        tls.thread_cancel_state == PTHREAD_CANCEL_ENABLE_STATE
-            && tls.thread_cancel_type == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE
-            && !tls.native_exit_started
-    })
-}
-
 #[inline]
 fn current_native_cancellation_wait() -> Option<CancellationWait> {
     if let Some(wait) = core_current_cancellation_wait() {
@@ -6893,6 +6893,10 @@ pub unsafe extern "C-unwind" fn pthread_setcancelstate(
         return unsafe { host_setcancelstate(state, oldstate) };
     }
 
+    let tid = core_self_tid();
+    if state == PTHREAD_CANCEL_DISABLE_STATE {
+        set_native_cancel_disabled(tid, true);
+    }
     let previous = if let Some(handle) = native {
         // SAFETY: the owner keeps this handle live through the call. Atomic
         // settings also permit the owner's signal handler to query/change them.
@@ -6904,7 +6908,9 @@ pub unsafe extern "C-unwind" fn pthread_setcancelstate(
             prev
         })
     };
-    set_native_cancel_disabled(core_self_tid(), state == PTHREAD_CANCEL_DISABLE_STATE);
+    if state == PTHREAD_CANCEL_ENABLE_STATE {
+        set_native_cancel_disabled(tid, false);
+    }
     if !oldstate.is_null() {
         // SAFETY: oldstate is provided by caller and checked for null.
         unsafe { *oldstate = previous };
@@ -7130,6 +7136,18 @@ unsafe fn cancellation_sigwait_window(
     set: *const u8,
     sigset_size: usize,
 ) -> Result<c_int, c_int> {
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let set =
+        unsafe { crate::signal_abi::filter_reserved_sigset_for_wait(set, &mut filtered_word) };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let _ = &mut filtered_word;
     if caller != 0 && !host_cancellation_thread() && !address_is_inside_this_object(caller) {
         let slice = raw_syscall::Timespec {
             tv_sec: 0,
@@ -7405,17 +7423,16 @@ unsafe extern "C-unwind" fn cancellation_sleep_window_raw(
         {
             let tid = cancel.tid();
             crate::signal_abi::ensure_native_sigcancel_installed();
-            set_native_cancel_point_active(tid, true);
+            let mut window_guard = NativeCancelWindowGuard::enter(tid);
             if cancel.pending() {
-                set_native_cancel_point_active(tid, false);
+                drop(window_guard);
                 unsafe { pthread_testcancel() };
                 return invoke_sleep_syscall();
             }
             let window_rsp = current_window_stack_pointer();
-            raw_syscall::arm_native_cancel_syscall(tid, cancel.address(), window_rsp);
+            window_guard.arm(cancel.address(), window_rsp);
             let ret = invoke_sleep_syscall();
-            let interrupted = raw_syscall::disarm_native_cancel_syscall(tid);
-            set_native_cancel_point_active(tid, false);
+            let interrupted = window_guard.finish();
             if interrupted && cancel.pending() {
                 unsafe { pthread_testcancel() };
             }
@@ -8033,6 +8050,47 @@ unsafe fn preflight_cancellation_point_for_caller(caller: usize) {
     }
 }
 
+struct NativeCancelWindowGuard {
+    tid: i32,
+    armed: bool,
+}
+
+impl NativeCancelWindowGuard {
+    #[inline]
+    fn enter(tid: i32) -> Self {
+        set_native_cancel_point_active(tid, true);
+        Self { tid, armed: false }
+    }
+
+    #[inline]
+    fn arm(&mut self, cancel_word: *const u32, window_rsp: usize) {
+        raw_syscall::arm_native_cancel_syscall(self.tid, cancel_word, window_rsp);
+        self.armed = true;
+    }
+
+    #[inline]
+    fn finish(mut self) -> bool {
+        let interrupted = if self.armed {
+            self.armed = false;
+            raw_syscall::disarm_native_cancel_syscall(self.tid)
+        } else {
+            false
+        };
+        set_native_cancel_point_active(self.tid, false);
+        core::mem::forget(self);
+        interrupted
+    }
+}
+
+impl Drop for NativeCancelWindowGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = raw_syscall::disarm_native_cancel_syscall(self.tid);
+        }
+        set_native_cancel_point_active(self.tid, false);
+    }
+}
+
 #[inline(always)]
 fn current_window_stack_pointer() -> usize {
     #[cfg(target_arch = "x86_64")]
@@ -8109,17 +8167,16 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
         {
             let tid = cancel.tid();
             crate::signal_abi::ensure_native_sigcancel_installed();
-            set_native_cancel_point_active(tid, true);
+            let mut window_guard = NativeCancelWindowGuard::enter(tid);
             if cancel.pending() {
-                set_native_cancel_point_active(tid, false);
+                drop(window_guard);
                 unsafe { pthread_testcancel() };
                 return blocking_syscall();
             }
             let window_rsp = current_window_stack_pointer();
-            raw_syscall::arm_native_cancel_syscall(tid, cancel.address(), window_rsp);
+            window_guard.arm(cancel.address(), window_rsp);
             let ret = blocking_syscall();
-            let interrupted = raw_syscall::disarm_native_cancel_syscall(tid);
-            set_native_cancel_point_active(tid, false);
+            let interrupted = window_guard.finish();
             if interrupted && cancel.pending() {
                 unsafe { pthread_testcancel() };
             }
@@ -10797,6 +10854,7 @@ pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
         unsafe { host_exit(retval) };
     }
 
+    set_native_cancel_disabled(core_self_tid(), true);
     with_pthread_tls(|tls| tls.native_exit_started = true);
     unsafe { continue_native_thread_exit() };
 }

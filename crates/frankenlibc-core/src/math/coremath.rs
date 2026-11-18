@@ -5985,6 +5985,12 @@ fn domain_nan_invalid() -> f64 {
 }
 
 #[inline(always)]
+fn round_dd_signed(dd: [f64; 2], sign: f64) -> f64 {
+    let s = if sign.is_sign_negative() { -1.0 } else { 1.0 };
+    core::hint::black_box(dd[0] * s) + core::hint::black_box(dd[1] * s)
+}
+
+#[inline(always)]
 fn pick_atan_anchor(num: f64, den: f64) -> usize {
     let nb = num.to_bits();
     let db = den.to_bits();
@@ -6630,31 +6636,27 @@ fn atan2_body(y: f64, x: f64) -> f64 {
     }
     let x_neg = x.is_sign_negative();
     if y == 0.0 {
-        return if x_neg {
-            (PI_DD[0] + PI_DD[1]).copysign(y)
-        } else {
-            y
-        };
+        return if x_neg { round_dd_signed(PI_DD, y) } else { y };
     }
     if x == 0.0 {
-        return (PI_2_DD[0] + PI_2_DD[1]).copysign(y);
+        return round_dd_signed(PI_2_DD, y);
     }
     if !x.is_finite() || !y.is_finite() {
         if !x.is_finite() && !y.is_finite() {
             return if x_neg {
-                (PI_3_4_DD[0] + PI_3_4_DD[1]).copysign(y)
+                round_dd_signed(PI_3_4_DD, y)
             } else {
-                (PI_4_DD[0] + PI_4_DD[1]).copysign(y)
+                round_dd_signed(PI_4_DD, y)
             };
         }
         if !x.is_finite() {
             return if x_neg {
-                (PI_DD[0] + PI_DD[1]).copysign(y)
+                round_dd_signed(PI_DD, y)
             } else {
                 0.0f64.copysign(y)
             };
         }
-        return (PI_2_DD[0] + PI_2_DD[1]).copysign(y);
+        return round_dd_signed(PI_2_DD, y);
     }
 
     let ay_bits = y.to_bits() & (u64::MAX >> 1);
@@ -6663,35 +6665,65 @@ fn atan2_body(y: f64, x: f64) -> f64 {
     let ex = ((ax_bits >> 52) as i32).max(1);
     let ediff = ey - ex;
     if ediff >= 56 {
-        return (PI_2_DD[0] + PI_2_DD[1]).copysign(y);
+        return round_dd_signed(PI_2_DD, y);
     }
     if ediff <= -56 {
         if x_neg {
-            return (PI_DD[0] + PI_DD[1]).copysign(y);
+            return round_dd_signed(PI_DD, y);
         }
         if ediff >= -960 {
-            let q = y / x;
+            let q = core::hint::black_box(y) / core::hint::black_box(x);
             let rem = (-q).mul_add(x, y);
             if rem == 0.0 {
-                return hf!("-0x1p-54").mul_add(q, q);
+                return core::hint::black_box(q) - core::hint::black_box(q * hf!("0x1p-54"));
             }
             return q;
         }
-        let q = core::hint::black_box(core::hint::black_box(y) / core::hint::black_box(x));
-        if (ax_bits & MASK52) == 0 {
-            if q != 0.0 && q * x == y {
-                if q.abs() < f64::MIN_POSITIVE {
-                    let _ = core::hint::black_box(
-                        core::hint::black_box(f64::from_bits(0x0010_0000_0000_0001))
-                            * core::hint::black_box(0.5),
-                    );
+        let y_s = y.abs() * hf!("0x1p+537");
+        let x_s = x * hf!("0x1p-537");
+        let u_ulps = y_s / x_s;
+        let rem_s = (-u_ulps).mul_add(x_s, y_s);
+        if u_ulps < hf!("0x1p+52") || (u_ulps == hf!("0x1p+52") && rem_s <= 0.0) {
+            let (k, upper_half) = if u_ulps < 0.5 || (u_ulps == 0.5 && rem_s <= 0.0) {
+                (0u64, false)
+            } else if u_ulps < 1.0 {
+                (0u64, true)
+            } else {
+                let m = u_ulps as u64;
+                let frac = u_ulps - (m as f64);
+                if frac == 0.0 && rem_s <= 0.0 {
+                    (m - 1, true)
+                } else if frac < 0.5 || (frac == 0.5 && rem_s <= 0.0) {
+                    (m, false)
                 } else {
-                    return hf!("-0x1p-54").mul_add(q, q);
+                    (m, true)
                 }
-            }
-            return q;
+            };
+            let (w, scale) = if !upper_half {
+                (
+                    (((k as f64) + 0.5) * hf!("0x1p-537")).copysign(y),
+                    hf!("0x1.fffffffffffffp-538"),
+                )
+            } else if k < (1u64 << 52) - 1 {
+                (
+                    (((k + 1) as f64) * hf!("0x1p-537")).copysign(y),
+                    hf!("0x1.fffffffffffffp-538"),
+                )
+            } else {
+                (
+                    (hf!("0x1.0000000000001p+52") * hf!("0x1p-537")).copysign(y),
+                    hf!("0x1.ffffffffffffep-538"),
+                )
+            };
+            return core::hint::black_box(w) * core::hint::black_box(scale);
         }
-        return atan2_cold(y, x);
+        if rem_s == 0.0 {
+            let adj = (core::hint::black_box(u_ulps)
+                - core::hint::black_box(u_ulps * hf!("0x1p-54")))
+            .copysign(y);
+            return (adj * hf!("0x1p-537")) * hf!("0x1p-537");
+        }
+        return core::hint::black_box(y) / core::hint::black_box(x);
     }
 
     let (ay, ax) = if ey > 1500 || ex > 1500 {
@@ -6787,7 +6819,7 @@ fn asin_refine(x: f64) -> f64 {
         let (as_h, as_l) = adddd_norm(sh, sl, corr_h, corr_l);
         adddd_norm(PI_2_DD[0], PI_2_DD[1], -(2.0 * as_h), -(2.0 * as_l))
     };
-    let eps = ah * hf!("0x1p-80");
+    let eps = ah * hf!("0x1p-76");
     let ub = ah + (al + eps);
     let lb = ah + (al - eps);
     if ub == lb {
@@ -6808,7 +6840,7 @@ fn asin_body(x: f64) -> f64 {
     let abits = bits & (u64::MAX >> 1);
     if abits >= 0x3ff0_0000_0000_0000 {
         if abits == 0x3ff0_0000_0000_0000 {
-            return (PI_2_DD[0] + PI_2_DD[1]).copysign(x);
+            return round_dd_signed(PI_2_DD, x);
         }
         if abits > 0x7ff0_0000_0000_0000 {
             return x + x;
@@ -6922,7 +6954,7 @@ fn acos_refine(x: f64) -> f64 {
             (2.0 * as_h, 2.0 * as_l)
         }
     };
-    let eps = ah * hf!("0x1p-80");
+    let eps = ah * hf!("0x1p-76");
     let ub = ah + (al + eps);
     let lb = ah + (al - eps);
     if ub == lb {
@@ -6946,7 +6978,7 @@ fn acos_body(x: f64) -> f64 {
             return 0.0;
         }
         if bits == 0xbff0_0000_0000_0000 {
-            return PI_DD[0] + PI_DD[1];
+            return round_dd_signed(PI_DD, 1.0);
         }
         if abits > 0x7ff0_0000_0000_0000 {
             return x + x;
@@ -7325,12 +7357,25 @@ mod tests {
             atan2(f64::INFINITY, f64::NEG_INFINITY).to_bits(),
             0x4002_d97c_7f33_21d2
         );
-        // Subnormal midpoint ratio 3*2^-1000 / 2^75 = 1.5*2^-1074: atan(u) < u rounds down to 2^-1074!
-        let sub_mid = atan2(
-            f64::from_bits((23u64 << 52) | (1u64 << 51)),
+        // Subnormal midpoint ratios:
+        // 1) 3*2^-1000 / 2^75 = 1.5*2^-1074: atan(u) < u rounds down to 0x1!
+        let sub_mid_odd = atan2(
+            f64::from_bits((24u64 << 52) | (1u64 << 51)),
             f64::from_bits(1098u64 << 52),
         );
-        assert_eq!(sub_mid.to_bits(), 1);
+        assert_eq!(sub_mid_odd.to_bits(), 1);
+        // 2) 75*2^-1001 / (15*2^74) = 2.5*2^-1074: atan(u) < u rounds down to 0x2!
+        let sub_mid_even = atan2(
+            f64::from_bits(0x01c2_c000_0000_0000),
+            f64::from_bits(0x44ce_0000_0000_0000),
+        );
+        assert_eq!(sub_mid_even.to_bits(), 2);
+        // 3) Just above 1.5*2^-1074 rounds up to 0x2!
+        let sub_above_mid = atan2(
+            f64::from_bits((24u64 << 52) | (1u64 << 51) | 1),
+            f64::from_bits(1098u64 << 52),
+        );
+        assert_eq!(sub_above_mid.to_bits(), 2);
     }
 
     #[test]

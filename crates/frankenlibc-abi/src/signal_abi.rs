@@ -177,8 +177,35 @@ fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
         sa_handler: act.sa_sigaction,
         sa_flags: act.sa_flags as usize,
         sa_restorer: act.sa_restorer.map_or(0usize, |restorer| restorer as usize),
-        sa_mask: sigset_first_word(&act.sa_mask),
+        sa_mask: sigset_first_word(&act.sa_mask)
+            & !(signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong),
     }
+}
+
+/// Filter NPTL/FrankenLibC reserved internal signals (32/33) out of a non-null,
+/// canonically mapped user `sigset_t` before `rt_sigtimedwait`, preserving
+/// kernel `EFAULT` behavior on null, unaligned, or kernel-range pointers.
+#[inline]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+pub(crate) unsafe fn filter_reserved_sigset_for_wait(
+    set: *const u8,
+    scratch: &mut libc::c_ulong,
+) -> *const u8 {
+    let addr = set as usize;
+    if (4096..(1usize << 57)).contains(&addr) {
+        let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
+        // SAFETY: validated positive user-space address; `read_unaligned` handles
+        // packed/unaligned `sigset_t` pointers just like `sigprocmask` / kernel `copy_from_user`.
+        let word0 = unsafe { core::ptr::read_unaligned(set as *const libc::c_ulong) };
+        if word0 & reserved != 0 {
+            *scratch = word0 & !reserved;
+            return std::ptr::from_ref(scratch).cast::<u8>();
+        }
+    }
+    set
 }
 
 #[cfg(all(
@@ -552,8 +579,7 @@ fn is_signal_trampoline(handler: usize) -> bool {
 }
 
 pub(crate) const NATIVE_SIGCANCEL: c_int = 32;
-static NATIVE_SIGCANCEL_INSTALLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static NATIVE_SIGCANCEL_STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 static PREV_SIGCANCEL_HANDLER: AtomicUsize = AtomicUsize::new(0);
 static PREV_SIGCANCEL_FLAGS: AtomicUsize = AtomicUsize::new(0);
 
@@ -580,6 +606,25 @@ impl Drop for CancelWindowSignalDepthGuard {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
+#[inline]
+unsafe fn restore_sigmask_before_unwind(context: *mut c_void) {
+    let uc = unsafe { &*context.cast::<libc::ucontext_t>() };
+    let restored = sigset_first_word(&uc.uc_sigmask)
+        & !(signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong);
+    let _ = unsafe {
+        raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_SETMASK,
+            (&raw const restored).cast(),
+            std::ptr::null_mut(),
+            std::mem::size_of::<u64>(),
+        )
+    };
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 unsafe extern "C-unwind" fn native_sigcancel_trampoline(
     signum: c_int,
     info: *mut libc::siginfo_t,
@@ -594,7 +639,7 @@ unsafe extern "C-unwind" fn native_sigcancel_trampoline(
         #[cfg(target_arch = "aarch64")]
         let pc = unsafe { (*context.cast::<libc::ucontext_t>()).uc_mcontext.pc as usize };
 
-        if (begin..insn).contains(&pc) {
+        if (begin..=insn).contains(&pc) {
             #[cfg(target_arch = "x86_64")]
             unsafe {
                 (*context.cast::<libc::ucontext_t>()).uc_mcontext.gregs[libc::REG_RIP as usize] =
@@ -617,16 +662,25 @@ unsafe extern "C-unwind" fn native_sigcancel_trampoline(
                 && !exiting
                 && !crate::pthread_abi::address_is_inside_this_object(pc)
             {
+                let tid = raw_syscall::raw_gettid_nocancel();
+                frankenlibc_core::pthread::tls::set_native_cancel_disabled(tid, true);
+                unsafe { restore_sigmask_before_unwind(context) };
                 unsafe { crate::pthread_abi::pthread_testcancel() };
+                frankenlibc_core::pthread::tls::set_native_cancel_disabled(tid, false);
             }
             return;
         }
 
         if !crate::pthread_abi::host_cancellation_thread() {
-            if crate::pthread_abi::unregistered_native_async_cancel_ready()
+            let tid = raw_syscall::raw_gettid_nocancel();
+            if frankenlibc_core::pthread::tls::unregistered_native_async_cancel_ready_for_tid(tid)
+                && !crate::pthread_abi::pthread_tls_access_active()
                 && !crate::pthread_abi::address_is_inside_this_object(pc)
             {
+                frankenlibc_core::pthread::tls::set_native_cancel_disabled(tid, true);
+                unsafe { restore_sigmask_before_unwind(context) };
                 unsafe { crate::pthread_abi::pthread_testcancel() };
+                frankenlibc_core::pthread::tls::set_native_cancel_disabled(tid, false);
             }
             return;
         }
@@ -657,7 +711,16 @@ pub(crate) fn ensure_native_sigcancel_installed() {
         any(target_arch = "x86_64", target_arch = "aarch64")
     ))]
     {
-        if NATIVE_SIGCANCEL_INSTALLED.load(Ordering::Acquire) {
+        if NATIVE_SIGCANCEL_STATE.load(Ordering::Acquire) == 2 {
+            return;
+        }
+        if NATIVE_SIGCANCEL_STATE
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            while NATIVE_SIGCANCEL_STATE.load(Ordering::Acquire) == 1 {
+                core::hint::spin_loop();
+            }
             return;
         }
         let our_handler = native_sigcancel_trampoline as *const () as usize;
@@ -700,7 +763,9 @@ pub(crate) fn ensure_native_sigcancel_installed() {
         }
         .is_ok()
         {
-            NATIVE_SIGCANCEL_INSTALLED.store(true, Ordering::Release);
+            NATIVE_SIGCANCEL_STATE.store(2, Ordering::Release);
+        } else {
+            NATIVE_SIGCANCEL_STATE.store(0, Ordering::Release);
         }
     }
 }
@@ -930,17 +995,17 @@ unsafe fn dispatch_registered_handler(
     let flags = slot.flags.load(Ordering::Relaxed) as c_int;
     if flags & libc::SA_SIGINFO != 0 {
         // SAFETY: the handler pointer was installed by the caller via sigaction with SA_SIGINFO.
-        let handler: extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) =
+        let handler: unsafe extern "C-unwind" fn(c_int, *mut libc::siginfo_t, *mut c_void) =
             unsafe { std::mem::transmute(handler) };
-        handler(signum, info, context);
+        unsafe { handler(signum, info, context) };
     } else {
         // SAFETY: the handler pointer was installed by the caller via signal/sigaction.
-        let handler: extern "C" fn(c_int) = unsafe { std::mem::transmute(handler) };
-        handler(signum);
+        let handler: unsafe extern "C-unwind" fn(c_int) = unsafe { std::mem::transmute(handler) };
+        unsafe { handler(signum) };
     }
 }
 
-unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
+unsafe extern "C-unwind" fn signal_handler_trampoline(signum: c_int) {
     // This must be the first operation: the classification/depth reads below
     // resolve Rust TLS and that resolution may allocate on a thread's first
     // signal. Mark signal context before any such allocation can occur.
@@ -960,7 +1025,7 @@ unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
     unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
 }
 
-unsafe extern "C" fn signal_siginfo_trampoline(
+unsafe extern "C-unwind" fn signal_siginfo_trampoline(
     signum: c_int,
     info: *mut libc::siginfo_t,
     context: *mut c_void,
