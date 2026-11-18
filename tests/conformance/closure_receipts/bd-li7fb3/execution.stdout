@@ -1,0 +1,7 @@
+
+running 2 tests
+test float32_kernels_route_through_cr_f64_and_consistent_sincosf ... ok
+test libm_f32_live_so_ulp_and_fixture_parity_gate_passes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.03s
+

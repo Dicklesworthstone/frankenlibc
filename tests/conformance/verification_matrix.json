@@ -32534,6 +32534,309 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-li7fb3",
+      "title": "libm f32: hundreds of millions of results differ from glibc 2.43 (which is correctly rounded for most float functions); acoshf overflows, lgammaf huge errors",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Single-precision float32 kernels delegate to CR f64 / avx2_fma_dispatch! polynomial kernels with exact sincosf == (sinf, cosf) parity, zero overflow on acoshf, accurate lgammaf/lgammaf_r, and <=1 ULP across 2^32 exhaustive f32 inputs"
+        },
+        "e2e_scripts": {
+          "required": false,
+          "scope": ""
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "tests/integration/fixture_libm_f32_sample.c and tests/integration/fixture_libm_special_values.c byte-for-byte parity in strict + hardened modes + 62M live libfrankenlibc_abi.so f32 evaluations"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "not_required"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-li7fb3",
+        "stream": "core",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test libm_f32_parity_gate_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "All 26 unary f32 functions + sincosf, atan2f, hypotf, powf, and lgammaf_r satisfy <=1 ULP (0 diffs on CR f32 + atan2f + hypotf + powf vs glibc 2.43 / __float128, exact sincosf == (sinf, cosf)), and fixture_libm_f32_sample + fixture_libm_special_values match host glibc byte-for-byte in strict + hardened modes"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-core/src/math/float32.rs",
+          "crates/frankenlibc-core/src/math/coremath.rs",
+          "crates/frankenlibc-core/src/math/trig.rs",
+          "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-li7fb3/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified across exhaustive 2^32 f32 sweep (107.4B evaluations, gt1_ulp=0 across all 25 unary functions), 62M live release libfrankenlibc_abi.so evaluations (SHA256 99a015cb9aac642c85a9c4a85a6eb5501a5c7a29e6fdb19f24e09bd7e8a09ba6), and RCH math suites.",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-li7fb3/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Single-precision libm f32 kernels achieve <=1 ULP everywhere, exact CR parity on CORE-MATH/f64-backed entrypoints (including asinf, acosf, atan2f, hypotf, powf, acoshf, lgammaf/lgammaf_r), and bit-exact sincosf == (sinf, cosf)",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-core/src/math/float32.rs",
+            "crates/frankenlibc-core/src/math/coremath.rs",
+            "crates/frankenlibc-core/src/math/trig.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs"
+          ],
+          "source": {
+            "commit": "9a108f03ddf108dda2e40f1c7aaefecef0dca88b",
+            "files": {
+              "crates/frankenlibc-core/src/math/float32.rs": "4df6a959e0d86ed8b0a3abd4c7b75098b113e227be46a3fb720b40207627002e",
+              "crates/frankenlibc-core/src/math/coremath.rs": "4d47a37f3f1d281318f482f7b7d188ae033f02a38add7c2e4972f651fd1192f7",
+              "crates/frankenlibc-core/src/math/trig.rs": "65f9cbd412acb543ff4a27bb6e22feb4e122950911df995151c797e67d3d8503",
+              "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs": "fc8f15aa0d93120717e2cc033580b9d4dfa4ffdb0600637f8546e8554cc201b3"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-17T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/libm_f32_parity_gate_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs",
+              "-o",
+              "target/closure_bins/libm_f32_parity_gate_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/libm_f32_parity_gate_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "float32_kernels_route_through_cr_f64_and_consistent_sincosf",
+              "libm_f32_live_so_ulp_and_fixture_parity_gate_passes"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "bead_id": "bd-otip6a",
+      "title": "libm accuracy: fl is not correctly rounded on 15-35% of inputs for exp/sin/cos/tan/log2/log10/sinh/asinh/log1p/expm1/erf where glibc almost always is",
+      "priority": 1,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": "Clean-room correctly-rounded binary64 kernels (sin, cos, sincos, tan, asin, acos, atan, atan2, asinh, acosh, atanh, erf, erfc, cbrt, tgamma, lgamma, lgamma_r, log) + ARM/fdlibm glibc-parity kernels (exp, exp2, exp10, expm1, log2, log10, log1p, pow, sinh, cosh, tanh) with avx2_fma_dispatch!"
+        },
+        "e2e_scripts": {
+          "required": false,
+          "scope": ""
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "6.75M live libfrankenlibc_abi.so f64 evaluations across 27 functions against 113-bit libquadmath (__float128) and host libm.so.6 in strict + hardened modes + 1M-input pinned __float128 corpus hashes"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "not_required"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-otip6a",
+        "stream": "core",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test libm_f64_cr_parity_gate_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "All 16 CORE-MATH/clean-room CR binary64 kernels (including asin, acos, atan2) produce 0 non-CR differences vs 113-bit libquadmath (__float128) across 250k-1M inputs, all 13 glibc-matching kernels produce 0 differences vs glibc 2.43, and baseline x86-64 / AVX2+FMA twins agree bit-for-bit"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-core/src/math/coremath.rs",
+          "crates/frankenlibc-core/src/math/trig.rs",
+          "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified across 6.75M live release libfrankenlibc_abi.so evaluations (SHA256 99a015cb9aac642c85a9c4a85a6eb5501a5c7a29e6fdb19f24e09bd7e8a09ba6), 6M __float128 prototype + 1M pinned corpus hashes (asin=0xac7b877a28403cd6, acos=0xaf790812c99c174e, atan2=0xcefefa6c54b38cfa), order-rotated speed (asin 1.95x, acos 1.85x, atan2 1.80x <= 2.0x glibc), and check_baseline_isa.sh (Nehalem/qemu64 28/28).",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Clean-room correctly-rounded binary64 asin, acos, and atan2 (3-tier Estrin/DD/Fp192 Ziv cascade with avx2_fma_dispatch!) completing binary64 CR/glibc-parity coverage across all 27 transcendental functions",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-core/src/math/coremath.rs",
+            "crates/frankenlibc-core/src/math/trig.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs"
+          ],
+          "source": {
+            "commit": "9a108f03ddf108dda2e40f1c7aaefecef0dca88b",
+            "files": {
+              "crates/frankenlibc-core/src/math/coremath.rs": "4d47a37f3f1d281318f482f7b7d188ae033f02a38add7c2e4972f651fd1192f7",
+              "crates/frankenlibc-core/src/math/trig.rs": "65f9cbd412acb543ff4a27bb6e22feb4e122950911df995151c797e67d3d8503",
+              "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs": "8e8a9bfe44f8dad19ac5b79bca27e0520e3e9c1d33cdb59f44fc0e06535b93e6"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-17T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/libm_f64_cr_parity_gate_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs",
+              "-o",
+              "target/closure_bins/libm_f64_cr_parity_gate_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/libm_f64_cr_parity_gate_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "binary64_coremath_dispatch_and_trig_wiring_are_complete",
+              "libm_f64_cr_quadmath_and_glibc_parity_gate_passes"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {
@@ -32542,6 +32845,8 @@
     "bd-rc0923-epic-eeuy4f.47": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.47/receipt.json",
     "bd-reality-202609-lx578q.4": "tests/conformance/closure_receipts/bd-reality-202609-lx578q.4-r3/receipt.json",
     "bd-rc0923-epic-eeuy4f.13": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.13-r2/receipt.json",
-    "bd-rc0923-epic-eeuy4f.24": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json"
+    "bd-rc0923-epic-eeuy4f.24": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.24/receipt.json",
+    "bd-li7fb3": "tests/conformance/closure_receipts/bd-li7fb3/receipt.json",
+    "bd-otip6a": "tests/conformance/closure_receipts/bd-otip6a/receipt.json"
   }
 }

@@ -1,0 +1,7 @@
+
+running 2 tests
+test binary64_coremath_dispatch_and_trig_wiring_are_complete ... ok
+test libm_f64_cr_quadmath_and_glibc_parity_gate_passes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.60s
+

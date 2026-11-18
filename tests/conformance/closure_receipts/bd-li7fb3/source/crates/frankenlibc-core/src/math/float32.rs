@@ -1,0 +1,2133 @@
+//! Single-precision (f32) mathematical functions.
+//!
+//! Mirrors the f64 functions from `float.rs`, `trig.rs`, and `exp.rs`
+//! for the `*f` suffix variants (`sinf`, `cosf`, `sqrtf`, etc.).
+
+// --- IEEE exception re-raise helpers ---
+//
+// libm's f32 software paths return the correct value for poles/domain inputs but
+// omit the C99/IEEE exception glibc raises. These re-raise it via a safe hardware
+// op (force_eval-style), used only on cold special-input branches.
+
+#[inline]
+fn fe_divbyzero_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(-1.0f32) / core::hint::black_box(0.0f32));
+}
+
+#[inline]
+fn fe_invalid_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32));
+}
+
+/// Used by the tiny-|x| shortcuts (`atanhf`, `log1pf`) where returning `x` is the
+/// correctly rounded result. Returning `x` is EXACT and so raises nothing, but the
+/// true value is not representable, and glibc raises FE_INEXACT for every nonzero
+/// input there — including the ones whose result is bit-identical to `x`. Without
+/// this the shortcut trades a value bug for a flag bug. Callers must skip it for
+/// ±0, where the result IS exact and glibc raises nothing.
+#[inline]
+fn fe_inexact_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(1.0f32) / core::hint::black_box(3.0f32));
+}
+
+// --- Trigonometric ---
+
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn sinf(x: f32) -> f32 => sinf_body;
+}
+
+#[inline(always)]
+fn sinf_body(x: f32) -> f32 {
+    // CORE-MATH f64 sin (correctly rounded) rounded once: within 1 ULP of
+    // glibc 2.43's sinf everywhere, differing on ~29M of the 2^32 inputs
+    // (glibc's sinf is not correctly rounded). The former f32 reduction
+    // (`r as f32`) + libm::sinf kernel was up to 2 ULP off on ~139M inputs.
+    crate::math::sin(f64::from(x)) as f32
+}
+
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn cosf(x: f32) -> f32 => cosf_body;
+}
+
+#[inline(always)]
+fn cosf_body(x: f32) -> f32 {
+    // CORE-MATH f64 cos (correctly rounded) rounded once: within 1 ULP of
+    // glibc 2.43's cosf everywhere, differing on ~29M of the 2^32 inputs
+    // (glibc's cosf is not correctly rounded). The former f32 reduction
+    // (`r as f32`) + libm::cosf kernel was up to 2 ULP off on ~139M inputs.
+    crate::math::cos(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn tanf(x: f32) -> f32 {
+    // f64 tan rounded once: glibc 2.43's tanf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 1.19M of them (1 ULP).
+    crate::math::tan(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn asinf(x: f32) -> f32 {
+    // f64 asin rounded once: glibc 2.43's asinf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 16.6k of them (1 ULP).
+    crate::math::asin(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn acosf(x: f32) -> f32 {
+    // f64 acos rounded once: glibc 2.43's acosf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 6.64M of them (1 ULP).
+    crate::math::acos(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn atanf(x: f32) -> f32 {
+    // f64 atan rounded once (the infinities give the correctly rounded f32
+    // pi/2): glibc 2.43's atanf is correctly rounded and this matches it on all
+    // but 2 of the 2^32 inputs (exhaustive, scratch f64route.c);
+    // libm::atanf differed by 1 ULP on 1.72G inputs.
+    crate::math::atan(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn atan2f(y: f32, x: f32) -> f32 {
+    // libm's atan2f lands 1 ULP under glibc wherever the result is an exact
+    // multiple of pi — atan2f(inf, 1) gave 1.5707963 against glibc's 1.5707964,
+    // the same f32 pi/2 shortfall already fixed in atanf/asinf/acosf. The
+    // quadrant/signed-zero/infinity table C99 F.10.1.4 specifies is large
+    // (pi/2, pi, pi/4, 3pi/4, and every sign combination), so rather than
+    // hand-write a dozen correctly-rounded constants, evaluate in f64 — where
+    // atan2 already matches glibc bit-for-bit — and round ONCE. The widening is
+    // exact, so every special case falls out with the sign structure intact.
+    crate::math::atan2(f64::from(y), f64::from(x)) as f32
+}
+
+// --- Exponential / logarithmic ---
+
+#[inline]
+pub fn expf(x: f32) -> f32 {
+    // Fused kernel (ARM optimized-routines / glibc `__ieee754_expf`, 0.5 ULP)
+    // for the whole finite-normal range: bit-exact to glibc. Overflow/
+    // underflow/subnormal/inf/nan defer to libm::expf for exact FE + errno
+    // semantics.
+    //
+    // A former [-5, 5] shortcut, libm::exp2f(x * LOG2_E), was faster but up to
+    // 4 ULP off: the rounding of x*log2e is amplified by exp2f. An exhaustive
+    // sweep against glibc (scratch f32sweep.c) found 28.7M differing inputs,
+    // expf(2) among them.
+    if x.abs() < 87.0 {
+        return expf_kernel(x);
+    }
+    // Overflow/underflow edge: f64 exp rounded once; the narrowing raises
+    // FE_OVERFLOW / FE_UNDERFLOW. libm::expf differed from glibc on 261 of
+    // 16.8M sampled inputs here.
+    if x.is_finite() {
+        return crate::math::exp(f64::from(x)) as f32;
+    }
+    libm::expf(x)
+}
+
+// NOTE (perf, 2026-06-06): routing this f32 log family through the in-tree f64
+// `log2_kernel` + single `as f32` rounding (the f64-intermediate lever proven for
+// `exp10f`/`expf`) was measured on ts1 and REJECTED. It is accuracy-clean (≤4 ULP
+// vs glibc) but not a perf win: our f64 `log2` kernel runs ~374–405 ns, which is
+// itself ≥ glibc's native f32 `log2f` (~335–369 ns), so widening to f64 cannot beat
+// glibc here. Normalised against the in-run host control, the route is a
+// wash-to-slight-regression. Keep the direct f32 computation paths.
+
+#[inline]
+pub fn logf(x: f32) -> f32 {
+    // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_logf`,
+    // 0.32 ULP) for positive normal finite x — bit-exact to glibc. Subnormal,
+    // zero, negative, inf and nan fall through to the FE-flag + libm path.
+    let ix = x.to_bits();
+    if ix.wrapping_sub(0x0080_0000) < (0x7f80_0000 - 0x0080_0000) {
+        return logf_kernel(ix);
+    }
+    // Positive subnormal: normalise exactly (x * 2^23) and take the 23 back
+    // out of the exponent field, as glibc does -- the same kernel, so the same
+    // result (libm differed on ~1 in 400k sampled subnormal-heavy inputs).
+    if ix != 0 && ix < 0x0080_0000 {
+        return logf_kernel((x * 8_388_608.0).to_bits().wrapping_sub(23 << 23));
+    }
+    // glibc raises FE_DIVBYZERO at the log(±0) pole and FE_INVALID for x<0;
+    // libm::logf returns the value (-inf / NaN) without the flag.
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
+    }
+    libm::logf(x)
+}
+
+#[inline]
+pub fn log2f(x: f32) -> f32 {
+    // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_log2f`,
+    // 0.26 ULP) for positive normal finite x — bit-exact to glibc and faster than
+    // the prior dyadic-profile grid + `libm::log2f` fallback. Subnormal, zero,
+    // negative, inf and nan fall through to the FE-flag + libm path below.
+    let ix = x.to_bits();
+    if ix.wrapping_sub(0x0080_0000) < (0x7f80_0000 - 0x0080_0000) {
+        return log2f_kernel(ix);
+    }
+    // Positive subnormal: normalise exactly (x * 2^23) and take the 23 back
+    // out of the exponent field, as glibc does -- the same kernel, so the same
+    // result (libm differed on ~1 in 400k sampled subnormal-heavy inputs).
+    if ix != 0 && ix < 0x0080_0000 {
+        return log2f_kernel((x * 8_388_608.0).to_bits().wrapping_sub(23 << 23));
+    }
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
+    }
+    // MUST use the pure-Rust libm implementation, NOT `x.log2()`. The std
+    // `f32::log2` lowers to an indirect call through the `log2f` symbol; in the
+    // shipped `libc.so` that symbol is our OWN interposed `log2f`, so `x.log2()`
+    // here recurses infinitely (stack overflow). Verified via the cdylib GOT
+    // relocation: the indirect target binds to `log2f@@Base` (self). The bench
+    // never caught it because the bench binary links glibc's `log2f`. Every other
+    // f32 transcendental here uses `libm::*` for exactly this reason.
+    libm::log2f(x)
+}
+
+#[inline]
+pub fn log10f(x: f32) -> f32 {
+    // f64 log10 rounded once; glibc 2.43's log10f is correctly rounded and this
+    // matches it on all but 1 of the 2^32 inputs (exhaustive, scratch
+    // f64route.c). The f64 kernel raises FE_DIVBYZERO/FE_INVALID for 0 and
+    // negative x. The former log2f * LOG10_2 shortcut and libm::log10f were up
+    // to 2 ULP off (12.3M inputs differed).
+    crate::math::log10(f64::from(x)) as f32
+}
+
+// ---------------------------------------------------------------------------
+// Fused single-pass f32 `powf` kernel.
+//
+// Ported faithfully from ARM-software/optimized-routines `math/powf.c` plus the
+// `powf_log2_data` / `exp2f_data` tables (SPDX: MIT OR Apache-2.0 WITH
+// LLVM-exception). This is the same algorithm glibc ships as
+// `__ieee754_powf`; documented worst-case error is 0.82 ULP, comfortably
+// inside the 4-ULP glibc parity contract. One `log2` table pass + one `exp2`
+// table pass produces the f32 result, vs composing two general f64
+// transcendentals. Constants are stored as exact IEEE-754 bit patterns because
+// Rust has no hex-float literals; values were converted with `float.fromhex`.
+//
+// Used only for positive **normal** finite bases with finite exponents whose
+// result stays in the finite-normal f32 range (|y*log2 x| < 126). Overflow,
+// underflow, subnormal/zero/negative bases, and non-finite inputs fall through
+// to `libm::powf` for exact IEEE special-case + errno/exception semantics, so
+// the errno-setting ABI layer is unaffected.
+const POWF_LOG2_OFF: u32 = 0x3f33_0000;
+const POWF_LOG2_TABLE_BITS: u32 = 4; // N = 16
+const POWF_EXP2_TABLE_BITS: u32 = 5; // N = 32
+// 0x1.8p+52 / 32 — the exp2 reduction shift (POWF_SCALE = 1, non-TOINT path).
+const POWF_EXP2_SHIFT: f64 = f64::from_bits(0x42e8_0000_0000_0000);
+
+/// log2 table: (invc, logc) IEEE bit patterns, `POWF_SCALE = 1`.
+const POWF_LOG2_TAB: [(u64, u64); 16] = [
+    (0x3ff661ec79f8f3be, 0xbfdefec65b963019),
+    (0x3ff571ed4aaf883d, 0xbfdb0b6832d4fca4),
+    (0x3ff49539f0f010b0, 0xbfd7418b0a1fb77b),
+    (0x3ff3c995b0b80385, 0xbfd39de91a6dcf7b),
+    (0x3ff30d190c8864a5, 0xbfd01d9bf3f2b631),
+    (0x3ff25e227b0b8ea0, 0xbfc97c1d1b3b7af0),
+    (0x3ff1bb4a4a1a343f, 0xbfc2f9e393af3c9f),
+    (0x3ff12358f08ae5ba, 0xbfb960cbbf788d5c),
+    (0x3ff0953f419900a7, 0xbfaa6f9db6475fce),
+    (0x3ff0000000000000, 0x0000000000000000),
+    (0x3fee608cfd9a47ac, 0x3fb338ca9f24f53d),
+    (0x3feca4b31f026aa0, 0x3fc476a9543891ba),
+    (0x3feb2036576afce6, 0x3fce840b4ac4e4d2),
+    (0x3fe9c2d163a1aa2d, 0x3fd40645f0c6651c),
+    (0x3fe886e6037841ed, 0x3fd88e9c2c1b9ff8),
+    (0x3fe767dcf5534862, 0x3fdce0a44eb17bcc),
+];
+/// log2 polynomial A[0..5], `POWF_SCALE = 1`.
+const POWF_LOG2_POLY: [u64; 5] = [
+    0x3fd27616c9496e0b,
+    0xbfd71969a075c67a,
+    0x3fdec70a6ca7badd,
+    0xbfe7154748bef6c8,
+    0x3ff71547652ab82b,
+];
+/// exp2 table `tab[i] = uint(2^(i/32)) - (i << 52-5)` (already in u64).
+const POWF_EXP2_TAB: [u64; 32] = [
+    0x3ff0000000000000,
+    0x3fefd9b0d3158574,
+    0x3fefb5586cf9890f,
+    0x3fef9301d0125b51,
+    0x3fef72b83c7d517b,
+    0x3fef54873168b9aa,
+    0x3fef387a6e756238,
+    0x3fef1e9df51fdee1,
+    0x3fef06fe0a31b715,
+    0x3feef1a7373aa9cb,
+    0x3feedea64c123422,
+    0x3feece086061892d,
+    0x3feebfdad5362a27,
+    0x3feeb42b569d4f82,
+    0x3feeab07dd485429,
+    0x3feea47eb03a5585,
+    0x3feea09e667f3bcd,
+    0x3fee9f75e8ec5f74,
+    0x3feea11473eb0187,
+    0x3feea589994cce13,
+    0x3feeace5422aa0db,
+    0x3feeb737b0cdc5e5,
+    0x3feec49182a3f090,
+    0x3feed503b23e255d,
+    0x3feee89f995ad3ad,
+    0x3feeff76f2fb5e47,
+    0x3fef199bdd85529c,
+    0x3fef3720dcef9069,
+    0x3fef5818dcfba487,
+    0x3fef7c97337b9b5f,
+    0x3fefa4afa2a490da,
+    0x3fefd0765b6e4540,
+];
+/// exp2 polynomial C[0..3] (N = 32).
+const POWF_EXP2_POLY: [u64; 3] = [0x3fac6af84b912394, 0x3fcebfce50fac4f3, 0x3fe62e42ff0c52d6];
+
+/// `log2(x)` for the bit pattern `ix` of a positive normal float, returned as a
+/// double. Faithful port of ARM `log2_inline` (POWF_SCALE = 1).
+#[inline]
+fn powf_log2_inline(ix: u32) -> f64 {
+    let tmp = ix.wrapping_sub(POWF_LOG2_OFF);
+    let i = ((tmp >> (23 - POWF_LOG2_TABLE_BITS)) % 16) as usize;
+    let top = tmp & 0xff80_0000;
+    let iz = ix.wrapping_sub(top);
+    let k = (top as i32) >> 23; // POWF_SCALE_BITS = 0, arithmetic shift
+    let (invc_bits, logc_bits) = POWF_LOG2_TAB[i];
+    let invc = f64::from_bits(invc_bits);
+    let logc = f64::from_bits(logc_bits);
+    let z = f32::from_bits(iz) as f64;
+
+    // log2(x) = log1p(z/c-1)/ln2 + log2(c) + k.
+    let r = z * invc - 1.0;
+    let y0 = logc + f64::from(k);
+    let a0 = f64::from_bits(POWF_LOG2_POLY[0]);
+    let a1 = f64::from_bits(POWF_LOG2_POLY[1]);
+    let a2 = f64::from_bits(POWF_LOG2_POLY[2]);
+    let a3 = f64::from_bits(POWF_LOG2_POLY[3]);
+    let a4 = f64::from_bits(POWF_LOG2_POLY[4]);
+    let r2 = r * r;
+    let y = a0 * r + a1;
+    let p = a2 * r + a3;
+    let r4 = r2 * r2;
+    let q = a4 * r + y0;
+    let q = p * r2 + q;
+    y * r4 + q
+}
+
+/// `2^xd` rounded to f32, for positive-base powf (no sign bias). Faithful port
+/// of ARM `exp2_inline` (non-TOINT path). Caller guarantees `xd` is bounded
+/// (|xd| < 126) so the table index arithmetic cannot overflow.
+#[inline]
+fn powf_exp2_inline(xd: f64) -> f32 {
+    // x = k/N + r with r in [-1/(2N), 1/(2N)].
+    let kd = xd + POWF_EXP2_SHIFT;
+    let ki = kd.to_bits();
+    let kd = kd - POWF_EXP2_SHIFT; // k/N
+    let r = xd - kd;
+
+    // exp2(x) = 2^(k/N) * 2^r ~= s * (C0*r^3 + C1*r^2 + C2*r + 1).
+    let t = POWF_EXP2_TAB[(ki % 32) as usize];
+    let t = t.wrapping_add(ki << (52 - POWF_EXP2_TABLE_BITS));
+    let s = f64::from_bits(t);
+    let c0 = f64::from_bits(POWF_EXP2_POLY[0]);
+    let c1 = f64::from_bits(POWF_EXP2_POLY[1]);
+    let c2 = f64::from_bits(POWF_EXP2_POLY[2]);
+    let z = c0 * r + c1;
+    let r2 = r * r;
+    let y = c2 * r + 1.0;
+    let y = z * r2 + y;
+    (y * s) as f32
+}
+
+/// log2f fused kernel polynomial (ARM optimized-routines `__log2f_data.poly`,
+/// degree 4). The `tab` it pairs with is byte-identical to `POWF_LOG2_TAB`
+/// (same invc/logc, `POWF_SCALE = 1`), so that table is reused.
+const LOG2F_POLY: [u64; 4] = [
+    0xbfd712b6f70a7e4d,
+    0x3fdecabf496832e0,
+    0xbfe715479ffae3de,
+    0x3ff715475f35c8b8,
+];
+
+/// `log2(x)` for the bit pattern `ix` of a positive normal float, rounded to
+/// f32. Faithful port of ARM `log2f` (the standalone single-precision log2,
+/// glibc `__ieee754_log2f`, 0.26 ULP).
+#[inline]
+fn log2f_kernel(ix: u32) -> f32 {
+    let tmp = ix.wrapping_sub(POWF_LOG2_OFF);
+    let i = ((tmp >> (23 - POWF_LOG2_TABLE_BITS)) % 16) as usize;
+    let top = tmp & 0xff80_0000;
+    let iz = ix.wrapping_sub(top);
+    let k = (tmp as i32) >> 23; // arithmetic shift
+    let (invc_bits, logc_bits) = POWF_LOG2_TAB[i];
+    let invc = f64::from_bits(invc_bits);
+    let logc = f64::from_bits(logc_bits);
+    let z = f32::from_bits(iz) as f64;
+
+    // log2(x) = log1p(z/c-1)/ln2 + log2(c) + k.
+    let r = z * invc - 1.0;
+    let y0 = logc + f64::from(k);
+    let a0 = f64::from_bits(LOG2F_POLY[0]);
+    let a1 = f64::from_bits(LOG2F_POLY[1]);
+    let a2 = f64::from_bits(LOG2F_POLY[2]);
+    let a3 = f64::from_bits(LOG2F_POLY[3]);
+    let r2 = r * r;
+    let y = a1 * r + a2;
+    let y = a0 * r2 + y;
+    let p = a3 * r + y0;
+    let y = y * r2 + p;
+    y as f32
+}
+
+// expf fused kernel constants (ARM optimized-routines `expf`, glibc
+// `__ieee754_expf`, 0.5 ULP). Reuses `POWF_EXP2_TAB`; the polynomial and shift
+// are the N-scaled variants (`poly_scaled`, unscaled `shift = 0x1.8p+52`).
+const EXPF_INVLN2_SCALED: f64 = f64::from_bits(0x4047_1547_652b_82fe); // log2(e) * 32
+const EXPF_SHIFT: f64 = f64::from_bits(0x4338_0000_0000_0000); // 0x1.8p+52
+const EXPF_POLY_SCALED: [u64; 3] = [
+    0x3ebc_6af8_4b91_2394,
+    0x3f2e_bfce_50fa_c4f3,
+    0x3f96_2e42_ff0c_52d6,
+];
+
+/// `e^x` rounded to f32. Faithful port of ARM `expf` (non-TOINT path). Caller
+/// guarantees `|x| < 88` so the result is a finite normal f32 and the table
+/// index arithmetic cannot overflow.
+#[inline]
+fn expf_kernel(x: f32) -> f32 {
+    let xd = f64::from(x);
+    // x*N/Ln2 = k + r with r in [-1/2, 1/2] and int k.
+    let z = EXPF_INVLN2_SCALED * xd;
+    let kd = z + EXPF_SHIFT;
+    let ki = kd.to_bits();
+    let kd = kd - EXPF_SHIFT;
+    let r = z - kd;
+
+    // exp(x) = 2^(k/N) * 2^(r/N) ~= s * (C0*r^3 + C1*r^2 + C2*r + 1).
+    let t = POWF_EXP2_TAB[(ki % 32) as usize];
+    let t = t.wrapping_add(ki << (52 - POWF_EXP2_TABLE_BITS));
+    let s = f64::from_bits(t);
+    let c0 = f64::from_bits(EXPF_POLY_SCALED[0]);
+    let c1 = f64::from_bits(EXPF_POLY_SCALED[1]);
+    let c2 = f64::from_bits(EXPF_POLY_SCALED[2]);
+    let z2 = c0 * r + c1;
+    let r2 = r * r;
+    let y = c2 * r + 1.0;
+    let y = z2 * r2 + y;
+    (y * s) as f32
+}
+
+// logf fused kernel (ARM optimized-routines `logf`, glibc `__ieee754_logf`,
+// 0.32 ULP). Reuses `POWF_LOG2_OFF` (0x3f330000) and the 16-subinterval split;
+// the `invc` column matches the shared table but the `logc` column is `ln(c)`
+// (natural log), so a dedicated table is used. First-order poly coefficient is 1.
+const LOGF_LN2: f64 = f64::from_bits(0x3fe6_2e42_fefa_39ef);
+const LOGF_TAB: [(u64, u64); 16] = [
+    (0x3ff661ec79f8f3be, 0xbfd57bf7808caade),
+    (0x3ff571ed4aaf883d, 0xbfd2bef0a7c06ddb),
+    (0x3ff49539f0f010b0, 0xbfd01eae7f513a67),
+    (0x3ff3c995b0b80385, 0xbfcb31d8a68224e9),
+    (0x3ff30d190c8864a5, 0xbfc6574f0ac07758),
+    (0x3ff25e227b0b8ea0, 0xbfc1aa2bc79c8100),
+    (0x3ff1bb4a4a1a343f, 0xbfba4e76ce8c0e5e),
+    (0x3ff12358f08ae5ba, 0xbfb1973c5a611ccc),
+    (0x3ff0953f419900a7, 0xbfa252f438e10c1e),
+    (0x3ff0000000000000, 0x0000000000000000),
+    (0x3fee608cfd9a47ac, 0x3faaa5aa5df25984),
+    (0x3feca4b31f026aa0, 0x3fbc5e53aa362eb4),
+    (0x3feb2036576afce6, 0x3fc526e57720db08),
+    (0x3fe9c2d163a1aa2d, 0x3fcbc2860d224770),
+    (0x3fe886e6037841ed, 0x3fd1058bc8a07ee1),
+    (0x3fe767dcf5534862, 0x3fd4043057b6ee09),
+];
+const LOGF_POLY: [u64; 3] = [0xbfd00ea348b88334, 0x3fd5575b0be00b6a, 0xbfdffffef20a4123];
+
+/// `ln(x)` for the bit pattern `ix` of a positive normal float, rounded to f32.
+/// Faithful port of ARM `logf`.
+#[inline]
+fn logf_kernel(ix: u32) -> f32 {
+    let tmp = ix.wrapping_sub(POWF_LOG2_OFF);
+    let i = ((tmp >> (23 - POWF_LOG2_TABLE_BITS)) % 16) as usize;
+    let k = (tmp as i32) >> 23; // arithmetic shift
+    let iz = ix.wrapping_sub(tmp & 0xff80_0000);
+    let (invc_bits, logc_bits) = LOGF_TAB[i];
+    let invc = f64::from_bits(invc_bits);
+    let logc = f64::from_bits(logc_bits);
+    let z = f32::from_bits(iz) as f64;
+
+    // log(x) = log1p(z/c-1) + log(c) + k*Ln2.
+    let r = z * invc - 1.0;
+    let y0 = logc + f64::from(k) * LOGF_LN2;
+    let a0 = f64::from_bits(LOGF_POLY[0]);
+    let a1 = f64::from_bits(LOGF_POLY[1]);
+    let a2 = f64::from_bits(LOGF_POLY[2]);
+    let r2 = r * r;
+    let y = a1 * r + a2;
+    let y = a0 * r2 + y;
+    let y = y * r2 + (y0 + r);
+    y as f32
+}
+
+#[inline]
+pub fn powf(base: f32, exponent: f32) -> f32 {
+    // glibc 2.43's powf is this kernel (ARM optimized-routines, 0.82 ULP) for
+    // every finite nonzero base, so route all of them through it: log2 of |x|
+    // (a subnormal x normalised by 2^23 first), times y, then exp2 with the
+    // kernel's own overflow/underflow cut-offs; a negative base needs an
+    // integer y and takes the sign of x^y. fl's former shortcuts -- integer
+    // y by repeated squaring, y == 0.5 by sqrt, libm for subnormal bases and
+    // for |y*log2 x| >= 126, and a precomputed y == 1.337 table -- each
+    // differed from glibc (up to 9.8% of sampled inputs per category, scratch
+    // powcat.c). Zero, infinite and NaN operands, and the domain error of a
+    // negative base with a non-integer y, keep libm's IEEE special-case table.
+    let Some((ylogx, negate)) = powf_ylogx(base, exponent) else {
+        return libm::powf(base, exponent);
+    };
+    let r = if ylogx > f64::from_bits(0x405f_ffff_ffd1_d571) {
+        // |x^y| > 0x1.ffffffp127: overflow (FE_OVERFLOW, FE_INEXACT).
+        core::hint::black_box(f32::MAX) * 2.0
+    } else if ylogx <= -150.0 {
+        // Underflow to zero (FE_UNDERFLOW, FE_INEXACT).
+        core::hint::black_box(f32::MIN_POSITIVE) * f32::MIN_POSITIVE
+    } else {
+        powf_exp2_inline(ylogx)
+    };
+    if negate { -r } else { r }
+}
+
+/// `y * log2|x|` as `powf`'s kernel computes it, and whether the result is
+/// negative; `None` for the operands it leaves to the special-case table.
+#[inline]
+fn powf_ylogx(base: f32, exponent: f32) -> Option<(f64, bool)> {
+    if !(base.is_finite() && exponent.is_finite()) || base == 0.0 {
+        return None;
+    }
+    let mut ix = base.to_bits();
+    let mut negate = false;
+    if base < 0.0 {
+        if libm::truncf(exponent) != exponent {
+            return None;
+        }
+        // |y| >= 2^24 is always even.
+        negate = exponent.abs() < 16_777_216.0 && (exponent as i32) & 1 == 1;
+        ix &= 0x7fff_ffff;
+    }
+    if ix < 0x0080_0000 {
+        ix = (f32::from_bits(ix) * 8_388_608.0)
+            .to_bits()
+            .wrapping_sub(23 << 23);
+    }
+    Some((f64::from(exponent) * powf_log2_inline(ix), negate))
+}
+
+/// Whether glibc's powf reports ERANGE for an underflow: `y * log2|x| <
+/// -149`, i.e. a result of zero or the least subnormal (glibc 2.43, scratch
+/// powsp.c). Overflow and the pole are reported by the caller from the result.
+pub fn powf_underflow_erange(base: f32, exponent: f32) -> bool {
+    powf_ylogx(base, exponent).is_some_and(|(ylogx, _)| ylogx < -149.0)
+}
+
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn sinhf(x: f32) -> f32 => sinhf_body;
+}
+
+#[inline(always)]
+fn sinhf_body(x: f32) -> f32 {
+    // f64 sinh rounded once: glibc 2.43's sinhf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 576 of them (1 ULP).
+    crate::math::sinh(f64::from(x)) as f32
+}
+
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn coshf(x: f32) -> f32 => coshf_body;
+}
+
+#[inline(always)]
+fn coshf_body(x: f32) -> f32 {
+    // f64 cosh rounded once: glibc 2.43's coshf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 515 of them (1 ULP).
+    crate::math::cosh(f64::from(x)) as f32
+}
+
+// Bounds of the WITHDRAWN pure-f32 tanhf fast band (see `tanhf`). Retained,
+// unused, as the record of what the band was: the path was removed for losing
+// 1 ULP against glibc, not because these bounds were wrong. Anyone restoring a
+// fast path here must beat glibc's bits, not merely stay inside this range.
+#[allow(dead_code)]
+const TANHF_FAST_ABS_MIN: f32 = 0.5;
+// Upper bound kept below where `expf(2x)` overflows (2x < 88.7, i.e. x < 44.3);
+// well before that, `(u-1)/(u+1)` self-saturates to ±1 exactly in f32 (the `-1`
+// and `+1` vanish against the huge `u`), so the result is correct for the whole
+// band — including the saturated CASES (e.g. tanhf(20)=1.0).
+#[allow(dead_code)]
+const TANHF_FAST_ABS_MAX: f32 = 40.0;
+
+#[inline]
+pub fn tanhf(x: f32) -> f32 {
+    // tanh(x) = (e^2x - 1)/(e^2x + 1). For |x| >= 0.5 this form has no
+    // cancellation (the result is bounded away from 0), so the f32 `expf`
+    // fast path covers 2x directly on this interval and avoids widening through
+    // the f64 exp kernel. The identity is odd, so it serves negative x with no
+    // special-casing. Near-0 (cancellation) and tiny/non-finite x defer to libm.
+    // PERF PATH WITHDRAWN. The pure-f32 form `(expf(2x) - 1) / (expf(2x) + 1)`
+    // rounds three times — the expf, the add/sub, and the divide — and lands
+    // 1 ULP below glibc at ordinary arguments: tanhf(-1) gave -0.7615941
+    // against glibc's -0.7615942. Bit parity is not tradeable against speed
+    // (see the parity-absolute rule), so evaluate in f64 and round ONCE.
+    //
+    // Narrowing TANHF_FAST_ABS_MIN/MAX so the failing points miss the fast band
+    // would turn the gate green without making the function correct, which is
+    // gate-gaming; the band is withdrawn wholesale instead.
+    crate::math::tanh(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn asinhf(x: f32) -> f32 {
+    // f64 asinh rounded once: glibc 2.43's asinhf is correctly rounded and this
+    // matches it on all but 6 of the 2^32 inputs (exhaustive, scratch
+    // f64route.c). The former f32 log(|x| + sqrt(x^2+1)) path was up to 2 ULP
+    // off (19.4M inputs differed).
+    crate::math::asinh(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn acoshf(x: f32) -> f32 {
+    // Domain is [1, +inf); for x < 1 acosh is undefined and glibc returns NaN.
+    // libm::acoshf computes a spurious finite value for large negative x (e.g.
+    // acoshf(-100) = -2.2), so guard the domain explicitly. NaN inputs fall
+    // through (NaN < 1.0 is false) to libm, which returns NaN. glibc also raises
+    // FE_INVALID for the out-of-domain case, so produce the NaN via 0/0 (which
+    // sets the flag) rather than a bare NaN constant.
+    if x < 1.0 {
+        return core::hint::black_box(
+            core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32),
+        );
+    }
+    // f64 acosh rounded once. glibc 2.43's acoshf is correctly rounded; this
+    // matches it on all but 2 of the 2^32 inputs (exhaustive, scratch
+    // f64route.c). The former f32 evaluation for x >= 1.5 overflowed
+    // (x-1)*(x+1) above ~1.8e19 (inf for a finite result) and differed from
+    // glibc on 545M inputs.
+    crate::math::acosh(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn atanhf(x: f32) -> f32 {
+    // f64 atanh rounded once: glibc 2.43's atanhf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 11.6k of them (1 ULP).
+    crate::math::atanh(f64::from(x)) as f32
+}
+
+// --- Exponential / logarithmic (additional) ---
+
+#[inline]
+pub fn exp2f(x: f32) -> f32 {
+    // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_exp2f`,
+    // 0.5 ULP) — the same `2^xd` table pass used by the powf exp2 stage. Used for
+    // the normal-result interior |x| < 126, where 2^x is a finite normal f32 and
+    // `xd = x` is exact. Overflow, underflow, subnormal, inf and nan defer to
+    // `libm::exp2f` for exact FE_OVERFLOW/FE_UNDERFLOW + errno semantics.
+    if x.abs() < 126.0 {
+        return powf_exp2_inline(f64::from(x));
+    }
+    libm::exp2f(x)
+}
+
+#[inline]
+pub fn expm1f(x: f32) -> f32 {
+    // glibc 2.43's expm1f is correctly rounded; f64 expm1 rounded once
+    // matches it except in rare double-rounding cases. A former
+    // `expf(x) - 1.0` shortcut was up to 3 ULP off (20.8M inputs differed,
+    // exhaustively), and libm::expm1f (fdlibm) is not correctly rounded.
+    libm::expm1(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn log1pf(x: f32) -> f32 {
+    if x == 0.0 {
+        return x; // preserve the sign of zero (log1p(-0) = -0), and raise nothing
+    }
+    // Tiny |x|: log1p(x) = x - x²/2 + …, and the first omitted term is below half an
+    // f32 ULP once |x| < 2^-24, so x IS the correctly rounded result. Proof: for
+    // |x| ∈ [2^e, 2^(e+1)), ulp(x) = 2^(e-23), and x²/2 < 2^(2e+1) ≤ 2^(e-24) =
+    // ½ulp(x) exactly when e ≤ -25, i.e. |x| < 2^-24. Confirmed against glibc 2.42:
+    // log1pf(±2^-24) returns x bit-for-bit, log1pf(±2^-23) does not.
+    //
+    // This branch is REQUIRED, not just a shortcut: the f64 route below is wrong here.
+    // `1.0 + f64::from(x)` is exact only while x's lowest significand bit stays inside
+    // f64's 53-bit window, i.e. |x| ≥ 2^-29; below that the sum rounds and the error
+    // swamps the tiny result. At x = -8.282635e-14 (≈2^-43) that showed up as a
+    // 548-ULP drift against glibc.
+    //
+    // glibc raises FE_INEXACT for every nonzero input here even though it returns x
+    // unchanged (the true log1p(x) is not representable), so force one inexact
+    // operation: returning x is exact and would otherwise silently drop the flag the
+    // f64 `log` used to raise.
+    const TINY: f32 = 1.0 / 16_777_216.0; // 2^-24
+    if x.abs() < TINY {
+        fe_inexact_f32(); // x == 0.0 already returned above, so this branch is nonzero
+        return x;
+    }
+    // log1p(x) = log(1+x). Compute 1+x in f64 — exact for |x| ≥ 2^-29, which the guard
+    // above now guarantees — then take the dedicated bit-exact f64 `log` kernel and
+    // round once. Accurate across the rest of the domain and ~glibc speed (the f64 log
+    // is the ARM __log port), replacing the generic libm::log1pf. The f64 log raises
+    // FE_DIVBYZERO for 1+x == 0 (x == -1, pole) and FE_INVALID for 1+x < 0 (x < -1,
+    // domain), exactly matching glibc's log1pf.
+    (crate::math::log(1.0 + f64::from(x))) as f32
+}
+
+// --- Float utilities ---
+
+#[inline]
+pub fn sqrtf(x: f32) -> f32 {
+    libm::sqrtf(x)
+}
+
+#[inline]
+pub fn fabsf(x: f32) -> f32 {
+    libm::fabsf(x)
+}
+
+#[inline]
+pub fn ceilf(x: f32) -> f32 {
+    libm::ceilf(x)
+}
+
+#[inline]
+pub fn floorf(x: f32) -> f32 {
+    libm::floorf(x)
+}
+
+#[inline]
+pub fn roundf(x: f32) -> f32 {
+    // See `roundf_exact`: libm's `+0.5` arithmetic spuriously raises FE_INEXACT.
+    roundf_exact(x)
+}
+
+#[inline]
+pub fn truncf(x: f32) -> f32 {
+    libm::truncf(x)
+}
+
+#[inline]
+pub fn rintf(x: f32) -> f32 {
+    libm::rintf(x)
+}
+
+/// f32 counterpart of [`crate::math::nearbyint`]: honours the current rounding
+/// mode; the FE_INEXACT suppression happens at the ABI boundary. bd-epponw.
+#[inline]
+pub fn nearbyintf(x: f32) -> f32 {
+    libm::rintf(x)
+}
+
+#[inline]
+pub fn fmodf(x: f32, y: f32) -> f32 {
+    libm::fmodf(x, y)
+}
+
+#[inline]
+pub fn remainderf(x: f32, y: f32) -> f32 {
+    // fdlibm `__ieee754_remainderf`, fmodf-based (reuses fl's `fmodf`), replacing
+    // `libm::remainderf`'s remquof-based quotient-bit tracking — `remainderf` never
+    // needs the quotient, so tracking it bit-by-bit wastes work on large-quotient
+    // inputs. The exact f32 mirror of the f64 `remainder` fix (bd-remainder-fdlibm-
+    // fmod). glibc's remainderf is likewise fdlibm/fmodf-based, so this is bit-
+    // identical (conformance_diff_math_exact + conformance_diff_fmod_rem_flags cover it).
+    let xbits = x.to_bits();
+    let pbits = y.to_bits();
+    let sx = xbits & 0x8000_0000;
+    let axb = xbits & 0x7fff_ffff; // |x| bits
+    let apb = pbits & 0x7fff_ffff; // |y| bits
+    // y == 0, or x non-finite, or y NaN -> NaN (raising invalid via 0/0 or inf/inf).
+    if apb == 0 || axb >= 0x7f80_0000 || apb > 0x7f80_0000 {
+        // As in the f64 `remainder`: self-division is fdlibm's NaN-plus-
+        // FE_INVALID idiom, not a typo. See bd-pa0nlj.
+        #[allow(clippy::eq_op)]
+        let invalid = (x * y) / (x * y);
+        return invalid;
+    }
+    let ap = f32::from_bits(apb);
+    let mut xv = x;
+    // Reduce x mod 2|y| first when y+y cannot overflow (y exponent below max).
+    if apb <= 0x7eff_ffff {
+        xv = fmodf(xv, ap + ap);
+    }
+    // |x| == |y| exactly -> signed zero.
+    if axb == apb {
+        return 0.0 * xv;
+    }
+    let mut xa = xv.abs();
+    if apb < 0x0100_0000 {
+        if xa + xa > ap {
+            xa -= ap;
+            if xa + xa >= ap {
+                xa -= ap;
+            }
+        }
+    } else {
+        let p_half = 0.5 * ap;
+        if xa > p_half {
+            xa -= ap;
+            if xa >= p_half {
+                xa -= ap;
+            }
+        }
+    }
+    f32::from_bits(xa.to_bits() ^ sx)
+}
+
+#[inline]
+pub fn copysignf(x: f32, y: f32) -> f32 {
+    libm::copysignf(x, y)
+}
+
+#[inline]
+pub fn cbrtf(x: f32) -> f32 {
+    libm::cbrtf(x)
+}
+
+#[inline]
+pub fn hypotf(x: f32, y: f32) -> f32 {
+    // In f64: the squares of f32 values are exact and their sum nearly always
+    // is, so one f64 sqrt rounded to f32 is what glibc 2.43 returns (libm's
+    // f32 algorithm differed by 1 ULP on ~10% of sampled inputs). An infinity
+    // wins over a NaN (C F.10.4.3); the narrowing raises FE_OVERFLOW.
+    if x.is_infinite() || y.is_infinite() {
+        return f32::INFINITY;
+    }
+    if x.is_nan() || y.is_nan() {
+        return core::hint::black_box(x) + y;
+    }
+    let (dx, dy) = (f64::from(x), f64::from(y));
+    (dx * dx + dy * dy).sqrt() as f32
+}
+
+// --- Min / max / dim / fma ---
+
+#[inline]
+pub fn fminf(x: f32, y: f32) -> f32 {
+    libm::fminf(x, y)
+}
+
+#[inline]
+pub fn fmaxf(x: f32, y: f32) -> f32 {
+    libm::fmaxf(x, y)
+}
+
+#[inline]
+pub fn fdimf(x: f32, y: f32) -> f32 {
+    libm::fdimf(x, y)
+}
+
+#[inline]
+pub fn fmaf(x: f32, y: f32, z: f32) -> f32 {
+    libm::fmaf(x, y, z)
+}
+
+// --- Rounding / conversion ---
+
+// f32 conversions share glibc's x86 `cvt(t)ss2si` out-of-range / NaN semantics
+// (integer-indefinite i64::MIN), the same as the f64 path. The rounded f32 is
+// widened to f64 exactly before the range check. See
+// `crate::math::float::round_to_i64_x86`.
+#[inline]
+pub fn lrintf(x: f32) -> i64 {
+    crate::math::float::round_to_i64_x86(libm::rintf(x) as f64)
+}
+
+#[inline]
+pub fn llrintf(x: f32) -> i64 {
+    crate::math::float::round_to_i64_x86(libm::rintf(x) as f64)
+}
+
+/// f32 counterpart of `float::round_exact`: round half away from zero with bit
+/// manipulation only, so no FE_INEXACT is raised. `libm::roundf` uses `+0.5`
+/// arithmetic and does raise it, which C F.10.6.6 forbids for this family.
+#[inline]
+pub(crate) fn roundf_exact(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000;
+    let e = ((bits >> 23) & 0xff) as i32;
+    if e >= 127 + 23 {
+        // |x| >= 2^23, plus the infinities and NaN: already integral.
+        return x;
+    }
+    if e < 127 {
+        let mag = f32::from_bits(bits & 0x7fff_ffff);
+        let r = if mag >= 0.5 { 1.0_f32 } else { 0.0_f32 };
+        return f32::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 150 - e;
+    let half = 1u32 << (frac_bits - 1);
+    let frac_mask = (1u32 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let out = if (bits & frac_mask) >= half {
+        int_part + (1u32 << frac_bits)
+    } else {
+        int_part
+    };
+    f32::from_bits(out)
+}
+
+#[inline]
+pub fn lroundf(x: f32) -> i64 {
+    crate::math::float::round_to_i64_x86(roundf_exact(x) as f64)
+}
+
+#[inline]
+pub fn llroundf(x: f32) -> i64 {
+    crate::math::float::round_to_i64_x86(roundf_exact(x) as f64)
+}
+
+// --- Float decomposition ---
+
+#[inline]
+pub fn ldexpf(x: f32, exp: i32) -> f32 {
+    libm::ldexpf(x, exp)
+}
+
+#[inline]
+pub fn frexpf(x: f32) -> (f32, i32) {
+    libm::frexpf(x)
+}
+
+#[inline]
+pub fn modff(x: f32) -> (f32, f32) {
+    libm::modff(x)
+}
+
+// --- Scaling / exponent extraction ---
+
+#[inline]
+pub fn scalbnf(x: f32, n: i32) -> f32 {
+    libm::scalbnf(x, n)
+}
+
+#[inline]
+pub fn scalblnf(x: f32, n: i64) -> f32 {
+    let exp = n.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    libm::ldexpf(x, exp)
+}
+
+#[inline]
+pub fn nextafterf(x: f32, y: f32) -> f32 {
+    let r = libm::nextafterf(x, y);
+    // C99/IEEE: FE_OVERFLOW when finite -> infinite; FE_UNDERFLOW when the result
+    // is subnormal/zero and differs from x. libm omits these; re-raise.
+    if x.is_finite() && r.is_infinite() {
+        let _ = core::hint::black_box(
+            core::hint::black_box(f32::MAX) * core::hint::black_box(f32::MAX),
+        );
+    } else if r != x && r.abs() < f32::MIN_POSITIVE {
+        let _ = core::hint::black_box(
+            core::hint::black_box(f32::MIN_POSITIVE) * core::hint::black_box(f32::MIN_POSITIVE),
+        );
+    }
+    r
+}
+
+/// Return the next representable `f32` after `x` toward `y` (long double direction).
+///
+/// `y` is `f64` (representing the `long double` direction parameter in C ABI).
+/// The direction is determined by `x < y` / `x > y` / `x == y`.
+#[inline]
+pub fn nexttowardf(x: f32, y: f64) -> f32 {
+    if x.is_nan() || y.is_nan() {
+        return f32::NAN;
+    }
+    let xd = x as f64;
+    if xd == y {
+        return x;
+    }
+    // Step toward y using f32 nextafter
+    if xd < y {
+        libm::nextafterf(x, f32::INFINITY)
+    } else {
+        libm::nextafterf(x, f32::NEG_INFINITY)
+    }
+}
+
+#[inline]
+pub fn ilogbf(x: f32) -> i32 {
+    // C99 7.12.6.5: ilogb(0), ilogb(±inf), ilogb(NaN) raise FE_INVALID.
+    if x == 0.0 || !x.is_finite() {
+        fe_invalid_f32();
+    }
+    libm::ilogbf(x)
+}
+
+#[inline]
+pub fn logbf(x: f32) -> f32 {
+    if x == 0.0 {
+        // logb(0) = -inf is a pole: glibc raises FE_DIVBYZERO.
+        fe_divbyzero_f32();
+        return f32::NEG_INFINITY;
+    }
+    if x.is_infinite() {
+        return f32::INFINITY;
+    }
+    if x.is_nan() {
+        return x;
+    }
+    libm::ilogbf(x) as f32
+}
+
+// --- Special functions ---
+
+super::avx2_fma_dispatch! {
+    /// Error function, single precision.
+    ///
+    /// f64 erf rounded once (see `erff_body`).
+    #[inline]
+    pub fn erff(x: f32) -> f32 => erff_body;
+}
+
+#[inline(always)]
+fn erff_body(x: f32) -> f32 {
+    // f64 erf rounded once: glibc 2.43's erff is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 691k of them (1 ULP).
+    crate::math::erf(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn erfcf(x: f32) -> f32 {
+    // CORE-MATH f64 erfc (correctly rounded) rounded once: glibc 2.43's erfcf
+    // is correctly rounded too, and this matches it on all but 1 of the 2^32
+    // inputs (exhaustive, scratch f64route.c). The narrowing raises
+    // FE_UNDERFLOW for a subnormal f32 result. The former 1 +- erff(x) and
+    // libm::erfcf paths were up to 3 ULP off (26.9M inputs differed).
+    crate::math::erfc(f64::from(x)) as f32
+}
+
+#[inline]
+pub fn lgammaf(x: f32) -> f32 {
+    // CORE-MATH f64 lgamma (correctly rounded) rounded once; glibc 2.43's
+    // lgammaf is correctly rounded and this matches it on all but 2 of the 2^32
+    // inputs (exhaustive, scratch f64route.c). libm::lgammaf below 13 was off by
+    // up to 7.5M ULP near the zeros of lgamma (386M inputs differed).
+    lgammaf_r(x).0
+}
+
+#[inline]
+pub fn tgammaf(x: f32) -> f32 {
+    // Negative-integer poles: glibc raises FE_INVALID (NaN); libm::tgammaf omits
+    // the flag. (tgammaf(0) is handled by libm with FE_DIVBYZERO.)
+    if x < 0.0 && x.is_finite() && x == libm::floorf(x) {
+        fe_invalid_f32();
+    }
+    // `libm::tgammaf` is ~7x slower than glibc; the in-tree f64 `tgamma` fast
+    // kernel (tgamma_reduced) is far more than accurate enough for a
+    // correctly-rounded f32 result, and f32 args widen to f64 exactly.
+    super::special::tgamma(x as f64) as f32
+}
+
+// --- New batch: remquo, sincos, nan, Bessel, compat ---
+
+/// IEEE remainder with quotient (f32 variant).
+#[inline]
+pub fn remquof(x: f32, y: f32) -> (f32, i32) {
+    let (rem, quo) = libm::remquof(x, y);
+    // Match glibc: store only sign(x/y) * (low 3 bits of the quotient
+    // magnitude) — C99 n=3. See `crate::math::float::remquo`.
+    let magnitude = (quo.unsigned_abs() & 7) as i32;
+    (rem, if quo < 0 { -magnitude } else { magnitude })
+}
+
+/// Compute sine and cosine simultaneously (f32 variant).
+#[inline]
+pub fn sincosf(x: f32) -> (f32, f32) {
+    // Bit-identical to `(sinf(x), cosf(x))`, evaluating both via CORE-MATH's
+    // correctly rounded f64 kernels rounded once (`libm::sincosf` was up to
+    // 2 ULP off and disagreed with `sinf`/`cosf`; bd-li7fb3).
+    (sinf(x), cosf(x))
+}
+
+/// Generate a quiet NaN (f32 variant), encoding the `tag` payload like
+/// C `nanf(tagp)`. See [`crate::math::float::nan`] for the tag grammar;
+/// here the payload occupies the f32 mantissa's low 22 bits.
+#[inline]
+pub fn nanf(tag: &[u8]) -> f32 {
+    // Quiet NaN: exponent all-ones + the quiet bit (mantissa bit 22).
+    const QUIET_NAN: u32 = 0x7fc0_0000;
+    // The tag payload occupies mantissa bits 0..=21.
+    const PAYLOAD_MASK: u32 = 0x003f_ffff;
+    // Reuse the f64 tag parser; the payload lives in the low bits.
+    let payload = crate::math::float::nan(tag).to_bits() as u32;
+    f32::from_bits(QUIET_NAN | (payload & PAYLOAD_MASK))
+}
+
+/// GNU extension: base-10 exponential (f32 variant).
+#[inline]
+pub fn exp10f(x: f32) -> f32 {
+    // glibc's exp10f: x*log2(10) in f64 through the single-precision exp2
+    // kernel (the one powf uses), integers included (exp10f(3) is 1000 with
+    // FE_INEXACT raised, as glibc). f64 exp2 rounded to f32 instead differed from
+    // glibc on 694 of 16.8M sampled inputs (glibc's exp10f is not correctly
+    // rounded). The kernel builds its scale in f64, so it is safe well past the
+    // f32 range: up to |xd| < 200 the narrowing gives the overflow/subnormal/
+    // underflow results and flags; beyond, f64 exp2 does the same.
+    let xd = f64::from(x) * core::f64::consts::LOG2_10;
+    if xd.abs() < 200.0 {
+        return powf_exp2_inline(xd);
+    }
+    (crate::math::exp2(xd)) as f32
+}
+
+/// Bessel function of the first kind, order 0 (f32 variant).
+#[inline]
+pub fn j0f(x: f32) -> f32 {
+    libm::j0f(x)
+}
+
+/// Bessel function of the first kind, order 1 (f32 variant).
+#[inline]
+pub fn j1f(x: f32) -> f32 {
+    // J1 is odd, so J1(-inf) carries the sign of -J1(+inf) = -0.0; libm::j1f(-inf)
+    // returns +0.0, but glibc returns -0.0. Match glibc.
+    if x == f32::NEG_INFINITY {
+        return -0.0;
+    }
+    libm::j1f(x)
+}
+
+/// Bessel function of the first kind, order `n` (f32 variant).
+#[inline]
+pub fn jnf(n: i32, x: f32) -> f32 {
+    // Mirror f64 jn: route orders 0/±1 through j0f/j1f (j1f's signed-zero-at-(-inf)
+    // fix) + the identity J_{-n} = (-1)^n J_n. Identical to libm::jnf for finite x;
+    // |n| >= 2 stays on libm::jnf.
+    match n {
+        0 => j0f(x),
+        1 => j1f(x),
+        -1 => -j1f(x),
+        _ => libm::jnf(n, x),
+    }
+}
+
+/// Bessel function of the second kind, order 0 (f32 variant).
+/// Y-Bessel pole/domain exception re-raise (f32): x==0 -> FE_DIVBYZERO,
+/// x<0 -> FE_INVALID. Mirrors the f64 `raise_y_special`.
+#[inline]
+fn raise_y_special_f32(x: f32) {
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
+    }
+}
+
+pub fn y0f(x: f32) -> f32 {
+    raise_y_special_f32(x);
+    libm::y0f(x)
+}
+
+/// Bessel function of the second kind, order 1 (f32 variant).
+#[inline]
+pub fn y1f(x: f32) -> f32 {
+    raise_y_special_f32(x);
+    libm::y1f(x)
+}
+
+/// Bessel function of the second kind, order `n` (f32 variant).
+#[inline]
+pub fn ynf(n: i32, x: f32) -> f32 {
+    // Mirror f64 yn: orders 0/±1 via y0f/y1f + the identity Y_{-n} = (-1)^n Y_n.
+    match n {
+        0 => y0f(x),
+        1 => y1f(x),
+        -1 => {
+            // THE IDENTITY'S SIGN FLIP MUST NOT CREATE A NEGATIVE ZERO. glibc's
+            // float Y_n returns +0.0 at +inf, and negating that would hand the
+            // caller -0.0 — a bit-pattern divergence in a case where both values
+            // compare equal, which is exactly the kind that survives review
+            // (measured: ynf(-1, +inf) is +0.0 on host glibc 2.42, and this
+            // module returned -0.0 — bd-7ilguh, found by the differential gate
+            // conformance_diff_bessel_jn_yn).
+            //
+            // Note the reference implementation is INCONSISTENT here: its double
+            // yn(-1, +inf) really is -0.0. The ABI contract is per-symbol, and
+            // the float symbol is the one this function backs, so the exception
+            // is deliberately narrower than "non-finite": it covers only the
+            // +inf zero, leaving the NaN behaviour at -inf unchanged (that
+            // already matches, sign bit included).
+            let y = y1f(x);
+            if x == f32::INFINITY { y } else { -y }
+        }
+        _ => {
+            raise_y_special_f32(x);
+            libm::ynf(n, x)
+        }
+    }
+}
+
+/// BSD/SUSv2 `finitef()`: returns non-zero if `x` is neither infinite nor NaN.
+#[inline]
+pub fn finitef(x: f32) -> i32 {
+    if x.is_finite() { 1 } else { 0 }
+}
+
+/// BSD `dremf()` — alias for `remainderf()`.
+#[inline]
+pub fn dremf(x: f32, y: f32) -> f32 {
+    remainderf(x, y)
+}
+
+/// BSD `gammaf()` — alias for `lgammaf()`.
+#[inline]
+pub fn gammaf(x: f32) -> f32 {
+    // Keep the compatibility alias on the same numerical kernel as lgammaf.
+    lgammaf(x)
+}
+
+/// Reentrant lgammaf: returns `(lgammaf(x), signgam)` (f32 variant).
+#[inline]
+pub fn lgammaf_r(x: f32) -> (f32, i32) {
+    // Handle NaNs before widening and entering the real-valued kernel. Preserve
+    // the payload and raise INVALID only for a signaling NaN.
+    if x.is_nan() {
+        return (core::hint::black_box(x) + 0.0, 1);
+    }
+    // See `lgammaf`; the sign is CORE-MATH's too, so value and sign agree.
+    let (v, sign) = crate::math::lgamma_r(f64::from(x));
+    (v as f32, sign)
+}
+
+// ---------------------------------------------------------------------------
+// IEEE 754 classification helpers (f32 variants)
+// ---------------------------------------------------------------------------
+
+/// FP_NAN, FP_INFINITE, FP_ZERO, FP_SUBNORMAL, FP_NORMAL (same values as f64).
+pub const FP_NAN_F32: i32 = 0;
+pub const FP_INFINITE_F32: i32 = 1;
+pub const FP_ZERO_F32: i32 = 2;
+pub const FP_SUBNORMAL_F32: i32 = 3;
+pub const FP_NORMAL_F32: i32 = 4;
+
+/// Classify a single-precision float (glibc `__fpclassifyf`).
+#[inline]
+pub fn fpclassifyf(x: f32) -> i32 {
+    const ABS_MASK: u32 = 0x7fff_ffff;
+    const EXP_MASK: u32 = 0x7f80_0000;
+
+    let magnitude = x.to_bits() & ABS_MASK;
+    match magnitude & EXP_MASK {
+        0 => {
+            if magnitude == 0 {
+                FP_ZERO_F32
+            } else {
+                FP_SUBNORMAL_F32
+            }
+        }
+        EXP_MASK => {
+            if magnitude == EXP_MASK {
+                FP_INFINITE_F32
+            } else {
+                FP_NAN_F32
+            }
+        }
+        _ => FP_NORMAL_F32,
+    }
+}
+
+/// Return non-zero if sign bit is set (f32 variant).
+#[inline]
+pub fn signbitf(x: f32) -> i32 {
+    if x.is_sign_negative() { 1 } else { 0 }
+}
+
+/// Return non-zero if `x` is infinite (f32 variant).
+#[inline]
+pub fn isinff(x: f32) -> i32 {
+    if x == f32::INFINITY {
+        1
+    } else if x == f32::NEG_INFINITY {
+        -1
+    } else {
+        0
+    }
+}
+
+/// Return non-zero if `x` is NaN (f32 variant).
+#[inline]
+pub fn isnanf(x: f32) -> i32 {
+    if x.is_nan() { 1 } else { 0 }
+}
+
+/// Extract the significand (mantissa) of `x` scaled to `[1, 2)` (f32 variant).
+#[inline]
+pub fn significandf(x: f32) -> f32 {
+    if x == 0.0 || x.is_nan() || x.is_infinite() {
+        return x;
+    }
+    let e = libm::ilogbf(x);
+    libm::scalbnf(x, -e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avx2_fma_twins_match_baseline_bodies() {
+        use crate::math::{assert_dispatch_matches_body, avx2_fma_dispatch_inputs};
+        // f32 inputs widened exactly to f64 and the results narrowed back.
+        let inputs = avx2_fma_dispatch_inputs(-100.0, 100.0)
+            .into_iter()
+            .map(|x| f64::from(x as f32))
+            .collect::<Vec<_>>();
+        let f32_case = |name: &str, dispatched: fn(f32) -> f32, body: fn(f32) -> f32| {
+            assert_dispatch_matches_body(
+                name,
+                &inputs,
+                |x| f64::from(dispatched(x as f32)),
+                |x| f64::from(body(x as f32)),
+            );
+        };
+        f32_case("sinf", sinf, sinf_body);
+        f32_case("cosf", cosf, cosf_body);
+        f32_case("sinhf", sinhf, sinhf_body);
+        f32_case("coshf", coshf, coshf_body);
+        f32_case("erff", erff, erff_body);
+    }
+
+    #[test]
+    fn acoshf_domain_and_j1f_sign_match_glibc() {
+        // acosh domain is [1, +inf); x < 1 must be NaN (libm returns spurious
+        // finite values for large negative x, e.g. acoshf(-100) = -2.2).
+        for x in [
+            -100.0f32,
+            -104.0,
+            -1.0,
+            0.0,
+            0.5,
+            0.9999999,
+            f32::NEG_INFINITY,
+        ] {
+            assert!(acoshf(x).is_nan(), "acoshf({x}) must be NaN (domain x<1)");
+        }
+        assert_eq!(acoshf(1.0), 0.0);
+        assert!(acoshf(2.0).is_finite() && acoshf(2.0) > 0.0);
+        assert_eq!(acoshf(f32::INFINITY), f32::INFINITY);
+        // J1 is odd → j1f(-inf) = -0.0 (glibc); libm returns +0.0.
+        assert_eq!(j1f(f32::NEG_INFINITY).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(j1f(f32::INFINITY).to_bits(), 0.0f32.to_bits());
+    }
+
+    /// Bit-exact reference for `log2f`.
+    ///
+    /// These arms used to compare against `libm::log2f`, and that oracle is
+    /// WRONG for this project: `libm` is 1 ULP off from both the host and the
+    /// correctly-rounded result at points fl gets right. Measured at
+    /// x = 0.59375 (the first grid point where they disagree):
+    ///
+    /// ```text
+    ///   fl                            bits = 3208677331
+    ///   host glibc log2f              bits = 3208677331
+    ///   log2l() in long double -> f32 bits = 3208677331   (correctly rounded)
+    ///   libm::log2f                   bits = 3208677330   <-- the outlier
+    /// ```
+    ///
+    /// So the gate was red while fl was RIGHT. `f32::log2` resolves to the
+    /// host's `log2f`, which is the parity contract this project actually
+    /// holds itself to, and is already the idiom used by
+    /// `log10f_dyadic_profile_grid_within_4_ulps` a few arms below.
+    ///
+    /// The divergence comes from `log2f_dyadic_profile_fast_path`: the fallback
+    /// in `log2f` IS `libm::log2f`, so only inputs the fast path claims can
+    /// differ from it. The fast path is the MORE accurate of the two here —
+    /// it agrees with the host and with the correctly-rounded value — so this
+    /// gate was punishing fl for being right.
+    ///
+    /// `x.log2()` is safe HERE even though `log2f`'s own body carries a comment
+    /// forbidding it: that hazard is self-interposition inside the shipped
+    /// `libc.so`, where the `log2f` symbol resolves back to fl. This is
+    /// frankenlibc-core's unit-test binary, which exports no libc symbols and
+    /// links the host's `log2f` — the same reason the `log10f` arm below can
+    /// call `x.log10()`.
+    ///
+    /// NOTE this is a bit-exact comparison against the host, so it will fail if
+    /// the host's libm changes its rounding — that is intended: this project
+    /// tracks glibc, and a divergence is exactly what should be reported.
+    /// bd-m63gy7.
+    fn host_log2f_reference(x: f32) -> f32 {
+        x.log2()
+    }
+
+    #[test]
+    fn log2f_dyadic_profile_grid_matches_host_bits() {
+        let mut s = 0x6c8e_9cf5_u32;
+        for k in 0..=64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log2f(x);
+            let want = host_log2f_reference(x);
+            assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
+        }
+
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+            let got = log2f(x);
+            let want = host_log2f_reference(x);
+            assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
+        }
+
+        for &x in &[
+            -0.0f32,
+            0.0,
+            0.499_999_97,
+            1.0,
+            2.0,
+            2.500_000_2,
+            f32::INFINITY,
+        ] {
+            assert_eq!(
+                log2f(x).to_bits(),
+                host_log2f_reference(x).to_bits(),
+                "log2f({x})"
+            );
+        }
+        assert!(log2f(-1.0).is_nan());
+        assert!(log2f(f32::NAN).is_nan());
+    }
+
+    /// Golden corpus over the same 64-point dyadic grid.
+    ///
+    /// The recorded digest was UPDATED once, deliberately, and not to make a
+    /// red test pass. It had been captured while this corpus still encoded
+    /// `libm::log2f`'s values; 4 of the 64 grid points differ between libm and
+    /// the host, and on all 4 fl agrees with the host and with the
+    /// correctly-rounded (long-double) result — see `host_log2f_reference`.
+    ///
+    /// The evidence that licensed the update is the sibling arm
+    /// `log2f_dyadic_profile_grid_matches_host_bits`, which asserts bit
+    /// equality against the host over this same grid plus 1,000,000 random
+    /// points and the special values. Every value hashed below is therefore
+    /// independently proven correct pointwise before it is hashed — the digest
+    /// pins them, it does not define them. Split: 4 points changed, 60
+    /// unchanged, 0 regressions. bd-m63gy7.
+    #[test]
+    fn golden_log2f_dyadic_profile_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log2f(x);
+            let want = host_log2f_reference(x);
+            assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
+            hasher.update(x.to_bits().to_le_bytes());
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "6ca9ff9314c15c49d761f9686434e351789ff0815c083abdbf45991cb2a6ba2f",
+            "log2f dyadic profile corpus hash drifted: got {digest}"
+        );
+    }
+
+    #[test]
+    fn hypotf_matches_glibc() {
+        // `f32::hypot` is the host glibc's hypotf in this test binary.
+        let mut st = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200_000 {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            let x = f32::from_bits(st as u32);
+            let y = f32::from_bits((st >> 32) as u32);
+            let (got, want) = (hypotf(x, y), x.hypot(y));
+            if got.is_nan() && want.is_nan() {
+                continue;
+            }
+            assert_eq!(got.to_bits(), want.to_bits(), "hypotf({x:e}, {y:e})");
+        }
+        assert_eq!(hypotf(f32::INFINITY, f32::NAN), f32::INFINITY);
+    }
+
+    #[test]
+    fn logf_log2f_subnormals_match_glibc() {
+        // Positive subnormals take glibc's own route (normalise by 2^23, same
+        // kernel); libm differed on 9772 / 9696 of them (exhaustively).
+        let mut u = 1u32;
+        while u < 0x0080_0000 {
+            let x = f32::from_bits(u);
+            assert_eq!(logf(x).to_bits(), x.ln().to_bits(), "logf({x:e})");
+            assert_eq!(log2f(x).to_bits(), x.log2().to_bits(), "log2f({x:e})");
+            u += 97;
+        }
+    }
+
+    #[test]
+    fn log10f_dyadic_profile_grid_matches_glibc() {
+        let mut worst = 0u32;
+        for k in 0..=64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log10f(x);
+            let want = x.log10();
+            let ulps = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            worst = worst.max(ulps);
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "log10f({x}) = {got:?} but glibc = {want:?} ({ulps} ULP)"
+            );
+        }
+
+        for &x in &[
+            -1.0f32,
+            -0.0,
+            0.0,
+            0.500_001,
+            0.531_251,
+            2.500_001,
+            f32::INFINITY,
+            f32::NAN,
+        ] {
+            let got = log10f(x);
+            let want = x.log10(); // host glibc
+            if got.is_nan() && want.is_nan() {
+                continue;
+            }
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "log10f({x:?}) differs from glibc"
+            );
+        }
+        println!("log10f dyadic profile grid worst ULP = {worst}");
+    }
+
+    #[test]
+    fn golden_log10f_dyadic_profile_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log10f(x);
+            hasher.update(x.to_bits().to_le_bytes());
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        println!("log10f dyadic profile corpus sha256 = {digest}");
+        assert_eq!(
+            // Updated 2026-10-07 with the f64-route log10f: these 64 points are
+            // the grid that log10f_dyadic_profile_grid_matches_glibc checks
+            // bit-exact against host glibc in the same run.
+            digest,
+            "fc8405ac49ee455327f65542613be8ca29612a99283f84f9ac88d872592c141d",
+            "log10f dyadic profile corpus hash drifted: got {digest}"
+        );
+    }
+
+    #[test]
+    fn expf_medium_range_matches_glibc_exactly() {
+        // Dense sweep of [-5, 5] (a former 4-ULP shortcut's range) vs host
+        // glibc expf: the kernel is glibc's algorithm, so the results are equal.
+        let mut s = 0x1357_9bdf_u32;
+        let mut maxu = 0u32;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = -5.0 + (s >> 9) as f32 * (10.0 / (1u32 << 23) as f32); // [-5,5]
+            let got = expf(x);
+            let want = x.exp(); // glibc expf
+            let u = if got == want {
+                0
+            } else {
+                (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs()
+            };
+            if u > maxu {
+                maxu = u;
+            }
+        }
+        assert_eq!(maxu, 0, "expf max {maxu} ULP vs glibc on [-5, 5]");
+    }
+
+    #[test]
+    fn expf_fallback_preserves_libm_bits() {
+        // Outside [-5, 5] expf must stay bit-identical to libm::expf.
+        for &x in &[
+            -50.0f32,
+            -10.0,
+            -5.0001,
+            5.0001,
+            10.0,
+            50.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        ] {
+            assert_eq!(
+                expf(x).to_bits(),
+                libm::expf(x).to_bits(),
+                "expf({x}) fallback drifted"
+            );
+        }
+        assert!(expf(f32::NAN).is_nan());
+    }
+
+    #[test]
+    fn sinhf_fast_path_within_4_ulps() {
+        fn ulpf(a: f32, b: f32) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f32;
+        let mut x = -7.5f32;
+        while x <= 7.5 {
+            let u = ulpf(sinhf(x), libm::sinhf(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.001;
+        }
+        assert!(
+            worst <= 4,
+            "sinhf fast path worst {worst} ULP at x={worst_x}"
+        );
+    }
+
+    #[test]
+    fn coshf_fast_path_within_4_ulps() {
+        fn ulpf(a: f32, b: f32) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f32;
+        let mut x = -7.5f32;
+        while x <= 7.5 {
+            let u = ulpf(coshf(x), libm::coshf(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.001;
+        }
+        assert!(
+            worst <= 4,
+            "coshf fast path worst {worst} ULP at x={worst_x}"
+        );
+    }
+
+    #[test]
+    fn tanhf_fast_path_within_4_ulps() {
+        fn ulpf(a: f32, b: f32) -> i64 {
+            if a == b {
+                0
+            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+                i64::MAX
+            } else {
+                (a.to_bits() as i64 - b.to_bits() as i64).abs()
+            }
+        }
+        let mut worst = 0i64;
+        let mut worst_x = 0.0f32;
+        let mut x = -2.5f32;
+        while x <= 2.5 {
+            let u = ulpf(tanhf(x), libm::tanhf(x));
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            x += 0.0005;
+        }
+        assert!(
+            worst <= 4,
+            "tanhf fast path worst {worst} ULP at x={worst_x}"
+        );
+    }
+
+    #[test]
+    fn powf_matches_glibc() {
+        // `f32::powf` is the host glibc's powf in this test binary. Covers the
+        // categories that once took shortcuts: integer and half exponents,
+        // negative bases, subnormal bases, the overflow/underflow edge.
+        let mut st = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        let uni = |r: u64, lo: f32, hi: f32| lo + (hi - lo) * ((r >> 40) as f32 / 16_777_216.0);
+        for i in 0..400_000u32 {
+            let (r1, r2) = (next(), next());
+            let (x, y) = match i % 8 {
+                0 => (uni(r1, 1e-3, 50.0), ((r2 % 17) as i32 - 8) as f32),
+                1 => (-uni(r1, 1e-3, 50.0), ((r2 % 17) as i32 - 8) as f32),
+                2 => (uni(r1, 0.0, 1e6), 0.5),
+                3 => (uni(r1, 1e-3, 1e3), uni(r2, -12.0, 12.0)),
+                4 => (f32::from_bits(r1 as u32 & 0x7f_ffff), uni(r2, -0.9, 0.9)),
+                5 => {
+                    let x = uni(r1, 2.0, 1e6);
+                    (x, 127.9 / x.log2() * uni(r2, 0.99, 1.01))
+                }
+                6 => {
+                    let x = uni(r1, 2.0, 1e6);
+                    (x, -149.0 / x.log2() * uni(r2, 0.97, 1.03))
+                }
+                _ => (f32::from_bits(r1 as u32), f32::from_bits(r2 as u32)),
+            };
+            let (got, want) = (powf(x, y), x.powf(y));
+            if got.is_nan() && want.is_nan() {
+                continue;
+            }
+            assert_eq!(got.to_bits(), want.to_bits(), "powf({x:e}, {y:e})");
+        }
+    }
+
+    #[test]
+    fn trig_sanity() {
+        assert!((sinf(0.0) - 0.0).abs() < 1e-6);
+        assert!((cosf(0.0) - 1.0).abs() < 1e-6);
+        assert!((tanf(0.0) - 0.0).abs() < 1e-6);
+        assert!((asinf(1.0) - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert!((acosf(1.0) - 0.0).abs() < 1e-6);
+        assert!((atanf(1.0) - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
+        assert!((atan2f(1.0, 1.0) - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn exp_log_sanity() {
+        assert!((expf(0.0) - 1.0).abs() < 1e-6);
+        assert!((logf(1.0) - 0.0).abs() < 1e-6);
+        assert!((log2f(8.0) - 3.0).abs() < 1e-5);
+        assert!((log10f(100.0) - 2.0).abs() < 1e-5);
+        assert!((powf(2.0, 10.0) - 1024.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn float_util_sanity() {
+        assert_eq!(sqrtf(9.0), 3.0);
+        assert_eq!(fabsf(-3.5), 3.5);
+        assert_eq!(ceilf(2.1), 3.0);
+        assert_eq!(floorf(2.9), 2.0);
+        assert_eq!(roundf(2.5), 3.0);
+        assert_eq!(truncf(-2.9), -2.0);
+        assert!((fmodf(5.5, 2.0) - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hyperbolic_f32_sanity() {
+        assert!((sinhf(0.0) - 0.0).abs() < 1e-6);
+        assert!((coshf(0.0) - 1.0).abs() < 1e-6);
+        assert!((tanhf(0.0) - 0.0).abs() < 1e-6);
+        assert!((asinhf(0.0) - 0.0).abs() < 1e-6);
+        assert!((acoshf(1.0) - 0.0).abs() < 1e-6);
+        assert!((atanhf(0.0) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn exp_log_extra_sanity() {
+        assert!((exp2f(3.0) - 8.0).abs() < 1e-5);
+        assert!((expm1f(0.0) - 0.0).abs() < 1e-6);
+        assert!((log1pf(0.0) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn expm1f_matches_glibc_where_a_shortcut_was_3_ulps_off() {
+        // [0.5, 2.5]: a former `expf(x) - 1` shortcut's range.
+        const EXPM1F_POSITIVE_FAST_MIN: f32 = 0.5;
+        const EXPM1F_POSITIVE_FAST_MAX: f32 = 2.5;
+        let mut s = 0x54a3_31d5_u32;
+        let mut worst = 0u32;
+        for _ in 0..1_000_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = EXPM1F_POSITIVE_FAST_MIN
+                + (s >> 9) as f32
+                    * ((EXPM1F_POSITIVE_FAST_MAX - EXPM1F_POSITIVE_FAST_MIN) / (1u32 << 23) as f32);
+            let got = expm1f(x);
+            let want = x.exp_m1();
+            let ulps = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            worst = worst.max(ulps);
+            assert_eq!(
+                ulps, 0,
+                "expm1f({x}) = {got:?} but glibc = {want:?} ({ulps} ULP)"
+            );
+        }
+        assert_eq!(worst, 0);
+    }
+
+    #[test]
+    fn expm1f_fallback_preserves_libm_bits() {
+        for &x in &[
+            -5.0f32,
+            -1.0,
+            -0.0,
+            0.0,
+            0.499_999,
+            2.500_001,
+            10.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        ] {
+            assert_eq!(
+                expm1f(x).to_bits(),
+                libm::expm1f(x).to_bits(),
+                "expm1f({x:?}) fallback drifted"
+            );
+        }
+        assert!(expm1f(f32::NAN).is_nan());
+    }
+
+    #[test]
+    fn float_util_extra_sanity() {
+        assert!((remainderf(5.5, 2.0) + 0.5).abs() < 1e-6);
+        assert_eq!(copysignf(3.0, -1.0), -3.0);
+        assert!((cbrtf(27.0) - 3.0).abs() < 1e-5);
+        assert!((hypotf(3.0, 4.0) - 5.0).abs() < 1e-5);
+        assert_eq!(rintf(2.0), 2.0);
+        assert_eq!(nearbyintf(2.3), 2.0);
+    }
+
+    #[test]
+    fn min_max_dim_fma_f32_sanity() {
+        assert_eq!(fminf(2.0, 3.0), 2.0);
+        assert_eq!(fmaxf(2.0, 3.0), 3.0);
+        assert_eq!(fminf(f32::NAN, 3.0), 3.0);
+        assert_eq!(fmaxf(f32::NAN, 3.0), 3.0);
+        assert_eq!(fdimf(4.0, 2.0), 2.0);
+        assert_eq!(fdimf(2.0, 4.0), 0.0);
+        assert!((fmaf(2.0, 3.0, 4.0) - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rounding_conversion_f32_sanity() {
+        assert_eq!(lrintf(2.7), 3);
+        assert_eq!(llrintf(-2.3), -2);
+        assert_eq!(lroundf(2.5), 3);
+        assert_eq!(llroundf(-2.5), -3);
+    }
+
+    #[test]
+    fn decomposition_f32_sanity() {
+        assert_eq!(ldexpf(1.0, 10), 1024.0);
+        let (m, e) = frexpf(12.0);
+        assert!((m - 0.75).abs() < 1e-6);
+        assert_eq!(e, 4);
+        let (frac, int) = modff(3.75);
+        assert!((int - 3.0).abs() < 1e-6);
+        assert!((frac - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scaling_exponent_f32_sanity() {
+        assert_eq!(scalbnf(1.0, 10), 1024.0);
+        assert_eq!(scalblnf(1.0, 10), 1024.0);
+        let next = nextafterf(1.0, 2.0);
+        assert!(next > 1.0);
+        assert_eq!(ilogbf(8.0), 3);
+        assert_eq!(logbf(8.0), 3.0);
+    }
+
+    #[test]
+    fn nexttowardf_sanity() {
+        // Step up: f32(1.0) toward f64(2.0)
+        let up = nexttowardf(1.0_f32, 2.0_f64);
+        assert!(up > 1.0_f32);
+        // Step down: f32(1.0) toward f64(0.0)
+        let down = nexttowardf(1.0_f32, 0.0_f64);
+        assert!(down < 1.0_f32);
+        // Equal: return x unchanged
+        assert_eq!(nexttowardf(1.0_f32, 1.0_f64), 1.0_f32);
+        // NaN propagation
+        assert!(nexttowardf(f32::NAN, 1.0_f64).is_nan());
+        assert!(nexttowardf(1.0_f32, f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn special_f32_sanity() {
+        assert!(erff(0.0).abs() < 1e-6);
+        assert!((erfcf(0.0) - 1.0).abs() < 1e-6);
+        assert!((tgammaf(5.0) - 24.0).abs() < 1e-3);
+        assert!((lgammaf(5.0) - (24.0_f32).ln()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn remquof_sanity() {
+        let (rem, quo) = remquof(10.0, 3.0);
+        assert!((rem - 1.0).abs() < 1e-5);
+        assert_eq!(quo & 0x7, 3 & 0x7);
+    }
+
+    #[test]
+    fn sincosf_sanity() {
+        let (s, c) = sincosf(0.0);
+        assert!((s - 0.0).abs() < 1e-6);
+        assert!((c - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nanf_sanity() {
+        assert!(nanf(b"").is_nan());
+        assert!(nanf(b"1").is_nan());
+        // The tag payload is encoded into the low mantissa bits (glibc parity).
+        assert_eq!(nanf(b"").to_bits(), 0x7fc0_0000);
+        assert_eq!(nanf(b"1").to_bits(), 0x7fc0_0001);
+        assert_eq!(nanf(b"0xff").to_bits(), 0x7fc0_00ff);
+        assert_eq!(nanf(b"abc").to_bits(), 0x7fc0_0000);
+    }
+
+    #[test]
+    fn exp10f_sanity() {
+        // Integer exponents yield exact powers of ten (glibc parity).
+        assert_eq!(exp10f(0.0), 1.0);
+        assert_eq!(exp10f(1.0), 10.0);
+        assert_eq!(exp10f(2.0), 100.0);
+        assert_eq!(exp10f(3.0), 1000.0);
+        // Non-integer exponents take the transcendental path.
+        assert!((exp10f(0.5) - 10.0_f32.sqrt()).abs() < 1e-3);
+        // f64-intermediate exp2 path stays within 4 ULP of the libm reference
+        // across the finite f32 domain (the live glibc proof is in
+        // conformance_diff_math::diff_exp10f_within_4_ulps).
+        let mut worst = 0i64;
+        let mut x = -44.0_f32;
+        while x <= 38.0 {
+            if x != libm::truncf(x) {
+                let (got, want) = (exp10f(x), libm::exp10f(x));
+                if got.is_finite() && want.is_finite() {
+                    let u = (got.to_bits() as i64 - want.to_bits() as i64).abs();
+                    worst = worst.max(u);
+                    assert!(u <= 4, "exp10f({x}) = {got:?} vs {want:?} ({u} ULP)");
+                }
+            }
+            x += 0.0011;
+        }
+        assert!(exp10f(40.0).is_infinite());
+        assert_eq!(exp10f(-50.0), 0.0);
+        println!("exp10f worst ULP = {worst}");
+    }
+
+    #[test]
+    fn golden_exp10f_profile_band_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = exp10f(x);
+            let want = libm::exp10f(x);
+            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            assert!(u <= 4, "exp10f({x})={got:?} vs {want:?} ({u} ULP)");
+            hasher.update(x.to_bits().to_le_bytes());
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "d27316211664f96669fdc0dd45c618aeba051833b5876979af94beca3ba1df38",
+            "exp10f profile-band golden corpus hash drifted: got {digest}"
+        );
+    }
+
+    /// Independent million-input cohort on [0.5, 2.5) (same xorshift seed and
+    /// domain as before the glibc-kernel port): <=4 ULP of libm::exp10f, and
+    /// <=1 ULP of 10^x evaluated in f64 (an f32 result within half an ULP of
+    /// the f64 value cannot be more than one ULP from the true result).
+    #[test]
+    fn exp10f_profile_band_within_4_ulps() {
+        let ulps = |a: f32, b: f32| (a.to_bits() as i32 - b.to_bits() as i32).unsigned_abs();
+        let mut worst_libm = 0u32;
+        let mut worst_f64 = 0u32;
+        let mut state = 0x2468_ace1_u32;
+        for _ in 0..1_000_000 {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let x = 0.5 + (state >> 8) as f32 * (2.0 / (1u32 << 24) as f32);
+            let got = exp10f(x);
+            let want = libm::exp10f(x);
+            let u = ulps(got, want);
+            worst_libm = worst_libm.max(u);
+            assert!(u <= 4, "exp10f({x})={got:?} vs libm {want:?} ({u} ULP)");
+            let reference = 10f64.powf(f64::from(x)) as f32;
+            let u = ulps(got, reference);
+            worst_f64 = worst_f64.max(u);
+            assert!(u <= 1, "exp10f({x})={got:?} vs f64 {reference:?} ({u} ULP)");
+        }
+        println!("exp10f profile band worst ULP: {worst_libm} vs libm, {worst_f64} vs f64");
+    }
+
+    #[test]
+    fn bessel_f32_sanity() {
+        assert!((j0f(0.0) - 1.0).abs() < 1e-5);
+        assert!(j1f(0.0).abs() < 1e-5);
+        assert!((jnf(0, 2.5) - j0f(2.5)).abs() < 1e-5);
+        assert!((y0f(1.0) - 0.08825696).abs() < 1e-3);
+        assert!((y1f(1.0) - (-0.781_212_8)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn finitef_sanity() {
+        assert_eq!(finitef(1.0), 1);
+        assert_eq!(finitef(f32::INFINITY), 0);
+        assert_eq!(finitef(f32::NEG_INFINITY), 0);
+        assert_eq!(finitef(f32::NAN), 0);
+        assert_eq!(finitef(0.0), 1);
+    }
+
+    #[test]
+    fn dremf_sanity() {
+        let r1 = dremf(5.3, 2.0);
+        let r2 = remainderf(5.3, 2.0);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn gammaf_sanity() {
+        assert!((gammaf(5.0) - (24.0_f32).ln()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn significandf_sanity() {
+        let s = significandf(12.0);
+        assert!((s - 1.5).abs() < 1e-5); // 12 = 1.5 * 2^3
+        assert_eq!(significandf(0.0), 0.0);
+        assert!(significandf(f32::NAN).is_nan());
+        assert!(significandf(f32::INFINITY).is_infinite());
+    }
+
+    #[test]
+    fn lgammaf_r_sanity() {
+        let (val, sign) = lgammaf_r(5.0);
+        assert!((val - (24.0_f32).ln()).abs() < 1e-3);
+        assert_eq!(sign, 1);
+        let (_, sign2) = lgammaf_r(-0.5);
+        assert_eq!(sign2, -1);
+    }
+
+    #[test]
+    fn fpclassifyf_sanity() {
+        assert_eq!(fpclassifyf(1.0), FP_NORMAL_F32);
+        assert_eq!(fpclassifyf(0.0), FP_ZERO_F32);
+        assert_eq!(fpclassifyf(-0.0), FP_ZERO_F32);
+        assert_eq!(fpclassifyf(f32::INFINITY), FP_INFINITE_F32);
+        assert_eq!(fpclassifyf(f32::NEG_INFINITY), FP_INFINITE_F32);
+        assert_eq!(fpclassifyf(f32::NAN), FP_NAN_F32);
+        assert_eq!(fpclassifyf(1e-45), FP_SUBNORMAL_F32); // smallest positive subnormal f32
+
+        let boundary_cases = [
+            (0x0000_0001, FP_SUBNORMAL_F32),
+            (0x007f_ffff, FP_SUBNORMAL_F32),
+            (0x0080_0000, FP_NORMAL_F32),
+            (0x7f7f_ffff, FP_NORMAL_F32),
+            (0x7f80_0001, FP_NAN_F32),
+            (0x7fc0_0000, FP_NAN_F32),
+        ];
+        for (bits, expected) in boundary_cases {
+            assert_eq!(fpclassifyf(f32::from_bits(bits)), expected);
+            assert_eq!(fpclassifyf(f32::from_bits(bits | (1_u32 << 31))), expected);
+        }
+    }
+
+    #[test]
+    fn signbitf_sanity() {
+        assert_eq!(signbitf(1.0), 0);
+        assert_eq!(signbitf(-1.0), 1);
+        assert_eq!(signbitf(-0.0), 1);
+    }
+
+    #[test]
+    fn isinff_isnanf_sanity() {
+        assert_eq!(isinff(f32::INFINITY), 1);
+        assert_eq!(isinff(f32::NEG_INFINITY), -1);
+        assert_eq!(isinff(1.0), 0);
+        assert_eq!(isnanf(f32::NAN), 1);
+        assert_eq!(isnanf(1.0), 0);
+    }
+
+    #[test]
+    fn sincosf_matches_sinf_cosf_bit_for_bit() {
+        let mut s = 0x9e37_79b9u32;
+        for &special in &[
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            core::f32::consts::PI,
+            f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            f32::MAX,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ] {
+            let (gs, gc) = sincosf(special);
+            let ws = sinf(special);
+            let wc = cosf(special);
+            assert!(
+                (gs.is_nan() && ws.is_nan()) || gs.to_bits() == ws.to_bits(),
+                "sincosf sin mismatch at {special:e}"
+            );
+            assert!(
+                (gc.is_nan() && wc.is_nan()) || gc.to_bits() == wc.to_bits(),
+                "sincosf cos mismatch at {special:e}"
+            );
+        }
+        for _ in 0..100_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = f32::from_bits(s);
+            let (gs, gc) = sincosf(x);
+            let (ws, wc) = (sinf(x), cosf(x));
+            assert!(
+                (gs.is_nan() && ws.is_nan()) || gs.to_bits() == ws.to_bits(),
+                "sincosf sin mismatch at {:#x}",
+                x.to_bits()
+            );
+            assert!(
+                (gc.is_nan() && wc.is_nan()) || gc.to_bits() == wc.to_bits(),
+                "sincosf cos mismatch at {:#x}",
+                x.to_bits()
+            );
+        }
+    }
+}

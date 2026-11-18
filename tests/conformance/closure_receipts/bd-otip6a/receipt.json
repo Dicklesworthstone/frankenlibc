@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-otip6a",
+  "contract": {
+    "behavior": "Clean-room correctly-rounded binary64 asin, acos, and atan2 (3-tier Estrin/DD/Fp192 Ziv cascade with avx2_fma_dispatch!) completing binary64 CR/glibc-parity coverage across all 27 transcendental functions",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-core/src/math/coremath.rs",
+      "crates/frankenlibc-core/src/math/trig.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs"
+    ],
+    "source": {
+      "commit": "9a108f03ddf108dda2e40f1c7aaefecef0dca88b",
+      "files": {
+        "crates/frankenlibc-core/src/math/coremath.rs": "4d47a37f3f1d281318f482f7b7d188ae033f02a38add7c2e4972f651fd1192f7",
+        "crates/frankenlibc-core/src/math/trig.rs": "65f9cbd412acb543ff4a27bb6e22feb4e122950911df995151c797e67d3d8503",
+        "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs": "8e8a9bfe44f8dad19ac5b79bca27e0520e3e9c1d33cdb59f44fc0e06535b93e6"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-17T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/libm_f64_cr_parity_gate_test",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs",
+        "-o",
+        "target/closure_bins/libm_f64_cr_parity_gate_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/libm_f64_cr_parity_gate_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "binary64_coremath_dispatch_and_trig_wiring_are_complete",
+        "libm_f64_cr_quadmath_and_glibc_parity_gate_passes"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs",
+      "-o",
+      "target/closure_bins/libm_f64_cr_parity_gate_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T01:41:57.100826+00:00",
+    "finished_at": "2026-11-18T01:41:57.366342+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/libm_f64_cr_parity_gate_test",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T01:41:57.369870+00:00",
+    "finished_at": "2026-11-18T01:42:15.995513+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "f4ada4dd793295192c4d019f9d7671df819aa44fcf84289a4dbbe2c9cd436cc0",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/libm_f64_cr_parity_gate_test": "58601ec94720e5337d52b38a09f835e26b3a92c747316df44a1d8605421ec76f"
+  },
+  "artifact_files": {
+    "target/closure_bins/libm_f64_cr_parity_gate_test": "artifact-0"
+  },
+  "source_files": {
+    "crates/frankenlibc-core/src/math/coremath.rs": "4d47a37f3f1d281318f482f7b7d188ae033f02a38add7c2e4972f651fd1192f7",
+    "crates/frankenlibc-core/src/math/trig.rs": "65f9cbd412acb543ff4a27bb6e22feb4e122950911df995151c797e67d3d8503",
+    "crates/frankenlibc-harness/tests/libm_f64_cr_parity_gate_test.rs": "8e8a9bfe44f8dad19ac5b79bca27e0520e3e9c1d33cdb59f44fc0e06535b93e6"
+  },
+  "executable_sha256": "58601ec94720e5337d52b38a09f835e26b3a92c747316df44a1d8605421ec76f"
+}

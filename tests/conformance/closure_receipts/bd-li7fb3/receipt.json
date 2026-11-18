@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-li7fb3",
+  "contract": {
+    "behavior": "Single-precision libm f32 kernels achieve <=1 ULP everywhere, exact CR parity on CORE-MATH/f64-backed entrypoints (including asinf, acosf, atan2f, hypotf, powf, acoshf, lgammaf/lgammaf_r), and bit-exact sincosf == (sinf, cosf)",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-core/src/math/float32.rs",
+      "crates/frankenlibc-core/src/math/coremath.rs",
+      "crates/frankenlibc-core/src/math/trig.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs"
+    ],
+    "source": {
+      "commit": "9a108f03ddf108dda2e40f1c7aaefecef0dca88b",
+      "files": {
+        "crates/frankenlibc-core/src/math/float32.rs": "4df6a959e0d86ed8b0a3abd4c7b75098b113e227be46a3fb720b40207627002e",
+        "crates/frankenlibc-core/src/math/coremath.rs": "4d47a37f3f1d281318f482f7b7d188ae033f02a38add7c2e4972f651fd1192f7",
+        "crates/frankenlibc-core/src/math/trig.rs": "65f9cbd412acb543ff4a27bb6e22feb4e122950911df995151c797e67d3d8503",
+        "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs": "fc8f15aa0d93120717e2cc033580b9d4dfa4ffdb0600637f8546e8554cc201b3"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-17T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/libm_f32_parity_gate_test",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs",
+        "-o",
+        "target/closure_bins/libm_f32_parity_gate_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/libm_f32_parity_gate_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "float32_kernels_route_through_cr_f64_and_consistent_sincosf",
+        "libm_f32_live_so_ulp_and_fixture_parity_gate_passes"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs",
+      "-o",
+      "target/closure_bins/libm_f32_parity_gate_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T01:41:41.047196+00:00",
+    "finished_at": "2026-11-18T01:41:41.713378+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/libm_f32_parity_gate_test",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T01:41:41.717038+00:00",
+    "finished_at": "2026-11-18T01:41:56.778413+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "571107338a1a135566f30526e03088b75ad9b7ee5b048def9c4e57d5b674f5f4",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/libm_f32_parity_gate_test": "8a10787b9ffcd2649ffda5d72eeff7f1a190febcd7c521221c0803f9f076a523"
+  },
+  "artifact_files": {
+    "target/closure_bins/libm_f32_parity_gate_test": "artifact-0"
+  },
+  "source_files": {
+    "crates/frankenlibc-core/src/math/float32.rs": "4df6a959e0d86ed8b0a3abd4c7b75098b113e227be46a3fb720b40207627002e",
+    "crates/frankenlibc-core/src/math/coremath.rs": "4d47a37f3f1d281318f482f7b7d188ae033f02a38add7c2e4972f651fd1192f7",
+    "crates/frankenlibc-core/src/math/trig.rs": "65f9cbd412acb543ff4a27bb6e22feb4e122950911df995151c797e67d3d8503",
+    "crates/frankenlibc-harness/tests/libm_f32_parity_gate_test.rs": "fc8f15aa0d93120717e2cc033580b9d4dfa4ffdb0600637f8546e8554cc201b3"
+  },
+  "executable_sha256": "8a10787b9ffcd2649ffda5d72eeff7f1a190febcd7c521221c0803f9f076a523"
+}
