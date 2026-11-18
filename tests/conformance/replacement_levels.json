@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "bead": "bd-2bu",
-  "generated_at_utc": "2026-11-18T02:35:00Z",
-  "source_commit": "388e330c829e4dbc36b33c81b82044d5275ad5e4",
+  "generated_at_utc": "2026-11-18T04:38:00Z",
+  "source_commit": "148347cfed65c872310e363d3e61d0df3433deb8",
   "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
   "levels": [
     {
