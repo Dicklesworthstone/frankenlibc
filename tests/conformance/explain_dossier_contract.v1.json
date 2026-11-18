@@ -2,8 +2,8 @@
   "schema_version": "v1",
   "manifest_id": "explain-dossier-contract",
   "bead": "bd-juvqm.10",
-  "generated_utc": "2026-11-18T04:41:00Z",
-  "source_commit": "47da51d4d2569bdf6556f6ddb7030d231cfc04a4",
+  "generated_utc": "2026-11-18T23:28:29Z",
+  "source_commit": "34442f6da9f4cdb0379910907069e2d65015d88b",
   "source_commit_freshness": {
     "require_no_tracked_source_changes_since_source_commit": true,
     "tracked_source_roots": [
@@ -79,8 +79,11 @@
     ]
   },
   "support_taxonomy_guard": {
-    "rationale": "FrankenLibC distinguishes (1) reachability claims — 'works under preload', 'links cleanly under standalone' — from (2) semantic-parity claims — 'behaves identically to glibc on the workload set'. Only the semantic_overlay artifact backs (2). The dossier MUST refuse a 'passes' / 'ready' support claim unless a non-empty semantic_overlay artifact_ref is paired with it.",
-    "promotion_words": ["passes", "ready"],
+    "rationale": "FrankenLibC distinguishes (1) reachability claims \u2014 'works under preload', 'links cleanly under standalone' \u2014 from (2) semantic-parity claims \u2014 'behaves identically to glibc on the workload set'. Only the semantic_overlay artifact backs (2). The dossier MUST refuse a 'passes' / 'ready' support claim unless a non-empty semantic_overlay artifact_ref is paired with it.",
+    "promotion_words": [
+      "passes",
+      "ready"
+    ],
     "required_paired_artifact_kind": "semantic_overlay"
   },
   "deterministic_output_contract": {
