@@ -1642,66 +1642,109 @@ static NATIVE_NUMERIC_TIDS: [core::sync::atomic::AtomicI32; NATIVE_PRINTF_SLOTS]
 static NATIVE_NUMERIC_WORDS: [[AtomicU64; 3]; NATIVE_PRINTF_SLOTS] =
     [const { [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)] }; NATIVE_PRINTF_SLOTS];
 
+#[inline]
+const fn printf_slot_claiming_for_tid(tid: i32) -> i32 {
+    if tid >= i32::MAX - 1 {
+        i32::MIN
+    } else if tid <= 1 {
+        -3
+    } else {
+        -(tid + 2)
+    }
+}
+
+#[inline]
+const fn is_printf_slot_claiming(stored: i32) -> bool {
+    stored <= -2
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn store_native_numeric_words_for_tid(tid: i32, words: [u64; 3]) {
+    if tid <= 0 {
+        return;
+    }
+    let self_claiming = printf_slot_claiming_for_tid(tid);
+    let start = (tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
+    'retry: for _ in 0..8 {
+        let mut first_tombstone: Option<usize> = None;
+        for i in 0..NATIVE_PRINTF_SLOTS {
+            let idx = (start + i) % NATIVE_PRINTF_SLOTS;
+            let mut cur = NATIVE_NUMERIC_TIDS[idx].load(Ordering::Acquire);
+            while is_printf_slot_claiming(cur) {
+                if cur == self_claiming {
+                    return;
+                }
+                core::hint::spin_loop();
+                cur = NATIVE_NUMERIC_TIDS[idx].load(Ordering::Acquire);
+            }
+            if cur == tid {
+                NATIVE_NUMERIC_WORDS[idx][0].store(words[0], Ordering::Release);
+                NATIVE_NUMERIC_WORDS[idx][1].store(words[1], Ordering::Release);
+                NATIVE_NUMERIC_WORDS[idx][2].store(words[2], Ordering::Release);
+                return;
+            }
+            if cur == -1 {
+                if first_tombstone.is_none() {
+                    first_tombstone = Some(idx);
+                }
+                continue;
+            }
+            if cur == 0 {
+                let (target, expected) = match first_tombstone {
+                    Some(tomb) => (tomb, -1),
+                    None => (idx, 0),
+                };
+                if NATIVE_NUMERIC_TIDS[target]
+                    .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    NATIVE_NUMERIC_WORDS[target][0].store(words[0], Ordering::Relaxed);
+                    NATIVE_NUMERIC_WORDS[target][1].store(words[1], Ordering::Relaxed);
+                    NATIVE_NUMERIC_WORDS[target][2].store(words[2], Ordering::Relaxed);
+                    NATIVE_NUMERIC_TIDS[target].store(tid, Ordering::Release);
+                    return;
+                }
+                continue 'retry;
+            }
+        }
+        if let Some(tomb) = first_tombstone {
+            if NATIVE_NUMERIC_TIDS[tomb]
+                .compare_exchange(-1, self_claiming, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                NATIVE_NUMERIC_WORDS[tomb][0].store(words[0], Ordering::Relaxed);
+                NATIVE_NUMERIC_WORDS[tomb][1].store(words[1], Ordering::Relaxed);
+                NATIVE_NUMERIC_WORDS[tomb][2].store(words[2], Ordering::Relaxed);
+                NATIVE_NUMERIC_TIDS[tomb].store(tid, Ordering::Release);
+                return;
+            }
+            continue 'retry;
+        }
+        break;
+    }
+}
+
+/// Migrate a creator thread's compiler-TLS `THREAD_NUMERIC` state into the
+/// TID-keyed `NATIVE_NUMERIC_TIDS` table before cloning a native worker thread
+/// that shares `%fs`.
+pub fn migrate_creator_thread_numeric_for_native_threads() {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if ANY_THREAD_NUMERIC.load(Ordering::Acquire)
+        && let Ok(Some(words)) = THREAD_NUMERIC.try_with(|cell| cell.take())
+    {
+        store_native_numeric_words_for_tid(crate::syscall::raw_gettid_nocancel(), words);
+    }
+}
+
 /// Make this thread's numeric formatting follow `uselocale`'s LC_NUMERIC
 /// instead of the global locale's.
 pub fn set_thread_numeric(decimal_point: &[u8], separator: &[u8], grouping: &[u8]) {
     let (sep, rule) = pack_grouping(separator, grouping);
     let words = [pack_decimal_point(decimal_point), sep, rule];
-    ANY_THREAD_NUMERIC.store(true, Ordering::Relaxed);
+    ANY_THREAD_NUMERIC.store(true, Ordering::Release);
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if crate::pthread::tls::native_threads_may_exist() {
-        let tid = crate::syscall::raw_gettid_nocancel();
-        if tid > 0 {
-            let start = (tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
-            'retry: for _ in 0..8 {
-                let mut first_tombstone: Option<usize> = None;
-                for i in 0..NATIVE_PRINTF_SLOTS {
-                    let idx = (start + i) % NATIVE_PRINTF_SLOTS;
-                    let cur = NATIVE_NUMERIC_TIDS[idx].load(Ordering::Acquire);
-                    if cur == tid {
-                        NATIVE_NUMERIC_WORDS[idx][0].store(words[0], Ordering::Release);
-                        NATIVE_NUMERIC_WORDS[idx][1].store(words[1], Ordering::Release);
-                        NATIVE_NUMERIC_WORDS[idx][2].store(words[2], Ordering::Release);
-                        return;
-                    }
-                    if cur == -1 {
-                        if first_tombstone.is_none() {
-                            first_tombstone = Some(idx);
-                        }
-                        continue;
-                    }
-                    if cur == 0 {
-                        let (target, expected) = match first_tombstone {
-                            Some(tomb) => (tomb, -1),
-                            None => (idx, 0),
-                        };
-                        if NATIVE_NUMERIC_TIDS[target]
-                            .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
-                            .is_ok()
-                        {
-                            NATIVE_NUMERIC_WORDS[target][0].store(words[0], Ordering::Release);
-                            NATIVE_NUMERIC_WORDS[target][1].store(words[1], Ordering::Release);
-                            NATIVE_NUMERIC_WORDS[target][2].store(words[2], Ordering::Release);
-                            return;
-                        }
-                        continue 'retry;
-                    }
-                }
-                if let Some(tomb) = first_tombstone {
-                    if NATIVE_NUMERIC_TIDS[tomb]
-                        .compare_exchange(-1, tid, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok()
-                    {
-                        NATIVE_NUMERIC_WORDS[tomb][0].store(words[0], Ordering::Release);
-                        NATIVE_NUMERIC_WORDS[tomb][1].store(words[1], Ordering::Release);
-                        NATIVE_NUMERIC_WORDS[tomb][2].store(words[2], Ordering::Release);
-                        return;
-                    }
-                    continue 'retry;
-                }
-                break;
-            }
-        }
+        store_native_numeric_words_for_tid(crate::syscall::raw_gettid_nocancel(), words);
         return;
     }
     let _ = THREAD_NUMERIC.try_with(|cell| cell.set(Some(words)));
@@ -3027,17 +3070,25 @@ static NATIVE_RENDER_FAILURE_ERRNOS: [core::sync::atomic::AtomicI32; NATIVE_PRIN
 /// Fail this thread's current printf call with `errno`.
 #[cold]
 pub fn note_render_failure(errno: i32) {
-    ANY_RENDER_FAILURE.store(true, Ordering::Relaxed);
+    ANY_RENDER_FAILURE.store(true, Ordering::Release);
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     if crate::pthread::tls::native_threads_may_exist() {
         let tid = crate::syscall::raw_gettid_nocancel();
         if tid > 0 {
+            let self_claiming = printf_slot_claiming_for_tid(tid);
             let start = (tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
             'retry: for _ in 0..8 {
                 let mut first_tombstone: Option<usize> = None;
                 for i in 0..NATIVE_PRINTF_SLOTS {
                     let idx = (start + i) % NATIVE_PRINTF_SLOTS;
-                    let cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
+                    let mut cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
+                    while is_printf_slot_claiming(cur) {
+                        if cur == self_claiming {
+                            return;
+                        }
+                        core::hint::spin_loop();
+                        cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
+                    }
                     if cur == tid {
                         NATIVE_RENDER_FAILURE_ERRNOS[idx].store(errno, Ordering::Release);
                         return;
@@ -3054,10 +3105,16 @@ pub fn note_render_failure(errno: i32) {
                             None => (idx, 0),
                         };
                         if NATIVE_RENDER_FAILURE_TIDS[target]
-                            .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
+                            .compare_exchange(
+                                expected,
+                                self_claiming,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
                             .is_ok()
                         {
-                            NATIVE_RENDER_FAILURE_ERRNOS[target].store(errno, Ordering::Release);
+                            NATIVE_RENDER_FAILURE_ERRNOS[target].store(errno, Ordering::Relaxed);
+                            NATIVE_RENDER_FAILURE_TIDS[target].store(tid, Ordering::Release);
                             return;
                         }
                         continue 'retry;
@@ -3065,10 +3122,11 @@ pub fn note_render_failure(errno: i32) {
                 }
                 if let Some(tomb) = first_tombstone {
                     if NATIVE_RENDER_FAILURE_TIDS[tomb]
-                        .compare_exchange(-1, tid, Ordering::AcqRel, Ordering::Acquire)
+                        .compare_exchange(-1, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                         .is_ok()
                     {
-                        NATIVE_RENDER_FAILURE_ERRNOS[tomb].store(errno, Ordering::Release);
+                        NATIVE_RENDER_FAILURE_ERRNOS[tomb].store(errno, Ordering::Relaxed);
+                        NATIVE_RENDER_FAILURE_TIDS[tomb].store(tid, Ordering::Release);
                         return;
                     }
                     continue 'retry;
@@ -3079,6 +3137,89 @@ pub fn note_render_failure(errno: i32) {
         return;
     }
     RENDER_FAILURE.with(|failure| failure.set(errno));
+}
+
+/// Remove an exiting thread's entries from the TID-keyed `printf` tables so
+/// sequential thread churn neither saturates the 64 slots nor leaks stale
+/// `LC_NUMERIC` / render-failure state onto recycled TIDs.
+pub fn clear_native_printf_tables_for_tid(tid: i32) {
+    if tid <= 0 {
+        return;
+    }
+    if ANY_THREAD_NUMERIC.load(Ordering::Acquire) {
+        let start = (tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
+        for i in 0..NATIVE_PRINTF_SLOTS {
+            let idx = (start + i) % NATIVE_PRINTF_SLOTS;
+            let cur = NATIVE_NUMERIC_TIDS[idx].load(Ordering::Acquire);
+            if cur == tid {
+                NATIVE_NUMERIC_WORDS[idx][0].store(0, Ordering::Release);
+                NATIVE_NUMERIC_WORDS[idx][1].store(0, Ordering::Release);
+                NATIVE_NUMERIC_WORDS[idx][2].store(0, Ordering::Release);
+                NATIVE_NUMERIC_TIDS[idx].store(-1, Ordering::Release);
+                break;
+            }
+            if cur == 0 {
+                break;
+            }
+        }
+    }
+    if ANY_RENDER_FAILURE.load(Ordering::Acquire) {
+        let start = (tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
+        for i in 0..NATIVE_PRINTF_SLOTS {
+            let idx = (start + i) % NATIVE_PRINTF_SLOTS;
+            let cur = NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Acquire);
+            if cur == tid {
+                NATIVE_RENDER_FAILURE_ERRNOS[idx].store(0, Ordering::Release);
+                NATIVE_RENDER_FAILURE_TIDS[idx].store(-1, Ordering::Release);
+                break;
+            }
+            if cur == 0 {
+                break;
+            }
+        }
+    }
+}
+
+/// Rebuild TID-keyed `printf` tables in a freshly forked single-threaded child
+/// so the surviving thread retains its POSIX-inherited `uselocale` `LC_NUMERIC`
+/// under `child_tid` while dead sibling slots are wiped.
+pub fn rekey_native_printf_tables_after_fork(parent_tid: i32, child_tid: i32) {
+    if ANY_THREAD_NUMERIC.load(Ordering::Acquire) {
+        let mut survivor_words: Option<[u64; 3]> = None;
+        for idx in 0..NATIVE_PRINTF_SLOTS {
+            let cur = NATIVE_NUMERIC_TIDS[idx].load(Ordering::Acquire);
+            if parent_tid > 0 && cur == parent_tid {
+                survivor_words = Some([
+                    NATIVE_NUMERIC_WORDS[idx][0].load(Ordering::Acquire),
+                    NATIVE_NUMERIC_WORDS[idx][1].load(Ordering::Acquire),
+                    NATIVE_NUMERIC_WORDS[idx][2].load(Ordering::Acquire),
+                ]);
+            }
+            if cur != 0 {
+                NATIVE_NUMERIC_WORDS[idx][0].store(0, Ordering::Release);
+                NATIVE_NUMERIC_WORDS[idx][1].store(0, Ordering::Release);
+                NATIVE_NUMERIC_WORDS[idx][2].store(0, Ordering::Release);
+                NATIVE_NUMERIC_TIDS[idx].store(0, Ordering::Release);
+            }
+        }
+        if let Some(words) = survivor_words
+            && child_tid > 0
+        {
+            let dst = (child_tid as u32 as usize) % NATIVE_PRINTF_SLOTS;
+            NATIVE_NUMERIC_WORDS[dst][0].store(words[0], Ordering::Release);
+            NATIVE_NUMERIC_WORDS[dst][1].store(words[1], Ordering::Release);
+            NATIVE_NUMERIC_WORDS[dst][2].store(words[2], Ordering::Release);
+            NATIVE_NUMERIC_TIDS[dst].store(child_tid, Ordering::Release);
+        }
+    }
+    if ANY_RENDER_FAILURE.load(Ordering::Acquire) {
+        for idx in 0..NATIVE_PRINTF_SLOTS {
+            if NATIVE_RENDER_FAILURE_TIDS[idx].load(Ordering::Relaxed) != 0 {
+                NATIVE_RENDER_FAILURE_ERRNOS[idx].store(0, Ordering::Release);
+                NATIVE_RENDER_FAILURE_TIDS[idx].store(0, Ordering::Release);
+            }
+        }
+    }
 }
 
 #[cold]

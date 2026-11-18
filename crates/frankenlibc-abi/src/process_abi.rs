@@ -331,6 +331,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     let _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
+    let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -343,6 +344,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         Ok(guard) => guard,
         Err(error) => {
             drop(malloc_guard);
+            drop(policy_tls_guard);
             drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
@@ -356,10 +358,12 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 
     let pid = clone_for_fork(host_fork);
     if pid == Ok(0) {
+        policy_tls_guard.adopt_and_unlock_in_fork_child();
         // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
         unsafe { malloc_guard.adopt_in_fork_child() };
     }
     drop(malloc_guard);
+    drop(policy_tls_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();

@@ -339,11 +339,153 @@ thread_local! {
     static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-#[cfg(not(feature = "owned-tls-cache"))]
 static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
 
-#[cfg(feature = "owned-tls-cache")]
-static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
+const NATIVE_VALIDATION_TID_SLOTS: usize = 256;
+const NATIVE_VALIDATION_EMPTY: u64 = 0;
+const NATIVE_VALIDATION_TOMBSTONE: u64 = u64::MAX;
+static NATIVE_VALIDATION_ENTRIES: [AtomicU64; NATIVE_VALIDATION_TID_SLOTS] =
+    [const { AtomicU64::new(0) }; NATIVE_VALIDATION_TID_SLOTS];
+static NATIVE_VALIDATION_OVERFLOW_ACTIVE: AtomicU32 = AtomicU32::new(0);
+
+#[derive(Clone, Copy)]
+enum NativeValidationSlot {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    None,
+    Slot {
+        idx: usize,
+        tid: u32,
+    },
+    Overflow,
+}
+
+#[inline]
+const fn pack_native_validation(tid: u32, depth: u32) -> u64 {
+    ((tid as u64) << 32) | (depth as u64)
+}
+
+fn enter_native_validation_tid() -> (NativeValidationSlot, bool) {
+    let tid = crate::heal::raw_native_tid().max(1) as u32;
+    let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+    'retry: for _ in 0..16 {
+        let mut first_tombstone: Option<usize> = None;
+        for i in 0..NATIVE_VALIDATION_TID_SLOTS {
+            let idx = (start + i) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+            let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+            while cur != NATIVE_VALIDATION_TOMBSTONE && (cur >> 32) as u32 == tid {
+                let next_depth = (cur as u32).saturating_add(1);
+                match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
+                    cur,
+                    pack_native_validation(tid, next_depth),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return (NativeValidationSlot::Slot { idx, tid }, false),
+                    Err(observed) => cur = observed,
+                }
+            }
+            if cur == NATIVE_VALIDATION_TOMBSTONE && first_tombstone.is_none() {
+                first_tombstone = Some(idx);
+                continue;
+            }
+            if cur == NATIVE_VALIDATION_EMPTY {
+                let (target, expected) = match first_tombstone {
+                    Some(tomb) => (tomb, NATIVE_VALIDATION_TOMBSTONE),
+                    None => (idx, NATIVE_VALIDATION_EMPTY),
+                };
+                if NATIVE_VALIDATION_ENTRIES[target]
+                    .compare_exchange(
+                        expected,
+                        pack_native_validation(tid, 1),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    return (NativeValidationSlot::Slot { idx: target, tid }, true);
+                }
+                continue 'retry;
+            }
+        }
+        if let Some(tomb) = first_tombstone
+            && NATIVE_VALIDATION_ENTRIES[tomb]
+                .compare_exchange(
+                    NATIVE_VALIDATION_TOMBSTONE,
+                    pack_native_validation(tid, 1),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+        {
+            return (NativeValidationSlot::Slot { idx: tomb, tid }, true);
+        }
+    }
+    NATIVE_VALIDATION_OVERFLOW_ACTIVE.fetch_add(1, Ordering::AcqRel);
+    (NativeValidationSlot::Overflow, true)
+}
+
+#[inline]
+fn leave_native_validation_tid(idx: usize, tid: u32) -> bool {
+    let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+    loop {
+        if cur == NATIVE_VALIDATION_TOMBSTONE || (cur >> 32) as u32 != tid {
+            return false;
+        }
+        let depth = cur as u32;
+        let (next, zeroed) = if depth <= 1 {
+            (NATIVE_VALIDATION_TOMBSTONE, true)
+        } else {
+            (pack_native_validation(tid, depth - 1), false)
+        };
+        match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
+            cur,
+            next,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return zeroed,
+            Err(observed) => cur = observed,
+        }
+    }
+}
+
+#[inline]
+fn in_native_validation_tid() -> bool {
+    if NATIVE_VALIDATION_OVERFLOW_ACTIVE.load(Ordering::Acquire) != 0 {
+        return true;
+    }
+    let tid = crate::heal::raw_native_tid().max(1) as u32;
+    let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+    for i in 0..NATIVE_VALIDATION_TID_SLOTS {
+        let idx = (start + i) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+        let cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+        if cur != NATIVE_VALIDATION_TOMBSTONE && (cur >> 32) as u32 == tid {
+            return (cur as u32) > 0;
+        }
+        if cur == NATIVE_VALIDATION_EMPTY {
+            return false;
+        }
+    }
+    false
+}
+
+/// Clear dead sibling threads' validation-context slots in a forked child.
+pub(crate) fn reset_validation_context_in_fork_child() {
+    for entry in &NATIVE_VALIDATION_ENTRIES {
+        entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+    }
+    NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let active = u32::from(
+        !crate::tls_cache::compiler_tls_disabled()
+            && VALIDATION_DEPTH
+                .try_with(|depth| depth.get() > 0)
+                .unwrap_or(false),
+    );
+    #[cfg(feature = "owned-tls-cache")]
+    let active = 0u32;
+    ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
+}
 
 struct PinnedEpochGuard<'a> {
     _guard: crate::ebr::EbrGuard<'a>,
@@ -353,92 +495,85 @@ struct PinnedEpochGuard<'a> {
 }
 
 struct ValidationExecutionGuard {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    unbacked: bool,
+    native_slot: NativeValidationSlot,
 }
 
 impl Drop for ValidationExecutionGuard {
     fn drop(&mut self) {
-        #[cfg(not(feature = "owned-tls-cache"))]
-        {
-            let decremented_to_zero = if self.unbacked {
+        let decremented_to_zero = match self.native_slot {
+            NativeValidationSlot::Slot { idx, tid } => leave_native_validation_tid(idx, tid),
+            NativeValidationSlot::Overflow => {
+                NATIVE_VALIDATION_OVERFLOW_ACTIVE.fetch_sub(1, Ordering::AcqRel);
                 true
-            } else {
-                VALIDATION_DEPTH
-                    .try_with(|depth| {
-                        let prev = depth.get();
-                        let next = prev.saturating_sub(1);
-                        depth.set(next);
-                        prev > 0 && next == 0
-                    })
-                    .unwrap_or(false)
-            };
-            if decremented_to_zero {
-                ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
             }
+            #[cfg(not(feature = "owned-tls-cache"))]
+            NativeValidationSlot::None => VALIDATION_DEPTH
+                .try_with(|depth| {
+                    let prev = depth.get();
+                    let next = prev.saturating_sub(1);
+                    depth.set(next);
+                    prev > 0 && next == 0
+                })
+                .unwrap_or(false),
+        };
+        if decremented_to_zero {
+            ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
         }
-        #[cfg(feature = "owned-tls-cache")]
-        let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            Some(current.saturating_sub(1))
-        });
     }
 }
 
 fn enter_validation_execution_context() -> ValidationExecutionGuard {
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        let unbacked = crate::tls_cache::compiler_tls_disabled();
-        let incremented_from_zero = if unbacked {
-            true
-        } else {
-            VALIDATION_DEPTH
-                .try_with(|depth| {
-                    let prev = depth.get();
-                    depth.set(prev.saturating_add(1));
-                    prev == 0
-                })
-                .unwrap_or(false)
-        };
+    if !crate::tls_cache::compiler_tls_disabled() {
+        let incremented_from_zero = VALIDATION_DEPTH
+            .try_with(|depth| {
+                let prev = depth.get();
+                depth.set(prev.saturating_add(1));
+                prev == 0
+            })
+            .unwrap_or(false);
         if incremented_from_zero {
             ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
         }
-        ValidationExecutionGuard { unbacked }
+        return ValidationExecutionGuard {
+            native_slot: NativeValidationSlot::None,
+        };
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        let _ = VALIDATION_DEPTH.try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            Some(current.saturating_add(1))
-        });
-        ValidationExecutionGuard {}
+    let (native_slot, incremented_from_zero) = enter_native_validation_tid();
+    if incremented_from_zero {
+        ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::Release);
     }
+    ValidationExecutionGuard { native_slot }
 }
 
-#[cfg(not(feature = "owned-tls-cache"))]
 #[cold]
 #[inline(never)]
 fn in_validation_context_slow() -> bool {
-    if crate::tls_cache::compiler_tls_disabled() {
-        return true;
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        in_native_validation_tid()
     }
-    VALIDATION_DEPTH
-        .try_with(|depth| depth.get() > 0)
-        .unwrap_or(false)
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if in_native_validation_tid() {
+            return true;
+        }
+        if !crate::tls_cache::compiler_tls_disabled() {
+            return VALIDATION_DEPTH
+                .try_with(|depth| depth.get() > 0)
+                .unwrap_or(false);
+        }
+        false
+    }
 }
 
 #[inline(always)]
 #[must_use]
 pub fn in_validation_context() -> bool {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        if ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) == 0 {
-            return false;
-        }
-        in_validation_context_slow()
+    if ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) == 0 {
+        return false;
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        VALIDATION_DEPTH.load(Ordering::Acquire) > 0
-    }
+    in_validation_context_slow()
 }
 
 impl ValidationPipeline {

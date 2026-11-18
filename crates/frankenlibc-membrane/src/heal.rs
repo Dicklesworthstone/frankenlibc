@@ -238,7 +238,7 @@ static NATIVE_WRITING_RUNTIME_TIDS: [std::sync::atomic::AtomicI32; NATIVE_LOG_RE
 
 #[inline]
 #[allow(unsafe_code)]
-fn raw_native_tid() -> i32 {
+pub(crate) fn raw_native_tid() -> i32 {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         let ret: usize;
@@ -862,6 +862,13 @@ pub fn note_runtime_log_drop() {
 /// inherited descriptor.
 #[allow(unsafe_code)]
 pub unsafe fn reopen_runtime_log_in_fork_child() {
+    crate::ptr_validator::reset_validation_context_in_fork_child();
+    for slot in &NATIVE_EMITTING_HEALING_TIDS {
+        slot.store(0, Ordering::Release);
+    }
+    for slot in &NATIVE_WRITING_RUNTIME_TIDS {
+        slot.store(0, Ordering::Release);
+    }
     let inherited = RUNTIME_LOG_FD.load(Ordering::Acquire);
     if inherited < 0 {
         return;

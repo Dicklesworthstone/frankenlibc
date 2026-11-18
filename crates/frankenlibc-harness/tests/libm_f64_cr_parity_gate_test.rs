@@ -241,33 +241,61 @@ int main(int argc, char **argv) {
             }
         }
     }
-    *fl_errno() = 0;
-    double inf_s = 0.0, inf_c = 0.0;
-    fl_sincos(INFINITY, &inf_s, &inf_c);
-    if (!isnan(inf_s) || !isnan(inf_c) || *fl_errno() != EDOM) {
-        fprintf(stderr, "FAIL sincos(INFINITY) EDOM: errno=%d\n", *fl_errno());
-        return 1;
+    d1_t fl_tan = (d1_t)dlsym(fl, "tan");
+    if (!fl_tan) return 2;
+    double inf_inputs[2] = {INFINITY, -INFINITY};
+    for (int k = 0; k < 2; k++) {
+        double v = inf_inputs[k];
+        *fl_errno() = 0;
+        double inf_s = 0.0, inf_c = 0.0;
+        fl_sincos(v, &inf_s, &inf_c);
+        if (!isnan(inf_s) || !isnan(inf_c) || *fl_errno() != EDOM) {
+            fprintf(stderr, "FAIL sincos(%g) EDOM: errno=%d\n", v, *fl_errno());
+            return 1;
+        }
+        d1_t tfs[3] = {fl_sin, fl_cos, fl_tan};
+        const char *tnames[3] = {"sin", "cos", "tan"};
+        for (int t = 0; t < 3; t++) {
+            *fl_errno() = 0;
+            double r = tfs[t](v);
+            if (!isnan(r) || *fl_errno() != EDOM) {
+                fprintf(stderr, "FAIL %s(%g) EDOM: r=%g errno=%d\n", tnames[t], v, r, *fl_errno());
+                return 1;
+            }
+        }
     }
 
-    /* Directed rounding + FE_INEXACT checks on subnormal atan2 and irrational pi/2 return: */
+    /* Directed rounding + FE_INEXACT checks on subnormal/negative atan2 and asin: */
     feclearexcept(FE_ALL_EXCEPT);
     double p2_rne = fl_asin(1.0);
     if (d2u(p2_rne) != 0x3ff921fb54442d18ULL || !fetestexcept(FE_INEXACT)) {
         fprintf(stderr, "FAIL asin(1.0) FE_INEXACT\n");
         return 1;
     }
+    double y_neg_exact = -0x1p-945;
+    double x_pos_exact = 0x1p+76;
     fesetround(FE_UPWARD);
     uint64_t up_tiny = d2u(fl_atan2(u2d(1ULL), u2d(0x7fe0000000000000ULL)));
     uint64_t up_p2 = d2u(fl_asin(1.0));
+    uint64_t up_neg_exact = d2u(fl_atan2(y_neg_exact, x_pos_exact));
+    uint64_t up_sub_asin = d2u(fl_asin(u2d(1ULL)));
     fesetround(FE_TOWARDZERO);
     uint64_t tz_ulp = d2u(fl_atan2(u2d(24ULL << 52), u2d(1098ULL << 52)));
     fesetround(FE_DOWNWARD);
     uint64_t dn_neg = d2u(fl_atan2(-u2d(1ULL), u2d(0x7fe0000000000000ULL)));
+    uint64_t dn_neg_exact = d2u(fl_atan2(y_neg_exact, x_pos_exact));
+    uint64_t dn_sub_asin = d2u(fl_asin(-u2d(1ULL)));
     fesetround(FE_TONEAREST);
     if (up_tiny != 1ULL || up_p2 != 0x3ff921fb54442d19ULL || tz_ulp != 0ULL ||
-        dn_neg != ((1ULL << 63) | 1ULL)) {
-        fprintf(stderr, "FAIL directed rounding: up_tiny=%lx up_p2=%lx tz_ulp=%lx dn_neg=%lx\n",
-                up_tiny, up_p2, tz_ulp, dn_neg);
+        dn_neg != ((1ULL << 63) | 1ULL) ||
+        up_neg_exact != 0x801fffffffffffffULL ||
+        dn_neg_exact != 0x8020000000000000ULL ||
+        up_sub_asin != 2ULL ||
+        dn_sub_asin != ((1ULL << 63) | 2ULL)) {
+        fprintf(stderr,
+                "FAIL directed rounding: up_tiny=%lx up_p2=%lx tz_ulp=%lx dn_neg=%lx "
+                "up_neg_ex=%lx dn_neg_ex=%lx up_asin=%lx dn_asin=%lx\n",
+                up_tiny, up_p2, tz_ulp, dn_neg, up_neg_exact, dn_neg_exact, up_sub_asin, dn_sub_asin);
         return 1;
     }
 

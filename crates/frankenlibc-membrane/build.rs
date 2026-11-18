@@ -883,7 +883,12 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // threads with non-zero VALIDATION_DEPTH (fetch_add Release on 0->1,
         // fetch_sub Release on 1->0, load Acquire short-circuit in
         // in_validation_context).
-        expected_sites: 13,
+        // 13 -> 26: NATIVE_VALIDATION_ENTRIES (packed `(tid, depth)` AtomicU64) +
+        // NATIVE_VALIDATION_OVERFLOW_ACTIVE track per-TID validation recursion
+        // atomically without two-word signal-TOCTOU races when compiler TLS is
+        // disabled, pairing Acquire loads with AcqRel/Acquire CAS/RMWs and
+        // Release fork-reset stores.
+        expected_sites: 26,
         stop_at_cfg_test: false,
         optional: false,
     },

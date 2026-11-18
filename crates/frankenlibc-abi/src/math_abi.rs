@@ -625,18 +625,35 @@ fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f6
     out
 }
 
+#[cold]
+#[inline(never)]
+fn trig_inf_f64(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    let out = unary_entry(x, base_cost_ns, f);
+    set_domain_errno();
+    out
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sin(x: f64) -> f64 {
+    if x.is_infinite() {
+        return trig_inf_f64(x, 5, frankenlibc_core::math::sin);
+    }
     unary_infallible_entry(x, 5, frankenlibc_core::math::sin)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cos(x: f64) -> f64 {
+    if x.is_infinite() {
+        return trig_inf_f64(x, 5, frankenlibc_core::math::cos);
+    }
     unary_infallible_entry(x, 5, frankenlibc_core::math::cos)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tan(x: f64) -> f64 {
+    if x.is_infinite() {
+        return trig_inf_f64(x, 6, frankenlibc_core::math::tan);
+    }
     unary_infallible_entry(x, 6, frankenlibc_core::math::tan)
 }
 
@@ -1678,18 +1695,35 @@ fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -
 
 // --- Trigonometric f32 ---
 
+#[cold]
+#[inline(never)]
+fn trig_inf_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
+    let out = unary_entry_f32(x, base_cost_ns, f);
+    set_domain_errno();
+    out
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinf(x: f32) -> f32 {
+    if x.is_infinite() {
+        return trig_inf_f32(x, 5, frankenlibc_core::math::sinf);
+    }
     unary_entry_f32(x, 5, frankenlibc_core::math::sinf)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cosf(x: f32) -> f32 {
+    if x.is_infinite() {
+        return trig_inf_f32(x, 5, frankenlibc_core::math::cosf);
+    }
     unary_entry_f32(x, 5, frankenlibc_core::math::cosf)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanf(x: f32) -> f32 {
+    if x.is_infinite() {
+        return trig_inf_f32(x, 5, frankenlibc_core::math::tanf);
+    }
     unary_entry_f32(x, 5, frankenlibc_core::math::tanf)
 }
 

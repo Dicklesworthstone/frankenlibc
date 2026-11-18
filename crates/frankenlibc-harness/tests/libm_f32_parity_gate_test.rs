@@ -148,6 +148,7 @@ int main(int argc, char **argv) {
 
     f1_t fl_sinf = (f1_t)dlsym(fl, "sinf");
     f1_t fl_cosf = (f1_t)dlsym(fl, "cosf");
+    f1_t fl_tanf = (f1_t)dlsym(fl, "tanf");
     sincosf_t fl_sincosf = (sincosf_t)dlsym(fl, "sincosf");
     sincosf_t gl_sincosf = (sincosf_t)dlsym(gl, "sincosf");
     f2_t fl_atan2f = (f2_t)dlsym(fl, "atan2f");
@@ -156,10 +157,33 @@ int main(int argc, char **argv) {
     f2_t gl_powf = (f2_t)dlsym(gl, "powf");
     lgammaf_r_t fl_lgr = (lgammaf_r_t)dlsym(fl, "lgammaf_r");
     lgammaf_r_t gl_lgr = (lgammaf_r_t)dlsym(gl, "lgammaf_r");
-    if (!fl_sinf || !fl_cosf || !fl_sincosf || !gl_sincosf || !fl_atan2f ||
-        !fl_hypotf || !fl_powf || !gl_powf || !fl_lgr || !gl_lgr) {
+    typedef int *(*errno_loc_t)(void);
+    errno_loc_t fl_errno = (errno_loc_t)dlsym(fl, "__errno_location");
+    if (!fl_sinf || !fl_cosf || !fl_tanf || !fl_sincosf || !gl_sincosf || !fl_atan2f ||
+        !fl_hypotf || !fl_powf || !gl_powf || !fl_lgr || !gl_lgr || !fl_errno) {
         fprintf(stderr, "missing binary/multi-output f32 libm symbol\n");
         return 2;
+    }
+    float inf_f[2] = {INFINITY, -INFINITY};
+    for (int k = 0; k < 2; k++) {
+        float v = inf_f[k];
+        *fl_errno() = 0;
+        float is_o = 0.0f, ic_o = 0.0f;
+        fl_sincosf(v, &is_o, &ic_o);
+        if (!isnan(is_o) || !isnan(ic_o) || *fl_errno() != 33) {
+            fprintf(stderr, "FAIL sincosf(%g) EDOM: errno=%d\n", v, *fl_errno());
+            return 1;
+        }
+        f1_t tfs[3] = {fl_sinf, fl_cosf, fl_tanf};
+        const char *tnames[3] = {"sinf", "cosf", "tanf"};
+        for (int t = 0; t < 3; t++) {
+            *fl_errno() = 0;
+            float r = tfs[t](v);
+            if (!isnan(r) || *fl_errno() != 33) {
+                fprintf(stderr, "FAIL %s(%g) EDOM: errno=%d\n", tnames[t], v, *fl_errno());
+                return 1;
+            }
+        }
     }
 
     for (uint32_t i = 0; i < N; i++) {

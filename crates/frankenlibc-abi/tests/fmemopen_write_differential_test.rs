@@ -905,10 +905,19 @@ fn fmemopen_preserves_single_threaded_fast_path_until_second_thread_enters() {
     for (i, b) in data.iter_mut().enumerate() {
         *b = (i % 251) as u8;
     }
-    for _ in 0..8 {
+    let mut first_fp_addr = 0usize;
+    for iter in 0..8 {
         unsafe {
             let fp = fl::fmemopen(data.as_mut_ptr().cast(), data.len(), c"r".as_ptr());
             assert!(!fp.is_null());
+            if iter == 0 {
+                first_fp_addr = fp as usize;
+            } else {
+                assert_eq!(
+                    fp as usize, first_fp_addr,
+                    "single-threaded parked fmemopen slot should reuse handle in place"
+                );
+            }
             let mut chunk = [0u8; 64];
             for step in 0..64 {
                 assert_eq!(fl::fread(chunk.as_mut_ptr().cast(), 1, 64, fp), 64);
@@ -917,6 +926,46 @@ fn fmemopen_preserves_single_threaded_fast_path_until_second_thread_enters() {
             assert_eq!(fl::fclose(fp), 0);
         }
     }
+
+    // While `first_fp_addr` is parked (closed), double-`fclose` must still fail
+    // with `EOF`/`EBADF`, `fflush(NULL)` must succeed, and reopening a shorter
+    // buffer must reset `content_end` and `feof` cleanly.
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+        assert_eq!(
+            fl::fclose(first_fp_addr as *mut libc::c_void),
+            libc::EOF,
+            "double fclose on parked closed slot must fail with EOF"
+        );
+        assert_eq!(*frankenlibc_abi::errno_abi::__errno_location(), libc::EBADF);
+        assert_eq!(fl::fflush(std::ptr::null_mut()), 0);
+
+        let mut short_buf = [0u8; 130];
+        for (i, b) in short_buf.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_add(17);
+        }
+        let fp = fl::fmemopen(
+            short_buf.as_mut_ptr().cast(),
+            short_buf.len(),
+            c"r".as_ptr(),
+        );
+        assert_eq!(fp as usize, first_fp_addr);
+        assert_eq!(fl::feof(fp), 0);
+        let mut head = [0u8; 128];
+        assert_eq!(fl::fread(head.as_mut_ptr().cast(), 1, 128, fp), 128);
+        assert_eq!(&head[..], &short_buf[..128]);
+        let mut tail = [0xa5u8; 4];
+        assert_eq!(fl::fread(tail.as_mut_ptr().cast(), 4, 1, fp), 0);
+        assert_eq!(&tail[..2], &short_buf[128..130]);
+        assert_ne!(fl::feof(fp), 0);
+        assert_eq!(fl::fseek(fp, 5, libc::SEEK_SET), 0);
+        assert_eq!(fl::feof(fp), 0);
+        let mut seek_out = [0u8; 3];
+        assert_eq!(fl::fread(seek_out.as_mut_ptr().cast(), 1, 3, fp), 3);
+        assert_eq!(&seek_out[..], &short_buf[5..8]);
+        assert_eq!(fl::fclose(fp), 0);
+    }
+
     assert_eq!(
         frankenlibc_abi::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire),
         1,

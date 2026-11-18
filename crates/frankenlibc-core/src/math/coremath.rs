@@ -5991,6 +5991,16 @@ fn round_dd_signed(dd: [f64; 2], sign: f64) -> f64 {
 }
 
 #[inline(always)]
+fn ziv_round_signed(ah: f64, al: f64, eps: f64, sign: f64) -> Option<f64> {
+    let s = if sign.is_sign_negative() { -1.0 } else { 1.0 };
+    let sah = ah * s;
+    let sal = al * s;
+    let ub = sah + (sal + eps);
+    let lb = sah + (sal - eps);
+    (ub == lb).then_some(ub)
+}
+
+#[inline(always)]
 fn pick_atan_anchor(num: f64, den: f64) -> usize {
     let nb = num.to_bits();
     let db = den.to_bits();
@@ -6473,15 +6483,33 @@ impl Fp192 {
                 let sticky = (self.m[2] & mask) != 0 || self.m[1] != 0 || self.m[0] != 0;
                 (q, half, sticky)
             };
-            let round_up = half != 0 && (sticky || (q & 1) != 0);
-            let q_rounded = q + u64::from(round_up);
-            if half != 0 || sticky {
-                let tiny = f64::from_bits(0x0010_0000_0000_0001);
-                let _ =
-                    core::hint::black_box(core::hint::black_box(tiny) * core::hint::black_box(0.5));
-            }
             let sign_bit = if self.neg { 1u64 << 63 } else { 0 };
-            return f64::from_bits(sign_bit | q_rounded);
+            if half == 0 && !sticky {
+                return f64::from_bits(sign_bit | q);
+            }
+            let sign_f = if self.neg { -1.0 } else { 1.0 };
+            let (w, scale) = if !sticky {
+                (
+                    ((q as f64) + 0.5) * hf!("0x1p-537") * sign_f,
+                    hf!("0x1p-537"),
+                )
+            } else if half == 0 {
+                (
+                    ((q as f64) + 0.5) * hf!("0x1p-537") * sign_f,
+                    hf!("0x1.fffffffffffffp-538"),
+                )
+            } else if q < (1u64 << 52) - 1 {
+                (
+                    ((q + 1) as f64) * hf!("0x1p-537") * sign_f,
+                    hf!("0x1.fffffffffffffp-538"),
+                )
+            } else {
+                (
+                    hf!("0x1.0000000000001p+52") * hf!("0x1p-537") * sign_f,
+                    hf!("0x1.ffffffffffffep-538"),
+                )
+            };
+            return core::hint::black_box(w) * core::hint::black_box(scale);
         }
         let top53 = self.m[2] >> 11;
         let half = (self.m[2] >> 10) & 1;
@@ -6615,10 +6643,8 @@ fn atan2_refine_dd(y: f64, x: f64, num: f64, den: f64, swap: bool, x_neg: bool) 
         (true, false) => adddd_norm(PI_DD[0], PI_DD[1], -bh, -bl),
     };
     let eps = ah * hf!("0x1p-96");
-    let ub = ah + (al + eps);
-    let lb = ah + (al - eps);
-    if ub == lb {
-        return ub.copysign(y);
+    if let Some(rounded) = ziv_round_signed(ah, al, eps, y) {
+        return rounded;
     }
     atan2_cold(y, x)
 }
@@ -6718,9 +6744,8 @@ fn atan2_body(y: f64, x: f64) -> f64 {
             return core::hint::black_box(w) * core::hint::black_box(scale);
         }
         if rem_s == 0.0 {
-            let adj = (core::hint::black_box(u_ulps)
-                - core::hint::black_box(u_ulps * hf!("0x1p-54")))
-            .copysign(y);
+            let su = u_ulps.copysign(y);
+            let adj = core::hint::black_box(su) - core::hint::black_box(su * hf!("0x1p-54"));
             return (adj * hf!("0x1p-537")) * hf!("0x1p-537");
         }
         return core::hint::black_box(y) / core::hint::black_box(x);
@@ -6741,13 +6766,12 @@ fn atan2_body(y: f64, x: f64) -> f64 {
         let c3 = -(qh * (qh * qh)) * hf!("0x1.5555555555555p-2");
         let (ah, al) = adddd_norm(qh, ql, c3, 0.0);
         if al == 0.0 {
-            return hf!("-0x1p-54").mul_add(ah, ah).copysign(y);
+            let sah = ah.copysign(y);
+            return core::hint::black_box(sah) - core::hint::black_box(sah * hf!("0x1p-54"));
         }
         let eps = ah * hf!("0x1p-72");
-        let ub = ah + (al + eps);
-        let lb = ah + (al - eps);
-        if ub == lb {
-            return ub.copysign(y);
+        if let Some(rounded) = ziv_round_signed(ah, al, eps, y) {
+            return rounded;
         }
         return atan2_cold(y, x);
     }
@@ -6769,10 +6793,8 @@ fn atan2_body(y: f64, x: f64) -> f64 {
         }
     };
     let eps = ah * hf!("0x1p-63");
-    let ub = ah + (al + eps);
-    let lb = ah + (al - eps);
-    if ub == lb {
-        return ub.copysign(y);
+    if let Some(rounded) = ziv_round_signed(ah, al, eps, y) {
+        return rounded;
     }
     atan2_refine_dd(y, x, num, den, swap, x_neg)
 }
@@ -6820,10 +6842,8 @@ fn asin_refine(x: f64) -> f64 {
         adddd_norm(PI_2_DD[0], PI_2_DD[1], -(2.0 * as_h), -(2.0 * as_l))
     };
     let eps = ah * hf!("0x1p-76");
-    let ub = ah + (al + eps);
-    let lb = ah + (al - eps);
-    if ub == lb {
-        return ub.copysign(x);
+    if let Some(rounded) = ziv_round_signed(ah, al, eps, x) {
+        return rounded;
     }
     asin_cold(x)
 }
@@ -6852,10 +6872,15 @@ fn asin_body(x: f64) -> f64 {
             return x;
         }
         if abits < 0x0010_0000_0000_0000 {
-            let _ = core::hint::black_box(core::hint::black_box(x) * core::hint::black_box(0.5));
-            return x;
+            let w = (((abits as f64) + 0.5) * hf!("0x1p-537")).copysign(x);
+            return core::hint::black_box(w) * core::hint::black_box(hf!("0x1.fffffffffffffp-538"));
         }
-        return hf!("0x1p-54").mul_add(x, x);
+        if abits < 0x0370_0000_0000_0000 {
+            let xs = x * hf!("0x1p+108");
+            return (core::hint::black_box(xs) + core::hint::black_box(xs * hf!("0x1p-54")))
+                * hf!("0x1p-108");
+        }
+        return core::hint::black_box(x) + core::hint::black_box(x * hf!("0x1p-54"));
     }
     let ax = x.abs();
     if ax <= 0.5 {
@@ -6868,10 +6893,8 @@ fn asin_body(x: f64) -> f64 {
         let (ah, e_a) = fasttwosum(ax, ch);
         let al = e_a + lo;
         let eps = ah * hf!("0x1p-59");
-        let ub = ah + (al + eps);
-        let lb = ah + (al - eps);
-        if ub == lb {
-            return ub.copysign(x);
+        if let Some(rounded) = ziv_round_signed(ah, al, eps, x) {
+            return rounded;
         }
         return asin_refine(x);
     }
@@ -6888,10 +6911,8 @@ fn asin_body(x: f64) -> f64 {
     let (ah, e_r) = fasttwosum(PI_2_DD[0], -(2.0 * as_h));
     let al = e_r + (PI_2_DD[1] - 2.0 * as_l);
     let eps = ah * hf!("0x1p-59");
-    let ub = ah + (al + eps);
-    let lb = ah + (al - eps);
-    if ub == lb {
-        return ub.copysign(x);
+    if let Some(rounded) = ziv_round_signed(ah, al, eps, x) {
+        return rounded;
     }
     asin_refine(x)
 }
@@ -6986,7 +7007,7 @@ fn acos_body(x: f64) -> f64 {
         return domain_nan_invalid();
     }
     if abits < 0x3c90_0000_0000_0000 {
-        return PI_2_DD[0] + (PI_2_DD[1] - x);
+        return core::hint::black_box(PI_2_DD[0]) + (core::hint::black_box(PI_2_DD[1]) - x);
     }
     let ax = x.abs();
     if ax <= 0.5 {

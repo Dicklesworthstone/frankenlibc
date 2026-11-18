@@ -323,7 +323,7 @@ fn host_dlopen(_path: &CStr) -> usize {
 }
 
 #[cfg(not(feature = "standalone"))]
-fn host_dlsym(handle: usize, name: &CStr) -> usize {
+fn nss_backend_dlsym(handle: usize, name: &CStr) -> usize {
     type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
         return 0;
@@ -335,7 +335,7 @@ fn host_dlsym(handle: usize, name: &CStr) -> usize {
 }
 
 #[cfg(feature = "standalone")]
-fn host_dlsym(_handle: usize, _name: &CStr) -> usize {
+fn nss_backend_dlsym(_handle: usize, _name: &CStr) -> usize {
     0
 }
 
@@ -396,7 +396,7 @@ fn module_function(service: &[u8], function: &'static str) -> Option<usize> {
     symbol.push(b'_');
     symbol.extend_from_slice(function.as_bytes());
     symbol.push(0);
-    let addr = CStr::from_bytes_with_nul(&symbol).map_or(0, |name| host_dlsym(handle, name));
+    let addr = CStr::from_bytes_with_nul(&symbol).map_or(0, |name| nss_backend_dlsym(handle, name));
     let mut modules = MODULES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(module) = modules.iter_mut().find(|m| m.service == service)
         && !module.symbols.iter().any(|(n, _)| *n == function)
@@ -1572,8 +1572,8 @@ type FreeFn = unsafe extern "C" fn(*mut c_void);
 /// process's global `malloc`/`realloc`/`free` (fl's own when preloaded).
 fn global_allocator() -> Option<(MallocFn, FreeFn)> {
     let default = libc::RTLD_DEFAULT as usize;
-    let malloc = host_dlsym(default, c"malloc");
-    let free = host_dlsym(default, c"free");
+    let malloc = nss_backend_dlsym(default, c"malloc");
+    let free = nss_backend_dlsym(default, c"free");
     if malloc == 0 || free == 0 {
         return None;
     }

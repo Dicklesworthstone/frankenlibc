@@ -2097,6 +2097,12 @@ impl NativeStreamRegistry {
 
     /// Get a mutable reference to a stream by slot index.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut NativeFile> {
+        if !self.local_test_instance
+            && index >= 3
+            && PARKED_STATIC_SLOT.load(Ordering::Acquire) == index
+        {
+            return None;
+        }
         let slot = self.slot_mut(index)?;
         if slot.state == SLOT_OCCUPIED {
             Some(&mut slot.file)
@@ -2107,6 +2113,12 @@ impl NativeStreamRegistry {
 
     /// Get a reference to a stream by slot index.
     pub fn get(&self, index: usize) -> Option<&NativeFile> {
+        if !self.local_test_instance
+            && index >= 3
+            && PARKED_STATIC_SLOT.load(Ordering::Acquire) == index
+        {
+            return None;
+        }
         let slot = self.slot(index)?;
         if slot.state == SLOT_OCCUPIED {
             Some(&slot.file)
@@ -2119,9 +2131,17 @@ impl NativeStreamRegistry {
     ///
     /// This implements `fflush(NULL)` semantics: flush every open output stream.
     pub fn flush_all(&mut self) -> usize {
+        let parked = if self.local_test_instance {
+            0
+        } else {
+            PARKED_STATIC_SLOT.load(Ordering::Acquire)
+        };
         let mut errors = 0;
-        for slot in self.slots_mut() {
-            if slot.state == SLOT_OCCUPIED && slot.file.is_writable() {
+        for (index, slot) in self.slots_mut().enumerate() {
+            if slot.state == SLOT_OCCUPIED
+                && !(parked >= 3 && index == parked)
+                && slot.file.is_writable()
+            {
                 let file_ptr: *mut NativeFile = &mut slot.file;
                 // SAFETY: file_ptr is a valid pointer to our registry-owned NativeFile.
                 let rc = unsafe { vtable_fd_flush(file_ptr) };
@@ -2135,20 +2155,42 @@ impl NativeStreamRegistry {
 
     /// Count of currently open streams.
     pub fn open_count(&self) -> usize {
-        self.slots().filter(|s| s.state == SLOT_OCCUPIED).count()
+        let parked = if self.local_test_instance {
+            0
+        } else {
+            PARKED_STATIC_SLOT.load(Ordering::Acquire)
+        };
+        self.slots()
+            .enumerate()
+            .filter(|&(index, s)| s.state == SLOT_OCCUPIED && !(parked >= 3 && index == parked))
+            .count()
     }
 
     /// Find the first occupied slot index (for `_IO_iter_begin`).
     pub fn first_occupied(&self) -> Option<usize> {
-        self.slots().position(|s| s.state == SLOT_OCCUPIED)
+        let parked = if self.local_test_instance {
+            0
+        } else {
+            PARKED_STATIC_SLOT.load(Ordering::Acquire)
+        };
+        self.slots().enumerate().find_map(|(index, s)| {
+            (s.state == SLOT_OCCUPIED && !(parked >= 3 && index == parked)).then_some(index)
+        })
     }
 
     /// Find the next occupied slot index after `after` (for `_IO_iter_next`).
     pub fn next_occupied(&self, after: usize) -> Option<usize> {
+        let parked = if self.local_test_instance {
+            0
+        } else {
+            PARKED_STATIC_SLOT.load(Ordering::Acquire)
+        };
         self.slots()
             .enumerate()
             .skip(after.checked_add(1)?)
-            .find_map(|(index, slot)| (slot.state == SLOT_OCCUPIED).then_some(index))
+            .find_map(|(index, slot)| {
+                (slot.state == SLOT_OCCUPIED && !(parked >= 3 && index == parked)).then_some(index)
+            })
     }
 }
 
@@ -2337,6 +2379,88 @@ pub(crate) fn static_native_slot_for_ptr_lockfree(stream: *const c_void) -> Opti
 #[inline]
 pub(crate) fn is_native_slot_ptr_lockfree(stream: *const c_void) -> bool {
     static_native_slot_for_ptr_lockfree(stream).is_some()
+}
+
+/// Dynamic static slot (`3..STREAM_REGISTRY_CAPACITY`) currently parked in a
+/// closed single-threaded `fmemopen` recycler (`0` = none).
+static PARKED_STATIC_SLOT: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+pub(crate) fn parked_static_slot() -> usize {
+    PARKED_STATIC_SLOT.load(Ordering::Acquire)
+}
+
+#[inline]
+pub(crate) fn static_slot_lock_is_unowned(slot: usize) -> bool {
+    (3..STREAM_REGISTRY_CAPACITY).contains(&slot)
+        && STATIC_SLOT_LOCKS[slot]
+            .get()
+            .is_none_or(|lock| lock.is_unowned())
+}
+
+#[inline]
+pub(crate) unsafe fn park_static_slot_st(slot: usize, handle: *mut c_void) {
+    debug_assert!((3..STREAM_REGISTRY_CAPACITY).contains(&slot));
+    STATIC_SLOT_OCCUPIED[slot].store(0, Ordering::Release);
+    let file_ptr = handle.cast::<NativeFile>();
+    // SAFETY: single-threaded recycler owns `file_ptr` and `_IO_list_all`;
+    // unlink the closed stream from `_IO_list_all` so C callers inspecting
+    // `_IO_list_all->_chain` never observe a closed FILE.
+    unsafe {
+        let mut prev: *mut NativeFile = ptr::null_mut();
+        let mut curr = native_file_list().cast::<NativeFile>();
+        while !curr.is_null() {
+            if curr == file_ptr {
+                let next = (*curr).chain();
+                if prev.is_null() {
+                    publish_native_file_list(next.cast::<c_void>());
+                } else {
+                    (*prev).set_chain(next);
+                }
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                (*file_ptr).set_chain(ptr::null_mut());
+                break;
+            }
+            prev = curr;
+            curr = (*curr).chain();
+        }
+    }
+    PARKED_STATIC_SLOT.store(slot, Ordering::Release);
+}
+
+#[inline]
+pub(crate) unsafe fn reoccupy_parked_static_slot_st(
+    slot: usize,
+    handle: *mut c_void,
+    glibc_flags: i32,
+) {
+    debug_assert!((3..STREAM_REGISTRY_CAPACITY).contains(&slot));
+    let file = handle.cast::<_IO_FILE_Layout>();
+    let native_file = handle.cast::<NativeFile>();
+    // SAFETY: `handle` is the static `NativeFile` slot at `slot`, exclusively
+    // claimed by the single-threaded recycler before publishing occupancy.
+    unsafe {
+        (*file)._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
+        (*file)._fileno = -2;
+        (*file)._mode = -1;
+        (*native_file).set_chain(native_file_list().cast::<NativeFile>());
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+        publish_native_file_list(handle);
+    }
+    STATIC_SLOT_OCCUPIED[slot].store(1, Ordering::Release);
+}
+
+#[inline]
+pub(crate) fn try_claim_parked_static_slot(slot: usize) -> bool {
+    (3..STREAM_REGISTRY_CAPACITY).contains(&slot)
+        && PARKED_STATIC_SLOT
+            .compare_exchange(slot, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+}
+
+#[inline]
+pub(crate) fn take_parked_static_slot() -> usize {
+    PARKED_STATIC_SLOT.swap(0, Ordering::AcqRel)
 }
 
 /// Lock-free check: returns `Some(slot)` iff `stream` is an OCCUPIED static
@@ -3703,14 +3827,17 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// mode fl's registry is separate machinery and the host chain must stay
 /// untouched.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
-    if !stdio_abi::stdio_symbols_are_interposed() {
-        return;
-    }
-    if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
-        // ptr is the address of glibc's _IO_list_all variable (a FILE*).
-        // Set it to NULL to prevent glibc's exit handler from iterating.
-        let glibc_list_ptr = ptr as *mut *mut c_void;
-        unsafe { *glibc_list_ptr = ptr::null_mut() };
+    #[cfg(not(feature = "standalone"))]
+    {
+        if !stdio_abi::stdio_symbols_are_interposed() {
+            return;
+        }
+        if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
+            // ptr is the address of glibc's _IO_list_all variable (a FILE*).
+            // Set it to NULL to prevent glibc's exit handler from iterating.
+            let glibc_list_ptr = ptr as *mut *mut c_void;
+            unsafe { *glibc_list_ptr = ptr::null_mut() };
+        }
     }
 }
 

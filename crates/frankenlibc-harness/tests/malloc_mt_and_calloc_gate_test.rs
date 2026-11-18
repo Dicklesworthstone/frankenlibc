@@ -143,23 +143,46 @@ static void *worker(void *arg) {
 
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "sig-realloc") == 0) {
-        pthread_t warm_th;
-        if (pthread_create(&warm_th, NULL, noop_native_thread, NULL) != 0) return 2;
-        if (pthread_join(warm_th, NULL) != 0) return 2;
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sa.sa_handler = sigusr1_realloc_handler;
         if (sigaction(SIGUSR1, &sa, NULL) != 0) return 2;
+
+        /* Phase 1: Pure single-threaded (!MULTI_THREADED) unlocked fallback-table path */
+        for (int iter = 0; iter < 8; iter++) {
+            unsigned char *old_free = (unsigned char *)malloc(65536);
+            if (!old_free) return 3;
+            free(old_free);
+            unsigned char *buf = (unsigned char *)malloc(65536);
+            unsigned char *sbuf = (unsigned char *)malloc(256);
+            if (!buf || !sbuf) return 3;
+            for (size_t i = 0; i < 65536; i++) buf[i] = (unsigned char)((i * 31u + 7u) & 0xffu);
+            for (size_t i = 0; i < 256; i++) sbuf[i] = (unsigned char)((i * 17u + 3u) & 0xffu);
+            g_sig_ok = 0;
+            g_sig_ptr = buf;
+            g_sig_small = sbuf;
+            raise(SIGUSR1);
+            if (!g_sig_ok) {
+                fprintf(stderr, "ST signal handler realloc failed or lost payload bytes\n");
+                return 4;
+            }
+        }
+
+        /* Phase 2: Multi-threaded / native-thread path */
+        pthread_t warm_th;
+        if (pthread_create(&warm_th, NULL, noop_native_thread, NULL) != 0) return 2;
+        if (pthread_join(warm_th, NULL) != 0) return 2;
         unsigned char *buf = (unsigned char *)malloc(65536);
         unsigned char *sbuf = (unsigned char *)malloc(256);
         if (!buf || !sbuf) return 3;
         for (size_t i = 0; i < 65536; i++) buf[i] = (unsigned char)((i * 31u + 7u) & 0xffu);
         for (size_t i = 0; i < 256; i++) sbuf[i] = (unsigned char)((i * 17u + 3u) & 0xffu);
+        g_sig_ok = 0;
         g_sig_ptr = buf;
         g_sig_small = sbuf;
         raise(SIGUSR1);
         if (!g_sig_ok) {
-            fprintf(stderr, "signal handler realloc failed or lost payload bytes\n");
+            fprintf(stderr, "MT signal handler realloc failed or lost payload bytes\n");
             return 4;
         }
         printf("PASS: sig-realloc preserved payload\n");
@@ -296,40 +319,43 @@ int main(int argc, char **argv) {
     }
 
     for mode in ["strict", "hardened"] {
-        let out = Command::new(&probe_bin)
-            .env("LD_PRELOAD", &lib)
-            .env("FRANKENLIBC_MODE", mode)
-            .output()
-            .expect("probe_mt_calloc run");
-        assert!(
-            out.status.success(),
-            "probe_mt_calloc ({mode}) failed:\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&out.stdout)
-                .contains("PASS: malloc_mt_and_calloc_gate verified"),
-            "missing PASS banner in {mode}"
-        );
+        for native_threads in ["0", "1"] {
+            let out = Command::new(&probe_bin)
+                .env("LD_PRELOAD", &lib)
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FRANKENLIBC_THREAD_NATIVE", native_threads)
+                .output()
+                .expect("probe_mt_calloc run");
+            assert!(
+                out.status.success(),
+                "probe_mt_calloc ({mode}, native={native_threads}) failed:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stdout)
+                    .contains("PASS: malloc_mt_and_calloc_gate verified"),
+                "missing PASS banner in {mode} (native={native_threads})"
+            );
 
-        let sig_out = Command::new(&probe_bin)
-            .arg("sig-realloc")
-            .env("LD_PRELOAD", &lib)
-            .env("FRANKENLIBC_MODE", mode)
-            .env("FRANKENLIBC_THREAD_NATIVE", "1")
-            .output()
-            .expect("probe_mt_calloc sig-realloc run");
-        assert!(
-            sig_out.status.success(),
-            "probe_mt_calloc sig-realloc ({mode}) failed:\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&sig_out.stdout),
-            String::from_utf8_lossy(&sig_out.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&sig_out.stdout)
-                .contains("PASS: sig-realloc preserved payload"),
-            "missing sig-realloc PASS banner in {mode}"
-        );
+            let sig_out = Command::new(&probe_bin)
+                .arg("sig-realloc")
+                .env("LD_PRELOAD", &lib)
+                .env("FRANKENLIBC_MODE", mode)
+                .env("FRANKENLIBC_THREAD_NATIVE", native_threads)
+                .output()
+                .expect("probe_mt_calloc sig-realloc run");
+            assert!(
+                sig_out.status.success(),
+                "probe_mt_calloc sig-realloc ({mode}, native={native_threads}) failed:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&sig_out.stdout),
+                String::from_utf8_lossy(&sig_out.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&sig_out.stdout)
+                    .contains("PASS: sig-realloc preserved payload"),
+                "missing sig-realloc PASS banner in {mode} (native={native_threads})"
+            );
+        }
     }
 }

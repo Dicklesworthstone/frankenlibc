@@ -7441,118 +7441,125 @@ const LEGACY_RDATA_DIALECT: ResolverRdataDialect = ResolverRdataDialect {
 /// newer copies print `TYPE999` without that note. Calibrate once against the
 /// loaded host libresolv so a drop-in libc keeps its host's presentation ABI.
 fn resolver_rdata_dialect() -> ResolverRdataDialect {
-    static DIALECT: OnceLock<ResolverRdataDialect> = OnceLock::new();
-    *DIALECT.get_or_init(|| unsafe {
-        type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-        type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
-        type SprintRrf = unsafe extern "C" fn(
-            *const u8,
-            usize,
-            *const c_char,
-            c_int,
-            c_int,
-            libc::c_ulong,
-            *const u8,
-            usize,
-            *const c_char,
-            *const c_char,
-            *mut c_char,
-            usize,
-        ) -> c_int;
+    #[cfg(feature = "standalone")]
+    {
+        return LEGACY_RDATA_DIALECT;
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        static DIALECT: OnceLock<ResolverRdataDialect> = OnceLock::new();
+        *DIALECT.get_or_init(|| unsafe {
+            type Dlopen = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+            type Dlsym = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+            type SprintRrf = unsafe extern "C" fn(
+                *const u8,
+                usize,
+                *const c_char,
+                c_int,
+                c_int,
+                libc::c_ulong,
+                *const u8,
+                usize,
+                *const c_char,
+                *const c_char,
+                *mut c_char,
+                usize,
+            ) -> c_int;
 
-        let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
-            return LEGACY_RDATA_DIALECT;
-        };
-        let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
-            return LEGACY_RDATA_DIALECT;
-        };
-        // SAFETY: raw ELF resolution returns the host glibc entrypoints with
-        // their documented C signatures.
-        let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
-        let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
-        let handle = dlopen(
-            c"libresolv.so.2".as_ptr(),
-            libc::RTLD_NOW | libc::RTLD_LOCAL,
-        );
-        if handle.is_null() {
-            return LEGACY_RDATA_DIALECT;
-        }
-        let symbol = dlsym(handle, c"ns_sprintrrf".as_ptr());
-        if symbol.is_null() {
-            return LEGACY_RDATA_DIALECT;
-        }
-        // SAFETY: `symbol` was resolved from libresolv under its public name.
-        let sprintrrf: SprintRrf = core::mem::transmute(symbol);
-        let rdata = [0xde, 0xad, 0xbe, 0xef];
-        let mut buf = [0 as c_char; 128];
-        let written = sprintrrf(
-            ptr::null(),
-            0,
-            c"probe".as_ptr(),
-            1,
-            999,
-            60,
-            rdata.as_ptr(),
-            rdata.len(),
-            ptr::null(),
-            ptr::null(),
-            buf.as_mut_ptr(),
-            buf.len(),
-        );
-        let type_prefix = written > 0
-            && CStr::from_ptr(buf.as_ptr())
-                .to_bytes()
-                .windows(b"TYPE999".len())
-                .any(|window| window == b"TYPE999");
-
-        // SECOND PROBE, for the comment separator. The type-999 probe above
-        // cannot answer it: in the TYPE<n> dialect an unknown type carries no
-        // comment at all, so there is no separator to look at. A three-byte A
-        // record does carry one — every dialect calls it an "RR format error" —
-        // and it goes through the same `hexify` label in glibc's ns_print.c as
-        // the unknown-type note, so this one probe settles both (bd-d9et7k).
-        let short_a = [1u8, 2, 3];
-        let mut probe_buf = [0 as c_char; 128];
-        let written = sprintrrf(
-            ptr::null(),
-            0,
-            c"probe".as_ptr(),
-            1,
-            1, /* A */
-            60,
-            short_a.as_ptr(),
-            short_a.len(),
-            ptr::null(),
-            ptr::null(),
-            probe_buf.as_mut_ptr(),
-            probe_buf.len(),
-        );
-        let comment_separator = if written > 0 {
-            let rendered = CStr::from_ptr(probe_buf.as_ptr()).to_bytes();
-            let tabbed = b"\t; RR format error";
-            if rendered.windows(tabbed.len()).any(|w| w == tabbed) {
-                "\t; "
-            } else {
-                // Either the space form or a host that renders this some third
-                // way; the space form is what glibc 2.42 emits and what the
-                // legacy tab form was measured to differ from.
-                " ; "
+            let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
+                return LEGACY_RDATA_DIALECT;
+            };
+            let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
+                return LEGACY_RDATA_DIALECT;
+            };
+            // SAFETY: raw ELF resolution returns the host glibc entrypoints with
+            // their documented C signatures.
+            let dlopen: Dlopen = core::mem::transmute(dlopen_addr);
+            let dlsym: Dlsym = core::mem::transmute(dlsym_addr);
+            let handle = dlopen(
+                c"libresolv.so.2".as_ptr(),
+                libc::RTLD_NOW | libc::RTLD_LOCAL,
+            );
+            if handle.is_null() {
+                return LEGACY_RDATA_DIALECT;
             }
-        } else {
-            LEGACY_RDATA_DIALECT.comment_separator
-        };
+            let symbol = dlsym(handle, c"ns_sprintrrf".as_ptr());
+            if symbol.is_null() {
+                return LEGACY_RDATA_DIALECT;
+            }
+            // SAFETY: `symbol` was resolved from libresolv under its public name.
+            let sprintrrf: SprintRrf = core::mem::transmute(symbol);
+            let rdata = [0xde, 0xad, 0xbe, 0xef];
+            let mut buf = [0 as c_char; 128];
+            let written = sprintrrf(
+                ptr::null(),
+                0,
+                c"probe".as_ptr(),
+                1,
+                999,
+                60,
+                rdata.as_ptr(),
+                rdata.len(),
+                ptr::null(),
+                ptr::null(),
+                buf.as_mut_ptr(),
+                buf.len(),
+            );
+            let type_prefix = written > 0
+                && CStr::from_ptr(buf.as_ptr())
+                    .to_bytes()
+                    .windows(b"TYPE999".len())
+                    .any(|window| window == b"TYPE999");
 
-        ResolverRdataDialect {
-            type_prefix,
-            comment_separator,
-            // The same two deployed dialects differ on malformed TKEY/TSIG:
-            // legacy libbind rejects them while the TYPE<n> dialect emits
-            // RFC 3597 generic rdata. This is the discriminator exercised by
-            // the live all-types corpus.
-            refuses_tkey: !type_prefix,
-            refuses_tsig: !type_prefix,
-        }
-    })
+            // SECOND PROBE, for the comment separator. The type-999 probe above
+            // cannot answer it: in the TYPE<n> dialect an unknown type carries no
+            // comment at all, so there is no separator to look at. A three-byte A
+            // record does carry one — every dialect calls it an "RR format error" —
+            // and it goes through the same `hexify` label in glibc's ns_print.c as
+            // the unknown-type note, so this one probe settles both (bd-d9et7k).
+            let short_a = [1u8, 2, 3];
+            let mut probe_buf = [0 as c_char; 128];
+            let written = sprintrrf(
+                ptr::null(),
+                0,
+                c"probe".as_ptr(),
+                1,
+                1, /* A */
+                60,
+                short_a.as_ptr(),
+                short_a.len(),
+                ptr::null(),
+                ptr::null(),
+                probe_buf.as_mut_ptr(),
+                probe_buf.len(),
+            );
+            let comment_separator = if written > 0 {
+                let rendered = CStr::from_ptr(probe_buf.as_ptr()).to_bytes();
+                let tabbed = b"\t; RR format error";
+                if rendered.windows(tabbed.len()).any(|w| w == tabbed) {
+                    "\t; "
+                } else {
+                    // Either the space form or a host that renders this some third
+                    // way; the space form is what glibc 2.42 emits and what the
+                    // legacy tab form was measured to differ from.
+                    " ; "
+                }
+            } else {
+                LEGACY_RDATA_DIALECT.comment_separator
+            };
+
+            ResolverRdataDialect {
+                type_prefix,
+                comment_separator,
+                // The same two deployed dialects differ on malformed TKEY/TSIG:
+                // legacy libbind rejects them while the TYPE<n> dialect emits
+                // RFC 3597 generic rdata. This is the discriminator exercised by
+                // the live all-types corpus.
+                refuses_tkey: !type_prefix,
+                refuses_tsig: !type_prefix,
+            }
+        })
+    }
 }
 
 fn write_type_into(ty: u16, out: &mut String) {

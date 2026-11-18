@@ -3289,6 +3289,43 @@ pub fn locale_reset_catalog_state_for_tests() {
 /// `/usr/share/locale/<LANG>/` exists, ENOENT under `LANG=C` -- and why fixing
 /// it to one constant flip-flopped three times (56cbe3fc8, fb7d7cc03,
 /// 9e801d705), each time matching whichever host ran the gate.
+#[inline]
+fn is_secure_execution() -> bool {
+    #[cfg(not(test))]
+    {
+        // SAFETY: `__errno_location` addresses this thread's canonical errno slot;
+        // preserve caller errno in case `AT_SECURE` is absent (`ENOENT`).
+        let errno_ptr = unsafe { crate::errno_abi::__errno_location() };
+        let saved_errno = unsafe { std::ptr::read_volatile(errno_ptr) };
+        let val = unsafe { crate::stdlib_abi::getauxval(libc::AT_SECURE) };
+        unsafe { std::ptr::write_volatile(errno_ptr, saved_errno) };
+        val != 0
+    }
+
+    #[cfg(test)]
+    {
+        let Ok(bytes) = std::fs::read("/proc/self/auxv") else {
+            return false;
+        };
+        let word_bytes = std::mem::size_of::<usize>();
+        let pair_bytes = 2 * word_bytes;
+        for pair in bytes.chunks_exact(pair_bytes) {
+            let mut key = [0u8; std::mem::size_of::<usize>()];
+            let mut val = [0u8; std::mem::size_of::<usize>()];
+            key.copy_from_slice(&pair[..word_bytes]);
+            val.copy_from_slice(&pair[word_bytes..]);
+            let at = usize::from_ne_bytes(key) as c_ulong;
+            if at == 0 {
+                break;
+            }
+            if at == libc::AT_SECURE {
+                return usize::from_ne_bytes(val) != 0;
+            }
+        }
+        false
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catopen(name: *const c_char, oflag: c_int) -> nl_catd {
     if name.is_null() {
@@ -3301,9 +3338,7 @@ pub unsafe extern "C" fn catopen(name: *const c_char, oflag: c_int) -> nl_catd {
         unsafe { set_abi_errno(libc::EINVAL) };
         return INVALID_NL_CATD;
     };
-    // SAFETY: getauxval reads the process auxv; in the shipped library this binds
-    // to our own export.
-    let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;
+    let secure = is_secure_execution();
     let mut locale = if oflag == NL_CAT_LOCALE {
         // Stored NUL-terminated for setlocale's return value.
         let name = category_name(libc::LC_MESSAGES);

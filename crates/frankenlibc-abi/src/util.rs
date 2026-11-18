@@ -585,7 +585,22 @@ pub(crate) fn note_native_thread_created() {
     frankenlibc_core::pthread::tls::install_native_thread_post_teardown_hook(
         reclaim_native_thread_tls_heap_cells,
     );
+    frankenlibc_core::pthread::tls::install_native_thread_post_handle_drop_hook(
+        reclaim_native_thread_post_handle_drop,
+    );
     NATIVE_THREADS_CREATED.store(true, Ordering::Release);
+}
+
+fn reclaim_native_thread_post_handle_drop(tid: i32) {
+    #[cfg(not(test))]
+    {
+        crate::runtime_policy::reclaim_native_thread_policy_tls(tid);
+        crate::malloc_abi::retire_native_thread_reentry_slot(tid);
+    }
+    #[cfg(test)]
+    {
+        let _ = tid;
+    }
 }
 
 fn reclaim_native_thread_tls_heap_cells(tid: i32) {
@@ -613,6 +628,12 @@ fn reclaim_native_thread_tls_heap_cells(tid: i32) {
         for node in drained {
             unsafe { destroy_tls_heap_node(node) };
         }
+    }
+    #[cfg(not(test))]
+    {
+        crate::unistd_abi::reclaim_native_thread_res_nsaddr_tls(tid);
+        crate::runtime_policy::reclaim_native_thread_policy_tls(tid);
+        crate::malloc_abi::retire_native_thread_reentry_slot(tid);
     }
 }
 

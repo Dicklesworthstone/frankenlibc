@@ -20,7 +20,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 18
+DETECTOR_VERSION = 20
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -140,7 +140,7 @@ MODULE_DECL_RE = re.compile(
     r"(?m)^[ \t]*(?:(?:pub(?:\([^)]*\))?|unsafe)\s+)*mod\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
-USE_ITEM_RE = re.compile(r"(?m)^(?:(?:pub(?:\([^)]*\))?)\s+)?use\s+([^;]+);")
+USE_ITEM_RE = re.compile(r"(?m)^[ \t]*(?:(?:pub(?:\([^)]*\))?)\s+)?use\s+([^;]+);")
 PATH_ATTRIBUTE_RE = re.compile(r'path\s*=\s*"([^"]+)"')
 RAW_STRING_START_RE = re.compile(r'(?:br|cr|r)(?P<hashes>#{0,255})"')
 CHAR_LITERAL_RE = re.compile(
@@ -868,6 +868,7 @@ class FunctionInfo:
     signature: str
     attr_text: str
     lines: list[tuple[int, str]] = field(default_factory=list)
+    impl_type: str | None = None
     _body_lines_cache: list[tuple[int, str, str]] | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -925,38 +926,102 @@ def source_tree_sha256(files: list[Path], root: Path) -> str:
     return digest.hexdigest()
 
 
+def _expand_use_items(
+    prefix: str,
+    expr: str,
+    out: dict[str, str],
+    *,
+    is_indented: bool = False,
+) -> None:
+    expr = expr.strip()
+    if not expr:
+        return
+    if expr == "*":
+        if prefix:
+            out.setdefault("*", prefix)
+        return
+    if expr.startswith("{") and expr.endswith("}"):
+        for child in split_top_level(expr[1:-1]):
+            _expand_use_items(prefix, child, out, is_indented=is_indented)
+        return
+    brace_pos = expr.find("::{")
+    if brace_pos >= 0 and expr.endswith("}"):
+        close = matching_delimiter(expr, brace_pos + 2, "{", "}")
+        if close == len(expr):
+            sub_base = re.sub(r"\s+", "", expr[:brace_pos])
+            combined = f"{prefix}::{sub_base}" if prefix else sub_base
+            for child in split_top_level(expr[brace_pos + 3 : -1]):
+                _expand_use_items(combined, child, out, is_indented=is_indented)
+            return
+    alias_parts = re.split(r"\s+as\s+", expr, maxsplit=1)
+    original = re.sub(r"\s+", "", alias_parts[0])
+    if not original or "{" in original or "}":
+        if "{" in original or "}" in original or not original:
+            return
+    if original.endswith("::*"):
+        glob_base = original[:-3]
+        combined = f"{prefix}::{glob_base}" if prefix else glob_base
+        if combined:
+            out.setdefault("*", combined)
+        return
+    if original == "self":
+        if not prefix:
+            return
+        local_name = (
+            alias_parts[1].strip()
+            if len(alias_parts) == 2
+            else prefix.rsplit("::", 1)[-1]
+        )
+        target = prefix
+    else:
+        target = f"{prefix}::{original}" if prefix else original
+        local_name = (
+            alias_parts[1].strip()
+            if len(alias_parts) == 2
+            else target.rsplit("::", 1)[-1]
+        )
+    if is_indented and target.startswith("super::"):
+        stripped_super = target[len("super::") :]
+        if not stripped_super or stripped_super == local_name or local_name in out:
+            return
+        target = stripped_super
+    if (
+        local_name != "_"
+        and local_name != target
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local_name)
+    ):
+        out[local_name] = target
+
+
+TYPE_ALIAS_RE = re.compile(
+    r"(?m)^[ \t]*(?:(?:pub(?:\([^)]*\))?)\s+)?type\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)\b(?:\s*<[^>]*>)?\s*=\s*([^;]+);"
+)
+
+
 def parse_module_imports(text: str) -> dict[str, str]:
-    """Return simple module-scope function imports as local -> full path."""
+    """Return module- and block-scope `use` and `type` aliases as local -> target path."""
 
     imports: dict[str, str] = {}
     masked = rust_code_mask(text)
     for match in USE_ITEM_RE.finditer(masked):
+        line_start = masked.rfind("\n", 0, match.start()) + 1
+        prefix_ws = match.group(0)[: len(match.group(0)) - len(match.group(0).lstrip(" \t"))]
+        is_indented = bool(prefix_ws) or match.start() > line_start
         expression = " ".join(match.group(1).split())
         normalized = re.sub(r"\s*::\s*", "::", expression)
         normalized = re.sub(r"\{\s*", "{", normalized)
         normalized = re.sub(r"\s*\}", "}", normalized)
-        if "::{" in normalized and normalized.endswith("}"):
-            base, members = normalized.split("::{", 1)
-            members = members[:-1]
-            for member in members.split(","):
-                if not member or "{" in member or "}" in member or member == "self":
-                    continue
-                alias_parts = re.split(r"\s+as\s+", member.strip(), maxsplit=1)
-                original = re.sub(r"\s+", "", alias_parts[0])
-                local_name = alias_parts[1].strip() if len(alias_parts) == 2 else original
-                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local_name):
-                    imports[local_name] = f"{base}::{original}"
-            continue
-
-        alias_parts = re.split(r"\s+as\s+", expression, maxsplit=1)
-        original = re.sub(r"\s+", "", alias_parts[0])
-        local_name = (
-            alias_parts[1].strip()
-            if len(alias_parts) == 2
-            else original.rsplit("::", 1)[-1]
-        )
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local_name):
-            imports[local_name] = original
+        _expand_use_items("", normalized.lstrip(":"), imports, is_indented=is_indented)
+    for alias_match in TYPE_ALIAS_RE.finditer(masked):
+        alias_name = alias_match.group(1)
+        rhs = _strip_angle_groups(alias_match.group(2)).strip().lstrip(":")
+        rhs = re.sub(r"\s*::\s*", "::", rhs)
+        if (
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*", rhs)
+            and alias_name != rhs
+        ):
+            imports.setdefault(alias_name, rhs)
     return imports
 
 
@@ -1329,13 +1394,80 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
     return functions
 
 
+def _strip_angle_groups(text: str) -> str:
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "<":
+            depth += 1
+        elif ch == ">" and depth > 0:
+            depth -= 1
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
+def parse_impl_spans(mask: str) -> list[tuple[int, int, str]]:
+    """Return `(start_line, end_line, type_name)` for top-level/nested `impl` blocks."""
+
+    spans: list[tuple[int, int, str]] = []
+    for impl_match in re.finditer(r"(?m)^[ \t]*(?:unsafe[ \t]+)?impl\b", mask):
+        pos = impl_match.end()
+        angle = 0
+        brace = -1
+        while pos < len(mask):
+            ch = mask[pos]
+            if ch == "<":
+                angle += 1
+            elif ch == ">" and angle > 0:
+                angle -= 1
+            elif angle == 0 and ch == ";":
+                break
+            elif angle == 0 and ch == "{":
+                brace = pos
+                break
+            pos += 1
+        if brace < 0:
+            continue
+        close = matching_delimiter(mask, brace, "{", "}")
+        if close is None:
+            continue
+        header = mask[impl_match.end() : brace]
+        header = re.split(r"\bwhere\b", header, maxsplit=1)[0]
+        cleaned = _strip_angle_groups(header).strip()
+        if re.search(r"\bfor\b", cleaned):
+            target = re.split(r"\bfor\b", cleaned)[-1].strip()
+        else:
+            target = cleaned
+        target_leaf = target.split("::")[-1].strip()
+        ident_match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", target_leaf)
+        if ident_match is None:
+            continue
+        start_line = mask.count("\n", 0, brace) + 1
+        end_line = mask.count("\n", 0, close) + 1
+        spans.append((start_line, end_line, ident_match.group(1)))
+    return spans
+
+
 def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
     if text is None:
         text = path.read_text(encoding="utf-8")
     rows = text.splitlines()
-    mask_rows = rust_code_mask(text).splitlines()
+    masked_full = rust_code_mask(text)
+    mask_rows = masked_full.splitlines()
     if len(mask_rows) != len(rows):
         raise ValueError(f"Rust lexical mask changed line count for {path}")
+    impl_spans = parse_impl_spans(masked_full)
+
+    def enclosing_impl(line_1based: int) -> str | None:
+        best: tuple[int, str] | None = None
+        for s_line, e_line, ty_name in impl_spans:
+            if s_line <= line_1based <= e_line:
+                span_len = e_line - s_line
+                if best is None or span_len <= best[0]:
+                    best = (span_len, ty_name)
+        return best[1] if best is not None else None
+
     functions: list[FunctionInfo] = []
     idx = 0
     while idx < len(rows):
@@ -1418,6 +1550,7 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
             body_start_line=body_start_line,
             signature="\n".join(signature_lines),
             attr_text=attrs,
+            impl_type=enclosing_impl(idx + 1),
         )
         while end_idx < len(rows):
             current = rows[end_idx]
@@ -1678,6 +1811,9 @@ def detect_host_calls(
     *,
     include_libc_calls: bool = False,
     module_imports: dict[str, str] | None = None,
+    all_module_imports: dict[str, dict[str, str]] | None = None,
+    known_modules: set[str] | None = None,
+    module_aliases: dict[str, str | None] | None = None,
 ) -> list[HostCall]:
     calls: list[HostCall] = []
     path = rel(root, function.path)
@@ -1759,18 +1895,33 @@ def detect_host_calls(
                     )
                 )
             for target_expression, shadowed in call_paths.get(line_no, []):
-                if shadowed:
+                if shadowed or target_expression.lstrip(":").startswith("libc::"):
                     continue
                 imported_expression = resolve_import_target(
                     module_imports or {}, target_expression
                 )
                 if (
+                    (imported_expression is None or not imported_expression.startswith("libc::"))
+                    and all_module_imports is not None
+                    and known_modules is not None
+                ):
+                    _, expanded_parts = expand_qualified_imports(
+                        function.module,
+                        target_expression.lstrip(":").split("::"),
+                        known_modules,
+                        module_aliases,
+                        all_module_imports,
+                    )
+                    if len(expanded_parts) >= 2 and expanded_parts[0] == "libc":
+                        imported_expression = "::".join(expanded_parts)
+                if (
                     imported_expression is None
                     or not imported_expression.startswith("libc::")
-                    or target_expression.lstrip(":").startswith("libc::")
                 ):
                     continue
                 symbol = imported_expression.rsplit("::", 1)[-1]
+                if symbol == "syscall":
+                    continue
                 calls.append(
                     HostCall(
                         path=path,
@@ -1820,15 +1971,21 @@ def function_indices(
     dict[tuple[str, str], list[str]],
     dict[str, list[str]],
     dict[tuple[str, str], list[str]],
+    dict[tuple[str, str, str], list[str]],
 ]:
     function_by_id = {function.identity: function for function in functions}
     functions_by_module_and_name: dict[tuple[str, str], list[str]] = {}
     functions_by_name: dict[str, list[str]] = {}
     call_items_by_module_and_name: dict[tuple[str, str], list[str]] = {}
+    call_items_by_module_type_and_name: dict[tuple[str, str, str], list[str]] = {}
     for function in functions:
         call_items_by_module_and_name.setdefault(
             (function.module, function.name), []
         ).append(function.identity)
+        if function.impl_type is not None:
+            call_items_by_module_type_and_name.setdefault(
+                (function.module, function.impl_type, function.name), []
+            ).append(function.identity)
         # Rustfmt keeps module-level functions flush-left. Indented `fn` items
         # are methods, nested functions, or macro bodies; treating those as
         # module namespace entries is what made calls such as `drop(...)`
@@ -1845,11 +2002,14 @@ def function_indices(
         identities.sort()
     for identities in call_items_by_module_and_name.values():
         identities.sort()
+    for identities in call_items_by_module_type_and_name.values():
+        identities.sort()
     return (
         function_by_id,
         functions_by_module_and_name,
         functions_by_name,
         call_items_by_module_and_name,
+        call_items_by_module_type_and_name,
     )
 
 
@@ -1872,17 +2032,41 @@ def qualified_target_module(
     prefix = parts[:-1]
     if prefix == ["self"]:
         return caller_module, True
-    if prefix == ["super"]:
-        if module_aliases is not None and f"{caller_module}::super" in module_aliases:
-            return module_aliases[f"{caller_module}::super"], True
-        return "lib", True
+    if prefix[0] == "super":
+        cur_mod = caller_module
+        idx = 0
+        while idx < len(prefix) and prefix[idx] == "super":
+            if module_aliases is not None and f"{cur_mod}::super" in module_aliases:
+                parent = module_aliases[f"{cur_mod}::super"]
+                if parent is None:
+                    return None, True
+                cur_mod = parent
+            else:
+                cur_mod = "lib"
+            idx += 1
+        rest = prefix[idx:]
+        if not rest:
+            return cur_mod, True
+        if cur_mod == "lib":
+            if len(rest) == 1 and rest[0] in known_modules:
+                return rest[0], True
+            if len(rest) == 1 and module_aliases is not None and rest[0] in module_aliases:
+                return module_aliases[rest[0]], True
+            nested = "::".join(rest)
+            if module_aliases is not None and nested in module_aliases:
+                return module_aliases[nested], True
+            return None, True
+        nested = f"{cur_mod}::{'::'.join(rest)}"
+        if module_aliases is not None and nested in module_aliases:
+            return module_aliases[nested], True
+        return None, True
     if prefix == ["crate"]:
         return "lib", True
     if len(prefix) == 1 and prefix[0] in known_modules:
         return prefix[0], True
     if len(prefix) == 1 and module_aliases is not None and prefix[0] in module_aliases:
         return module_aliases[prefix[0]], True
-    if len(prefix) == 2 and prefix[0] in {"crate", "super"}:
+    if len(prefix) == 2 and prefix[0] == "crate":
         if prefix[1] in known_modules:
             return prefix[1], True
         if module_aliases is not None and prefix[1] in module_aliases:
@@ -1890,20 +2074,62 @@ def qualified_target_module(
         return None, True
     if len(prefix) >= 2 and prefix[0] == "self":
         return caller_module, True
-    if len(prefix) >= 3 and prefix[0] in {"crate", "super"}:
+    if len(prefix) >= 3 and prefix[0] == "crate":
         # Do not silently drop a nested component and attribute a global
         # wrapper to the similarly named reentrant function in its parent.
         nested = "::".join(prefix[1:])
-        if prefix[0] == "super" and module_aliases is not None:
-            parent = module_aliases.get(f"{caller_module}::super", "lib")
-            if parent != "lib":
-                nested = f"{parent}::{nested}"
         if module_aliases is not None and nested in module_aliases:
             return module_aliases[nested], True
         return None, True
     if prefix[0] in {"crate", "self", "super"}:
         return None, True
     return None, False
+
+
+def expand_qualified_imports(
+    caller_module: str,
+    parts: list[str],
+    known_modules: set[str],
+    module_aliases: dict[str, str | None] | None,
+    module_imports: dict[str, dict[str, str]] | None,
+) -> tuple[str, list[str]]:
+    """Expand module-scoped and re-exported `use` prefixes across local modules."""
+
+    if not module_imports:
+        return caller_module, parts
+    cur_module = caller_module
+    cur_parts = list(parts)
+    visited: set[tuple[str, tuple[str, ...]]] = set()
+    while cur_parts:
+        state = (cur_module, tuple(cur_parts))
+        if state in visited:
+            break
+        visited.add(state)
+        imports = module_imports.get(cur_module, {})
+        if cur_parts[0] in imports:
+            replacement = imports[cur_parts[0]].lstrip(":").split("::")
+            cur_parts = [*replacement, *cur_parts[1:]]
+            continue
+        advanced = False
+        for split_idx in range(1, len(cur_parts)):
+            mod_target, claims_local = qualified_target_module(
+                cur_module,
+                [*cur_parts[:split_idx], "_probe"],
+                known_modules,
+                module_aliases,
+            )
+            if (
+                claims_local
+                and mod_target is not None
+                and cur_parts[split_idx] in module_imports.get(mod_target, {})
+            ):
+                cur_module = mod_target
+                cur_parts = cur_parts[split_idx:]
+                advanced = True
+                break
+        if not advanced:
+            break
+    return cur_module, cur_parts
 
 
 def resolve_function_calls(
@@ -1914,6 +2140,7 @@ def resolve_function_calls(
     known_modules: set[str],
     root: Path,
     *,
+    call_items_by_module_type_and_name: dict[tuple[str, str, str], list[str]] | None = None,
     module_aliases: dict[str, str | None] | None = None,
     module_imports: dict[str, dict[str, str]] | None = None,
     declared_types_by_module: dict[str, set[str]] | None = None,
@@ -1944,22 +2171,32 @@ def resolve_function_calls(
         if candidates:
             return candidates
         imported_expression = (module_imports or {}).get(module, {}).get(name)
-        if imported_expression is None:
-            return []
-        imported_parts = imported_expression.split("::")
-        imported_module, claims_local = qualified_target_module(
-            module,
-            imported_parts,
-            known_modules,
-            module_aliases,
-        )
-        if not claims_local or imported_module is None:
-            return []
-        return module_item_candidates(
-            imported_module,
-            imported_parts[-1],
-            visited,
-        )
+        if imported_expression is not None:
+            imported_parts = imported_expression.split("::")
+            imported_module, claims_local = qualified_target_module(
+                module,
+                imported_parts,
+                known_modules,
+                module_aliases,
+            )
+            if claims_local and imported_module is not None:
+                return module_item_candidates(
+                    imported_module,
+                    imported_parts[-1],
+                    visited,
+                )
+        glob_target = (module_imports or {}).get(module, {}).get("*")
+        if glob_target is not None:
+            glob_parts = [*glob_target.split("::"), name]
+            glob_module, glob_claims_local = qualified_target_module(
+                module,
+                glob_parts,
+                known_modules,
+                module_aliases,
+            )
+            if glob_claims_local and glob_module is not None:
+                return module_item_candidates(glob_module, name, visited)
+        return []
 
     for line_no, raw_line, line in function_body_lines(function):
         if not line:
@@ -2021,54 +2258,122 @@ def resolve_function_calls(
                 elif len(candidates) > 1:
                     reason = "ambiguous_unqualified_local_target"
             else:
-                local_type = parts[-2]
-                local_types = (declared_types_by_module or {}).get(
-                    function.module, set()
+                initial_parts = list(parts)
+                if initial_parts[0] == "Self" and function.impl_type is not None:
+                    initial_parts[0] = function.impl_type
+                _, raw_claims_local = qualified_target_module(
+                    function.module,
+                    initial_parts,
+                    known_modules,
+                    module_aliases,
                 )
-                if len(parts) == 2 and local_type in local_types:
-                    target_module, claims_local = function.module, True
+                effective_caller, effective_parts = expand_qualified_imports(
+                    function.module,
+                    initial_parts,
+                    known_modules,
+                    module_aliases,
+                    module_imports,
+                )
+                target_name = effective_parts[-1]
+                if len(effective_parts) < 2:
+                    continue
+                if effective_parts[0] == "libc":
+                    # Handled directly by detect_host_calls (`libc_crate_imported_extern_call`).
+                    continue
+                local_type = effective_parts[-2]
+                local_types = (declared_types_by_module or {}).get(
+                    effective_caller, set()
+                )
+                if len(effective_parts) == 2 and (
+                    local_type in local_types or local_type == "Self"
+                ):
+                    target_module, claims_local = effective_caller, True
                 else:
                     target_module, claims_local = qualified_target_module(
-                        function.module, parts, known_modules, module_aliases
+                        effective_caller,
+                        effective_parts,
+                        known_modules,
+                        module_aliases,
                     )
+                    if (
+                        claims_local
+                        and target_module is None
+                        and len(effective_parts) >= 3
+                    ):
+                        type_module, type_claims_local = qualified_target_module(
+                            effective_caller,
+                            effective_parts[:-1],
+                            known_modules,
+                            module_aliases,
+                        )
+                        if (
+                            type_claims_local
+                            and type_module is not None
+                            and local_type
+                            in (declared_types_by_module or {}).get(
+                                type_module, set()
+                            )
+                        ):
+                            target_module = type_module
                 if not claims_local:
-                    continue
-                candidates = (
-                    module_item_candidates(target_module, target_name)
-                    if target_module is not None
-                    else []
-                )
-                target_types = (declared_types_by_module or {}).get(
-                    target_module or "", set()
-                )
-                if (
-                    not candidates
-                    and target_module is not None
-                    and local_type in target_types
-                ):
-                    if (target_module, local_type, target_name) in (
-                        enum_constructors or set()
+                    if (
+                        raw_claims_local
+                        and conservative_nonlocal_unknown
+                        and effective_parts[0]
+                        not in {"std", "core", "alloc", "frankenlibc_core", "frankenlibc_membrane"}
                     ):
-                        continue
-                    if (target_module, local_type, target_name) in (
-                        generated_associated_leaves or set()
-                    ):
-                        continue
-                    candidates = call_items_by_module_and_name.get(
-                        (target_module, target_name), []
-                    )
-                if not candidates:
-                    nonlocal_candidates = functions_by_name.get(target_name, [])
-                    if conservative_nonlocal_unknown:
-                        candidates = nonlocal_candidates
-                        reason = "unresolved_qualified_target"
-                    elif target_module is not None or len(nonlocal_candidates) <= 1:
-                        continue
+                        candidates = functions_by_name.get(target_name, [])
+                        reason = "imported_nonlocal_qualified_target"
                     else:
-                        candidates = nonlocal_candidates
-                        reason = "unresolved_qualified_target"
-                elif len(candidates) > 1:
-                    reason = "ambiguous_qualified_target"
+                        continue
+                else:
+                    candidates = (
+                        module_item_candidates(target_module, target_name)
+                        if target_module is not None
+                        else []
+                    )
+                    target_types = (declared_types_by_module or {}).get(
+                        target_module or "", set()
+                    )
+                    if (
+                        not candidates
+                        and target_module is not None
+                        and (local_type in target_types or local_type == "Self")
+                    ):
+                        if local_type != "Self" and (
+                            target_module,
+                            local_type,
+                            target_name,
+                        ) in (enum_constructors or set()):
+                            continue
+                        if local_type != "Self" and (
+                            target_module,
+                            local_type,
+                            target_name,
+                        ) in (generated_associated_leaves or set()):
+                            continue
+                        typed_candidates = (
+                            call_items_by_module_type_and_name or {}
+                        ).get((target_module, local_type, target_name), [])
+                        candidates = (
+                            typed_candidates
+                            if typed_candidates
+                            else call_items_by_module_and_name.get(
+                                (target_module, target_name), []
+                            )
+                        )
+                    if not candidates:
+                        nonlocal_candidates = functions_by_name.get(target_name, [])
+                        if conservative_nonlocal_unknown:
+                            candidates = nonlocal_candidates
+                            reason = "unresolved_qualified_target"
+                        elif target_module is not None or len(nonlocal_candidates) <= 1:
+                            continue
+                        else:
+                            candidates = nonlocal_candidates
+                            reason = "unresolved_qualified_target"
+                    elif len(candidates) > 1:
+                        reason = "ambiguous_qualified_target"
 
             if reason is None and len(candidates) == 1:
                 target_id = candidates[0]
@@ -2192,14 +2497,20 @@ def analyze_host_dependencies(
         functions_by_module_and_name,
         functions_by_name,
         call_items_by_module_and_name,
+        call_items_by_module_type_and_name,
     ) = function_indices(functions)
     known_modules = {function.module for function in functions}
+    if module_imports:
+        known_modules.update(module_imports.keys())
     direct_host_calls = {
         function.identity: detect_host_calls(
             function,
             root,
             include_libc_calls=include_libc_calls,
             module_imports=(module_imports or {}).get(function.module),
+            all_module_imports=module_imports,
+            known_modules=known_modules,
+            module_aliases=module_aliases,
         )
         for function in functions
     }
@@ -2213,6 +2524,7 @@ def analyze_host_dependencies(
             call_items_by_module_and_name,
             known_modules,
             root,
+            call_items_by_module_type_and_name=call_items_by_module_type_and_name,
             module_aliases=module_aliases,
             module_imports=module_imports,
             declared_types_by_module=declared_types_by_module,
@@ -2324,7 +2636,14 @@ def analyze_host_dependencies(
                 unresolved_looks_delegating = (
                     not call.candidate_function_ids
                     and (
-                        (not same_symbol_only and call.reason == "unresolved_qualified_target")
+                        (
+                            not same_symbol_only
+                            and call.reason
+                            in {
+                                "unresolved_qualified_target",
+                                "imported_nonlocal_qualified_target",
+                            }
+                        )
                         or
                         (same_symbol_only and symbol in call.target_expression)
                         or any(
@@ -3688,6 +4007,67 @@ pub extern "C" fn exported_comparison_only(a: i32, b: i32, c: i32) -> bool {
     require(
         cmp_calls == [],
         "comparison operators `<` and `>` were misclassified as turbofish calls",
+    )
+
+    # Regression checks for v20 soundness fixes: Self::method, {self, ...} identity,
+    # nested brace / indented `use`, and cross-module `libc::` re-exports.
+    nested_imports = parse_module_imports(
+        "use libc::{self, c_int, dlopen as host_open};\n"
+        "fn inner() {\n"
+        "    use crate::{m1::{self as m1_mod, helper as m1_helper}};\n"
+        "}\n"
+    )
+    require(
+        "libc" not in nested_imports
+        and nested_imports.get("host_open") == "libc::dlopen"
+        and nested_imports.get("m1_mod") == "crate::m1"
+        and nested_imports.get("m1_helper") == "crate::m1::helper",
+        f"nested/indented/self brace imports parsed unexpectedly: {nested_imports}",
+    )
+    m1_path = root / "crates/frankenlibc-abi/src/m1.rs"
+    m2_path = root / "crates/frankenlibc-abi/src/m2.rs"
+    m1_src = (
+        "pub(crate) use libc::dlopen as reexported_dlopen;\n"
+        "pub struct Helper;\n"
+        "impl Helper {\n"
+        "    pub fn run() -> *mut core::ffi::c_void {\n"
+        "        Self::leaf()\n"
+        "    }\n"
+        "    fn leaf() -> *mut core::ffi::c_void {\n"
+        "        unsafe { libc::dlsym(core::ptr::null_mut(), core::ptr::null()) }\n"
+        "    }\n"
+        "}\n"
+    )
+    m2_src = (
+        "#[unsafe(no_mangle)]\n"
+        'pub extern "C" fn exported_self_and_reexport() -> *mut core::ffi::c_void {\n'
+        "    let _ = unsafe { crate::m1::reexported_dlopen(core::ptr::null(), 0) };\n"
+        "    crate::m1::Helper::run()\n"
+        "}\n"
+    )
+    v20_fns = parse_functions(m1_path, m1_src) + parse_functions(m2_path, m2_src)
+    v20_analysis = analyze_host_dependencies(
+        v20_fns,
+        root,
+        same_symbol_only=False,
+        include_libc_calls=True,
+        module_imports={
+            "m1": parse_module_imports(m1_src),
+            "m2": parse_module_imports(m2_src),
+        },
+        declared_types_by_module={
+            "m1": parse_declared_types(m1_src),
+            "m2": parse_declared_types(m2_src),
+        },
+        conservative_nonlocal_unknown=True,
+    )
+    v20_syms = {
+        row["symbol"]: set(row["host_symbols"])
+        for row in v20_analysis["symbol_rows"]
+    }
+    require(
+        v20_syms.get("exported_self_and_reexport") == {"dlopen", "dlsym"},
+        f"Self::method or cross-module libc:: re-export missed: {v20_syms}",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

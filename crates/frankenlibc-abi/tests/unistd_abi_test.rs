@@ -3313,8 +3313,12 @@ fn capture_argp_stream_output(
         "fdopen failed: {}",
         std::io::Error::last_os_error()
     );
-
+    // Host glibc's `fdopen` on a pipe probes `lseek` and leaves `ESPIPE` in
+    // `errno`; clear it before running `write` and preserve `write`'s own
+    // `errno` across `fflush`/`fclose`/pipe drain.
+    clear_errno();
     write(stream);
+    let saved_errno = errno_value();
     assert_eq!(
         unsafe { libc::fflush(stream) },
         0,
@@ -3336,6 +3340,9 @@ fn capture_argp_stream_output(
     let mut output = String::new();
     let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
     read_end.read_to_string(&mut output)?;
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = saved_errno;
+    }
     Ok(output)
 }
 
@@ -8895,12 +8902,23 @@ fn aio_suspend_rejects_oversize_tv_nsec() {
 
 #[test]
 fn aio_suspend_rejects_empty_list_before_timeout() {
-    // nent <= 0 is its own EINVAL path that must trigger before we ever
-    // look at the timespec — adversarial timestamps should not affect it.
+    // Negative `nent` is an immediate EINVAL path before inspecting `timeout`,
+    // whereas `nent == 0` with an empty list succeeds immediately (`0`) on glibc.
+    let invalid_ts = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 1_000_000_000,
+    };
     clear_errno();
-    let rc = unsafe { aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
-    assert_eq!(rc, -1);
+    let rc_neg = unsafe { aio_suspend(std::ptr::null(), -1, &invalid_ts) };
+    assert_eq!(rc_neg, -1);
     assert_eq!(errno_value(), libc::EINVAL);
+
+    clear_errno();
+    let rc_zero = unsafe { aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    let host_zero = unsafe { libc::aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    assert_eq!(rc_zero, host_zero);
+    assert_eq!(rc_zero, 0);
+    assert_eq!(errno_value(), 0);
 }
 
 #[test]
@@ -14803,9 +14821,7 @@ fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
 
 #[test]
 fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
-    use frankenlibc_abi::unistd_abi::{
-        _nss_files_getaliasbyname_r, _nss_files_gethostton_r, _nss_files_getntohost_r,
-    };
+    use frankenlibc_abi::unistd_abi::{_nss_files_gethostton_r, _nss_files_getntohost_r};
 
     let key = CString::new("missing").unwrap();
     macro_rules! check {
@@ -14841,9 +14857,38 @@ fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
         }};
     }
 
-    check!(_nss_files_getaliasbyname_r);
     check!(_nss_files_gethostton_r);
     check!(_nss_files_getntohost_r);
+}
+
+#[test]
+fn nss_files_alias_rejects_invalid_output_without_claiming_a_miss() {
+    use frankenlibc_abi::unistd_abi::_nss_files_getaliasbyname_r;
+    use std::ptr;
+    let mut error = 717;
+    unsafe {
+        assert_eq!(
+            _nss_files_getaliasbyname_r(
+                c"missing".as_ptr(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                &mut error,
+            ),
+            -1
+        );
+        assert_eq!(error, libc::EINVAL);
+        assert_eq!(
+            _nss_files_getaliasbyname_r(
+                ptr::null(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+            ),
+            -1
+        );
+    }
 }
 
 #[test]
@@ -16264,21 +16309,37 @@ fn res_context_query_rejects_null_answer_before_network() {
 fn res_context_search_rejects_non_utf8_name_before_network() {
     use frankenlibc_abi::errno_abi::__errno_location;
     use frankenlibc_abi::unistd_abi::__res_context_search;
-    let name = CString::new(vec![0xff, b'e', b'x']).unwrap();
     let mut buf = [0u8; 512];
     unsafe { *__errno_location() = 0 };
-    let rc = unsafe {
+    let rc_null = unsafe {
         __res_context_search(
             std::ptr::null_mut(),
-            name.as_ptr(),
+            std::ptr::null(),
             1,
             1,
             buf.as_mut_ptr() as *mut c_void,
             buf.len() as c_int,
         )
     };
-    assert_eq!(rc, -1);
+    assert_eq!(rc_null, -1);
     assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    // Malformed empty DNS label ("a..b.") is rejected during wire-query
+    // construction before any network socket I/O occurs.
+    let malformed = CString::new("a..b.").unwrap();
+    unsafe { *__errno_location() = 0 };
+    let rc_malformed = unsafe {
+        __res_context_search(
+            std::ptr::null_mut(),
+            malformed.as_ptr(),
+            1,
+            1,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(rc_malformed, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EMSGSIZE);
 }
 
 #[test]
@@ -16302,6 +16363,56 @@ fn res_context_send_rejects_short_query_before_network() {
         )
     };
     assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_context_mkquery_accepts_allocated_resolv_context_and_nss_alias_erange() {
+    use frankenlibc_abi::glibc_internal_abi::{__resolv_context_get, __resolv_context_put};
+    use frankenlibc_abi::unistd_abi::{__res_context_mkquery, _nss_files_getaliasbyname_r};
+
+    let ctx = unsafe { __resolv_context_get() };
+    assert!(!ctx.is_null(), "__resolv_context_get must succeed");
+    let dname = CString::new("example.com").unwrap();
+    let mut packet = [0u8; 512];
+    let len = unsafe {
+        __res_context_mkquery(
+            ctx,
+            0,
+            dname.as_ptr(),
+            1,
+            1,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            packet.as_mut_ptr() as *mut c_void,
+            packet.len() as c_int,
+        )
+    };
+    unsafe { __resolv_context_put(ctx) };
+    assert!(
+        len > 12,
+        "__res_context_mkquery on real resolv_context must build DNS query, got {len}"
+    );
+    assert_ne!(
+        packet[2] & 0x01,
+        0,
+        "default resolv_context must enable RD bit"
+    );
+
+    let alias_name = CString::new("postmaster").unwrap();
+    let mut alias_ent = [0u8; 64];
+    let mut errnop: c_int = 0;
+    let status = unsafe {
+        _nss_files_getaliasbyname_r(
+            alias_name.as_ptr(),
+            alias_ent.as_mut_ptr() as *mut c_void,
+            std::ptr::null_mut(),
+            0,
+            &mut errnop,
+        )
+    };
+    assert_eq!(status, -2); // NSS_STATUS_TRYAGAIN
+    assert_eq!(errnop, libc::ERANGE);
 }
 
 #[test]

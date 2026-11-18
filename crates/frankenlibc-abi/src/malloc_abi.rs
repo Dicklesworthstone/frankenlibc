@@ -492,7 +492,7 @@ fn compute_desired_strict_hot_mode() -> u64 {
     if cfg!(test)
         || cfg!(feature = "owned-tls-cache")
         || cfg!(feature = "standalone")
-        || NATIVE_THREAD_BACKEND.load(Ordering::Acquire)
+        || NATIVE_THREAD_BACKEND.load(Ordering::SeqCst)
         || !runtime_policy::is_runtime_ready()
         || !runtime_policy::explicit_strict_passthrough_resolved()
         || GLOBAL_ALLOC_STATS.get().is_none()
@@ -500,7 +500,7 @@ fn compute_desired_strict_hot_mode() -> u64 {
     {
         return STRICT_HOT_MODE_SLOW as u64;
     }
-    if MULTI_THREADED.load(Ordering::Acquire) {
+    if MULTI_THREADED.load(Ordering::SeqCst) {
         STRICT_HOT_MODE_MT as u64
     } else {
         STRICT_HOT_MODE_ST as u64
@@ -510,19 +510,25 @@ fn compute_desired_strict_hot_mode() -> u64 {
 #[cold]
 #[inline(never)]
 pub(crate) fn refresh_strict_hot_mode() {
-    let desired = compute_desired_strict_hot_mode();
-    let mut cur = STRICT_HOT_MODE_STATE.load(Ordering::Acquire);
+    let mut cur = STRICT_HOT_MODE_STATE.load(Ordering::SeqCst);
     loop {
+        let desired = compute_desired_strict_hot_mode();
         if (cur & 3) == desired {
             return;
         }
         match STRICT_HOT_MODE_STATE.compare_exchange_weak(
             cur,
             (cur & !3) | desired,
-            Ordering::AcqRel,
-            Ordering::Acquire,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
         ) {
-            Ok(_) => return,
+            Ok(_) => {
+                let recheck = compute_desired_strict_hot_mode();
+                if recheck == desired {
+                    return;
+                }
+                cur = STRICT_HOT_MODE_STATE.load(Ordering::SeqCst);
+            }
             Err(actual) => cur = actual,
         }
     }
@@ -713,6 +719,26 @@ fn note_thread_tid(tid: i32) {
 /// so the tid path neither matches nor claims such a slot: the two key spaces stay
 /// disjoint.
 const KEY_CLAIMED_TID: i32 = -1;
+/// Tombstone marker for a reentry slot vacated by an exited native worker thread;
+/// preserves probe chains while allowing subsequent native threads to reuse the slot.
+const REENTRY_RETIRED_TID: i32 = -2;
+
+/// Returns `true` once any second thread has been created or observed in this process.
+#[inline(always)]
+pub(crate) fn is_multi_threaded() -> bool {
+    MULTI_THREADED.load(Ordering::Relaxed)
+}
+
+/// Latch `MULTI_THREADED` and `__libc_single_threaded = 0` synchronously before
+/// spawning a hosted OS thread so single-threaded unlocked fast paths in the
+/// parent cannot race with the newly created child thread.
+pub(crate) fn latch_multi_threaded_before_thread_create() {
+    crate::stdio_abi::evict_parked_st_fmemopen_slot();
+    crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
+    if !MULTI_THREADED.swap(true, Ordering::SeqCst) {
+        refresh_strict_hot_mode();
+    }
+}
 
 /// Set, together with `MULTI_THREADED`, before FrankenLibC's own thread backend clones
 /// its first thread. Those threads are created without `CLONE_SETTLS` and share their
@@ -798,11 +824,14 @@ pub(crate) fn note_native_thread_backend() {
     }
     MULTI_THREADED.store(true, Ordering::SeqCst);
     crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
+    // Drain creator compiler-TLS stdio caches and any parked ST fmemopen slot
+    // BEFORE latching `NATIVE_THREAD_BACKEND = true` (which suppresses compiler
+    // TLS access) and BEFORE any clone child shares `%fs`.
+    crate::stdio_abi::drain_creator_compiler_tls_for_native_threads();
     frankenlibc_membrane::tls_cache::disable_compiler_tls_cache_for_native_threads();
-    if !NATIVE_THREAD_BACKEND.load(Ordering::Acquire) {
-        crate::stdio_abi::drain_creator_compiler_tls_for_native_threads();
-    }
-    if !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst) {
+    let first_native = !NATIVE_THREAD_BACKEND.swap(true, Ordering::SeqCst);
+    if first_native {
+        crate::runtime_policy::migrate_creator_runtime_policy_tls_for_native_threads();
         refresh_strict_hot_mode();
     }
 }
@@ -984,50 +1013,53 @@ fn allocator_reentry_slot_for_tid(
     }
     let compact_start =
         (tid as usize).wrapping_mul(0x9e37_79b1_85eb_ca87) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
-    for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
-        let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
-        let Some(slot) = ensure_reentry_slot(idx) else {
-            continue;
-        };
-        let observed = slot.tid.load(Ordering::Acquire);
-        if observed == tid {
-            bind_slot_to_thread_key(slot, thread_key);
-            return Some(slot);
-        }
-        if observed == 0 {
-            match slot
-                .tid
-                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
-            {
-                Ok(_) => {
-                    note_slot_claimed_index(idx);
-                    bind_slot_to_thread_key(slot, thread_key);
-                    return Some(slot);
-                }
-                Err(actual) if actual == tid => {
-                    bind_slot_to_thread_key(slot, thread_key);
-                    return Some(slot);
-                }
-                Err(_) => {}
-            }
-        }
-    }
-
     let start = allocator_reentry_slot_start(tid);
-    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
-        let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
-        let Some(slot) = ensure_reentry_slot(idx) else {
-            continue;
-        };
-        let observed = slot.tid.load(Ordering::Acquire);
-        if observed == tid {
-            bind_slot_to_thread_key(slot, thread_key);
-            return Some(slot);
+
+    'retry: for _ in 0..8 {
+        let mut first_reusable: Option<(usize, &'static AllocatorReentrySlot, i32)> = None;
+        for offset in 0..REENTRY_COMPACT_GRANULE_SLOTS {
+            let idx = (compact_start + offset) & (REENTRY_COMPACT_GRANULE_SLOTS - 1);
+            let Some(slot) = ensure_reentry_slot(idx) else {
+                continue;
+            };
+            let observed = slot.tid.load(Ordering::Acquire);
+            if observed == tid {
+                bind_slot_to_thread_key(slot, thread_key);
+                return Some(slot);
+            }
+            if (observed == 0 || observed == REENTRY_RETIRED_TID) && first_reusable.is_none() {
+                first_reusable = Some((idx, slot, observed));
+            }
         }
-        if observed == 0 {
+
+        for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
+            let idx = (start + offset) & ALLOCATOR_REENTRY_SLOT_MASK;
+            let Some(slot) = ensure_reentry_slot(idx) else {
+                continue;
+            };
+            let observed = slot.tid.load(Ordering::Acquire);
+            if observed == tid {
+                bind_slot_to_thread_key(slot, thread_key);
+                return Some(slot);
+            }
+            if (observed == 0 || observed == REENTRY_RETIRED_TID) && first_reusable.is_none() {
+                first_reusable = Some((idx, slot, observed));
+            }
+            if observed == 0 {
+                break;
+            }
+        }
+
+        let boot_obs = BOOTSTRAP_REENTRY_SLOT.tid.load(Ordering::Acquire);
+        if boot_obs == tid {
+            bind_slot_to_thread_key(&BOOTSTRAP_REENTRY_SLOT, thread_key);
+            return Some(&BOOTSTRAP_REENTRY_SLOT);
+        }
+
+        if let Some((idx, slot, expected)) = first_reusable {
             match slot
                 .tid
-                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
+                .compare_exchange(expected, tid, Ordering::AcqRel, Ordering::Acquire)
             {
                 Ok(_) => {
                     note_slot_claimed_index(idx);
@@ -1038,28 +1070,52 @@ fn allocator_reentry_slot_for_tid(
                     bind_slot_to_thread_key(slot, thread_key);
                     return Some(slot);
                 }
-                Err(_) => {}
+                Err(_) => continue 'retry,
             }
         }
-    }
 
-    let slot = &BOOTSTRAP_REENTRY_SLOT;
-    let observed = slot.tid.load(Ordering::Acquire);
-    if observed == tid {
-        bind_slot_to_thread_key(slot, thread_key);
-        return Some(slot);
-    }
-    if observed == 0
-        && slot
-            .tid
-            .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-    {
-        note_slot_claimed_index(ALLOCATOR_REENTRY_SLOT_COUNT);
-        bind_slot_to_thread_key(slot, thread_key);
-        return Some(slot);
+        if (boot_obs == 0 || boot_obs == REENTRY_RETIRED_TID)
+            && BOOTSTRAP_REENTRY_SLOT
+                .tid
+                .compare_exchange(boot_obs, tid, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            note_slot_claimed_index(ALLOCATOR_REENTRY_SLOT_COUNT);
+            bind_slot_to_thread_key(&BOOTSTRAP_REENTRY_SLOT, thread_key);
+            return Some(&BOOTSTRAP_REENTRY_SLOT);
+        }
+        break;
     }
     None
+}
+
+/// Release the TID-claimed reentry slot of an exiting native worker thread (`tid`)
+/// so `wide_io_depth`/`signal_handler_sp` are cleared and sequential thread churn
+/// beyond 4,096 threads recycles slots cleanly without losing magazine/stat state.
+pub(crate) fn retire_native_thread_reentry_slot(tid: i32) {
+    if tid <= 0 {
+        return;
+    }
+    for_each_claimed_slot(|slot| {
+        if slot.tid.load(Ordering::Acquire) == tid {
+            slot.native_guard_bits.store(0, Ordering::Release);
+            slot.allocator_depth.store(0, Ordering::Release);
+            slot.wide_io_depth.store(0, Ordering::Release);
+            slot.fallback_cache_index.store(0, Ordering::Release);
+            slot.in_fallback_table.store(false, Ordering::Release);
+            #[cfg(not(feature = "owned-tls-cache"))]
+            slot.string_membrane_active.store(false, Ordering::Release);
+            slot.last_fast_pcc_packed.store(0, Ordering::Release);
+            slot.signal_handler_sp.store(0, Ordering::Release);
+            slot.thread_key.store(0, Ordering::Release);
+            let _ = slot.tid.compare_exchange(
+                tid,
+                REENTRY_RETIRED_TID,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
+        }
+    });
 }
 
 /// Get the reentry slot for the current thread, without a syscall unless FrankenLibC's
@@ -3452,13 +3508,21 @@ unsafe fn bump_allocation_size(ptr: *mut c_void) -> Option<usize> {
 
 #[inline]
 unsafe fn resolve_host_allocator_symbol(name: &'static [u8]) -> *mut c_void {
-    let symbol = name.strip_suffix(b"\0").unwrap_or(name);
-    let Ok(symbol) = core::str::from_utf8(symbol) else {
-        return std::ptr::null_mut();
-    };
-    crate::host_resolve::resolve_host_symbol_raw(symbol)
-        .map(|addr| addr as *mut c_void)
-        .unwrap_or_default()
+    #[cfg(feature = "standalone")]
+    {
+        let _ = name;
+        std::ptr::null_mut()
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let symbol = name.strip_suffix(b"\0").unwrap_or(name);
+        let Ok(symbol) = core::str::from_utf8(symbol) else {
+            return std::ptr::null_mut();
+        };
+        crate::host_resolve::resolve_host_symbol_raw(symbol)
+            .map(|addr| addr as *mut c_void)
+            .unwrap_or_default()
+    }
 }
 
 /// Safe accessor: returns cached host fn or None (bump fallback).
@@ -3492,35 +3556,38 @@ host_fn_accessor!(
 /// Resolve and cache host allocator symbols.
 /// Called from __libc_start_main AFTER _dl_init, when dlvsym is safe.
 pub(crate) fn prewarm_host_allocator_symbols() {
-    crate::host_resolve::bootstrap_host_symbols();
-    // SAFETY: called after dynamic linker init; dlvsym_next is safe.
-    unsafe {
-        let malloc_ptr = crate::host_resolve::host_malloc_raw()
-            .map(|host_fn| host_fn as usize)
-            .unwrap_or_else(|| resolve_host_allocator_symbol(b"malloc\0") as usize);
-        let calloc_ptr = crate::host_resolve::host_calloc_raw()
-            .map(|host_fn| host_fn as usize)
-            .unwrap_or_else(|| resolve_host_allocator_symbol(b"calloc\0") as usize);
-        let realloc_ptr = crate::host_resolve::host_realloc_raw()
-            .map(|host_fn| host_fn as usize)
-            .unwrap_or_else(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
-        let free_ptr = crate::host_resolve::host_free_raw()
-            .map(|host_fn| host_fn as usize)
-            .unwrap_or_else(|| resolve_host_allocator_symbol(b"free\0") as usize);
-        let memalign_ptr = resolve_host_allocator_symbol(b"memalign\0") as usize;
-        let malloc_usable_size_ptr =
-            resolve_host_allocator_symbol(b"malloc_usable_size\0") as usize;
+    #[cfg(not(feature = "standalone"))]
+    {
+        crate::host_resolve::bootstrap_host_symbols();
+        // SAFETY: called after dynamic linker init; dlvsym_next is safe.
+        unsafe {
+            let malloc_ptr = crate::host_resolve::host_malloc_raw()
+                .map(|host_fn| host_fn as usize)
+                .unwrap_or_else(|| resolve_host_allocator_symbol(b"malloc\0") as usize);
+            let calloc_ptr = crate::host_resolve::host_calloc_raw()
+                .map(|host_fn| host_fn as usize)
+                .unwrap_or_else(|| resolve_host_allocator_symbol(b"calloc\0") as usize);
+            let realloc_ptr = crate::host_resolve::host_realloc_raw()
+                .map(|host_fn| host_fn as usize)
+                .unwrap_or_else(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
+            let free_ptr = crate::host_resolve::host_free_raw()
+                .map(|host_fn| host_fn as usize)
+                .unwrap_or_else(|| resolve_host_allocator_symbol(b"free\0") as usize);
+            let memalign_ptr = resolve_host_allocator_symbol(b"memalign\0") as usize;
+            let malloc_usable_size_ptr =
+                resolve_host_allocator_symbol(b"malloc_usable_size\0") as usize;
 
-        let _ = HOST_MALLOC_FN.get_or_init(|| malloc_ptr);
-        let _ = HOST_CALLOC_FN.get_or_init(|| calloc_ptr);
-        let _ = HOST_REALLOC_FN.get_or_init(|| realloc_ptr);
-        let _ = HOST_FREE_FN.get_or_init(|| free_ptr);
-        // An early lookup may precede the host image becoming resolvable.
-        // Leave this cache retryable so later arena allocations can resolve it.
-        if memalign_ptr != 0 {
-            let _ = HOST_MEMALIGN_FN.set(memalign_ptr);
+            let _ = HOST_MALLOC_FN.get_or_init(|| malloc_ptr);
+            let _ = HOST_CALLOC_FN.get_or_init(|| calloc_ptr);
+            let _ = HOST_REALLOC_FN.get_or_init(|| realloc_ptr);
+            let _ = HOST_FREE_FN.get_or_init(|| free_ptr);
+            // An early lookup may precede the host image becoming resolvable.
+            // Leave this cache retryable so later arena allocations can resolve it.
+            if memalign_ptr != 0 {
+                let _ = HOST_MEMALIGN_FN.set(memalign_ptr);
+            }
+            let _ = HOST_MALLOC_USABLE_SIZE_FN.get_or_init(|| malloc_usable_size_ptr);
         }
-        let _ = HOST_MALLOC_USABLE_SIZE_FN.get_or_init(|| malloc_usable_size_ptr);
     }
     let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
     refresh_strict_hot_mode();
@@ -3795,17 +3862,27 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             } else {
                 host_alloc_result(out)
             }
-        } else if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
+        } else {
+            if size == 0 {
+                return std::ptr::null_mut();
+            }
+            let Some(old_size) =
+                fallback_size_lockfree(ptr).or_else(|| arena_block_size_lockfree(ptr))
+            else {
+                unsafe { set_abi_errno(ENOMEM as c_int) };
+                return std::ptr::null_mut();
+            };
             let out = unsafe { bump_alloc(size) };
             if !out.is_null() {
-                let copy_size = old_size.min(size);
                 unsafe {
-                    std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
+                    std::ptr::copy_nonoverlapping(
+                        ptr.cast::<u8>(),
+                        out.cast::<u8>(),
+                        old_size.min(size),
+                    );
                 }
             }
             out
-        } else {
-            unsafe { bump_alloc(size) }
         }
     }
 }
@@ -5702,6 +5779,9 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
                 && let Some(reusable) = fallback_slot_if_ready(reusable_idx)
             {
                 publish_fallback_range(key, size);
+                reusable
+                    .ptr
+                    .store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
                 reusable.size.store(size, Ordering::Relaxed);
                 reusable.ptr.store(key, Ordering::Release);
                 return Some(reusable_idx);
@@ -5736,6 +5816,9 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
                 && let Some(reusable) = fallback_slot_if_ready(reusable_idx)
             {
                 publish_fallback_range(key, size);
+                reusable
+                    .ptr
+                    .store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
                 reusable.size.store(size, Ordering::Relaxed);
                 reusable.ptr.store(key, Ordering::Release);
                 return Some(reusable_idx);
@@ -5751,6 +5834,9 @@ unsafe fn fallback_insert_sized_index_unlocked(key: usize, size: usize) -> Optio
         && let Some(reusable) = fallback_slot_if_ready(reusable_idx)
     {
         publish_fallback_range(key, size);
+        reusable
+            .ptr
+            .store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
         reusable.size.store(size, Ordering::Relaxed);
         reusable.ptr.store(key, Ordering::Release);
         return Some(reusable_idx);
@@ -5794,12 +5880,20 @@ fn fallback_insert_sized_for_slot(
     // callers cannot be shown to hold a guard, and eliding a lock on an
     // unproven precondition is how an allocator gets a rare, unreproducible
     // corruption. bd-65p87u.
-    let indexed = if !MULTI_THREADED.load(Ordering::Relaxed) {
+    let indexed = if !MULTI_THREADED.load(Ordering::Acquire) {
         match fallback_key(ptr) {
             // SAFETY: guard held by the caller + single-threaded => exclusive.
-            Some(key) if !ptr.is_null() => unsafe {
-                fallback_insert_sized_index_unlocked(key, size)
-            },
+            // Mark `in_fallback_table` across the unlocked probe/update so a
+            // same-thread signal handler calling `fallback_size_lockfree` never
+            // observes an in-progress slot transition.
+            Some(key) if !ptr.is_null() => {
+                slot.in_fallback_table.store(true, Ordering::Release);
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                let res = unsafe { fallback_insert_sized_index_unlocked(key, size) };
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                slot.in_fallback_table.store(false, Ordering::Release);
+                res
+            }
             _ => None,
         }
     } else {
@@ -5821,20 +5915,26 @@ fn fallback_remove_sized_for_slot(
     ptr: *mut c_void,
 ) -> Option<usize> {
     let key = fallback_key(ptr)?;
-    if !MULTI_THREADED.load(Ordering::Relaxed) {
+    if !MULTI_THREADED.load(Ordering::Acquire) {
         let cached = slot.fallback_cache_index.load(Ordering::Acquire);
         if let Some(cached_idx) = cached.checked_sub(1) {
             if let Some(entry) = fallback_slot_if_ready(cached_idx) {
                 let slot_key = entry.ptr.load(Ordering::Acquire);
                 if slot_key == key {
+                    slot.in_fallback_table.store(true, Ordering::Release);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
                     let size = entry.size.load(Ordering::Relaxed);
                     clear_fallback_cache(slot);
                     if size != 0 {
                         // Keep the key as an inactive marker. The next host tcache
                         // reuse can reactivate it without probing past a tombstone.
                         entry.size.store(0, Ordering::Release);
+                        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                        slot.in_fallback_table.store(false, Ordering::Release);
                         return Some(size);
                     }
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    slot.in_fallback_table.store(false, Ordering::Release);
                     return None;
                 }
             }
@@ -6417,18 +6517,22 @@ pub(crate) fn try_string_membrane_slot() -> Option<StringMembraneSlot> {
 #[inline]
 #[must_use]
 pub(crate) fn in_string_membrane_or_validation_now() -> bool {
-    if frankenlibc_membrane::ptr_validator::in_validation_context() {
-        return true;
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        frankenlibc_membrane::ptr_validator::in_validation_context()
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if frankenlibc_membrane::ptr_validator::in_validation_context() {
+            return true;
+        }
         if let Some(slot) = current_allocator_reentry_slot()
             && slot.string_membrane_active.load(Ordering::Relaxed)
         {
             return true;
         }
+        false
     }
-    false
 }
 
 /// Clear `signal_handler_sp` and per-thread fast-PCC explainability on thread exit

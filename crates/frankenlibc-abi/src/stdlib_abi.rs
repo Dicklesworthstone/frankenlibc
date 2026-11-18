@@ -1261,6 +1261,36 @@ pub(crate) fn publish_startup_environ(published: *mut *mut c_char) {
     publish_environ_aliases();
 }
 
+/// Returns `true` when none of FrankenLibC's `environ` aliases have been
+/// seeded yet (e.g. during `.init_array` or when loaded via
+/// `dlopen(..., RTLD_LOCAL | RTLD_DEEPBIND)` where `__libc_start_main` never runs).
+#[inline]
+fn got_environ_uninitialized_for_init_array() -> bool {
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        not(debug_assertions),
+        not(feature = "standalone")
+    ))]
+    {
+        unsafe { GOT_ENVIRON.is_null() && GOT_UNDERSCORE_ENVIRON.is_null() }
+    }
+    #[cfg(not(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        not(debug_assertions),
+        not(feature = "standalone")
+    )))]
+    {
+        true
+    }
+}
+
+pub(crate) fn environ_uninitialized_for_init_array() -> bool {
+    let host_uninit = unsafe { HOST_ENVIRON.is_null() };
+    host_uninit && got_environ_uninitialized_for_init_array()
+}
+
 /// Transfer ownership of the process environ array during startup (bd-zh1y.6.1).
 ///
 /// Deep-copies the host environ into our own allocation so setenv/unsetenv can

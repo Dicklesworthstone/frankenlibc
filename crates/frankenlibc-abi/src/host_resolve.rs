@@ -55,21 +55,29 @@ pub(crate) unsafe fn host_dlvsym_next_raw(
     symbol: *const c_char,
     version: *const c_char,
 ) -> *mut c_void {
-    if HOST_DLVSYM.load(Ordering::Acquire) == 0 {
-        ensure_host_dlvsym();
+    #[cfg(feature = "standalone")]
+    {
+        let _ = (symbol, version);
+        core::ptr::null_mut()
     }
-    // Use the ELF-resolved host dlvsym to avoid calling our interposed dlvsym,
-    // which during bootstrap passthrough resolves from our export table instead
-    // of delegating to the real host dynamic linker.
-    let addr = HOST_DLVSYM.load(Ordering::Acquire);
-    if addr != 0 {
-        type DlvsymFn =
-            unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
-        let host_dlvsym: DlvsymFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_dlvsym(libc::RTLD_NEXT, symbol, version) };
+    #[cfg(not(feature = "standalone"))]
+    {
+        if HOST_DLVSYM.load(Ordering::Acquire) == 0 {
+            ensure_host_dlvsym();
+        }
+        // Use the ELF-resolved host dlvsym to avoid calling our interposed dlvsym,
+        // which during bootstrap passthrough resolves from our export table instead
+        // of delegating to the real host dynamic linker.
+        let addr = HOST_DLVSYM.load(Ordering::Acquire);
+        if addr != 0 {
+            type DlvsymFn =
+                unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
+            let host_dlvsym: DlvsymFn = unsafe { core::mem::transmute(addr) };
+            return unsafe { host_dlvsym(libc::RTLD_NEXT, symbol, version) };
+        }
+        // Fallback: try libc::dlvsym (may recurse into our interposed dlvsym)
+        unsafe { libc::dlvsym(libc::RTLD_NEXT, symbol, version) }
     }
-    // Fallback: try libc::dlvsym (may recurse into our interposed dlvsym)
-    unsafe { libc::dlvsym(libc::RTLD_NEXT, symbol, version) }
 }
 
 unsafe fn raw_read(fd: i32, buf: *mut u8, count: usize) -> isize {
@@ -772,11 +780,14 @@ fn load_loader_image() -> Option<&'static LoadedGlibcImage> {
 /// Early-resolve the host dlvsym so that subsequent host_dlvsym_next_raw calls
 /// bypass our interposed dlvsym. Must be called before delegate_to_host_libc_start_main.
 pub(crate) fn ensure_host_dlvsym() {
-    if HOST_DLVSYM.load(Ordering::Acquire) != 0 {
-        return;
-    }
-    if let Some(addr) = resolve_host_symbol_raw("dlvsym") {
-        HOST_DLVSYM.store(addr, Ordering::Release);
+    #[cfg(not(feature = "standalone"))]
+    {
+        if HOST_DLVSYM.load(Ordering::Acquire) != 0 {
+            return;
+        }
+        if let Some(addr) = resolve_host_symbol_raw("dlvsym") {
+            HOST_DLVSYM.store(addr, Ordering::Release);
+        }
     }
 }
 
@@ -785,50 +796,53 @@ pub(crate) fn ensure_host_dlvsym() {
 static BOOTSTRAP_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn bootstrap_host_symbols() {
-    // EARLY-OUT ON FULL RESOLUTION. `RESOLVED` was written at the end of this
-    // function and never read anywhere, so the table below was walked on EVERY
-    // call — and every symbol still at 0 was re-resolved, which means a full ELF
-    // symbol-table scan with string comparison per call. Measured with callgrind
-    // on a malloc/free loop, `symbol_name_matches` was 5.42% of fl's entire
-    // instruction budget and `resolve_symbol_from_data` a further 2.31%, i.e.
-    // 7.7% of malloc+free spent looking up host symbols. bd-dcrhgl.
-    if RESOLVED.load(Ordering::Acquire) != 0 {
-        return;
-    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        // EARLY-OUT ON FULL RESOLUTION. `RESOLVED` was written at the end of this
+        // function and never read anywhere, so the table below was walked on EVERY
+        // call — and every symbol still at 0 was re-resolved, which means a full ELF
+        // symbol-table scan with string comparison per call. Measured with callgrind
+        // on a malloc/free loop, `symbol_name_matches` was 5.42% of fl's entire
+        // instruction budget and `resolve_symbol_from_data` a further 2.31%, i.e.
+        // 7.7% of malloc+free spent looking up host symbols. bd-dcrhgl.
+        if RESOLVED.load(Ordering::Acquire) != 0 {
+            return;
+        }
 
-    // BACKOFF, because a plain one-shot latch would be wrong. Some of these
-    // resolve only once the loader image is mapped (`dlvsym`,
-    // `dl_iterate_phdr`), so an early call can legitimately fail and a later one
-    // succeed; latching after the first pass would lose them permanently.
-    // Retrying on attempts 0, 1, 2 and then only on powers of two keeps the
-    // late-resolution path working while making the steady state — a symbol
-    // that is genuinely absent — cost one atomic increment and a branch instead
-    // of a symbol-table walk.
-    let attempt = BOOTSTRAP_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-    if attempt > 2 && !attempt.is_power_of_two() {
-        return;
-    }
+        // BACKOFF, because a plain one-shot latch would be wrong. Some of these
+        // resolve only once the loader image is mapped (`dlvsym`,
+        // `dl_iterate_phdr`), so an early call can legitimately fail and a later one
+        // succeed; latching after the first pass would lose them permanently.
+        // Retrying on attempts 0, 1, 2 and then only on powers of two keeps the
+        // late-resolution path working while making the steady state — a symbol
+        // that is genuinely absent — cost one atomic increment and a branch instead
+        // of a symbol-table walk.
+        let attempt = BOOTSTRAP_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        if attempt > 2 && !attempt.is_power_of_two() {
+            return;
+        }
 
-    let mut unresolved = 0usize;
-    for (symbol, cache) in [
-        ("pthread_self", &HOST_PTHREAD_SELF),
-        ("malloc", &HOST_MALLOC),
-        ("calloc", &HOST_CALLOC),
-        ("realloc", &HOST_REALLOC),
-        ("free", &HOST_FREE),
-        ("__errno_location", &HOST_ERRNO_LOCATION),
-        ("dlvsym", &HOST_DLVSYM),
-    ] {
-        if cache.load(Ordering::Acquire) == 0 {
-            let a = resolve_host_symbol_raw(symbol).unwrap_or(0);
-            if a != 0 {
-                cache.store(a, Ordering::Release);
-            } else {
-                unresolved += 1;
+        let mut unresolved = 0usize;
+        for (symbol, cache) in [
+            ("pthread_self", &HOST_PTHREAD_SELF),
+            ("malloc", &HOST_MALLOC),
+            ("calloc", &HOST_CALLOC),
+            ("realloc", &HOST_REALLOC),
+            ("free", &HOST_FREE),
+            ("__errno_location", &HOST_ERRNO_LOCATION),
+            ("dlvsym", &HOST_DLVSYM),
+        ] {
+            if cache.load(Ordering::Acquire) == 0 {
+                let a = resolve_host_symbol_raw(symbol).unwrap_or(0);
+                if a != 0 {
+                    cache.store(a, Ordering::Release);
+                } else {
+                    unresolved += 1;
+                }
             }
         }
+        RESOLVED.store((unresolved == 0) as usize, Ordering::Release);
     }
-    RESOLVED.store((unresolved == 0) as usize, Ordering::Release);
 }
 
 /// The loaded libc (`needle` "libc.so") or ld.so ("ld-linux") symbol
@@ -945,42 +959,75 @@ static LOADED_LOADER_TABLES: LoadedTablesCache = LoadedTablesCache {
 };
 
 pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
-    if let Some((base, tables)) = loaded_tables(b"libc.so", &LOADED_LIBC_TABLES) {
-        return resolve_in(base, &tables, symbol);
+    #[cfg(feature = "standalone")]
+    {
+        let _ = symbol;
+        None
     }
-    let image = load_glibc_image()?;
-    // SAFETY: cached mapping is process-lifetime read-only storage for libc ELF bytes.
-    let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
-    resolve_symbol_from_data(image.base, data, symbol)
+    #[cfg(not(feature = "standalone"))]
+    {
+        if let Some((base, tables)) = loaded_tables(b"libc.so", &LOADED_LIBC_TABLES) {
+            return resolve_in(base, &tables, symbol);
+        }
+        let image = load_glibc_image()?;
+        // SAFETY: cached mapping is process-lifetime read-only storage for libc ELF bytes.
+        let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
+        resolve_symbol_from_data(image.base, data, symbol)
+    }
 }
 
 pub(crate) fn resolve_loader_symbol_raw(symbol: &str) -> Option<usize> {
-    if let Some((base, tables)) = loaded_tables(b"ld-linux", &LOADED_LOADER_TABLES) {
-        return resolve_in(base, &tables, symbol);
+    #[cfg(feature = "standalone")]
+    {
+        let _ = symbol;
+        None
     }
-    let image = load_loader_image()?;
-    // SAFETY: cached mapping is process-lifetime read-only storage for ld-linux ELF bytes.
-    let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
-    resolve_symbol_from_data(image.base, data, symbol)
+    #[cfg(not(feature = "standalone"))]
+    {
+        if let Some((base, tables)) = loaded_tables(b"ld-linux", &LOADED_LOADER_TABLES) {
+            return resolve_in(base, &tables, symbol);
+        }
+        let image = load_loader_image()?;
+        // SAFETY: cached mapping is process-lifetime read-only storage for ld-linux ELF bytes.
+        let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
+        resolve_symbol_from_data(image.base, data, symbol)
+    }
 }
 
 pub(crate) fn resolve_host_symbol_cached(
     slot: &OnceLock<usize>,
     symbol: &'static str,
 ) -> Option<usize> {
-    let ptr = *slot.get_or_init(|| resolve_host_symbol_raw(symbol).unwrap_or(0));
-    (ptr != 0).then_some(ptr)
+    #[cfg(feature = "standalone")]
+    {
+        let _ = (slot, symbol);
+        None
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let ptr = *slot.get_or_init(|| resolve_host_symbol_raw(symbol).unwrap_or(0));
+        (ptr != 0).then_some(ptr)
+    }
 }
 
 #[inline]
 fn load_host_symbol(cache: &AtomicUsize, symbol: &'static str) -> Option<usize> {
-    let addr = cache.load(Ordering::Acquire);
-    if addr != 0 {
-        return Some(addr);
+    #[cfg(feature = "standalone")]
+    {
+        let _ = (cache, symbol);
+        None
     }
-    load_host_symbol_slow(cache, symbol)
+    #[cfg(not(feature = "standalone"))]
+    {
+        let addr = cache.load(Ordering::Acquire);
+        if addr != 0 {
+            return Some(addr);
+        }
+        load_host_symbol_slow(cache, symbol)
+    }
 }
 
+#[cfg(not(feature = "standalone"))]
 #[cold]
 #[inline(never)]
 fn load_host_symbol_slow(cache: &AtomicUsize, symbol: &'static str) -> Option<usize> {
@@ -1230,47 +1277,61 @@ static ERRNO_RESOLVE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 /// this symbol's own, so a cold cache always gets its first three attempts.
 /// Once resolved this is one load and a branch, as before.
 pub(crate) fn host_errno_location_raw() -> Option<unsafe extern "C" fn() -> *mut c_int> {
-    let cached = HOST_ERRNO_LOCATION.load(Ordering::Acquire);
-    if cached != 0 {
-        // SAFETY: the cached address is the host `__errno_location`.
-        return Some(unsafe {
-            core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(cached)
-        });
+    #[cfg(feature = "standalone")]
+    {
+        None
     }
-    if let Some(addr) = load_host_symbol(&HOST_ERRNO_LOCATION, "__errno_location") {
-        // SAFETY: the cached address is the host `__errno_location`.
-        return Some(unsafe {
-            core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr)
-        });
-    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let cached = HOST_ERRNO_LOCATION.load(Ordering::Acquire);
+        if cached != 0 {
+            // SAFETY: the cached address is the host `__errno_location`.
+            return Some(unsafe {
+                core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(cached)
+            });
+        }
+        if let Some(addr) = load_host_symbol(&HOST_ERRNO_LOCATION, "__errno_location") {
+            // SAFETY: the cached address is the host `__errno_location`.
+            return Some(unsafe {
+                core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr)
+            });
+        }
 
-    // Cold: the shared bootstrap skipped us. Spend one of THIS symbol's own
-    // attempts. `resolve_host_symbol_raw` reaches the ELF image through raw
-    // syscalls (`raw_open`/`raw_fstat`/raw `mmap`), never through fl's own
-    // interposed entry points, so this cannot re-enter the errno path.
-    let attempt = ERRNO_RESOLVE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-    if attempt > 2 && !attempt.is_power_of_two() {
-        return None;
+        // Cold: the shared bootstrap skipped us. Spend one of THIS symbol's own
+        // attempts. `resolve_host_symbol_raw` reaches the ELF image through raw
+        // syscalls (`raw_open`/`raw_fstat`/raw `mmap`), never through fl's own
+        // interposed entry points, so this cannot re-enter the errno path.
+        let attempt = ERRNO_RESOLVE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        if attempt > 2 && !attempt.is_power_of_two() {
+            return None;
+        }
+        let addr = resolve_host_symbol_raw("__errno_location").unwrap_or(0);
+        if addr == 0 {
+            return None;
+        }
+        HOST_ERRNO_LOCATION.store(addr, Ordering::Release);
+        // SAFETY: resolved from the host image's symbol table under that name.
+        Some(unsafe { core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr) })
     }
-    let addr = resolve_host_symbol_raw("__errno_location").unwrap_or(0);
-    if addr == 0 {
-        return None;
-    }
-    HOST_ERRNO_LOCATION.store(addr, Ordering::Release);
-    // SAFETY: resolved from the host image's symbol table under that name.
-    Some(unsafe { core::mem::transmute::<usize, unsafe extern "C" fn() -> *mut c_int>(addr) })
 }
 
 #[inline]
 pub(crate) unsafe fn write_host_errno_if_available(val: c_int) {
-    let Some(host_errno_location) = host_errno_location_raw() else {
-        return;
-    };
-    // SAFETY: host `__errno_location` returns the thread-local errno pointer when available.
-    let ptr = unsafe { host_errno_location() };
-    if !ptr.is_null() {
-        // SAFETY: non-null pointer returned by host `__errno_location` is writable.
-        unsafe { std::ptr::write_volatile(ptr, val) };
+    #[cfg(feature = "standalone")]
+    {
+        let _ = val;
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(host_errno_location) = host_errno_location_raw() else {
+            return;
+        };
+        // SAFETY: host `__errno_location` returns the thread-local errno pointer when available.
+        let ptr = unsafe { host_errno_location() };
+        if !ptr.is_null() {
+            // SAFETY: non-null pointer returned by host `__errno_location` is writable.
+            unsafe { std::ptr::write_volatile(ptr, val) };
+        }
     }
 }
 
@@ -1318,16 +1379,23 @@ pub(crate) fn host_dladdr1_cached() -> Option<usize> {
 
 #[inline]
 pub(crate) fn host_errno(default_errno: c_int) -> c_int {
-    let Some(host_errno_location) = host_errno_location_raw() else {
-        return default_errno;
-    };
-    // SAFETY: host `__errno_location` returns a valid thread-local errno pointer.
-    let ptr = unsafe { host_errno_location() };
-    if ptr.is_null() {
+    #[cfg(feature = "standalone")]
+    {
         default_errno
-    } else {
-        // SAFETY: non-null pointer returned by host `__errno_location` is readable.
-        unsafe { *ptr }
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(host_errno_location) = host_errno_location_raw() else {
+            return default_errno;
+        };
+        // SAFETY: host `__errno_location` returns a valid thread-local errno pointer.
+        let ptr = unsafe { host_errno_location() };
+        if ptr.is_null() {
+            default_errno
+        } else {
+            // SAFETY: non-null pointer returned by host `__errno_location` is readable.
+            unsafe { *ptr }
+        }
     }
 }
 

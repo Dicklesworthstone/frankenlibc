@@ -244,6 +244,21 @@ impl FixedMemCursor {
     /// Copy input using a direct `Vec<u8>` refill callback (avoiding redundant
     /// zero-initialization before overwriting). Only a refill reads caller
     /// storage in buffered mode; unbuffered reads retain no snapshot.
+    /// Fast buffered slice probe for single-threaded `fread` hits: if `len`
+    /// bytes are already present in `self.input` at `self.position`, advances
+    /// `self.position` by `len` and returns that contiguous slice without call overhead.
+    #[inline(always)]
+    pub fn try_take_buffered(&mut self, len: usize) -> Option<&[u8]> {
+        let start = self.position.checked_sub(self.input_start)?;
+        let end = start.checked_add(len)?;
+        if end <= self.input.len() {
+            self.position += len;
+            Some(&self.input[start..end])
+        } else {
+            None
+        }
+    }
+
     #[inline]
     pub fn read_with_refill(
         &mut self,

@@ -110,7 +110,7 @@ fn decrement_live_native_threads() -> bool {
 /// via `pthread_exit` / cancellation) while its stack is still mapped.
 pub unsafe fn maybe_exit_process_as_last_native_thread() {
     if decrement_live_native_threads() {
-        let raw = LAST_THREAD_EXIT_HOOK.swap(0, Ordering::AcqRel);
+        let raw = LAST_THREAD_EXIT_HOOK.load(Ordering::Acquire);
         if raw != 0 {
             // SAFETY: `set_last_thread_exit_hook` stores a valid `LastThreadExitHook`.
             let hook: LastThreadExitHook = unsafe { core::mem::transmute(raw) };
@@ -474,7 +474,7 @@ unsafe fn unmapself_and_exit(stack_base: usize, stack_total_size: usize) -> ! {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
-unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -> ! {
+unsafe fn detached_thread_self_cleanup_and_exit(tid: i32, handle_ptr: *mut ThreadHandle) -> ! {
     // SAFETY: caller guarantees `handle_ptr` is a live detached thread handle
     // that is no longer accessible by any joiner.
     let handle = unsafe { &*handle_ptr };
@@ -490,6 +490,8 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
     // SAFETY: `handle_ptr` was allocated via Box::into_raw in create_thread and
     // detached threads own their final cleanup path.
     unsafe { drop(Box::from_raw(handle_ptr)) };
+    super::tls::run_native_post_handle_drop_hook(tid);
+    super::tls::finish_exiting_native_tid(tid);
 
     if stack_base != 0 && stack_total_size != 0 {
         unsafe { unmapself_and_exit(stack_base, stack_total_size) };
@@ -536,17 +538,18 @@ pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) 
                 ) {
                     Ok(_) => break,
                     Err(THREAD_DETACHED) => {
-                        unsafe { detached_thread_self_cleanup_and_exit(handle_ptr) };
+                        unsafe { detached_thread_self_cleanup_and_exit(tid, handle_ptr) };
                     }
                     Err(_) => continue,
                 }
             }
-            THREAD_DETACHED => unsafe { detached_thread_self_cleanup_and_exit(handle_ptr) },
+            THREAD_DETACHED => unsafe { detached_thread_self_cleanup_and_exit(tid, handle_ptr) },
             THREAD_FINISHED | THREAD_JOINED => break,
             _ => break,
         }
     }
 
+    super::tls::finish_exiting_native_tid(tid);
     syscall::sys_exit_thread(0);
 }
 

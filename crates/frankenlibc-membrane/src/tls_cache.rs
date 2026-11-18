@@ -330,6 +330,7 @@ pub fn set_pipeline_runtime_math_disabled(disabled: bool) {
 /// Near-tail write threshold in bytes: any hardened write whose destination has
 /// `remaining <= WARM_WRITE_TAIL_THRESHOLD` (or `write_len >= remaining`) re-verifies
 /// header and trailing canary immediately on warm `TLS_CACHE` hits.
+#[cfg(any(test, not(feature = "owned-tls-cache")))]
 pub(crate) const WARM_WRITE_TAIL_THRESHOLD: usize = 64;
 
 /// Thread-local validation cache.
@@ -417,6 +418,7 @@ impl TlsValidationCache {
             .is_some_and(|entries| entries[idx].valid)
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(always)]
     fn remaining_for_state(state: SafetyState, remaining: usize) -> Option<usize> {
         match state {
@@ -447,6 +449,7 @@ impl TlsValidationCache {
         }
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(always)]
     pub(crate) fn record_bloom_misses(&mut self, count: u64) {
         if self.unbacked {
@@ -517,6 +520,7 @@ impl TlsValidationCache {
         }
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[cold]
     #[inline(never)]
     fn verify_entry_remaining_slow(
@@ -566,6 +570,7 @@ impl TlsValidationCache {
         self.verify_entry_validation_slow(entry, arena)
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[cold]
     #[inline(never)]
     fn verify_range_remaining_slow(
@@ -578,6 +583,7 @@ impl TlsValidationCache {
         self.verify_entry_remaining_slow(entry, rem, arena)
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(always)]
     fn check_entry_remaining_if_needed(
         &mut self,
@@ -757,6 +763,7 @@ impl TlsValidationCache {
         None
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline]
     fn lookup_hit_remaining_entries(
         &mut self,
@@ -799,6 +806,7 @@ impl TlsValidationCache {
         CachedRemaining::MISS
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(always)]
     fn lookup_range_remaining_const<const IS_WRITE: bool>(
         &mut self,
@@ -862,6 +870,7 @@ impl TlsValidationCache {
         }
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(always)]
     pub(crate) fn lookup_hit_remaining_with_oracle_const<const IS_WRITE: bool>(
         &mut self,
@@ -896,6 +905,7 @@ impl TlsValidationCache {
         self.lookup_hit_remaining_slow(addr, arena.map(|a| (a, IS_WRITE, write_len)))
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(never)]
     fn lookup_hit_remaining_slow(
         &mut self,
@@ -909,6 +919,7 @@ impl TlsValidationCache {
         hit
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[inline(always)]
     pub(crate) fn lookup_hit_remaining_pair_with_oracle<const LHS_IS_WRITE: bool>(
         &mut self,
@@ -1075,6 +1086,7 @@ impl TlsValidationCache {
         )
     }
 
+    #[cfg(any(test, not(feature = "owned-tls-cache")))]
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     fn lookup_hit_remaining_pair_slow_with_oracle(

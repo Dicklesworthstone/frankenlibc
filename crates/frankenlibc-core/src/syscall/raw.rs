@@ -10,7 +10,25 @@ use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 const CANCEL_SYSCALL_SLOTS: usize = 1024;
 const CANCEL_SLOT_EMPTY: i32 = 0;
 const CANCEL_SLOT_TOMBSTONE: i32 = -1;
-const CANCEL_SLOT_CLAIMING: i32 = -2;
+
+/// Encode a positive `tid` (`>= 1`) into a transient negative claiming sentinel
+/// (`<= -3`) so an asynchronous signal handler interrupting the same thread mid-CAS
+/// detects self-reentry immediately instead of spinning forever.
+#[inline]
+const fn cancel_slot_claiming_for_tid(tid: i32) -> i32 {
+    if tid >= i32::MAX - 1 {
+        i32::MIN
+    } else if tid <= 1 {
+        -3
+    } else {
+        -(tid + 2)
+    }
+}
+
+#[inline]
+const fn is_cancel_slot_claiming(stored: i32) -> bool {
+    stored <= -2
+}
 
 #[repr(C)]
 struct CancelSyscallArgs {
@@ -209,11 +227,18 @@ static CANCEL_SYSCALL_EVER_USED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Arm the interruptible native cancellation syscall trap for `tid`.
+///
+/// Returns `true` if a fresh trap slot was claimed for `tid` (which the caller
+/// must subsequently disarm), or `false` if an outer cancellation window on the
+/// same `tid` already owns an armed slot (e.g. a signal handler calling a
+/// nested cancellation-point syscall), leaving the outer slot and its
+/// `ACTIVE_SIGNAL_DEPTH` intact.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: usize) {
+pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: usize) -> bool {
     if tid <= 0 || cancel_word.is_null() {
-        return;
+        return false;
     }
+    let self_claiming = cancel_slot_claiming_for_tid(tid);
     CANCEL_SYSCALL_EVER_USED.store(true, Ordering::Release);
     let start = (tid as u32 as usize) % CANCEL_SYSCALL_SLOTS;
     'retry: for _ in 0..16 {
@@ -221,16 +246,15 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
         for i in 0..CANCEL_SYSCALL_SLOTS {
             let idx = (start + i) % CANCEL_SYSCALL_SLOTS;
             let mut stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
-            while stored == CANCEL_SLOT_CLAIMING {
+            while is_cancel_slot_claiming(stored) {
+                if stored == self_claiming {
+                    return false;
+                }
                 core::hint::spin_loop();
                 stored = ACTIVE_CANCEL_TIDS[idx].load(Ordering::Acquire);
             }
             if stored == tid {
-                ACTIVE_CANCEL_STATE[idx].store(0, Ordering::Release);
-                ACTIVE_CANCEL_SIGNAL_RESET(idx);
-                ACTIVE_CANCEL_RSPS[idx].store(window_rsp, Ordering::Release);
-                ACTIVE_CANCEL_WORDS[idx].store(cancel_word as usize, Ordering::Release);
-                return;
+                return false;
             }
             if stored == CANCEL_SLOT_TOMBSTONE {
                 if first_tombstone.is_none() {
@@ -244,12 +268,7 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
                     None => (idx, CANCEL_SLOT_EMPTY),
                 };
                 if ACTIVE_CANCEL_TIDS[target]
-                    .compare_exchange(
-                        expected,
-                        CANCEL_SLOT_CLAIMING,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
+                    .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
                     ACTIVE_CANCEL_STATE[target].store(0, Ordering::Relaxed);
@@ -258,7 +277,7 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
                     ACTIVE_CANCEL_WORDS[target].store(cancel_word as usize, Ordering::Relaxed);
                     NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
                     ACTIVE_CANCEL_TIDS[target].store(tid, Ordering::Release);
-                    return;
+                    return true;
                 }
                 continue 'retry;
             }
@@ -267,7 +286,7 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
             if ACTIVE_CANCEL_TIDS[tomb]
                 .compare_exchange(
                     CANCEL_SLOT_TOMBSTONE,
-                    CANCEL_SLOT_CLAIMING,
+                    self_claiming,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -279,18 +298,13 @@ pub fn arm_native_cancel_syscall(tid: i32, cancel_word: *const u32, window_rsp: 
                 ACTIVE_CANCEL_WORDS[tomb].store(cancel_word as usize, Ordering::Relaxed);
                 NATIVE_CANCEL_WINDOW_DEPTH.fetch_add(1, Ordering::AcqRel);
                 ACTIVE_CANCEL_TIDS[tomb].store(tid, Ordering::Release);
-                return;
+                return true;
             }
             continue 'retry;
         }
-        return;
+        return false;
     }
-}
-
-#[inline]
-#[allow(non_snake_case)]
-fn ACTIVE_CANCEL_SIGNAL_RESET(idx: usize) {
-    ACTIVE_SIGNAL_DEPTH[idx].store(0, Ordering::Release);
+    false
 }
 
 /// Disarm the interruptible native cancellation syscall trap for `tid`.

@@ -1018,7 +1018,7 @@ unsafe fn raw_avx_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
 ///
 /// SAFETY: caller guarantees `dst`/`src` are valid and disjoint for `n` bytes, and `n < 128`.
 #[inline(always)]
-unsafe fn raw_copy_under_128(dst: *mut u8, src: *const u8, n: usize) {
+pub(crate) unsafe fn raw_copy_under_128(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
         if n < 16 {
             if n >= 8 {

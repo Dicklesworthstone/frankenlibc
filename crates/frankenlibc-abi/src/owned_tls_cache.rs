@@ -31,9 +31,15 @@ struct OwnedTlsSlot<T> {
     value: Box<T>,
 }
 
+pub(crate) struct OwnedTlsForkGuard<T: 'static> {
+    cache: &'static OwnedTlsCache<T>,
+    parent_tid: i32,
+    guard: Option<std::sync::MutexGuard<'static, Vec<OwnedTlsSlot<T>>>>,
+}
+
 impl<T> OwnedTlsCache<T>
 where
-    T: Send,
+    T: Send + 'static,
 {
     pub(crate) const fn new(init: fn() -> T) -> Self {
         Self {
@@ -60,15 +66,71 @@ where
         let _owner = AccessOwnerGuard(&self.owner_tid);
         let index = match slots.iter().position(|slot| slot.tid == tid) {
             Some(index) => index,
-            None => {
-                slots.push(OwnedTlsSlot {
-                    tid,
-                    value: Box::new((self.init)()),
-                });
-                slots.len() - 1
-            }
+            None => match slots.iter().position(|slot| slot.tid == 0) {
+                Some(free_index) => {
+                    slots[free_index].tid = tid;
+                    *slots[free_index].value = (self.init)();
+                    free_index
+                }
+                None => {
+                    slots.push(OwnedTlsSlot {
+                        tid,
+                        value: Box::new((self.init)()),
+                    });
+                    slots.len() - 1
+                }
+            },
         };
         f(slots[index].value.as_mut())
+    }
+
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn release_tid(&'static self, tid: i32) {
+        if tid <= 0 {
+            return;
+        }
+        let caller_tid = syscall::sys_gettid();
+        let mut slots = self.slots.lock().unwrap_or_else(|err| err.into_inner());
+        self.owner_tid.store(caller_tid, Ordering::Release);
+        let _owner = AccessOwnerGuard(&self.owner_tid);
+        for slot in slots.iter_mut() {
+            if slot.tid == tid {
+                *slot.value = (self.init)();
+                slot.tid = 0;
+            }
+        }
+    }
+
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn lock_for_fork(&'static self) -> OwnedTlsForkGuard<T> {
+        let parent_tid = syscall::sys_gettid();
+        let guard = crate::runtime_policy::lock_std_mutex_preserving_errno(&self.slots);
+        OwnedTlsForkGuard {
+            cache: self,
+            parent_tid,
+            guard: Some(guard),
+        }
+    }
+}
+
+impl<T: Send + 'static> OwnedTlsForkGuard<T> {
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn adopt_and_unlock_in_fork_child(&mut self) {
+        if let Some(mut slots) = self.guard.take() {
+            let child_tid = syscall::sys_gettid();
+            self.cache.owner_tid.store(child_tid, Ordering::Release);
+            let _owner = AccessOwnerGuard(&self.cache.owner_tid);
+            for slot in slots.iter_mut() {
+                if slot.tid == self.parent_tid {
+                    slot.tid = child_tid;
+                } else if slot.tid != 0 {
+                    *slot.value = (self.cache.init)();
+                    slot.tid = 0;
+                }
+            }
+            drop(_owner);
+            drop(slots);
+        }
     }
 }
 
@@ -111,5 +173,17 @@ mod tests {
             assert!(CACHE.is_accessed_by_current_thread());
         });
         assert!(!CACHE.is_accessed_by_current_thread());
+    }
+
+    #[test]
+    fn release_tid_recycles_slot_without_growing_vec() {
+        static CACHE: OwnedTlsCache<usize> = OwnedTlsCache::new(|| 99);
+        let tid = frankenlibc_core::syscall::sys_gettid();
+        CACHE.with(|v| *v = 123);
+        CACHE.release_tid(tid);
+        CACHE.with(|v| assert_eq!(*v, 99));
+        let mut fork_guard = CACHE.lock_for_fork();
+        fork_guard.adopt_and_unlock_in_fork_child();
+        CACHE.with(|v| assert_eq!(*v, 99));
     }
 }

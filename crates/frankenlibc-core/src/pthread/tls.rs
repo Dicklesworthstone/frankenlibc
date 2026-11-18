@@ -50,8 +50,25 @@ const TLS_SLOT_EMPTY: i32 = 0;
 ///
 /// Thread IDs are strictly positive, so `-1` is never a real TID.
 const TLS_SLOT_TOMBSTONE: i32 = -1;
-/// Transient marker while an inserter initializes payload words before publishing `tid`.
-const TLS_SLOT_CLAIMING: i32 = -2;
+
+/// Encode a positive `tid` (`>= 1`) into a transient negative claiming sentinel
+/// (`<= -3`) so an asynchronous signal handler interrupting the same thread mid-CAS
+/// detects self-reentry immediately instead of spinning forever.
+#[inline]
+const fn tls_slot_claiming_for_tid(tid: i32) -> i32 {
+    if tid >= i32::MAX - 1 {
+        i32::MIN
+    } else if tid <= 1 {
+        -3
+    } else {
+        -(tid + 2)
+    }
+}
+
+#[inline]
+const fn is_tls_slot_claiming(stored: i32) -> bool {
+    stored <= -2
+}
 
 const EAGAIN: i32 = 11;
 const EINVAL: i32 = 22;
@@ -378,6 +395,7 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
     if tid <= 0 {
         return core::ptr::null_mut();
     }
+    let self_claiming = tls_slot_claiming_for_tid(tid);
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
     let mut owned_ptr: *mut TlsEntry = core::ptr::null_mut();
 
@@ -386,7 +404,13 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
         for i in 0..TLS_TABLE_SLOTS {
             let idx = (start + i) % TLS_TABLE_SLOTS;
             let mut current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
-            while current == TLS_SLOT_CLAIMING {
+            while is_tls_slot_claiming(current) {
+                if current == self_claiming {
+                    if !owned_ptr.is_null() {
+                        unsafe { drop_fallback_tls_block(owned_ptr) };
+                    }
+                    return core::ptr::null_mut();
+                }
                 core::hint::spin_loop();
                 current = FALLBACK_TLS_TIDS[idx].load(Ordering::Acquire);
             }
@@ -411,12 +435,7 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
                     None => (idx, TLS_SLOT_EMPTY),
                 };
                 if FALLBACK_TLS_TIDS[target]
-                    .compare_exchange(
-                        expected,
-                        TLS_SLOT_CLAIMING,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
+                    .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
                     if owned_ptr.is_null() {
@@ -434,7 +453,7 @@ fn fallback_table_get_or_insert(tid: i32) -> *mut TlsEntry {
             if FALLBACK_TLS_TIDS[tomb_idx]
                 .compare_exchange(
                     TLS_SLOT_TOMBSTONE,
-                    TLS_SLOT_CLAIMING,
+                    self_claiming,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -497,13 +516,17 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
     else {
         return false;
     };
+    let self_claiming = tls_slot_claiming_for_tid(tid);
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
     'retry: for _ in 0..16 {
         let mut first_tombstone: Option<usize> = None;
         for i in 0..TLS_TABLE_SLOTS {
             let idx = (start + i) % TLS_TABLE_SLOTS;
             let mut current = TLS_TIDS[idx].load(Ordering::Acquire);
-            while current == TLS_SLOT_CLAIMING {
+            while is_tls_slot_claiming(current) {
+                if current == self_claiming {
+                    return false;
+                }
                 core::hint::spin_loop();
                 current = TLS_TIDS[idx].load(Ordering::Acquire);
             }
@@ -526,12 +549,7 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
                     None => (idx, TLS_SLOT_EMPTY),
                 };
                 if TLS_TIDS[target]
-                    .compare_exchange(
-                        expected,
-                        TLS_SLOT_CLAIMING,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
+                    .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
                     publish_tls_slot(target, values_ptr, generation);
@@ -545,7 +563,7 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) -> bool {
             if TLS_TIDS[tomb_idx]
                 .compare_exchange(
                     TLS_SLOT_TOMBSTONE,
-                    TLS_SLOT_CLAIMING,
+                    self_claiming,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -706,6 +724,7 @@ fn ensure_unregistered_cancel_slot(tid: i32) -> Option<usize> {
     if tid <= 0 {
         return None;
     }
+    let self_claiming = tls_slot_claiming_for_tid(tid);
     UNREGISTERED_CANCEL_USED.store(true, Ordering::Release);
     let start = (tid as u32 as usize) % UNREGISTERED_CANCEL_SLOTS;
     'retry: for _ in 0..16 {
@@ -713,7 +732,10 @@ fn ensure_unregistered_cancel_slot(tid: i32) -> Option<usize> {
         for i in 0..UNREGISTERED_CANCEL_SLOTS {
             let idx = (start + i) % UNREGISTERED_CANCEL_SLOTS;
             let mut stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
-            while stored == TLS_SLOT_CLAIMING {
+            while is_tls_slot_claiming(stored) {
+                if stored == self_claiming {
+                    return None;
+                }
                 core::hint::spin_loop();
                 stored = UNREGISTERED_CANCEL_TIDS[idx].load(Ordering::Acquire);
             }
@@ -737,12 +759,7 @@ fn ensure_unregistered_cancel_slot(tid: i32) -> Option<usize> {
                     })
                     .ok()?;
                 if UNREGISTERED_CANCEL_TIDS[target]
-                    .compare_exchange(
-                        expected,
-                        TLS_SLOT_CLAIMING,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
+                    .compare_exchange(expected, self_claiming, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
                     UNREGISTERED_CANCEL_FLAGS[target].store(0, Ordering::Relaxed);
@@ -762,7 +779,7 @@ fn ensure_unregistered_cancel_slot(tid: i32) -> Option<usize> {
             if UNREGISTERED_CANCEL_TIDS[tomb]
                 .compare_exchange(
                     TLS_SLOT_TOMBSTONE,
-                    TLS_SLOT_CLAIMING,
+                    self_claiming,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
@@ -894,9 +911,9 @@ pub fn retire_unregistered_cancellation(tid: i32) {
     }
 }
 
-fn update_native_cancel_flag(tid: i32, mask: u32, set: bool) {
+fn update_native_cancel_flag(tid: i32, mask: u32, set: bool) -> bool {
     if tid <= 0 {
-        return;
+        return false;
     }
     if TLS_TABLE_USED.load(Ordering::Acquire) {
         let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
@@ -904,12 +921,12 @@ fn update_native_cancel_flag(tid: i32, mask: u32, set: bool) {
             let index = (start + offset) % TLS_TABLE_SLOTS;
             let stored_tid = TLS_TIDS[index].load(Ordering::Acquire);
             if stored_tid == tid {
-                if set {
-                    TLS_CANCEL_FLAGS[index].fetch_or(mask, Ordering::SeqCst);
+                let prev = if set {
+                    TLS_CANCEL_FLAGS[index].fetch_or(mask, Ordering::SeqCst)
                 } else {
-                    TLS_CANCEL_FLAGS[index].fetch_and(!mask, Ordering::SeqCst);
-                }
-                return;
+                    TLS_CANCEL_FLAGS[index].fetch_and(!mask, Ordering::SeqCst)
+                };
+                return prev & mask != 0;
             }
             if stored_tid == TLS_SLOT_EMPTY {
                 break;
@@ -917,32 +934,88 @@ fn update_native_cancel_flag(tid: i32, mask: u32, set: bool) {
         }
     }
     if let Some(idx) = ensure_unregistered_cancel_slot(tid) {
-        if set {
-            UNREGISTERED_CANCEL_FLAGS[idx].fetch_or(mask, Ordering::SeqCst);
+        let prev = if set {
+            UNREGISTERED_CANCEL_FLAGS[idx].fetch_or(mask, Ordering::SeqCst)
         } else {
-            UNREGISTERED_CANCEL_FLAGS[idx].fetch_and(!mask, Ordering::SeqCst);
-        }
+            UNREGISTERED_CANCEL_FLAGS[idx].fetch_and(!mask, Ordering::SeqCst)
+        };
+        return prev & mask != 0;
     }
+    false
 }
 
 /// Update `CANCEL_FLAG_DISABLED` for a native thread (`registered` or `unregistered`).
 pub fn set_native_cancel_disabled(tid: i32, disabled: bool) {
-    update_native_cancel_flag(tid, CANCEL_FLAG_DISABLED, disabled);
+    let _ = update_native_cancel_flag(tid, CANCEL_FLAG_DISABLED, disabled);
 }
 
 /// Update `CANCEL_FLAG_ASYNC` for a native thread (`registered` or `unregistered`).
 pub fn set_native_cancel_async(tid: i32, async_mode: bool) {
-    update_native_cancel_flag(tid, CANCEL_FLAG_ASYNC, async_mode);
+    let _ = update_native_cancel_flag(tid, CANCEL_FLAG_ASYNC, async_mode);
 }
 
-/// Update `CANCEL_FLAG_IN_POINT` for a native thread (`registered` or `unregistered`).
-pub fn set_native_cancel_point_active(tid: i32, active: bool) {
-    update_native_cancel_flag(tid, CANCEL_FLAG_IN_POINT, active);
+/// Update `CANCEL_FLAG_IN_POINT` for a native thread (`registered` or `unregistered`),
+/// returning whether `CANCEL_FLAG_IN_POINT` was already set prior to this call.
+pub fn set_native_cancel_point_active(tid: i32, active: bool) -> bool {
+    update_native_cancel_flag(tid, CANCEL_FLAG_IN_POINT, active)
 }
 
 /// Remove a TID from the table and return its values pointer.
 ///
 /// **Allocation-free.**
+fn detach_table_ptr_keep_exiting_tid(tid: i32) {
+    if tid <= 0 {
+        return;
+    }
+    let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    for i in 0..TLS_TABLE_SLOTS {
+        let idx = (start + i) % TLS_TABLE_SLOTS;
+        let stored_tid = TLS_TIDS[idx].load(Ordering::Acquire);
+        if stored_tid == tid {
+            TLS_CANCEL_WORDS[idx].store(0, Ordering::Release);
+            TLS_CANCEL_FLAGS[idx].store(0, Ordering::Release);
+            TLS_PTRS[idx].store(0, Ordering::Release);
+            return;
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            return;
+        }
+    }
+}
+
+/// Returns `true` when the calling thread is a native `clone` thread that has
+/// already detached its `ThreadHandle` pointer during exit teardown (and
+/// therefore must not fall back to its creator's `%fs` `errno` slot).
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+pub fn current_thread_is_exiting_native() -> bool {
+    if !native_threads_may_exist() {
+        return false;
+    }
+    let tid = syscall::sys_gettid();
+    if tid <= 0 {
+        return false;
+    }
+    let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    for i in 0..TLS_TABLE_SLOTS {
+        let idx = (start + i) % TLS_TABLE_SLOTS;
+        let stored_tid = TLS_TIDS[idx].load(Ordering::Acquire);
+        if stored_tid == tid {
+            return TLS_PTRS[idx].load(Ordering::Acquire) == 0;
+        }
+        if stored_tid == TLS_SLOT_EMPTY {
+            return false;
+        }
+    }
+    false
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+pub(crate) fn finish_exiting_native_tid(tid: i32) {
+    let _ = table_remove(tid);
+}
+
 fn table_remove(tid: i32) -> *mut TlsEntry {
     if tid <= 0 {
         return core::ptr::null_mut();
@@ -1108,9 +1181,10 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     super::thread::reset_live_native_threads_after_fork();
     syscall::reset_native_cancel_syscalls_after_fork();
+    let child_tid = syscall::sys_gettid();
+    crate::stdio::printf::rekey_native_printf_tables_after_fork(parent_tid, child_tid);
 
     if TLS_TABLE_USED.load(Ordering::Acquire) {
-        let child_tid = syscall::sys_gettid();
         rekey_fork_child_table(
             &TLS_TIDS,
             &TLS_PTRS,
@@ -1121,12 +1195,10 @@ pub unsafe fn note_fork_child(parent_tid: i32) {
         );
     }
     if UNREGISTERED_CANCEL_USED.load(Ordering::Acquire) {
-        let child_tid = syscall::sys_gettid();
         rekey_fork_child_unregistered_cancel(parent_tid, child_tid);
     }
     #[cfg(feature = "owned-tls-cache")]
     {
-        let child_tid = syscall::sys_gettid();
         rekey_fork_child_table(
             &FALLBACK_TLS_TIDS,
             &FALLBACK_TLS_PTRS,
@@ -1430,11 +1502,26 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) -> bool {
 }
 
 static NATIVE_POST_TEARDOWN_HOOK: std::sync::OnceLock<fn(i32)> = std::sync::OnceLock::new();
+static NATIVE_POST_HANDLE_DROP_HOOK: std::sync::OnceLock<fn(i32)> = std::sync::OnceLock::new();
 
 /// Register an optional ABI-layer callback invoked after all POSIX key
 /// destructors have completed for a native registered thread (`tid`).
 pub fn install_native_thread_post_teardown_hook(hook: fn(i32)) {
     let _ = NATIVE_POST_TEARDOWN_HOOK.set(hook);
+}
+
+/// Register an optional allocation-free ABI-layer callback invoked after a
+/// detached native thread drops its boxed `ThreadHandle` (`free`) and right
+/// before unmapping its stack / exiting the thread.
+pub fn install_native_thread_post_handle_drop_hook(hook: fn(i32)) {
+    let _ = NATIVE_POST_HANDLE_DROP_HOOK.set(hook);
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn run_native_post_handle_drop_hook(tid: i32) {
+    if let Some(hook) = NATIVE_POST_HANDLE_DROP_HOOK.get() {
+        hook(tid);
+    }
 }
 
 /// Run the POSIX key destructors of the exiting thread `tid`: the hook for
@@ -1582,10 +1669,18 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
         }
     }
 
+    crate::stdio::printf::clear_native_printf_tables_for_tid(tid);
     if registered {
-        table_remove(tid);
+        // Run ABI heap-cell teardown BEFORE `table_remove(tid)` so
+        // `current_thread_handle()` still resolves to this thread's private
+        // `errno` cell rather than falling through to creator `%fs` TLS.
         if let Some(hook) = NATIVE_POST_TEARDOWN_HOOK.get() {
             hook(tid);
+        }
+        if native_exit {
+            detach_table_ptr_keep_exiting_tid(tid);
+        } else {
+            table_remove(tid);
         }
     } else {
         // Only unregistered threads own fallback storage. A native child must
@@ -1598,6 +1693,7 @@ fn teardown_thread_tls_impl(tid: i32, native_exit: bool) {
             // SAFETY: removal transfers ownership of the fallback allocation.
             unsafe { drop_fallback_tls_block(fallback_ptr) };
         }
+        retire_unregistered_cancellation(tid);
     }
     let _ = rcu::rcu_unregister_thread(tid as u32);
 }

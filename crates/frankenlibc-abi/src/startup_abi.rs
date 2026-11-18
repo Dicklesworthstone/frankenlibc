@@ -208,6 +208,7 @@ static LAST_PHASE: AtomicU8 = AtomicU8::new(StartupCheckpoint::Entry as u8);
 static LAST_POLICY_LATENCY_NS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(debug_assertions)]
 static HOST_START_MAIN_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(feature = "standalone"))]
 static HOST_DELEGATED_MAIN: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(C)]
@@ -543,6 +544,7 @@ fn use_owned_startup() -> bool {
     !startup_delegate_env_requested()
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe extern "C-unwind" fn host_delegate_main_wrapper(
     argc: c_int,
     argv: *mut *mut c_char,
@@ -597,6 +599,7 @@ unsafe extern "C-unwind" fn host_delegate_main_wrapper(
 
 /// Whether the delegated `main` wrapper hands main's status back to the host
 /// `__libc_start_main` (unit tests driving a stand-in host) instead of exiting.
+#[cfg(not(feature = "standalone"))]
 fn delegated_main_returns_to_host() -> bool {
     #[cfg(debug_assertions)]
     if HOST_START_MAIN_OVERRIDE.load(Ordering::Relaxed) != 0 {
@@ -605,6 +608,7 @@ fn delegated_main_returns_to_host() -> bool {
     startup_return_to_caller_for_tests()
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn delegate_to_host_libc_start_main(
     main: Option<MainFn>,
     argc: c_int,
@@ -1397,13 +1401,20 @@ unsafe fn startup_phase0_impl(
     Ok(rc)
 }
 
-/// Seed the `getauxval` cache from `.init_array`'s `(argc, argv, envp)` arguments
-/// when `envp` still sits immediately after `argv` on the initial kernel stack.
+/// Seed process `argv[0]`/`environ` (when not yet initialized, e.g. under
+/// `dlopen(..., RTLD_DEEPBIND)` or early `.init_array`) and the `getauxval`
+/// cache when `envp` still sits immediately after `argv` on the initial stack.
 pub(crate) unsafe fn preseed_auxv_from_init_array(
     argc: c_int,
     argv: *mut *mut c_char,
     envp: *mut *mut c_char,
 ) {
+    if !argv.is_null() && program_invocation_name.load(Ordering::Acquire).is_null() {
+        init_program_name(argv);
+    }
+    if !envp.is_null() && crate::stdlib_abi::environ_uninitialized_for_init_array() {
+        init_environment_globals(envp);
+    }
     if argc < 0 || argv.is_null() || envp.is_null() {
         return;
     }
@@ -1472,6 +1483,7 @@ pub unsafe extern "C" fn __libc_start_main(
         }
 
         let phase0 = startup_policy_snapshot_for_tests();
+        #[cfg(not(feature = "standalone"))]
         if startup_failure_allows_host_fallback(phase0.failure_reason)
             && let Some(host_rc) = unsafe {
                 delegate_to_host_libc_start_main(
@@ -1509,6 +1521,7 @@ pub unsafe extern "C" fn __libc_start_main(
         return -1;
     }
 
+    #[cfg(not(feature = "standalone"))]
     // SAFETY: forwards to host libc startup for normal LD_PRELOAD operation.
     if let Some(rc) = unsafe {
         delegate_to_host_libc_start_main(main, argc, ubp_av, init, fini, rtld_fini, stack_end)
@@ -1597,6 +1610,7 @@ struct StartupTls {
     atexit_list: std::cell::RefCell<Vec<TlsAtExitEntry>>,
     atexit_capture_for_tests: std::cell::Cell<bool>,
     atexit_reentry: std::cell::Cell<bool>,
+    #[cfg(not(feature = "standalone"))]
     host_cxa_lookup_reentry: std::cell::Cell<bool>,
 }
 
@@ -1606,6 +1620,7 @@ fn new_startup_tls() -> StartupTls {
         atexit_list: std::cell::RefCell::new(Vec::new()),
         atexit_capture_for_tests: std::cell::Cell::new(false),
         atexit_reentry: std::cell::Cell::new(false),
+        #[cfg(not(feature = "standalone"))]
         host_cxa_lookup_reentry: std::cell::Cell::new(false),
     }
 }
@@ -1636,11 +1651,13 @@ std::thread_local! {
 // path may indirectly re-enter `__cxa_thread_atexit_impl` during dynamic
 // loader/TLS bring-up; a OnceLock would wedge in its RUNNING state and the
 // recursive call would futex-wait on itself.
+#[cfg(not(feature = "standalone"))]
 static HOST_CXA_THREAD_ATEXIT_IMPL: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
+#[cfg(not(feature = "standalone"))]
 const HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL: usize = usize::MAX;
 
-#[cfg(not(feature = "owned-tls-cache"))]
+#[cfg(all(not(feature = "owned-tls-cache"), not(feature = "standalone")))]
 std::thread_local! {
     static HOST_CXA_LOOKUP_REENTRY: std::cell::Cell<bool> = const {
         std::cell::Cell::new(false)
@@ -1771,6 +1788,7 @@ fn clear_tls_atexit_entries() {
     }
 }
 
+#[cfg(not(feature = "standalone"))]
 fn enter_host_cxa_lookup_reentry() -> bool {
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -1798,6 +1816,7 @@ fn enter_host_cxa_lookup_reentry() -> bool {
     }
 }
 
+#[cfg(not(feature = "standalone"))]
 fn set_host_cxa_lookup_reentry(value: bool) {
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -1810,48 +1829,57 @@ fn set_host_cxa_lookup_reentry(value: bool) {
 }
 
 unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
-    use std::sync::atomic::Ordering;
-
-    let cached = HOST_CXA_THREAD_ATEXIT_IMPL.load(Ordering::Acquire);
-    if cached == HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL {
-        return None;
-    }
-    if cached != 0 {
-        return Some(unsafe { std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(cached) });
-    }
-
-    // Reentry guard: if the resolver recurses back into us before the lookup
-    // completes, return None so the caller falls through to the in-Rust TLS
-    // fallback list. Without this guard the recursive path would re-enter
-    // dlsym and either hang the loader lock or stack-overflow.
-    let entered = enter_host_cxa_lookup_reentry();
-    if !entered {
-        return None;
-    }
-
-    let resolved =
-        crate::host_resolve::resolve_host_symbol_raw("__cxa_thread_atexit_impl").unwrap_or(0);
-
-    set_host_cxa_lookup_reentry(false);
-
-    let to_store = if resolved == 0 {
-        HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL
-    } else {
-        resolved
-    };
-    // First-writer-wins: any concurrent resolver returns the same dlsym
-    // result, so losing the race is fine.
-    let _ = HOST_CXA_THREAD_ATEXIT_IMPL.compare_exchange(
-        0,
-        to_store,
-        Ordering::Release,
-        Ordering::Acquire,
-    );
-
-    if resolved == 0 {
+    #[cfg(feature = "standalone")]
+    {
         None
-    } else {
-        Some(unsafe { std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(resolved) })
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        use std::sync::atomic::Ordering;
+
+        let cached = HOST_CXA_THREAD_ATEXIT_IMPL.load(Ordering::Acquire);
+        if cached == HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL {
+            return None;
+        }
+        if cached != 0 {
+            return Some(unsafe {
+                std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(cached)
+            });
+        }
+
+        // Reentry guard: if the resolver recurses back into us before the lookup
+        // completes, return None so the caller falls through to the in-Rust TLS
+        // fallback list. Without this guard the recursive path would re-enter
+        // dlsym and either hang the loader lock or stack-overflow.
+        let entered = enter_host_cxa_lookup_reentry();
+        if !entered {
+            return None;
+        }
+
+        let resolved =
+            crate::host_resolve::resolve_host_symbol_raw("__cxa_thread_atexit_impl").unwrap_or(0);
+
+        set_host_cxa_lookup_reentry(false);
+
+        let to_store = if resolved == 0 {
+            HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL
+        } else {
+            resolved
+        };
+        // First-writer-wins: any concurrent resolver returns the same dlsym
+        // result, so losing the race is fine.
+        let _ = HOST_CXA_THREAD_ATEXIT_IMPL.compare_exchange(
+            0,
+            to_store,
+            Ordering::Release,
+            Ordering::Acquire,
+        );
+
+        if resolved == 0 {
+            None
+        } else {
+            Some(unsafe { std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(resolved) })
+        }
     }
 }
 

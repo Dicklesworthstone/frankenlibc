@@ -192,6 +192,9 @@ fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
     // SAFETY: process-owned env pointer table, expected to be NUL-terminated.
     let mut envp = unsafe { environ };
     if envp.is_null() {
+        if RUNTIME_READY.load(AtomicOrdering::Acquire) == RUNTIME_STATE_ACTIVE {
+            return Ok(None);
+        }
         return Err(());
     }
 
@@ -932,21 +935,18 @@ fn lookup_active_ffi_pcc_certificate_with_index(
 
 #[inline]
 fn peek_active_pcc_index() -> Option<u8> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        with_runtime_policy_tls(|state| state.trace_context.map(|ctx| ctx.pcc_index))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 tls.trace_active
                     .get()
                     .then(|| tls.trace_context.get().pcc_index)
             })
             .ok()
-            .flatten()
+            .flatten();
     }
+    with_runtime_policy_tls(|state| state.trace_context.map(|ctx| ctx.pcc_index))
 }
 
 #[inline]
@@ -1250,8 +1250,11 @@ pub(crate) fn clear_mode_event_log() {
 #[inline]
 fn load_thread_local_mode_and_tick_switch() -> Option<SafetyLevel> {
     let (resolved, should_check) = {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        let owned = use_owned_runtime_policy_tls();
         #[cfg(feature = "owned-tls-cache")]
-        {
+        let owned = true;
+        if owned {
             with_runtime_policy_tls(|state| {
                 let cached = state.mode_cache;
                 if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
@@ -1265,25 +1268,30 @@ fn load_thread_local_mode_and_tick_switch() -> Option<SafetyLevel> {
                     None
                 }
             })?
-        }
-        #[cfg(not(feature = "owned-tls-cache"))]
-        {
-            RUNTIME_POLICY_TLS
-                .try_with(|tls| {
-                    let cached = tls.mode_cache.get();
-                    if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
-                        let next = tls.mode_switch_counter.get().wrapping_add(1);
-                        tls.mode_switch_counter.set(next);
-                        Some((
-                            u8_to_mode(cached),
-                            next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE),
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .ok()
-                .flatten()?
+        } else {
+            #[cfg(not(feature = "owned-tls-cache"))]
+            {
+                RUNTIME_POLICY_TLS
+                    .try_with(|tls| {
+                        let cached = tls.mode_cache.get();
+                        if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+                            let next = tls.mode_switch_counter.get().wrapping_add(1);
+                            tls.mode_switch_counter.set(next);
+                            Some((
+                                u8_to_mode(cached),
+                                next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .ok()
+                    .flatten()?
+            }
+            #[cfg(feature = "owned-tls-cache")]
+            {
+                unreachable!()
+            }
         }
     };
     if should_check {
@@ -1330,7 +1338,6 @@ pub(crate) fn mode() -> SafetyLevel {
     // immutable atomic in that context: trying the TLS cache again waits for
     // this very frame. Unresolved/resolving retains the existing strict
     // bootstrap behavior, without caching that temporary answer.
-    #[cfg(feature = "owned-tls-cache")]
     if runtime_policy_tls_reentry_active() {
         return u8_to_mode(MODE_STATE.load(AtomicOrdering::Acquire));
     }
@@ -1723,7 +1730,7 @@ impl RecordedPccExplainability {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
+#[derive(Clone, Copy)]
 struct RuntimePolicyTls {
     mode_cache: u8,
     mode_switch_counter: u64,
@@ -1737,7 +1744,8 @@ struct RuntimePolicyTls {
     decision_contract_machine: DecisionContractMachine,
 }
 
-#[cfg(feature = "owned-tls-cache")]
+const _: () = assert!(!core::mem::needs_drop::<RuntimePolicyTls>());
+
 const fn runtime_policy_tls_init() -> RuntimePolicyTls {
     RuntimePolicyTls {
         mode_cache: MODE_UNRESOLVED,
@@ -1753,50 +1761,141 @@ const fn runtime_policy_tls_init() -> RuntimePolicyTls {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RUNTIME_POLICY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RuntimePolicyTls> =
     crate::owned_tls_cache::OwnedTlsCache::new(runtime_policy_tls_init);
 
-#[cfg(feature = "owned-tls-cache")]
 static RUNTIME_POLICY_TLS_ACCESS_DEPTH: AtomicU32 = AtomicU32::new(0);
 
-#[cfg(feature = "owned-tls-cache")]
 struct RuntimePolicyTlsAccessGuard;
 
-#[cfg(feature = "owned-tls-cache")]
 impl Drop for RuntimePolicyTlsAccessGuard {
     fn drop(&mut self) {
         RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_sub(1, AtomicOrdering::Release);
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn with_runtime_policy_tls<R>(callback: impl FnOnce(&mut RuntimePolicyTls) -> R) -> R {
     RUNTIME_POLICY_TLS_ACCESS_DEPTH.fetch_add(1, AtomicOrdering::Acquire);
     let _guard = RuntimePolicyTlsAccessGuard;
     RUNTIME_POLICY_OWNED_TLS.with(callback)
 }
 
-#[cfg(feature = "owned-tls-cache")]
+#[inline(always)]
+fn use_owned_runtime_policy_tls() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        true
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        #[cfg(not(test))]
+        {
+            crate::malloc_abi::native_thread_backend_active()
+        }
+        #[cfg(test)]
+        {
+            false
+        }
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn reclaim_native_thread_policy_tls(tid: i32) {
+    if use_owned_runtime_policy_tls() {
+        RUNTIME_POLICY_OWNED_TLS.release_tid(tid);
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn migrate_creator_runtime_policy_tls_for_native_threads() {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let migrated = RUNTIME_POLICY_TLS
+            .try_with(|tls| {
+                let trace_context = if tls.trace_active.replace(false) {
+                    Some(tls.trace_context.replace(TraceContext::EMPTY))
+                } else {
+                    None
+                };
+                let last_explainability = tls
+                    .last_explainability
+                    .try_borrow_mut()
+                    .ok()
+                    .and_then(|mut slot| slot.take());
+                RuntimePolicyTls {
+                    mode_cache: tls.mode_cache.replace(MODE_UNRESOLVED),
+                    mode_switch_counter: tls.mode_switch_counter.replace(0),
+                    trace_counter: tls.trace_counter.replace(0),
+                    decision_counter: tls.decision_counter.replace(0),
+                    trace_context,
+                    last_explainability_kind: tls
+                        .last_explainability_kind
+                        .replace(EXPLAINABILITY_KIND_NONE),
+                    last_pcc_explainability: tls
+                        .last_pcc_explainability
+                        .replace(RecordedPccExplainability::EMPTY),
+                    last_explainability,
+                    policy_reentry_depth: tls.policy_reentry_depth.replace(0),
+                    decision_contract_machine: tls.decision_contract_machine.replace(
+                        DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD),
+                    ),
+                }
+            })
+            .ok();
+        if let Some(snapshot) = migrated {
+            with_runtime_policy_tls(|state| *state = snapshot);
+        }
+    }
+}
+
+pub(crate) struct PolicyTlsForkGuard {
+    #[cfg(not(test))]
+    res_nsaddr: Option<crate::owned_tls_cache::OwnedTlsForkGuard<libc::sockaddr_in>>,
+    policy: Option<crate::owned_tls_cache::OwnedTlsForkGuard<RuntimePolicyTls>>,
+}
+
+pub(crate) fn lock_policy_tls_for_fork() -> PolicyTlsForkGuard {
+    #[cfg(not(test))]
+    let res_nsaddr = crate::unistd_abi::lock_res_nsaddr_tls_for_fork();
+    let policy = if use_owned_runtime_policy_tls() {
+        Some(RUNTIME_POLICY_OWNED_TLS.lock_for_fork())
+    } else {
+        None
+    };
+    PolicyTlsForkGuard {
+        #[cfg(not(test))]
+        res_nsaddr,
+        policy,
+    }
+}
+
+impl PolicyTlsForkGuard {
+    pub(crate) fn adopt_and_unlock_in_fork_child(&mut self) {
+        #[cfg(not(test))]
+        if let Some(ref mut guard) = self.res_nsaddr {
+            guard.adopt_and_unlock_in_fork_child();
+        }
+        #[cfg(not(test))]
+        {
+            self.res_nsaddr = None;
+        }
+        if let Some(ref mut guard) = self.policy {
+            guard.adopt_and_unlock_in_fork_child();
+        }
+        self.policy = None;
+        RUNTIME_POLICY_TLS_ACCESS_DEPTH.store(0, AtomicOrdering::Release);
+    }
+}
+
+#[inline]
 pub(crate) fn runtime_policy_tls_access_active() -> bool {
     RUNTIME_POLICY_TLS_ACCESS_DEPTH.load(AtomicOrdering::Acquire) != 0
+        && RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread()
 }
 
-#[cfg(not(feature = "owned-tls-cache"))]
-pub(crate) const fn runtime_policy_tls_access_active() -> bool {
-    false
-}
-
-#[cfg(feature = "owned-tls-cache")]
 #[inline]
 pub(crate) fn runtime_policy_tls_reentry_active() -> bool {
     RUNTIME_POLICY_OWNED_TLS.is_accessed_by_current_thread()
-}
-
-#[cfg(not(feature = "owned-tls-cache"))]
-#[inline]
-pub(crate) const fn runtime_policy_tls_reentry_active() -> bool {
-    false
 }
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -1836,95 +1935,77 @@ thread_local! {
 }
 
 fn with_mode_cache<R>(callback: impl FnOnce(&mut u8) -> R) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.mode_cache)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut value = tls.mode_cache.get();
                 let result = callback(&mut value);
                 tls.mode_cache.set(value);
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.mode_cache)
+    }))
 }
 
 fn with_mode_switch_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.mode_switch_counter)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut value = tls.mode_switch_counter.get();
                 let result = callback(&mut value);
                 tls.mode_switch_counter.set(value);
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.mode_switch_counter)
+    }))
 }
 
 fn with_trace_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.trace_counter)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut value = tls.trace_counter.get();
                 let result = callback(&mut value);
                 tls.trace_counter.set(value);
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.trace_counter)
+    }))
 }
 
 fn with_decision_counter<R>(callback: impl FnOnce(&mut u64) -> R) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.decision_counter)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut value = tls.decision_counter.get();
                 let result = callback(&mut value);
                 tls.decision_counter.set(value);
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.decision_counter)
+    }))
 }
 
 fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.trace_context)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut value = if tls.trace_active.get() {
                     Some(tls.trace_context.get())
@@ -1943,28 +2024,19 @@ fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) 
                 }
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.trace_context)
+    }))
 }
 
 fn with_last_explainability<R>(
     callback: impl FnOnce(&mut Option<RecordedDecisionExplainability>) -> R,
 ) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            let out = callback(&mut state.last_explainability);
-            state.last_explainability_kind = if state.last_explainability.is_some() {
-                EXPLAINABILITY_KIND_FULL
-            } else {
-                EXPLAINABILITY_KIND_NONE
-            };
-            out
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let Ok(mut value) = tls.last_explainability.try_borrow_mut() else {
                     return None;
@@ -1978,50 +2050,53 @@ fn with_last_explainability<R>(
                 Some(out)
             })
             .ok()
-            .flatten()
+            .flatten();
     }
+    Some(with_runtime_policy_tls(|state| {
+        let out = callback(&mut state.last_explainability);
+        state.last_explainability_kind = if state.last_explainability.is_some() {
+            EXPLAINABILITY_KIND_FULL
+        } else {
+            EXPLAINABILITY_KIND_NONE
+        };
+        out
+    }))
 }
 
 fn with_policy_reentry_depth<R>(callback: impl FnOnce(&mut u32) -> R) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.policy_reentry_depth)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut value = tls.policy_reentry_depth.get();
                 let result = callback(&mut value);
                 tls.policy_reentry_depth.set(value);
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.policy_reentry_depth)
+    }))
 }
 
 fn with_decision_contract_machine<R>(
     callback: impl FnOnce(&mut DecisionContractMachine) -> R,
 ) -> Option<R> {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        Some(with_runtime_policy_tls(|state| {
-            callback(&mut state.decision_contract_machine)
-        }))
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let mut machine = tls.decision_contract_machine.get();
                 let result = callback(&mut machine);
                 tls.decision_contract_machine.set(machine);
                 result
             })
-            .ok()
+            .ok();
     }
+    Some(with_runtime_policy_tls(|state| {
+        callback(&mut state.decision_contract_machine)
+    }))
 }
 
 pub(crate) struct EntrypointTraceGuard {
@@ -2034,17 +2109,21 @@ impl Drop for EntrypointTraceGuard {
         if self.skipped {
             return;
         }
-        #[cfg(feature = "owned-tls-cache")]
-        let _ = with_trace_context(|slot| *slot = self.previous);
         #[cfg(not(feature = "owned-tls-cache"))]
-        let _ = RUNTIME_POLICY_TLS.try_with(|tls| match self.previous {
-            Some(prev) => {
-                tls.trace_context.set(prev);
-                tls.trace_active.set(true);
-            }
-            None => {
-                tls.trace_active.set(false);
-            }
+        if !use_owned_runtime_policy_tls() {
+            let _ = RUNTIME_POLICY_TLS.try_with(|tls| match self.previous {
+                Some(prev) => {
+                    tls.trace_context.set(prev);
+                    tls.trace_active.set(true);
+                }
+                None => {
+                    tls.trace_active.set(false);
+                }
+            });
+            return;
+        }
+        with_runtime_policy_tls(|state| {
+            state.trace_context = self.previous;
         });
     }
 }
@@ -2090,16 +2169,13 @@ fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
 #[cold]
 #[inline(never)]
 fn in_policy_reentry_context_slow() -> bool {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        with_runtime_policy_tls(|state| state.policy_reentry_depth > 0)
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| tls.policy_reentry_depth.get() > 0)
-            .unwrap_or(false)
+            .unwrap_or(false);
     }
+    with_runtime_policy_tls(|state| state.policy_reentry_depth > 0)
 }
 
 #[inline(always)]
@@ -2156,28 +2232,8 @@ pub(crate) fn entrypoint_scope_memcmp() -> EntrypointTraceGuard {
 
 #[inline(always)]
 fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTraceGuard {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        let trace_seq = next_trace_seq();
-        let context = TraceContext {
-            trace_seq,
-            symbol,
-            parent_span_seq: trace_seq,
-            pcc_index,
-        };
-        let previous = with_trace_context(|slot| {
-            let prev = *slot;
-            *slot = Some(context);
-            prev
-        })
-        .flatten();
-        EntrypointTraceGuard {
-            previous,
-            skipped: false,
-        }
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
+    if !use_owned_runtime_policy_tls() {
         let previous = RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let trace_seq = tls.trace_counter.get().wrapping_add(1);
@@ -2199,10 +2255,26 @@ fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTra
             .ok()
             .flatten();
 
-        EntrypointTraceGuard {
+        return EntrypointTraceGuard {
             previous,
             skipped: false,
-        }
+        };
+    }
+    let previous = with_runtime_policy_tls(|state| {
+        let trace_seq = state.trace_counter.wrapping_add(1);
+        state.trace_counter = trace_seq;
+        let prev = state.trace_context;
+        state.trace_context = Some(TraceContext {
+            trace_seq,
+            symbol,
+            parent_span_seq: trace_seq,
+            pcc_index,
+        });
+        prev
+    });
+    EntrypointTraceGuard {
+        previous,
+        skipped: false,
     }
 }
 
@@ -2246,8 +2318,11 @@ fn take_fast_pcc_packed() -> u16 {
 pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
     let fast_packed = take_fast_pcc_packed();
     let tls_record = {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        let owned = use_owned_runtime_policy_tls();
         #[cfg(feature = "owned-tls-cache")]
-        {
+        let owned = true;
+        if owned {
             with_runtime_policy_tls(|state| {
                 let kind = state.last_explainability_kind;
                 state.last_explainability_kind = EXPLAINABILITY_KIND_NONE;
@@ -2260,26 +2335,33 @@ pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
                     _ => None,
                 }
             })
-        }
-        #[cfg(not(feature = "owned-tls-cache"))]
-        {
-            RUNTIME_POLICY_TLS
-                .try_with(|tls| {
-                    let kind = tls.last_explainability_kind.get();
-                    tls.last_explainability_kind.set(EXPLAINABILITY_KIND_NONE);
-                    match kind {
-                        EXPLAINABILITY_KIND_PCC => Some(tls.last_pcc_explainability.get().expand()),
-                        EXPLAINABILITY_KIND_FULL => tls
-                            .last_explainability
-                            .try_borrow_mut()
-                            .ok()
-                            .and_then(|mut slot| slot.take())
-                            .map(RecordedDecisionExplainability::expand),
-                        _ => None,
-                    }
-                })
-                .ok()
-                .flatten()
+        } else {
+            #[cfg(not(feature = "owned-tls-cache"))]
+            {
+                RUNTIME_POLICY_TLS
+                    .try_with(|tls| {
+                        let kind = tls.last_explainability_kind.get();
+                        tls.last_explainability_kind.set(EXPLAINABILITY_KIND_NONE);
+                        match kind {
+                            EXPLAINABILITY_KIND_PCC => {
+                                Some(tls.last_pcc_explainability.get().expand())
+                            }
+                            EXPLAINABILITY_KIND_FULL => tls
+                                .last_explainability
+                                .try_borrow_mut()
+                                .ok()
+                                .and_then(|mut slot| slot.take())
+                                .map(RecordedDecisionExplainability::expand),
+                            _ => None,
+                        }
+                    })
+                    .ok()
+                    .flatten()
+            }
+            #[cfg(feature = "owned-tls-cache")]
+            {
+                unreachable!()
+            }
         }
     };
     expand_fast_pcc_packed(fast_packed).or(tls_record)
@@ -2290,19 +2372,9 @@ pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
     if let Some(exp) = expand_fast_pcc_packed(peek_fast_pcc_packed()) {
         return Some(exp);
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        with_runtime_policy_tls(|state| match state.last_explainability_kind {
-            EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
-            EXPLAINABILITY_KIND_FULL => state
-                .last_explainability
-                .map(RecordedDecisionExplainability::expand),
-            _ => None,
-        })
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| match tls.last_explainability_kind.get() {
                 EXPLAINABILITY_KIND_PCC => Some(tls.last_pcc_explainability.get().expand()),
                 EXPLAINABILITY_KIND_FULL => tls
@@ -2314,8 +2386,15 @@ pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
                 _ => None,
             })
             .ok()
-            .flatten()
+            .flatten();
     }
+    with_runtime_policy_tls(|state| match state.last_explainability_kind {
+        EXPLAINABILITY_KIND_PCC => Some(state.last_pcc_explainability.expand()),
+        EXPLAINABILITY_KIND_FULL => state
+            .last_explainability
+            .map(RecordedDecisionExplainability::expand),
+        _ => None,
+    })
 }
 
 /// Read-only projection of the calling thread's existing hardened decision.
@@ -2607,12 +2686,7 @@ fn next_trace_seq() -> u64 {
 }
 
 fn fallback_trace_context() -> TraceContext {
-    let trace_seq = with_trace_counter(|counter| {
-        let next = counter.wrapping_add(1);
-        *counter = next;
-        next
-    })
-    .unwrap_or(0);
+    let trace_seq = next_trace_seq();
     TraceContext {
         trace_seq,
         symbol: TRACE_UNKNOWN_SYMBOL,
@@ -2895,50 +2969,8 @@ fn record_pcc_explainability(
     }
     set_fast_pcc_packed(0);
 
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        with_runtime_policy_tls(|state| {
-            let trace = state.trace_context.unwrap_or_else(|| {
-                let trace_seq = state.trace_counter.wrapping_add(1);
-                state.trace_counter = trace_seq;
-                TraceContext {
-                    trace_seq,
-                    symbol: TRACE_UNKNOWN_SYMBOL,
-                    parent_span_seq: trace_seq,
-                    pcc_index,
-                }
-            });
-            let span_seq = state.decision_counter.wrapping_add(1);
-            state.decision_counter = span_seq;
-            let (contract_state, contract_action) =
-                if matches!(state.decision_contract_machine.state(), TsmState::Safe) {
-                    (TsmState::Safe, DecisionContractAction::Log)
-                } else {
-                    let transition = state
-                        .decision_contract_machine
-                        .observe(DecisionContractEvent::CheckPass, mode);
-                    (transition.to, transition.action)
-                };
-            state.last_pcc_explainability = RecordedPccExplainability {
-                trace_seq: trace.trace_seq,
-                span_seq,
-                parent_span_seq: trace.parent_span_seq,
-                requested_bytes,
-                addr_hint,
-                pcc_index,
-                mode,
-                is_write,
-                bloom_negative,
-                contract_state,
-                contract_event: DecisionContractEvent::CheckPass,
-                contract_action,
-                pad: 0,
-            };
-            state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
-        });
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
+    if !use_owned_runtime_policy_tls() {
         let _ = RUNTIME_POLICY_TLS.try_with(|tls| {
             let trace = if tls.trace_active.get() {
                 tls.trace_context.get()
@@ -2979,7 +3011,47 @@ fn record_pcc_explainability(
             });
             tls.last_explainability_kind.set(EXPLAINABILITY_KIND_PCC);
         });
+        return;
     }
+    with_runtime_policy_tls(|state| {
+        let trace = state.trace_context.unwrap_or_else(|| {
+            let trace_seq = state.trace_counter.wrapping_add(1);
+            state.trace_counter = trace_seq;
+            TraceContext {
+                trace_seq,
+                symbol: TRACE_UNKNOWN_SYMBOL,
+                parent_span_seq: trace_seq,
+                pcc_index,
+            }
+        });
+        let span_seq = state.decision_counter.wrapping_add(1);
+        state.decision_counter = span_seq;
+        let (contract_state, contract_action) =
+            if matches!(state.decision_contract_machine.state(), TsmState::Safe) {
+                (TsmState::Safe, DecisionContractAction::Log)
+            } else {
+                let transition = state
+                    .decision_contract_machine
+                    .observe(DecisionContractEvent::CheckPass, mode);
+                (transition.to, transition.action)
+            };
+        state.last_pcc_explainability = RecordedPccExplainability {
+            trace_seq: trace.trace_seq,
+            span_seq,
+            parent_span_seq: trace.parent_span_seq,
+            requested_bytes,
+            addr_hint,
+            pcc_index,
+            mode,
+            is_write,
+            bloom_negative,
+            contract_state,
+            contract_event: DecisionContractEvent::CheckPass,
+            contract_action,
+            pad: 0,
+        };
+        state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
+    });
 }
 
 /// Build the runtime-math kernel now if no call has yet. Process startup does
@@ -3798,50 +3870,9 @@ pub(crate) fn try_decide_certified_string_pcc(
         ROUTE_FFI_PCC_DECISIONS.fetch_add(1, AtomicOrdering::Relaxed);
     }
 
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        with_runtime_policy_tls(|state| {
-            let next_switch = state.mode_switch_counter.wrapping_add(1);
-            if next_switch.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
-                return None;
-            }
-            state.mode_cache = mode_raw;
-            state.mode_switch_counter = next_switch;
-            let trace_seq = state.trace_counter.wrapping_add(1);
-            state.trace_counter = trace_seq;
-            let span_seq = state.decision_counter.wrapping_add(1);
-            state.decision_counter = span_seq;
-            let (contract_state, contract_action) =
-                if matches!(state.decision_contract_machine.state(), TsmState::Safe) {
-                    (TsmState::Safe, DecisionContractAction::Log)
-                } else {
-                    let transition = state
-                        .decision_contract_machine
-                        .observe(DecisionContractEvent::CheckPass, mode);
-                    (transition.to, transition.action)
-                };
-            state.last_pcc_explainability = RecordedPccExplainability {
-                trace_seq,
-                span_seq,
-                parent_span_seq: trace_seq,
-                requested_bytes,
-                addr_hint,
-                pcc_index,
-                mode,
-                is_write,
-                bloom_negative,
-                contract_state,
-                contract_event: DecisionContractEvent::CheckPass,
-                contract_action,
-                pad: 0,
-            };
-            state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
-            Some(mode)
-        })
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RUNTIME_POLICY_TLS
+    if !use_owned_runtime_policy_tls() {
+        return RUNTIME_POLICY_TLS
             .try_with(|tls| {
                 let next_switch = tls.mode_switch_counter.get().wrapping_add(1);
                 if next_switch.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
@@ -3881,8 +3912,46 @@ pub(crate) fn try_decide_certified_string_pcc(
                 Some(mode)
             })
             .ok()
-            .flatten()
+            .flatten();
     }
+    with_runtime_policy_tls(|state| {
+        let next_switch = state.mode_switch_counter.wrapping_add(1);
+        if next_switch.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
+            return None;
+        }
+        state.mode_cache = mode_raw;
+        state.mode_switch_counter = next_switch;
+        let trace_seq = state.trace_counter.wrapping_add(1);
+        state.trace_counter = trace_seq;
+        let span_seq = state.decision_counter.wrapping_add(1);
+        state.decision_counter = span_seq;
+        let (contract_state, contract_action) =
+            if matches!(state.decision_contract_machine.state(), TsmState::Safe) {
+                (TsmState::Safe, DecisionContractAction::Log)
+            } else {
+                let transition = state
+                    .decision_contract_machine
+                    .observe(DecisionContractEvent::CheckPass, mode);
+                (transition.to, transition.action)
+            };
+        state.last_pcc_explainability = RecordedPccExplainability {
+            trace_seq,
+            span_seq,
+            parent_span_seq: trace_seq,
+            requested_bytes,
+            addr_hint,
+            pcc_index,
+            mode,
+            is_write,
+            bloom_negative,
+            contract_state,
+            contract_event: DecisionContractEvent::CheckPass,
+            contract_action,
+            pad: 0,
+        };
+        state.last_explainability_kind = EXPLAINABILITY_KIND_PCC;
+        Some(mode)
+    })
 }
 
 /// Membrane denials since process start.
@@ -4207,6 +4276,15 @@ pub(crate) struct ErrnoTransparencyGuard {
 impl ErrnoTransparencyGuard {
     #[inline]
     pub(crate) fn capture() -> Self {
+        if frankenlibc_core::pthread::tls::current_thread_is_exiting_native() {
+            return Self {
+                fl_slot: std::ptr::null_mut(),
+                fl_value: 0,
+                host_slot: std::ptr::null_mut(),
+                host_value: 0,
+            };
+        }
+        let is_native_clone = frankenlibc_core::pthread::thread::current_thread_handle().is_some();
         // SAFETY: `__errno_location` returns this thread's slot, valid for the
         // life of the thread and therefore for this guard's scope.
         let fl_slot = unsafe { crate::errno_abi::__errno_location() };
@@ -4224,24 +4302,33 @@ impl ErrnoTransparencyGuard {
         // in `abi_argp_help_ignores_unterminated_literal_text` where HEAD was
         // 10/10. A cold cache needs no protection anyway: `set_abi_errno` uses
         // the same cache, so it could not have written the host slot either.
+        // Native clone threads without `CLONE_SETTLS` share their creator's `%fs`
+        // TCB, so they never own the host glibc `errno` slot and must not touch it.
         #[cfg(not(feature = "standalone"))]
-        let (host_slot, host_value) = match crate::host_resolve::host_errno_location_cached() {
-            // SAFETY: the resolved host `__errno_location` returns this thread's
-            // glibc errno slot.
-            Some(loc) => {
-                let slot = unsafe { loc() };
-                let value = if slot.is_null() {
-                    0
-                } else {
-                    // SAFETY: non-null slot returned by host `__errno_location`.
-                    unsafe { std::ptr::read_volatile(slot) }
-                };
-                (slot, value)
+        let (host_slot, host_value) = if is_native_clone {
+            (std::ptr::null_mut(), 0)
+        } else {
+            match crate::host_resolve::host_errno_location_cached() {
+                // SAFETY: the resolved host `__errno_location` returns this thread's
+                // glibc errno slot.
+                Some(loc) => {
+                    let slot = unsafe { loc() };
+                    let value = if slot.is_null() {
+                        0
+                    } else {
+                        // SAFETY: non-null slot returned by host `__errno_location`.
+                        unsafe { std::ptr::read_volatile(slot) }
+                    };
+                    (slot, value)
+                }
+                None => (std::ptr::null_mut(), 0),
             }
-            None => (std::ptr::null_mut(), 0),
         };
         #[cfg(feature = "standalone")]
-        let (host_slot, host_value) = (std::ptr::null_mut(), 0);
+        let (host_slot, host_value) = {
+            let _ = is_native_clone;
+            (std::ptr::null_mut(), 0)
+        };
 
         Self {
             fl_slot,

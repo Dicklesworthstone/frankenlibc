@@ -245,6 +245,28 @@ pub(crate) unsafe fn copy_user_bytes(
     unsafe { copy_descriptors(source.cast(), destination.cast(), bytes) }
 }
 
+/// Signal-safe, lock-free kernel-validated user byte copy (`process_vm_readv` /
+/// `pipe2`) without consulting heap allocation tables (`known_remaining`).
+/// Suitable for reading untrusted `sigset_t` masks or signal-frame `ucontext_t`
+/// / code bytes inside unwinders and signal handlers without risking `SIGSEGV`.
+#[allow(dead_code)]
+pub(crate) unsafe fn copy_user_bytes_raw(
+    source: *const u8,
+    destination: *mut u8,
+    bytes: usize,
+) -> Result<(), c_int> {
+    if bytes == 0 {
+        return Ok(());
+    }
+    for address in [source as usize, destination as usize] {
+        if address == 0 || address.checked_add(bytes).is_none() {
+            return Err(errno::EFAULT);
+        }
+    }
+    // SAFETY: validated non-null non-wrapping ranges; kernel checks mapping permissions.
+    unsafe { copy_descriptors(source.cast(), destination.cast(), bytes) }
+}
+
 /// Fault-safe descriptor import. Short copies are errors; no incomplete array
 /// may reach validation or the target I/O syscall. No host errno side effects.
 unsafe fn copy_descriptors(

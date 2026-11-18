@@ -2694,6 +2694,9 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
         let slot = &slots[idx];
         debug_assert_eq!(card.decision_id, decision_id);
         let mut guard = slot.card.lock();
+        if slot.published_decision_id.load(Ordering::Relaxed) >= decision_id {
+            return;
+        }
         *guard = card;
         slot.published_decision_id
             .store(decision_id, Ordering::Release);
@@ -2798,6 +2801,9 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
         // Write record and publish seqno under the slot mutex so out-of-order
         // wrap-around writers never pair a newer seqno with an older payload.
         let mut guard = slot.record.lock();
+        if slot.published_seqno.load(Ordering::Relaxed) >= seqno {
+            return;
+        }
         *guard = record;
         slot.published_seqno.store(seqno, Ordering::Release);
     }

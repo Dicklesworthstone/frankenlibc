@@ -144,7 +144,7 @@ unsafe extern "C" {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn signal_restorer_trampoline_addr() -> usize {
+pub(crate) fn signal_restorer_trampoline_addr() -> usize {
     frankenlibc_signal_restorer as *const () as usize
 }
 
@@ -182,9 +182,10 @@ fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
     }
 }
 
-/// Filter NPTL/FrankenLibC reserved internal signals (32/33) out of a non-null,
-/// canonically mapped user `sigset_t` before `rt_sigtimedwait`, preserving
-/// kernel `EFAULT` behavior on null, unaligned, or kernel-range pointers.
+/// Filter NPTL/FrankenLibC reserved internal signals (32/33) out of a user
+/// `sigset_t` via a kernel-validated fault-safe copy (`copy_user_bytes_raw`),
+/// preserving exact kernel `-EFAULT` behavior on null, `PROT_NONE`, unmapped,
+/// page-crossing, or non-canonical pointers.
 #[inline]
 #[cfg(all(
     target_os = "linux",
@@ -194,12 +195,20 @@ pub(crate) unsafe fn filter_reserved_sigset_for_wait(
     set: *const u8,
     scratch: &mut libc::c_ulong,
 ) -> *const u8 {
-    let addr = set as usize;
-    if (4096..(1usize << 57)).contains(&addr) {
+    if set.is_null() {
+        return set;
+    }
+    let mut word0: libc::c_ulong = 0;
+    if unsafe {
+        crate::io_abi::iov_snapshot::copy_user_bytes_raw(
+            set,
+            (&raw mut word0).cast::<u8>(),
+            core::mem::size_of::<libc::c_ulong>(),
+        )
+    }
+    .is_ok()
+    {
         let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
-        // SAFETY: validated positive user-space address; `read_unaligned` handles
-        // packed/unaligned `sigset_t` pointers just like `sigprocmask` / kernel `copy_from_user`.
-        let word0 = unsafe { core::ptr::read_unaligned(set as *const libc::c_ulong) };
         if word0 & reserved != 0 {
             *scratch = word0 & !reserved;
             return std::ptr::from_ref(scratch).cast::<u8>();
@@ -700,6 +709,12 @@ unsafe extern "C-unwind" fn native_sigcancel_trampoline(
             unsafe { f(signum) };
         }
     }
+}
+
+/// Reset an orphaned in-progress `NATIVE_SIGCANCEL_STATE == 1` install lock in a
+/// freshly forked child so the child never spins on a vanished parent installer.
+pub(crate) fn reset_native_sigcancel_state_in_fork_child() {
+    let _ = NATIVE_SIGCANCEL_STATE.compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed);
 }
 
 /// Lazily install the `!SA_RESTART | SA_SIGINFO` kernel handler on signal 32

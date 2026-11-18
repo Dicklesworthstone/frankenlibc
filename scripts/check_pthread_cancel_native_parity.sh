@@ -110,12 +110,14 @@ done
 # restoration + main-thread async cancellation across hosted and native backends.
 cat > "$out/async_cancel_probe.cpp" <<'EOF'
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 static std::atomic<int> g_spin_ready{0};
@@ -226,7 +228,72 @@ static void *main_canceller(void *arg) {
     return nullptr;
 }
 
+static int g_sigusr2_pipe_w = -1;
+static std::atomic<int> g_sigusr2_wrote{0};
+static void sigusr2_write_in_window(int) {
+    if (g_sigusr2_pipe_w >= 0) {
+        char b = 'S';
+        ssize_t w = write(g_sigusr2_pipe_w, &b, 1);
+        if (w == 1) {
+            g_sigusr2_wrote.store(1, std::memory_order_release);
+        }
+    }
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && std::strcmp(argv[1], "efault-and-sigwindow") == 0) {
+        /* 1) PROT_NONE sigset_t* must return -1/EFAULT without SIGSEGV */
+        void *guard_page = mmap(nullptr, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (guard_page == MAP_FAILED) return 2;
+        struct timespec ts{0, 0};
+        errno = 0;
+        int sw = sigtimedwait(static_cast<const sigset_t *>(guard_page), nullptr, &ts);
+        int sw_err = errno;
+        munmap(guard_page, 4096);
+        if (sw != -1 || sw_err != EFAULT) {
+            std::fprintf(stderr, "PROT_NONE sigtimedwait: rc=%d errno=%d\n", sw, sw_err);
+            return 3;
+        }
+
+        /* 2) Signal handler calling write() inside a blocked read() cancellation window */
+        int data_pipe[2] = {-1, -1};
+        int ack_pipe[2] = {-1, -1};
+        if (pipe(data_pipe) != 0 || pipe(ack_pipe) != 0) return 4;
+        g_sigusr2_pipe_w = ack_pipe[1];
+        g_sigusr2_wrote.store(0, std::memory_order_relaxed);
+        struct sigaction sa{};
+        sa.sa_handler = sigusr2_write_in_window;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_RESTART;
+        if (sigaction(SIGUSR2, &sa, nullptr) != 0) return 5;
+
+        std::atomic<int> entered{0};
+        NestedPipeCtx ctx{data_pipe[0], &entered};
+        pthread_t rth{};
+        if (pthread_create(&rth, nullptr, nested_reader, &ctx) != 0) return 6;
+        while (entered.load(std::memory_order_acquire) == 0) {
+            usleep(1000);
+        }
+        usleep(5000);
+        if (pthread_kill(rth, SIGUSR2) != 0) return 7;
+        char ack = 0;
+        if (read(ack_pipe[0], &ack, 1) != 1 || ack != 'S' || g_sigusr2_wrote.load() != 1) {
+            std::fprintf(stderr, "SIGUSR2 write inside cancel window failed\n");
+            return 8;
+        }
+        usleep(5000);
+        if (pthread_cancel(rth) != 0) return 9;
+        void *rres = nullptr;
+        if (pthread_join(rth, &rres) != 0 || rres != PTHREAD_CANCELED) {
+            std::fprintf(stderr, "outer read failed to cancel after SIGUSR2 write: res=%p\n", rres);
+            return 10;
+        }
+        close(data_pipe[0]); close(data_pipe[1]);
+        close(ack_pipe[0]); close(ack_pipe[1]);
+        std::printf("efault-and-sigwindow:PASS\n");
+        return 0;
+    }
+
     if (argc == 2 && std::strcmp(argv[1], "main-async") == 0) {
         std::atexit(main_atexit_check);
         static std::atomic<int> s_main_ready{0};
@@ -289,6 +356,12 @@ for backend in 0 1; do
       "$out/async_cancel_probe" main-async > "$out/async-m-b${backend}-${mode}.out" 2> "$out/async-m-b${backend}-${mode}.err"
     grep -qx "async-main-cancel:PASS" "$out/async-m-b${backend}-${mode}.out"
     test ! -s "$out/async-m-b${backend}-${mode}.err"
+
+    timeout --kill-after=2s 10s env LD_PRELOAD="$library" \
+      FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE="$backend" \
+      "$out/async_cancel_probe" efault-and-sigwindow > "$out/async-e-b${backend}-${mode}.out" 2> "$out/async-e-b${backend}-${mode}.err"
+    grep -qx "efault-and-sigwindow:PASS" "$out/async-e-b${backend}-${mode}.out"
+    test ! -s "$out/async-e-b${backend}-${mode}.err"
   done
 done
 

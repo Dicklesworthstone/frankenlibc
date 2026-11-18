@@ -492,32 +492,34 @@ impl MallocState {
 
         self.thread_cache_misses += 1;
 
-        match self.elimination.try_take(bin_usize) {
-            TakeOutcome::Matched { value: ptr, meta } => {
-                self.track_allocation(size);
-                // Build the detail string only when the Trace row would be kept;
-                // avoids a heap `format!` on every elimination-matched alloc
-                // (the common path under multi-threaded malloc/free traffic).
-                if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
-                    self.record_lifecycle(
-                        AllocatorLogLevel::Trace,
-                        "malloc",
-                        "alloc",
-                        Some(ptr),
-                        Some(size),
-                        Some(bin_usize),
-                        "success",
-                        format!(
-                            "path=elimination;slot={};wait_cycles={};partner_thread={}",
-                            meta.slot_index.unwrap_or(usize::MAX),
-                            meta.wait_cycles,
-                            meta.partner_thread.unwrap_or(0)
-                        ),
-                    );
+        if Arc::strong_count(&self.elimination) > 1 {
+            match self.elimination.try_take(bin_usize) {
+                TakeOutcome::Matched { value: ptr, meta } => {
+                    self.track_allocation(size);
+                    // Build the detail string only when the Trace row would be kept;
+                    // avoids a heap `format!` on every elimination-matched alloc
+                    // (the common path under multi-threaded malloc/free traffic).
+                    if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
+                        self.record_lifecycle(
+                            AllocatorLogLevel::Trace,
+                            "malloc",
+                            "alloc",
+                            Some(ptr),
+                            Some(size),
+                            Some(bin_usize),
+                            "success",
+                            format!(
+                                "path=elimination;slot={};wait_cycles={};partner_thread={}",
+                                meta.slot_index.unwrap_or(usize::MAX),
+                                meta.wait_cycles,
+                                meta.partner_thread.unwrap_or(0)
+                            ),
+                        );
+                    }
+                    return Some(ptr);
                 }
-                return Some(ptr);
+                TakeOutcome::Fallback { .. } => {}
             }
-            TakeOutcome::Fallback { .. } => {}
         }
 
         // Try central bin
@@ -761,11 +763,19 @@ impl MallocState {
         self.lifecycle_logs.drain(..).collect()
     }
 
-    #[cfg(test)]
-    pub(crate) fn elimination_handle(
-        &self,
-    ) -> Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>> {
+    /// Returns a clone of the shared `EliminationArray` handle so sibling thread
+    /// `MallocState` instances can pair via `with_shared_elimination`.
+    pub fn elimination_handle(&self) -> Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>> {
         Arc::clone(&self.elimination)
+    }
+
+    /// Creates a new `MallocState` sharing an existing `EliminationArray` across threads.
+    pub fn with_shared_elimination(
+        elimination: Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>>,
+    ) -> Self {
+        let mut state = Self::new();
+        state.elimination = elimination;
+        state
     }
 }
 

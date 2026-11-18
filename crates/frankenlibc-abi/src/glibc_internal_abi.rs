@@ -209,14 +209,16 @@ unsafe fn legacy_cleanup_push(
         return;
     }
 
+    #[cfg(not(feature = "standalone"))]
     if let Some(push) = crate::pthread_abi::host_legacy_cleanup_push(deferred) {
         // SAFETY: the caller provides the live GNU cleanup buffer and handler.
         // Linking only our private TLS list would lose the handler on host exit.
         unsafe { push(buf, routine, arg) };
-    } else {
-        // SAFETY: the caller owns an aligned, writable GNU cleanup buffer.
-        unsafe { crate::pthread_abi::native_legacy_cleanup_push(buf, routine, arg, deferred) };
+        crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
+        return;
     }
+    // SAFETY: the caller owns an aligned, writable GNU cleanup buffer.
+    unsafe { crate::pthread_abi::native_legacy_cleanup_push(buf, routine, arg, deferred) };
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
 
@@ -231,13 +233,15 @@ unsafe fn legacy_cleanup_pop(buf: *mut c_void, execute: c_int, restore: bool) {
         return;
     }
 
+    #[cfg(not(feature = "standalone"))]
     if let Some(pop) = crate::pthread_abi::host_legacy_cleanup_pop(restore) {
         // SAFETY: this matches a live buffer registered with the host family.
         unsafe { pop(buf, execute) };
-    } else {
-        // SAFETY: this is the matching live buffer supplied to native push.
-        unsafe { crate::pthread_abi::native_legacy_cleanup_pop(buf, execute, restore) };
+        crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
+        return;
     }
+    // SAFETY: this is the matching live buffer supplied to native push.
+    unsafe { crate::pthread_abi::native_legacy_cleanup_pop(buf, execute, restore) };
     crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
 
@@ -574,6 +578,7 @@ pub(crate) fn note_current_thread_activity() {
     }
     if OBSERVED_PRIMARY_THREAD.load(std::sync::atomic::Ordering::Relaxed) != thread_token {
         __libc_single_threaded.store(0, std::sync::atomic::Ordering::Release);
+        crate::malloc_abi::latch_multi_threaded_before_thread_create();
     }
 }
 
@@ -5734,59 +5739,37 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut 
         return -1;
     }
 
-    // Classify handle: NULL or RTLD_DEFAULT (0) = self.
-    let is_self = handle.is_null();
-
+    // `handle` was checked null above, so NULL / RTLD_DEFAULT (0) = self.
     match request {
         RTLD_DI_LINKMAP => {
-            if is_self {
-                let lm = self_link_map();
-                if lm.is_null() {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::ENOENT) };
-                    return -1;
-                }
-                // Write link_map* into info (info points to a link_map**).
-                unsafe { *(info as *mut *const LinkMap) = lm };
-                return 0;
+            let lm = self_link_map();
+            if lm.is_null() {
+                unsafe { crate::errno_abi::set_abi_errno(libc::ENOENT) };
+                return -1;
             }
-            // Non-self handle: delegate to host dlinfo if available.
-            if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("dlinfo") {
-                type HostDlinfoFn = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
-                let host_fn: HostDlinfoFn = unsafe { core::mem::transmute(host_addr) };
-                return unsafe { host_fn(handle, request, info) };
-            }
-            unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-            -1
+            // Write link_map* into info (info points to a link_map**).
+            unsafe { *(info as *mut *const LinkMap) = lm };
+            0
         }
         RTLD_DI_ORIGIN => {
-            if is_self {
-                let Some((_, ref path)) = *self_lib_info() else {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::ENOENT) };
-                    return -1;
-                };
-                // Extract dirname: "/usr/lib/libfoo.so" -> "/usr/lib"
-                // Special case: "/libfoo.so" -> "/" (root directory).
-                let dir = match path.rfind('/') {
-                    Some(0) => "/",
-                    Some(pos) => &path[..pos],
-                    None => ".",
-                };
-                let dir_bytes = dir.as_bytes();
-                let dst = info as *mut u8;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(dir_bytes.as_ptr(), dst, dir_bytes.len());
-                    *dst.add(dir_bytes.len()) = 0; // NUL terminate
-                };
-                return 0;
-            }
-            // Non-self: delegate to host.
-            if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("dlinfo") {
-                type HostDlinfoFn = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
-                let host_fn: HostDlinfoFn = unsafe { core::mem::transmute(host_addr) };
-                return unsafe { host_fn(handle, request, info) };
-            }
-            unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-            -1
+            let Some((_, ref path)) = *self_lib_info() else {
+                unsafe { crate::errno_abi::set_abi_errno(libc::ENOENT) };
+                return -1;
+            };
+            // Extract dirname: "/usr/lib/libfoo.so" -> "/usr/lib"
+            // Special case: "/libfoo.so" -> "/" (root directory).
+            let dir = match path.rfind('/') {
+                Some(0) => "/",
+                Some(pos) => &path[..pos],
+                None => ".",
+            };
+            let dir_bytes = dir.as_bytes();
+            let dst = info as *mut u8;
+            unsafe {
+                std::ptr::copy_nonoverlapping(dir_bytes.as_ptr(), dst, dir_bytes.len());
+                *dst.add(dir_bytes.len()) = 0; // NUL terminate
+            };
+            0
         }
         _ => {
             // Unsupported request code.
@@ -9611,6 +9594,41 @@ struct NativeResolvContext {
     __refcount: SizeT,
     __from_res: bool,
     __next: *mut NativeResolvContext,
+}
+
+/// Extract `(statp, use_global_res)` from a `struct resolv_context *` (or `NULL`).
+///
+/// Both FrankenLibC's `NativeResolvContext` and glibc's `struct resolv_context`
+/// place `struct __res_state *resp` at byte offset `0`. Returns `None` when
+/// `ctx` is misaligned, smaller than a context header in tracked memory, or
+/// holds a null `resp` pointer.
+pub(crate) unsafe fn extract_resolv_context_statp(ctx: *mut c_void) -> Option<(*mut c_void, bool)> {
+    if ctx.is_null() {
+        return Some((unsafe { __res_state() }, true));
+    }
+    if !(ctx as usize).is_multiple_of(core::mem::align_of::<*mut c_void>()) {
+        return None;
+    }
+    if let Some(rem) = crate::malloc_abi::known_remaining(ctx as usize) {
+        if rem < core::mem::size_of::<NativeResolvContext>() {
+            return None;
+        }
+        let target = ctx.cast::<NativeResolvContext>();
+        // SAFETY: `ctx` is pointer-aligned and tracked with `>= size_of::<NativeResolvContext>()`.
+        let (resp, from_res) = unsafe { ((*target).resp, (*target).__from_res) };
+        if resp.is_null() {
+            return None;
+        }
+        let is_global = from_res && resp == unsafe { __res_state() };
+        return Some((resp, is_global));
+    }
+    // Foreign / untracked `resolv_context`: offset 0 is `struct __res_state *resp`.
+    let resp = unsafe { *ctx.cast::<*mut c_void>() };
+    if resp.is_null() {
+        return None;
+    }
+    let is_global = resp == unsafe { __res_state() };
+    Some((resp, is_global))
 }
 
 #[cfg(feature = "owned-tls-cache")]

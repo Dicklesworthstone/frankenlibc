@@ -56,6 +56,7 @@ use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
 
 use crate::errno_abi::set_abi_errno;
+#[cfg(not(feature = "standalone"))]
 use crate::host_resolve::{
     host_pthread_cancel_raw as resolved_thread_cancel_raw,
     host_pthread_clockjoin_np_raw as resolved_thread_clockjoin_np_raw,
@@ -87,34 +88,51 @@ mod cancel_poll;
 mod cancel_wait;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+#[cfg(not(feature = "standalone"))]
 type UnwindStartRoutine = unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadGettidNpFn = unsafe extern "C" fn(libc::pthread_t) -> libc::pid_t;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetdetachstateFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrGetdetachstateFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetguardsizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrGetguardsizeFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetstackFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrGetstackFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetstacksizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrGetstacksizeFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetinheritschedFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetschedpolicyFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetschedparamFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sched_param) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetaffinityNpFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize, *const libc::cpu_set_t) -> c_int;
+#[cfg(not(feature = "standalone"))]
 type ResolvedPthreadAttrSetsigmaskNpFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sigset_t) -> c_int;
 // Host attr type aliases reintroduced for LD_PRELOAD compatibility in host mode.
@@ -201,6 +219,7 @@ struct ManagedThreadRecord {
     detach_state: c_int,
 }
 
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 struct HostThreadStartContext {
     start_routine: StartRoutine,
     arg: *mut c_void,
@@ -212,11 +231,16 @@ struct HostThreadStartContext {
     child_owned: bool,
 }
 
+#[cfg(not(feature = "standalone"))]
 const STRICT_HOST_THREAD_TLS_GAP_BYTES: usize = 4 * 1024 * 1024;
+#[cfg(not(feature = "standalone"))]
 static STRICT_HOST_THREAD_TLS_GAP_PTR: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 const HOST_THREAD_HANDOFF_READY: i32 = 1;
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
 
 /// Counts children that exhausted [`HOST_THREAD_HANDOFF_SPIN_LIMIT`] and had to
@@ -233,17 +257,20 @@ static HOST_THREAD_HANDOFF_FUTEX_WAITS: AtomicU64 = AtomicU64::new(0);
 
 /// Yields the creating thread spends waiting for the child to publish its TID
 /// before it stops spinning and blocks on [`HOST_THREAD_REGISTRATION_EPOCH`].
+#[cfg(not(feature = "standalone"))]
 const HOST_THREAD_REGISTRATION_YIELD_SPINS: usize = 256;
 
 /// Upper bound on how long `pthread_create` waits for that publication. This
 /// is a safety net against a child that never runs, not the mechanism: the
 /// futex wake makes the common case return as soon as the child publishes.
+#[cfg(not(feature = "standalone"))]
 const HOST_THREAD_REGISTRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Bumped by every host-thread trampoline immediately after it publishes its
 /// kernel TID into [`HOST_THREAD_TID_REGISTRY`]. Global and `'static` so a
 /// creating thread can block on it without any lifetime relationship to the
 /// child's start context, which the child still owns while we wait.
+#[cfg(not(feature = "standalone"))]
 static HOST_THREAD_REGISTRATION_EPOCH: AtomicI32 = AtomicI32::new(0);
 
 static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, ManagedThreadRecord>>> =
@@ -258,23 +285,40 @@ static HOST_THREAD_TID_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, i32>>> =
     LazyLock::new(|| Mutex::new(artifact_hash_map()));
 static CANCEL_PENDING_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, bool>>> =
     LazyLock::new(|| Mutex::new(artifact_hash_map()));
+#[cfg(not(feature = "standalone"))]
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<ArtifactHashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(artifact_hash_map()));
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_GETTID_NP_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_GETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_GETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_GETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
 static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
 
 const THREAD_BACKEND_UNKNOWN: u8 = 0;
@@ -329,8 +373,12 @@ fn any_registered_host_thread_alive() -> bool {
         .any(|tid| tid != self_tid && thread_tid_appears_alive(tid))
 }
 
+static NATIVE_LAST_THREAD_EXITING: AtomicBool = AtomicBool::new(false);
+
 unsafe extern "C" fn native_last_thread_exit_hook() {
-    if !any_registered_host_thread_alive() {
+    if !any_registered_host_thread_alive()
+        && !NATIVE_LAST_THREAD_EXITING.swap(true, Ordering::AcqRel)
+    {
         // SAFETY: POSIX requires terminating the process as if by exit(0) when
         // the last remaining thread terminates via pthread_exit or cancellation.
         unsafe { crate::stdlib_abi::exit(0) };
@@ -504,7 +552,7 @@ fn force_native_threading_enabled() -> bool {
     // In standalone mode, always use native threading (no host pthreads)
     #[cfg(feature = "standalone")]
     {
-        global_force_native_threading_enabled()
+        true
     }
     #[cfg(not(feature = "standalone"))]
     {
@@ -538,6 +586,7 @@ fn current_threading_backend() -> u8 {
     resolved
 }
 
+#[cfg(not(feature = "standalone"))]
 fn loaded_libc_base_and_path() -> Option<(u64, String)> {
     let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
     for line in maps.lines() {
@@ -559,6 +608,7 @@ fn loaded_libc_base_and_path() -> Option<(u64, String)> {
     None
 }
 
+#[cfg(not(feature = "standalone"))]
 fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
     if let Some(addr) = HOST_LIBC_SYMBOL_CACHE
         .lock()
@@ -591,59 +641,75 @@ fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
 }
 
 unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {
-    let glibc_v34 = b"GLIBC_2.34\0";
-    let glibc_v232 = b"GLIBC_2.3.2\0";
-    let glibc_v225 = b"GLIBC_2.2.5\0";
-    // Try versions in order: newest first, then NPTL baseline (2.3.2),
-    // then legacy (2.2.5). For pthread_cond_*, the 2.3.2 version uses
-    // the NPTL layout which is the current default; 2.2.5 is the old
-    // LinuxThreads ABI with incompatible struct layout.
-    let mut ptr = unsafe {
-        crate::dlfcn_abi::dlvsym_next(
-            name.as_ptr().cast::<libc::c_char>(),
-            glibc_v34.as_ptr().cast::<libc::c_char>(),
-        )
-    };
-    if ptr.is_null() {
-        // SAFETY: NPTL baseline — preferred for pthread_cond_* and pthread_mutex_*.
-        ptr = unsafe {
+    #[cfg(feature = "standalone")]
+    {
+        let _ = name;
+        std::ptr::null_mut()
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let glibc_v34 = b"GLIBC_2.34\0";
+        let glibc_v232 = b"GLIBC_2.3.2\0";
+        let glibc_v225 = b"GLIBC_2.2.5\0";
+        // Try versions in order: newest first, then NPTL baseline (2.3.2),
+        // then legacy (2.2.5). For pthread_cond_*, the 2.3.2 version uses
+        // the NPTL layout which is the current default; 2.2.5 is the old
+        // LinuxThreads ABI with incompatible struct layout.
+        let mut ptr = unsafe {
             crate::dlfcn_abi::dlvsym_next(
                 name.as_ptr().cast::<libc::c_char>(),
-                glibc_v232.as_ptr().cast::<libc::c_char>(),
+                glibc_v34.as_ptr().cast::<libc::c_char>(),
             )
         };
-    }
-    if ptr.is_null() {
-        // SAFETY: oldest baseline — LinuxThreads era.
-        ptr = unsafe {
-            crate::dlfcn_abi::dlvsym_next(
-                name.as_ptr().cast::<libc::c_char>(),
-                glibc_v225.as_ptr().cast::<libc::c_char>(),
-            )
-        };
-    }
-    if ptr.is_null() {
-        let symbol = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok();
-        if let Some(symbol) = symbol
-            && let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)
-        {
-            ptr = addr as *mut c_void;
+        if ptr.is_null() {
+            // SAFETY: NPTL baseline — preferred for pthread_cond_* and pthread_mutex_*.
+            ptr = unsafe {
+                crate::dlfcn_abi::dlvsym_next(
+                    name.as_ptr().cast::<libc::c_char>(),
+                    glibc_v232.as_ptr().cast::<libc::c_char>(),
+                )
+            };
         }
+        if ptr.is_null() {
+            // SAFETY: oldest baseline — LinuxThreads era.
+            ptr = unsafe {
+                crate::dlfcn_abi::dlvsym_next(
+                    name.as_ptr().cast::<libc::c_char>(),
+                    glibc_v225.as_ptr().cast::<libc::c_char>(),
+                )
+            };
+        }
+        if ptr.is_null() {
+            let symbol = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok();
+            if let Some(symbol) = symbol
+                && let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)
+            {
+                ptr = addr as *mut c_void;
+            }
+        }
+        ptr
     }
-    ptr
 }
 
 unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {
-    let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
-        return std::ptr::null_mut();
-    };
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol) {
-        return addr as *mut c_void;
+    #[cfg(feature = "standalone")]
+    {
+        let _ = name;
+        std::ptr::null_mut()
     }
-    if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
-        return addr as *mut c_void;
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
+            return std::ptr::null_mut();
+        };
+        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol) {
+            return addr as *mut c_void;
+        }
+        if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
+            return addr as *mut c_void;
+        }
+        std::ptr::null_mut()
     }
-    std::ptr::null_mut()
 }
 
 unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {
@@ -662,6 +728,7 @@ unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_vo
     std::ptr::null_mut()
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolve_cached_pthread_attr_symbol(
     slot: &OnceLock<usize>,
     names: &[&'static [u8]],
@@ -672,6 +739,7 @@ unsafe fn resolve_cached_pthread_attr_symbol(
 
 /// Host glibc's `pthread_gettid_np` (GLIBC_2.42): a host thread's kernel TID,
 /// which `clone` stores before the host `pthread_create` returns.
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_gettid_np_fn() -> Option<ResolvedPthreadGettidNpFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -682,6 +750,7 @@ unsafe fn resolved_pthread_gettid_np_fn() -> Option<ResolvedPthreadGettidNpFn> {
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadGettidNpFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_init_fn() -> Option<ResolvedPthreadAttrInitFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -692,6 +761,7 @@ unsafe fn resolved_pthread_attr_init_fn() -> Option<ResolvedPthreadAttrInitFn> {
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrInitFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_destroy_fn() -> Option<ResolvedPthreadAttrDestroyFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -702,6 +772,7 @@ unsafe fn resolved_pthread_attr_destroy_fn() -> Option<ResolvedPthreadAttrDestro
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrDestroyFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setdetachstate_fn() -> Option<ResolvedPthreadAttrSetdetachstateFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -712,6 +783,7 @@ unsafe fn resolved_pthread_attr_setdetachstate_fn() -> Option<ResolvedPthreadAtt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetdetachstateFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_getdetachstate_fn() -> Option<ResolvedPthreadAttrGetdetachstateFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -722,6 +794,7 @@ unsafe fn resolved_pthread_attr_getdetachstate_fn() -> Option<ResolvedPthreadAtt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetdetachstateFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setguardsize_fn() -> Option<ResolvedPthreadAttrSetguardsizeFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -732,6 +805,7 @@ unsafe fn resolved_pthread_attr_setguardsize_fn() -> Option<ResolvedPthreadAttrS
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetguardsizeFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setstack_fn() -> Option<ResolvedPthreadAttrSetstackFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -742,6 +816,7 @@ unsafe fn resolved_pthread_attr_setstack_fn() -> Option<ResolvedPthreadAttrSetst
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetstackFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_getguardsize_fn() -> Option<ResolvedPthreadAttrGetguardsizeFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -752,6 +827,7 @@ unsafe fn resolved_pthread_attr_getguardsize_fn() -> Option<ResolvedPthreadAttrG
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetguardsizeFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_getstack_fn() -> Option<ResolvedPthreadAttrGetstackFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -762,6 +838,7 @@ unsafe fn resolved_pthread_attr_getstack_fn() -> Option<ResolvedPthreadAttrGetst
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstackFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setstacksize_fn() -> Option<ResolvedPthreadAttrSetstacksizeFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -772,6 +849,7 @@ unsafe fn resolved_pthread_attr_setstacksize_fn() -> Option<ResolvedPthreadAttrS
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetstacksizeFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_getstacksize_fn() -> Option<ResolvedPthreadAttrGetstacksizeFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -782,6 +860,7 @@ unsafe fn resolved_pthread_attr_getstacksize_fn() -> Option<ResolvedPthreadAttrG
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstacksizeFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAttrSetinheritschedFn>
 {
     let ptr = unsafe {
@@ -793,6 +872,7 @@ unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetinheritschedFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setschedpolicy_fn() -> Option<ResolvedPthreadAttrSetschedpolicyFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -803,6 +883,7 @@ unsafe fn resolved_pthread_attr_setschedpolicy_fn() -> Option<ResolvedPthreadAtt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetschedpolicyFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setschedparam_fn() -> Option<ResolvedPthreadAttrSetschedparamFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -813,6 +894,7 @@ unsafe fn resolved_pthread_attr_setschedparam_fn() -> Option<ResolvedPthreadAttr
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetschedparamFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setaffinity_np_fn() -> Option<ResolvedPthreadAttrSetaffinityNpFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -823,6 +905,7 @@ unsafe fn resolved_pthread_attr_setaffinity_np_fn() -> Option<ResolvedPthreadAtt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetaffinityNpFn>(ptr) })
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttrSetsigmaskNpFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -963,6 +1046,9 @@ pub(crate) fn in_threading_policy_context() -> bool {
 /// returning the surviving thread's active slow-gate count.
 #[cfg(not(test))]
 pub(crate) fn reset_threading_policy_in_fork_child() -> u64 {
+    NATIVE_LAST_THREAD_EXITING.store(false, Ordering::Release);
+    PTHREAD_TLS_ACCESS_DEPTH.store(0, Ordering::Release);
+    crate::signal_abi::reset_native_sigcancel_state_in_fork_child();
     let active = if let Some(handle) = core_current_thread_handle() {
         // SAFETY: surviving native thread owns its handle across fork.
         u64::from(unsafe { (*handle).threading_policy_depth.load(Ordering::Relaxed) != 0 })
@@ -1452,6 +1538,7 @@ fn native_pthread_equal(a: libc::pthread_t, b: libc::pthread_t) -> c_int {
     if a == b { 1 } else { 0 }
 }
 
+#[cfg(not(feature = "standalone"))]
 fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
     if thread == 0 || tid <= 0 {
         return;
@@ -1475,6 +1562,7 @@ fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
 /// by the same thread, forever (`claude --help`, bd-e54e25). A larger table is
 /// built with the lock released, entries are moved into it (no allocation: it
 /// already has room), and the old table is freed after unlocking.
+#[cfg(not(feature = "standalone"))]
 fn insert_without_growing_under_lock<K: Eq + std::hash::Hash, V>(
     registry: &Mutex<ArtifactHashMap<K, V>>,
     key: K,
@@ -1536,6 +1624,7 @@ fn prune_registered_host_thread_tid_if_matches(thread_key: usize, stale_tid: i32
     }
 }
 
+#[cfg(not(feature = "standalone"))]
 fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
     if thread == 0 {
         return false;
@@ -1596,6 +1685,7 @@ fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
 /// register itself (Bun's allocator, hardened `claude --help`, bd-e54e25), so
 /// a creator blocked on that registration deadlocked until its timeout, once
 /// per thread.
+#[cfg(not(feature = "standalone"))]
 fn new_host_thread_start_context(
     start_routine: StartRoutine,
     arg: *mut c_void,
@@ -1624,6 +1714,7 @@ fn new_host_thread_start_context(
 /// `thread_out` must be writable; `start_ctx` must come from
 /// [`new_host_thread_start_context`] together with `gettid`, and the host
 /// create must have succeeded with it.
+#[cfg(not(feature = "standalone"))]
 unsafe fn finish_host_thread_create(
     start_ctx: *mut HostThreadStartContext,
     gettid: Option<ResolvedPthreadGettidNpFn>,
@@ -1657,6 +1748,7 @@ unsafe fn finish_host_thread_create(
     }
 }
 
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 fn publish_host_thread_handoff(
     start_ctx: *const HostThreadStartContext,
     host_thread: libc::pthread_t,
@@ -1676,6 +1768,7 @@ fn publish_host_thread_handoff(
     }
 }
 
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pthread_t {
     for _ in 0..HOST_THREAD_HANDOFF_SPIN_LIMIT {
         let raw = start_ctx.host_thread.load(Ordering::Acquire);
@@ -1716,6 +1809,7 @@ fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pth
         }
     }
 
+    #[cfg(not(feature = "standalone"))]
     if let Some(host_self) = resolved_thread_self_raw() {
         // SAFETY: the resolved host symbol points to `pthread_self`.
         return unsafe { host_self() };
@@ -1724,6 +1818,7 @@ fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pth
     0
 }
 
+#[cfg(not(feature = "standalone"))]
 fn ensure_strict_host_thread_tls_gap() {
     if runtime_policy::mode().heals_enabled()
         || STRICT_HOST_THREAD_TLS_GAP_PTR.load(Ordering::Acquire) != 0
@@ -2295,44 +2390,53 @@ unsafe fn native_pthread_create(
             handled = true;
         }
         if !handled {
-            let Some(getstacksize) = (unsafe { resolved_pthread_attr_getstacksize_fn() }) else {
-                return libc::ENOSYS;
-            };
-            let rc = unsafe { getstacksize(attr, &mut stack_size) };
-            if rc != 0 {
-                return rc;
+            #[cfg(feature = "standalone")]
+            {
+                return libc::EINVAL;
             }
-            let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
-                return libc::ENOSYS;
-            };
-            let mut address = std::ptr::null_mut();
-            let mut size = 0;
-            let rc = unsafe { getstack(attr, &mut address, &mut size) };
-            if rc != 0 {
-                return rc;
-            }
-            // GNU attributes with only a stack size set expose an unset stack
-            // top as base == 0 - size. It is not caller-provided memory. Keep
-            // getstacksize's effective default when that representation appears.
-            if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
-                stack_addr = address as usize;
-                stack_size = size;
-                caller_stack = true;
-            }
-            let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() }) else {
-                return libc::ENOSYS;
-            };
-            let rc = unsafe { getguardsize(attr, &mut guard_size) };
-            if rc != 0 {
-                return rc;
-            }
-            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
-            else {
-                return libc::ENOSYS;
-            };
-            let rc = unsafe { getdetachstate(attr, &mut detach_state) };
-            if rc != 0 {
-                return rc;
+            #[cfg(not(feature = "standalone"))]
+            {
+                let Some(getstacksize) = (unsafe { resolved_pthread_attr_getstacksize_fn() })
+                else {
+                    return libc::ENOSYS;
+                };
+                let rc = unsafe { getstacksize(attr, &mut stack_size) };
+                if rc != 0 {
+                    return rc;
+                }
+                let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
+                    return libc::ENOSYS;
+                };
+                let mut address = std::ptr::null_mut();
+                let mut size = 0;
+                let rc = unsafe { getstack(attr, &mut address, &mut size) };
+                if rc != 0 {
+                    return rc;
+                }
+                // GNU attributes with only a stack size set expose an unset stack
+                // top as base == 0 - size. It is not caller-provided memory. Keep
+                // getstacksize's effective default when that representation appears.
+                if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
+                    stack_addr = address as usize;
+                    stack_size = size;
+                    caller_stack = true;
+                }
+                let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() })
+                else {
+                    return libc::ENOSYS;
+                };
+                let rc = unsafe { getguardsize(attr, &mut guard_size) };
+                if rc != 0 {
+                    return rc;
+                }
+                let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
+                else {
+                    return libc::ENOSYS;
+                };
+                let rc = unsafe { getdetachstate(attr, &mut detach_state) };
+                if rc != 0 {
+                    return rc;
+                }
             }
         }
     }
@@ -2428,6 +2532,7 @@ unsafe fn native_pthread_create(
     0
 }
 
+#[cfg(not(feature = "standalone"))]
 fn managed_attr_data_for_host_translation(
     attr: *const libc::pthread_attr_t,
 ) -> Option<*const PthreadAttrData> {
@@ -2454,6 +2559,7 @@ fn managed_attr_data_for_host_translation(
     None
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe fn dispatch_host_thread_create_with_managed_attr(
     host_create: unsafe extern "C" fn(
         *mut libc::pthread_t,
@@ -2587,6 +2693,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     }
 
     let result = if rc == 0 {
+        crate::malloc_abi::latch_multi_threaded_before_thread_create();
         let (start_ctx, gettid) = new_host_thread_start_context(start_routine, arg);
         let mut host_thread: libc::pthread_t = 0;
         unsafe {
@@ -2612,6 +2719,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     result
 }
 
+#[cfg(not(feature = "standalone"))]
 fn host_thread_start_entry() -> StartRoutine {
     // SAFETY: C and C-unwind have the same machine ABI. The host pthread slot
     // uses C, while the actual entry must permit pthread_exit/cancellation to
@@ -2619,6 +2727,7 @@ fn host_thread_start_entry() -> StartRoutine {
     unsafe { std::mem::transmute::<UnwindStartRoutine, StartRoutine>(host_thread_start_trampoline) }
 }
 
+#[cfg(not(feature = "standalone"))]
 unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     // Create the membrane's per-thread validation cache first, while this
     // thread holds no lock at all. Created lazily, its destructor registration
@@ -2636,8 +2745,15 @@ unsafe extern "C-unwind" fn host_thread_start_trampoline(arg: *mut c_void) -> *m
     let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = THREAD_BACKEND_HOST);
     let child_owned = start_ctx.child_owned;
     let host_thread = if child_owned {
-        // SAFETY: the resolved host symbol points to `pthread_self`.
-        resolved_thread_self_raw().map_or(0, |host_self| unsafe { host_self() })
+        #[cfg(not(feature = "standalone"))]
+        {
+            // SAFETY: the resolved host symbol points to `pthread_self`.
+            resolved_thread_self_raw().map_or(0, |host_self| unsafe { host_self() })
+        }
+        #[cfg(feature = "standalone")]
+        {
+            0
+        }
     } else {
         wait_for_host_thread_handoff(start_ctx)
     };
@@ -2929,6 +3045,7 @@ fn futex_wait_word(word: &AtomicI32, expected: i32, private: bool) -> c_int {
 /// Returns without distinguishing wake from timeout from `EAGAIN` — every
 /// caller re-checks the condition it actually cares about, so the wait is only
 /// ever a hint about when to look again.
+#[cfg(not(feature = "standalone"))]
 fn futex_wait_private_timeout(word: &AtomicI32, expected: i32, timeout_ns: i64) -> c_int {
     let ts = libc::timespec {
         tv_sec: timeout_ns / 1_000_000_000,
@@ -4332,6 +4449,12 @@ pub unsafe extern "C" fn pthread_create(
     let start = start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
     // Host pthreads are an explicit compatibility opt-out. The default and
     // standalone paths stay on the native lifecycle.
+    #[cfg(feature = "standalone")]
+    let result = {
+        let _ = force_native;
+        unsafe { native_pthread_create(thread_out, attr, start, arg) }
+    };
+    #[cfg(not(feature = "standalone"))]
     let result = if !force_native && let Some(host_create) = resolved_thread_create_raw() {
         ensure_strict_host_thread_tls_gap();
         unsafe {
@@ -4373,6 +4496,7 @@ pub(crate) unsafe fn pthread_join_for_caller(
     retval: *mut *mut c_void,
     caller: usize,
 ) -> c_int {
+    #[cfg(not(feature = "standalone"))]
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_join) = resolved_thread_join_raw()
@@ -4385,6 +4509,7 @@ pub(crate) unsafe fn pthread_join_for_caller(
 /// POSIX `pthread_detach`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
+    #[cfg(not(feature = "standalone"))]
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_detach) = resolved_thread_detach_raw()
@@ -4808,16 +4933,23 @@ pub unsafe extern "C" fn pthread_cond_init(
         if rc == 0 {
             clock_id
         } else {
-            let mut host_clock_id: libc::clockid_t = PTHREAD_COND_CLOCK_REALTIME;
-            let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {
-                return libc::EINVAL;
-            };
-            let host_rc =
-                unsafe { host_getclock(attr, &mut host_clock_id as *mut libc::clockid_t) };
-            if host_rc != 0 {
+            #[cfg(feature = "standalone")]
+            {
                 return libc::EINVAL;
             }
-            host_clock_id
+            #[cfg(not(feature = "standalone"))]
+            {
+                let mut host_clock_id: libc::clockid_t = PTHREAD_COND_CLOCK_REALTIME;
+                let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {
+                    return libc::EINVAL;
+                };
+                let host_rc =
+                    unsafe { host_getclock(attr, &mut host_clock_id as *mut libc::clockid_t) };
+                if host_rc != 0 {
+                    return libc::EINVAL;
+                }
+                host_clock_id
+            }
         }
     };
     // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
@@ -5912,9 +6044,16 @@ impl NotificationThreadAttributes {
                     std::ptr::copy_nonoverlapping(data, target.cast::<PthreadAttrData>(), 1);
                 }
             } else {
-                // Preserve valid attributes constructed by an un-interposed
-                // host library without copying its private extension pointers.
-                unsafe { Self::copy_host_fields(source, target.cast()) }?;
+                #[cfg(feature = "standalone")]
+                {
+                    return Err(libc::EINVAL);
+                }
+                #[cfg(not(feature = "standalone"))]
+                {
+                    // Preserve valid attributes constructed by an un-interposed
+                    // host library without copying its private extension pointers.
+                    unsafe { Self::copy_host_fields(source, target.cast()) }?;
+                }
             }
         }
         // SAFETY: this private object is never exposed for concurrent mutation.
@@ -5949,36 +6088,44 @@ impl NotificationThreadAttributes {
                 )
             }
         } else {
-            // Query the public host interface rather than copying private
-            // pointers from a foreign pthread_attr_t. Grow for large CPU sets.
-            let symbol =
-                unsafe { resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"]) };
-            if symbol.is_null() {
-                return Err(libc::ENOSYS);
+            #[cfg(feature = "standalone")]
+            {
+                return Err(libc::EINVAL);
             }
-            type GetAffinity = unsafe extern "C" fn(
-                *const libc::pthread_attr_t,
-                usize,
-                *mut libc::cpu_set_t,
-            ) -> c_int;
-            // SAFETY: the resolved public getter has this exact signature.
-            let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
-            let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
-            loop {
-                let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
-                if rc == 0 {
-                    // GNU reports an unset affinity as all ones, including
-                    // bytes beyond the kernel CPU set. Preserve inheritance.
-                    break if bytes.iter().all(|byte| *byte == u8::MAX) {
-                        None
-                    } else {
-                        Some((bytes.len(), bytes))
-                    };
+            #[cfg(not(feature = "standalone"))]
+            {
+                // Query the public host interface rather than copying private
+                // pointers from a foreign pthread_attr_t. Grow for large CPU sets.
+                let symbol = unsafe {
+                    resolve_host_symbol_with_aliases(&[b"pthread_attr_getaffinity_np\0"])
+                };
+                if symbol.is_null() {
+                    return Err(libc::ENOSYS);
                 }
-                if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
-                    return Err(rc);
+                type GetAffinity = unsafe extern "C" fn(
+                    *const libc::pthread_attr_t,
+                    usize,
+                    *mut libc::cpu_set_t,
+                ) -> c_int;
+                // SAFETY: the resolved public getter has this exact signature.
+                let getter = unsafe { std::mem::transmute::<*mut c_void, GetAffinity>(symbol) };
+                let mut bytes = vec![0u8; 2 * std::mem::size_of::<libc::cpu_set_t>()];
+                loop {
+                    let rc = unsafe { getter(source, bytes.len(), bytes.as_mut_ptr().cast()) };
+                    if rc == 0 {
+                        // GNU reports an unset affinity as all ones, including
+                        // bytes beyond the kernel CPU set. Preserve inheritance.
+                        break if bytes.iter().all(|byte| *byte == u8::MAX) {
+                            None
+                        } else {
+                            Some((bytes.len(), bytes))
+                        };
+                    }
+                    if rc != libc::EINVAL || bytes.len() >= 1024 * 1024 {
+                        return Err(rc);
+                    }
+                    bytes.resize(bytes.len() * 2, 0);
                 }
-                bytes.resize(bytes.len() * 2, 0);
             }
         };
         if let Some((size, bytes)) = affinity {
@@ -5996,6 +6143,7 @@ impl NotificationThreadAttributes {
         Ok(owned)
     }
 
+    #[cfg(not(feature = "standalone"))]
     unsafe fn copy_host_fields(
         source: *const libc::pthread_attr_t,
         target: *mut PthreadAttrData,
@@ -6760,27 +6908,34 @@ static MAIN_THREAD_FL_NAME: AtomicUsize = AtomicUsize::new(0);
 
 /// Record the calling thread's glibc handle when it is the main thread.
 pub(crate) fn remember_main_thread_host_handle() {
-    if force_native_threading_enabled() {
-        return;
-    }
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
-        && core_self_tid() != raw_syscall::sys_getpid()
+    #[cfg(not(feature = "standalone"))]
     {
-        return;
-    }
-    if let Some(host_self) = resolved_thread_self_raw() {
-        // SAFETY: the resolved host symbol is glibc's `pthread_self`.
-        let handle = unsafe { host_self() };
-        MAIN_THREAD_HOST_HANDLE.store(handle as usize, Ordering::Release);
+        if force_native_threading_enabled() {
+            return;
+        }
+        if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+            && core_self_tid() != raw_syscall::sys_getpid()
+        {
+            return;
+        }
+        if let Some(host_self) = resolved_thread_self_raw() {
+            // SAFETY: the resolved host symbol is glibc's `pthread_self`.
+            let handle = unsafe { host_self() };
+            MAIN_THREAD_HOST_HANDLE.store(handle as usize, Ordering::Release);
+        }
     }
 }
 
 /// The handle glibc knows `thread` by, and whether it is the calling thread.
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 fn host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
     if thread == native_pthread_self() {
+        #[cfg(not(feature = "standalone"))]
         let handle = resolved_thread_self_raw()
             // SAFETY: the resolved host symbol is glibc's `pthread_self`.
             .map_or(thread, |host_self| unsafe { host_self() });
+        #[cfg(feature = "standalone")]
+        let handle = thread;
         return (handle, true);
     }
     let main_name = MAIN_THREAD_FL_NAME.load(Ordering::Acquire);
@@ -6794,6 +6949,7 @@ fn host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
 /// The handle glibc knows `thread` by, for every call forwarded to glibc with
 /// a pthread_t: the main thread's fl name (its tid) handed to glibc's
 /// pthread_join/detach/tryjoin_np from another thread died with SIGSEGV.
+#[cfg_attr(feature = "standalone", allow(dead_code))]
 fn host_thread_handle(thread: libc::pthread_t) -> libc::pthread_t {
     host_cancel_target(thread).0
 }
@@ -6831,6 +6987,7 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
                 libc::ESRCH
             };
         }
+        #[cfg(not(feature = "standalone"))]
         if !force_native_threading_enabled()
             && let Some(host_cancel) = resolved_thread_cancel_raw()
         {
@@ -6864,11 +7021,11 @@ pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int
         }
     }
 
-    // If cancelling ourselves in async mode, act on it immediately.
-    if (thread == native_pthread_self() || thread_key == current_cancel_key())
-        && cancel_enabled_for_current_thread()
-        && cancel_async_for_current_thread()
-    {
+    // POSIX XSH 2.9.5.2 marks `pthread_cancel` async-cancel-safe: if the
+    // calling thread has asynchronous cancellation enabled and a pending
+    // request (either self-targeted or delivered while PC was inside this DSO),
+    // act on it before returning to user code.
+    if cancel_enabled_for_current_thread() && cancel_async_for_current_thread() {
         unsafe { pthread_testcancel() };
     }
 
@@ -6885,6 +7042,7 @@ pub unsafe extern "C-unwind" fn pthread_setcancelstate(
     }
 
     let native = core_current_thread_handle();
+    #[cfg(not(feature = "standalone"))]
     if native.is_none()
         && !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
@@ -6929,6 +7087,7 @@ pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut 
     }
 
     let native = core_current_thread_handle();
+    #[cfg(not(feature = "standalone"))]
     if native.is_none()
         && !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
@@ -6937,6 +7096,12 @@ pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut 
         return unsafe { host_setcanceltype(typ, oldtype) };
     }
 
+    let tid = core_self_tid();
+    if typ == PTHREAD_CANCEL_DEFERRED_TYPE {
+        set_native_cancel_async(tid, false);
+    } else {
+        crate::signal_abi::ensure_native_sigcancel_installed();
+    }
     let previous = if let Some(handle) = native {
         // SAFETY: this is the calling thread's live, registered handle.
         unsafe { (*handle).cancel_type.swap(typ, Ordering::Relaxed) }
@@ -6948,9 +7113,8 @@ pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut 
         })
     };
     if typ == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
-        crate::signal_abi::ensure_native_sigcancel_installed();
+        set_native_cancel_async(tid, true);
     }
-    set_native_cancel_async(core_self_tid(), typ == PTHREAD_CANCEL_ASYNCHRONOUS_TYPE);
     if !oldtype.is_null() {
         // SAFETY: oldtype is provided by caller and checked for null.
         unsafe { *oldtype = previous };
@@ -7470,9 +7634,27 @@ pub(crate) unsafe fn cancellation_point_sigsuspend(
     sigset_size: usize,
 ) -> Result<(), c_int> {
     let caller = core::intrinsics::return_address() as usize;
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_mask = if sigset_size == std::mem::size_of::<libc::c_ulong>() {
+        unsafe { crate::signal_abi::filter_reserved_sigset_for_wait(mask, &mut filtered_word) }
+    } else {
+        mask
+    };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_mask = {
+        let _ = &mut filtered_word;
+        mask
+    };
     unsafe {
-        cancellation_signal_window(caller, mask, || {
-            raw_syscall::sys_rt_sigsuspend(mask, sigset_size)
+        cancellation_signal_window(caller, effective_mask, || {
+            raw_syscall::sys_rt_sigsuspend(effective_mask, sigset_size)
         })
     }
 }
@@ -7564,9 +7746,30 @@ pub(crate) unsafe fn cancellation_point_ppoll(
     mask: *const u8,
 ) -> Result<c_int, c_int> {
     let caller = core::intrinsics::return_address() as usize;
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_mask =
+        unsafe { crate::signal_abi::filter_reserved_sigset_for_wait(mask, &mut filtered_word) };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_mask = {
+        let _ = &mut filtered_word;
+        mask
+    };
     unsafe {
-        cancellation_poll_window(caller, fds, nfds, timeout, mask, || {
-            raw_syscall::sys_ppoll(fds, nfds, timeout, mask, std::mem::size_of::<u64>())
+        cancellation_poll_window(caller, fds, nfds, timeout, effective_mask, || {
+            raw_syscall::sys_ppoll(
+                fds,
+                nfds,
+                timeout,
+                effective_mask,
+                std::mem::size_of::<u64>(),
+            )
         })
     }
 }
@@ -7651,19 +7854,34 @@ pub(crate) unsafe fn cancellation_point_pselect(
     mask: *const u8,
 ) -> Result<c_int, c_int> {
     let caller = core::intrinsics::return_address() as usize;
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_mask =
+        unsafe { crate::signal_abi::filter_reserved_sigset_for_wait(mask, &mut filtered_word) };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_mask = {
+        let _ = &mut filtered_word;
+        mask
+    };
     if let Some(result) = unsafe {
         native_select_window(
             caller,
             nfds,
             [readfds, writefds, exceptfds],
             cancel_poll::SelectTimeout::Timespec(timeout),
-            mask,
+            effective_mask,
         )
     } {
         return result;
     }
-    let sig_data = [mask as usize, std::mem::size_of::<u64>()];
-    let sig_pointer = if mask.is_null() {
+    let sig_data = [effective_mask as usize, std::mem::size_of::<u64>()];
+    let sig_pointer = if effective_mask.is_null() {
         std::ptr::null()
     } else {
         sig_data.as_ptr().cast()
@@ -7761,6 +7979,21 @@ unsafe fn cancellation_epoll_window(
     timeout: c_int,
     mask: *const u8,
 ) -> Result<c_int, c_int> {
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_mask =
+        unsafe { crate::signal_abi::filter_reserved_sigset_for_wait(mask, &mut filtered_word) };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_mask = {
+        let _ = &mut filtered_word;
+        mask
+    };
     if caller != 0
         && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
@@ -7776,7 +8009,7 @@ unsafe fn cancellation_epoll_window(
                 events,
                 maxevents,
                 timeout,
-                mask,
+                effective_mask,
                 cancel,
                 pthread_testcancel,
             )
@@ -7793,7 +8026,7 @@ unsafe fn cancellation_epoll_window(
                 events,
                 maxevents,
                 timeout,
-                mask,
+                effective_mask,
                 std::mem::size_of::<u64>(),
             )
         })
@@ -7824,6 +8057,21 @@ unsafe fn cancellation_epoll2_window(
     timeout: *const u8,
     mask: *const u8,
 ) -> Result<c_int, c_int> {
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_mask =
+        unsafe { crate::signal_abi::filter_reserved_sigset_for_wait(mask, &mut filtered_word) };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_mask = {
+        let _ = &mut filtered_word;
+        mask
+    };
     if caller != 0
         && let Some(cancel) = current_native_cancellation_wait()
         && !address_is_inside_this_object(caller)
@@ -7858,7 +8106,7 @@ unsafe fn cancellation_epoll2_window(
                     events,
                     maxevents,
                     timeout,
-                    mask,
+                    effective_mask,
                     cancel,
                     pthread_testcancel,
                 )
@@ -7877,7 +8125,7 @@ unsafe fn cancellation_epoll2_window(
                 events,
                 maxevents,
                 timeout,
-                mask,
+                effective_mask,
                 std::mem::size_of::<u64>(),
             )
         })
@@ -8052,31 +8300,37 @@ unsafe fn preflight_cancellation_point_for_caller(caller: usize) {
 
 struct NativeCancelWindowGuard {
     tid: i32,
-    armed: bool,
+    was_active: bool,
+    owns_slot: bool,
 }
 
 impl NativeCancelWindowGuard {
     #[inline]
     fn enter(tid: i32) -> Self {
-        set_native_cancel_point_active(tid, true);
-        Self { tid, armed: false }
+        let was_active = set_native_cancel_point_active(tid, true);
+        Self {
+            tid,
+            was_active,
+            owns_slot: false,
+        }
     }
 
     #[inline]
     fn arm(&mut self, cancel_word: *const u32, window_rsp: usize) {
-        raw_syscall::arm_native_cancel_syscall(self.tid, cancel_word, window_rsp);
-        self.armed = true;
+        self.owns_slot = raw_syscall::arm_native_cancel_syscall(self.tid, cancel_word, window_rsp);
     }
 
     #[inline]
     fn finish(mut self) -> bool {
-        let interrupted = if self.armed {
-            self.armed = false;
+        let interrupted = if self.owns_slot {
+            self.owns_slot = false;
             raw_syscall::disarm_native_cancel_syscall(self.tid)
         } else {
             false
         };
-        set_native_cancel_point_active(self.tid, false);
+        if !self.was_active {
+            set_native_cancel_point_active(self.tid, false);
+        }
         core::mem::forget(self);
         interrupted
     }
@@ -8084,10 +8338,12 @@ impl NativeCancelWindowGuard {
 
 impl Drop for NativeCancelWindowGuard {
     fn drop(&mut self) {
-        if self.armed {
+        if self.owns_slot {
             let _ = raw_syscall::disarm_native_cancel_syscall(self.tid);
         }
-        set_native_cancel_point_active(self.tid, false);
+        if !self.was_active {
+            set_native_cancel_point_active(self.tid, false);
+        }
     }
 }
 
@@ -8211,16 +8467,24 @@ unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() 
 fn cancellation_window_hook(
     caller: usize,
 ) -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> c_int> {
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
-        return None;
+    #[cfg(feature = "standalone")]
+    {
+        let _ = caller;
+        None
     }
-    if current_threading_backend() != THREAD_BACKEND_HOST {
-        return None;
+    #[cfg(not(feature = "standalone"))]
+    {
+        if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+            return None;
+        }
+        if current_threading_backend() != THREAD_BACKEND_HOST {
+            return None;
+        }
+        if address_is_inside_this_object(caller) {
+            return None;
+        }
+        resolved_thread_setcanceltype_raw()
     }
-    if address_is_inside_this_object(caller) {
-        return None;
-    }
-    resolved_thread_setcanceltype_raw()
 }
 
 static OWN_IMAGE_START: AtomicUsize = AtomicUsize::new(0);
@@ -8251,6 +8515,7 @@ fn record_own_image_range() -> usize {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_testcancel() {
+    #[cfg(not(feature = "standalone"))]
     if core_current_thread_handle().is_none()
         && !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
@@ -10519,6 +10784,7 @@ unsafe fn pthread_timedjoin_for_caller(
     abstime: *const libc::timespec,
     caller: usize,
 ) -> c_int {
+    #[cfg(not(feature = "standalone"))]
     if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
         if abstime.is_null() {
             return unsafe { pthread_join_for_caller(thread, retval, caller) };
@@ -10551,6 +10817,7 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
+    #[cfg(not(feature = "standalone"))]
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()
@@ -10622,6 +10889,7 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
         return libc::EINVAL;
     }
+    #[cfg(not(feature = "standalone"))]
     if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
         if abstime.is_null() {
             return unsafe { pthread_join_for_caller(thread, retval, caller) };
@@ -10848,6 +11116,7 @@ pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
         unsafe { continue_native_thread_exit() };
     }
 
+    #[cfg(not(feature = "standalone"))]
     if !force_native_threading_enabled()
         && let Some(host_exit) = resolved_thread_exit_raw()
     {
@@ -11228,10 +11497,13 @@ pub(crate) fn host_cancellation_thread() -> bool {
     core_current_thread_handle().is_none() && current_threading_backend() == THREAD_BACKEND_HOST
 }
 
+#[cfg(not(feature = "standalone"))]
 pub(crate) type LegacyCleanupPush =
     unsafe extern "C-unwind" fn(*mut c_void, *mut c_void, *mut c_void);
+#[cfg(not(feature = "standalone"))]
 pub(crate) type LegacyCleanupPop = unsafe extern "C-unwind" fn(*mut c_void, c_int);
 
+#[cfg(not(feature = "standalone"))]
 struct HostLegacyCleanup {
     push: LegacyCleanupPush,
     pop: LegacyCleanupPop,
@@ -11239,6 +11511,7 @@ struct HostLegacyCleanup {
     pop_restore: LegacyCleanupPop,
 }
 
+#[cfg(not(feature = "standalone"))]
 fn host_legacy_cleanup() -> Option<&'static HostLegacyCleanup> {
     if !host_cancellation_thread() {
         return None;
@@ -11270,6 +11543,7 @@ fn host_legacy_cleanup() -> Option<&'static HostLegacyCleanup> {
         .as_ref()
 }
 
+#[cfg(not(feature = "standalone"))]
 pub(crate) fn host_legacy_cleanup_push(deferred: bool) -> Option<LegacyCleanupPush> {
     let functions = host_legacy_cleanup()?;
     Some(if deferred {
@@ -11279,6 +11553,7 @@ pub(crate) fn host_legacy_cleanup_push(deferred: bool) -> Option<LegacyCleanupPu
     })
 }
 
+#[cfg(not(feature = "standalone"))]
 pub(crate) fn host_legacy_cleanup_pop(restore: bool) -> Option<LegacyCleanupPop> {
     let functions = host_legacy_cleanup()?;
     Some(if restore {
@@ -11708,13 +11983,14 @@ unsafe extern "C-unwind" fn continue_native_thread_exit() -> ! {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
     if !buf.is_null() {
+        #[cfg(not(feature = "standalone"))]
         if host_cancellation_thread()
             && let Some(f) = resolved_thread_register_cancel_raw()
         {
             unsafe { f(buf) };
-        } else {
-            unsafe { register_native_cleanup(buf, false) };
+            return;
         }
+        unsafe { register_native_cleanup(buf, false) };
     }
 }
 
@@ -11723,13 +11999,14 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
     if !buf.is_null() {
+        #[cfg(not(feature = "standalone"))]
         if host_cancellation_thread()
             && let Some(f) = resolved_thread_unregister_cancel_raw()
         {
             unsafe { f(buf) };
-        } else {
-            unsafe { unregister_native_cleanup(buf, false) };
+            return;
         }
+        unsafe { unregister_native_cleanup(buf, false) };
     }
 }
 
@@ -11737,13 +12014,14 @@ pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void) {
     if !buf.is_null() {
+        #[cfg(not(feature = "standalone"))]
         if host_cancellation_thread()
             && let Some(f) = resolved_thread_register_cancel_defer_raw()
         {
             unsafe { f(buf) };
-        } else {
-            unsafe { register_native_cleanup(buf, true) };
+            return;
         }
+        unsafe { register_native_cleanup(buf, true) };
     }
 }
 
@@ -11751,12 +12029,14 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unregister_cancel_restore(buf: *mut c_void) {
     if !buf.is_null() {
-        let f = resolved_thread_unregister_cancel_restore_raw();
-        if host_cancellation_thread() && f.is_some() {
-            unsafe { (f.unwrap_unchecked())(buf) };
-        } else {
-            unsafe { unregister_native_cleanup(buf, true) };
+        #[cfg(not(feature = "standalone"))]
+        if host_cancellation_thread()
+            && let Some(f) = resolved_thread_unregister_cancel_restore_raw()
+        {
+            unsafe { f(buf) };
+            return;
         }
+        unsafe { unregister_native_cleanup(buf, true) };
     }
 }
 
@@ -11798,12 +12078,14 @@ pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr
 /// removed before their jump transfer, so continuation uses the owned chain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unwind_next(buf: *mut c_void) {
+    #[cfg(not(feature = "standalone"))]
     if !buf.is_null()
         && host_cancellation_thread()
         && let Some(unwind_next) = resolved_thread_unwind_next_raw()
     {
         unsafe { unwind_next(buf) };
-    } else if !buf.is_null() && !host_cancellation_thread() {
+    }
+    if !buf.is_null() && !host_cancellation_thread() {
         unsafe { continue_native_thread_exit() };
     }
     std::process::abort();

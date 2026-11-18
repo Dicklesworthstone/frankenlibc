@@ -442,6 +442,133 @@ extern "C" fn __frankenlibc_owned_backtrace_from_cursor(
     URC_END_OF_STACK
 }
 
+#[repr(C)]
+struct BacktraceCaptureState {
+    buffer: *mut *mut c_void,
+    capacity: usize,
+    written: usize,
+}
+
+unsafe extern "C" fn backtrace_capture_trace(
+    ctx: *mut UnwindContext,
+    arg: *mut c_void,
+) -> UnwindReasonCode {
+    if ctx.is_null() || arg.is_null() {
+        return URC_END_OF_STACK;
+    }
+    // SAFETY: `arg` points to the caller's live stack `BacktraceCaptureState`.
+    let state = unsafe { &mut *arg.cast::<BacktraceCaptureState>() };
+    if state.written >= state.capacity {
+        return URC_NORMAL_STOP;
+    }
+    // SAFETY: `ctx` is a live `UnwindContext` supplied by the unwinder.
+    let ip = unsafe { (*ctx).ip };
+    if ip == 0 {
+        return URC_END_OF_STACK;
+    }
+    // SAFETY: `state.buffer` has capacity for `state.capacity` pointers.
+    unsafe {
+        *state.buffer.add(state.written) = ip as *mut c_void;
+    }
+    state.written += 1;
+    if state.written >= state.capacity {
+        URC_NORMAL_STOP
+    } else {
+        URC_NO_REASON
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+extern "C" fn __frankenlibc_capture_backtrace_from_cursor(
+    buffer: *mut *mut c_void,
+    max_frames: usize,
+    cursor_ptr: *const X86PhysicalCursor,
+) -> c_int {
+    if buffer.is_null() || max_frames == 0 {
+        return 0;
+    }
+    let capacity = max_frames
+        .min(MAX_BACKTRACE_FRAMES)
+        .min(c_int::MAX as usize);
+    let mut state = BacktraceCaptureState {
+        buffer,
+        capacity,
+        written: 0,
+    };
+    let _ = __frankenlibc_owned_backtrace_from_cursor(
+        Some(backtrace_capture_trace),
+        (&raw mut state).cast(),
+        cursor_ptr,
+    );
+    if state.written == 0 && !cursor_ptr.is_null() {
+        // SAFETY: `cursor_ptr` points to the stack-captured cursor.
+        let fallback_ip = unsafe { (*cursor_ptr).ip };
+        if fallback_ip != 0 {
+            // SAFETY: `buffer` has room for at least 1 pointer (`max_frames > 0`).
+            unsafe { *buffer = fallback_ip as *mut c_void };
+            state.written = 1;
+        }
+    }
+    state.written as c_int
+}
+
+/// Capture up to `max_frames` return addresses into `buffer` using FrankenLibC's
+/// native DWARF `.eh_frame` + frame-pointer unwinder (zero host glibc delegation).
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+pub(crate) unsafe extern "C" fn capture_owned_backtrace(
+    _buffer: *mut *mut c_void,
+    _max_frames: usize,
+) -> c_int {
+    std::arch::naked_asm!(
+        "sub rsp, 72",
+        "mov rax, [rsp + 72]",
+        "mov [rsp + 0], rax",
+        "lea rax, [rsp + 80]",
+        "mov [rsp + 8], rax",
+        "mov [rsp + 16], rbp",
+        "mov [rsp + 24], rbx",
+        "mov [rsp + 32], r12",
+        "mov [rsp + 40], r13",
+        "mov [rsp + 48], r14",
+        "mov [rsp + 56], r15",
+        "mov rdx, rsp",
+        "call {helper}",
+        "add rsp, 72",
+        "ret",
+        helper = sym __frankenlibc_capture_backtrace_from_cursor,
+    );
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub(crate) unsafe extern "C" fn capture_owned_backtrace(
+    buffer: *mut *mut c_void,
+    max_frames: usize,
+) -> c_int {
+    if buffer.is_null() || max_frames == 0 {
+        return 0;
+    }
+    let capacity = max_frames
+        .min(MAX_BACKTRACE_FRAMES)
+        .min(c_int::MAX as usize);
+    let mut state = BacktraceCaptureState {
+        buffer,
+        capacity,
+        written: 0,
+    };
+    let _ = owned_backtrace_from_frame_pointer(
+        Some(backtrace_capture_trace),
+        (&raw mut state).cast(),
+        current_frame_pointer(),
+        current_stack_pointer(),
+    );
+    if state.written == 0 {
+        unsafe { *buffer = capture_owned_backtrace as *const () as *mut c_void };
+        state.written = 1;
+    }
+    state.written as c_int
+}
+
 fn owned_backtrace_from_frame_pointer(
     trace: UnwindTraceFn,
     trace_argument: *mut c_void,
@@ -2246,31 +2373,55 @@ fn step_x86_64_cursor_with_mode(
 
     // Linux x86_64 signal restorer (`mov $15, %rax; syscall` = 48 c7 c0 0f 00 00 00 0f 05)
     // has no `.eh_frame` FDE; step directly across `rt_sigframe`'s `ucontext_t` at `cursor.rsp`
-    // (matching libgcc `x86_64_fallback_frame_state`, including `sigaltstack` frames).
+    // (matching libgcc `x86_64_fallback_frame_state`, including `sigaltstack` frames) using
+    // fault-safe kernel copies so page-boundary stubs, execute-only pages, or corrupt frames
+    // never fault in Rust.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    if (4096..(1usize << 57)).contains(&cursor.ip)
-        && (4096..(1usize << 57)).contains(&cursor.rsp)
+    if cursor.ip >= 4096
+        && cursor.rsp >= 4096
         && cursor.rsp.is_multiple_of(core::mem::align_of::<usize>())
     {
         const RT_SIGRETURN_X86_64: [u8; 9] = [0x48, 0xc7, 0xc0, 0x0f, 0x00, 0x00, 0x00, 0x0f, 0x05];
-        // SAFETY: `cursor.ip` is a return address inside an executable text mapping.
-        let code = unsafe { core::slice::from_raw_parts(cursor.ip as *const u8, 9) };
-        if code == RT_SIGRETURN_X86_64 {
-            // SAFETY: after popping `pretcode`, `cursor.rsp` points to the kernel's `ucontext_t`.
-            let uc = unsafe { &*(cursor.rsp as *const libc::ucontext_t) };
-            let gregs = &uc.uc_mcontext.gregs;
-            let next = X86PhysicalCursor {
-                ip: gregs[libc::REG_RIP as usize] as usize,
-                rsp: gregs[libc::REG_RSP as usize] as usize,
-                rbp: gregs[libc::REG_RBP as usize] as usize,
-                rbx: gregs[libc::REG_RBX as usize] as usize,
-                r12: gregs[libc::REG_R12 as usize] as usize,
-                r13: gregs[libc::REG_R13 as usize] as usize,
-                r14: gregs[libc::REG_R14 as usize] as usize,
-                r15: gregs[libc::REG_R15 as usize] as usize,
-            };
-            if next.ip != 0 && (next.rsp != cursor.rsp || next.ip != cursor.ip) {
-                return Ok(Some((next, true)));
+        let is_sigreturn = cursor.ip == crate::signal_abi::signal_restorer_trampoline_addr() || {
+            let mut code = [0u8; 9];
+            unsafe {
+                crate::io_abi::iov_snapshot::copy_user_bytes_raw(
+                    cursor.ip as *const u8,
+                    code.as_mut_ptr(),
+                    code.len(),
+                )
+            }
+            .is_ok()
+                && code == RT_SIGRETURN_X86_64
+        };
+        if is_sigreturn
+            && let Some(gregs_addr) = cursor
+                .rsp
+                .checked_add(core::mem::offset_of!(libc::ucontext_t, uc_mcontext.gregs))
+        {
+            let mut gregs: [libc::greg_t; 23] = [0; 23];
+            if unsafe {
+                crate::io_abi::iov_snapshot::copy_user_bytes_raw(
+                    gregs_addr as *const u8,
+                    gregs.as_mut_ptr().cast::<u8>(),
+                    core::mem::size_of_val(&gregs),
+                )
+            }
+            .is_ok()
+            {
+                let next = X86PhysicalCursor {
+                    ip: gregs[libc::REG_RIP as usize] as usize,
+                    rsp: gregs[libc::REG_RSP as usize] as usize,
+                    rbp: gregs[libc::REG_RBP as usize] as usize,
+                    rbx: gregs[libc::REG_RBX as usize] as usize,
+                    r12: gregs[libc::REG_R12 as usize] as usize,
+                    r13: gregs[libc::REG_R13 as usize] as usize,
+                    r14: gregs[libc::REG_R14 as usize] as usize,
+                    r15: gregs[libc::REG_R15 as usize] as usize,
+                };
+                if next.ip != 0 && (next.rsp != cursor.rsp || next.ip != cursor.ip) {
+                    return Ok(Some((next, true)));
+                }
             }
         }
     }

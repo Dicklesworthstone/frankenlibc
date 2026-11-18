@@ -117,21 +117,35 @@ static RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
 
 fn attach_reclaimer(state: *mut ThreadState) -> bool {
     let reclaimer = RECLAIMER.get_or_init(|| {
-        type Create = unsafe extern "C" fn(
-            *mut libc::pthread_key_t,
-            Option<unsafe extern "C" fn(*mut c_void)>,
-        ) -> c_int;
-        let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
-        let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
-        // SAFETY: the private key belongs to host threads. This schedules only
-        // reclamation of our heap state; native module IDs never enter its DTV.
-        let create: Create = unsafe { core::mem::transmute(create) };
-        let set: SetSpecific = unsafe { std::mem::transmute(set) };
-        let mut key = 0;
-        if unsafe { create(&mut key, Some(reclaim)) } != 0 {
-            return None;
+        #[cfg(feature = "standalone")]
+        {
+            let mut key = 0;
+            if unsafe { crate::pthread_abi::pthread_key_create(&mut key, Some(reclaim)) } != 0 {
+                return None;
+            }
+            Some(Reclaimer {
+                key,
+                set: crate::pthread_abi::pthread_setspecific,
+            })
         }
-        Some(Reclaimer { key, set })
+        #[cfg(not(feature = "standalone"))]
+        {
+            type Create = unsafe extern "C" fn(
+                *mut libc::pthread_key_t,
+                Option<unsafe extern "C" fn(*mut c_void)>,
+            ) -> c_int;
+            let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
+            let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
+            // SAFETY: the private key belongs to host threads. This schedules only
+            // reclamation of our heap state; native module IDs never enter its DTV.
+            let create: Create = unsafe { core::mem::transmute(create) };
+            let set: SetSpecific = unsafe { std::mem::transmute(set) };
+            let mut key = 0;
+            if unsafe { create(&mut key, Some(reclaim)) } != 0 {
+                return None;
+            }
+            Some(Reclaimer { key, set })
+        }
     });
     reclaimer
         .as_ref()

@@ -5501,6 +5501,8 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
+    let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // Prevent a child handler from emitting through the parent's inherited
@@ -5509,6 +5511,8 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         Ok(guard) => guard,
         Err(error) => {
             drop(malloc_guard);
+            drop(policy_tls_guard);
+            drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
@@ -5521,10 +5525,12 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // SAFETY: fork via raw syscall
     let pid = crate::process_abi::clone_for_fork(host_fork);
     if pid == Ok(0) {
+        policy_tls_guard.adopt_and_unlock_in_fork_child();
         // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
         unsafe { malloc_guard.adopt_in_fork_child() };
     }
     drop(malloc_guard);
+    drop(policy_tls_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
@@ -5532,6 +5538,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     let pid = match pid {
         Ok(p) => p,
         Err(error) => {
+            drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
@@ -5543,10 +5550,15 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     };
 
     if pid == 0 {
+        if let Some(ref mut g) = _native_tls_heap_guard {
+            // SAFETY: freshly forked single-threaded child.
+            unsafe { g.adopt_in_fork_child() };
+        }
         // SAFETY: freshly forked child (single thread); updates both lock and
         // guard owner_tid so drop(_environ_guard) unlocks cleanly.
         unsafe { _environ_guard.adopt_in_fork_child() };
     }
+    drop(_native_tls_heap_guard);
     drop(_pipeline_guard);
     drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
@@ -8506,8 +8518,31 @@ pub unsafe extern "C" fn rt_sigsuspend(mask: *const c_void, sigsetsize: usize) -
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
+    let mut filtered_word: libc::c_ulong = 0;
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    let effective_mask = if sigsetsize == std::mem::size_of::<libc::c_ulong>() {
+        unsafe {
+            crate::signal_abi::filter_reserved_sigset_for_wait(
+                mask as *const u8,
+                &mut filtered_word,
+            )
+        }
+    } else {
+        mask as *const u8
+    };
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    let effective_mask = {
+        let _ = &mut filtered_word;
+        mask as *const u8
+    };
     // SAFETY: caller supplied a non-null signal-mask pointer for the kernel ABI.
-    match unsafe { syscall::sys_rt_sigsuspend(mask as *const u8, sigsetsize) } {
+    match unsafe { syscall::sys_rt_sigsuspend(effective_mask, sigsetsize) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -9350,13 +9385,15 @@ pub unsafe extern "C" fn forkpty(
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
+    // Mirror fork()'s ENVIRON_LOCK acquisition BEFORE pipeline_guard: the
+    // forkpty child does not exec, so any held environ lock from another parent
+    // thread becomes a stuck lock in the child address space, and setenv holds
+    // ENVIRON_LOCK while its hardened memcpy takes pipeline locks.
+    let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let _pipeline_guard =
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
-    // Mirror fork()'s ENVIRON_LOCK acquisition: the forkpty child does not exec,
-    // so any held environ lock from another parent thread becomes a stuck lock
-    // in the child address space. Acquiring here forces serialization with any
-    // in-flight setenv before the clone.
-    let mut _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let mut _native_tls_heap_guard = crate::util::lock_native_tls_heap_for_fork();
+    let mut policy_tls_guard = crate::runtime_policy::lock_policy_tls_for_fork();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // Keep application handlers out of the clone-to-reopen interval, exactly
@@ -9365,6 +9402,8 @@ pub unsafe extern "C" fn forkpty(
         Ok(guard) => guard,
         Err(error) => {
             drop(malloc_guard);
+            drop(policy_tls_guard);
+            drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
@@ -9378,10 +9417,12 @@ pub unsafe extern "C" fn forkpty(
 
     let pid = crate::process_abi::clone_for_fork(host_fork);
     if pid == Ok(0) {
+        policy_tls_guard.adopt_and_unlock_in_fork_child();
         // SAFETY: freshly forked single-threaded child before dropping malloc_guard.
         unsafe { malloc_guard.adopt_in_fork_child() };
     }
     drop(malloc_guard);
+    drop(policy_tls_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
@@ -9389,6 +9430,7 @@ pub unsafe extern "C" fn forkpty(
     let pid = match pid {
         Ok(p) => p,
         Err(error) => {
+            drop(_native_tls_heap_guard);
             drop(_pipeline_guard);
             drop(_environ_guard);
             stdio_guard.release_in_parent();
@@ -9402,10 +9444,15 @@ pub unsafe extern "C" fn forkpty(
     };
 
     if pid == 0 {
+        if let Some(ref mut g) = _native_tls_heap_guard {
+            // SAFETY: freshly forked single-threaded child.
+            unsafe { g.adopt_in_fork_child() };
+        }
         // SAFETY: freshly forked child (single thread); updates both lock and
         // guard owner_tid so drop(_environ_guard) unlocks cleanly.
         unsafe { _environ_guard.adopt_in_fork_child() };
     }
+    drop(_native_tls_heap_guard);
     drop(_pipeline_guard);
     drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
@@ -12589,8 +12636,63 @@ pub unsafe extern "C" fn _nss_files_getnetent_r(
 // dereference it).
 nss_files_get_ent_stub!(_nss_files_getnetgrent_r);
 
-// Remaining unsupported single-key string providers.
-nss_files_get_by_str_stub!(_nss_files_getaliasbyname_r);
+/// Resolve an exact mail alias name from `/etc/aliases` via the native files source.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getaliasbyname_r(
+    name: *const c_char,
+    result: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    if name.is_null() || result.is_null() {
+        if !errnop.is_null() {
+            unsafe { *errnop = libc::EINVAL };
+        }
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return NSS_STATUS_UNAVAIL;
+    }
+    if buffer.is_null() || buflen == 0 {
+        if !errnop.is_null() {
+            unsafe { *errnop = libc::ERANGE };
+        }
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return NSS_STATUS_TRYAGAIN;
+    }
+    let saved_errno = current_abi_errno();
+    let mut resolved: *mut c_void = std::ptr::null_mut();
+    let mut open_errno: c_int = 0;
+    let rc = unsafe {
+        files_getaliasbyname_r(name, result, buffer, buflen, &mut resolved, &mut open_errno)
+    };
+    if open_errno != 0 {
+        unsafe { set_abi_errno(open_errno) };
+        return if open_errno == libc::EAGAIN {
+            NSS_STATUS_TRYAGAIN
+        } else {
+            NSS_STATUS_UNAVAIL
+        };
+    }
+    if rc == 0 && !resolved.is_null() {
+        unsafe { set_abi_errno(saved_errno) };
+        NSS_STATUS_SUCCESS
+    } else if rc == libc::ERANGE {
+        if !errnop.is_null() {
+            unsafe { *errnop = libc::ERANGE };
+        }
+        unsafe { set_abi_errno(libc::ERANGE) };
+        NSS_STATUS_TRYAGAIN
+    } else if rc == libc::EINVAL {
+        if !errnop.is_null() {
+            unsafe { *errnop = libc::EINVAL };
+        }
+        unsafe { set_abi_errno(libc::EINVAL) };
+        NSS_STATUS_UNAVAIL
+    } else {
+        unsafe { set_abi_errno(saved_errno) };
+        NSS_STATUS_NOTFOUND
+    }
+}
 /// Resolve an exact RPC name or alias from the native files source.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getrpcbyname_r(
@@ -14204,12 +14306,18 @@ pub unsafe extern "C" fn __open_catalog(
 /// Context-aware alias of the reentrant resolver hostalias helper.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_context_hostalias(
-    _ctx: *mut c_void,
+    ctx: *mut c_void,
     name: *const c_char,
     buf: *mut c_char,
     buflen: usize,
 ) -> *const c_char {
-    unsafe { crate::resolv_abi::__res_hostalias(core::ptr::null_mut(), name, buf, buflen) }
+    let Some((statp, _)) =
+        (unsafe { crate::glibc_internal_abi::extract_resolv_context_statp(ctx) })
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return core::ptr::null();
+    };
+    unsafe { crate::resolv_abi::__res_hostalias(statp.cast(), name, buf, buflen) }
 }
 
 /// `__res_context_mkquery(*ctx, op, *dname, class, type, *data,
@@ -14229,9 +14337,28 @@ pub unsafe extern "C" fn __res_context_mkquery(
     buf: *mut c_void,
     buflen: c_int,
 ) -> c_int {
+    let Some((statp, use_global)) =
+        (unsafe { crate::glibc_internal_abi::extract_resolv_context_statp(ctx) })
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if use_global {
+        return unsafe {
+            crate::resolv_state::global::mkquery(
+                op,
+                dname,
+                class,
+                type_,
+                (data, datalen, newrr),
+                buf,
+                buflen,
+            )
+        };
+    }
     unsafe {
         crate::glibc_internal_abi::__res_nmkquery(
-            ctx, op, dname, class, type_, data, datalen, newrr, buf, buflen,
+            statp, op, dname, class, type_, data, datalen, newrr, buf, buflen,
         )
     }
 }
@@ -14247,7 +14374,16 @@ pub unsafe extern "C" fn __res_context_query(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { crate::glibc_internal_abi::__res_nquery(ctx, name, class, type_, answer, anslen) }
+    let Some((statp, use_global)) =
+        (unsafe { crate::glibc_internal_abi::extract_resolv_context_statp(ctx) })
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if use_global {
+        return unsafe { crate::resolv_state::global::query(name, class, type_, answer, anslen) };
+    }
+    unsafe { crate::glibc_internal_abi::__res_nquery(statp, name, class, type_, answer, anslen) }
 }
 
 /// `__res_context_search(*ctx, name, class, type, *answer,
@@ -14262,7 +14398,16 @@ pub unsafe extern "C" fn __res_context_search(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { crate::glibc_internal_abi::__res_nsearch(ctx, name, class, type_, answer, anslen) }
+    let Some((statp, use_global)) =
+        (unsafe { crate::glibc_internal_abi::extract_resolv_context_statp(ctx) })
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if use_global {
+        return unsafe { crate::resolv_state::global::search(name, class, type_, answer, anslen) };
+    }
+    unsafe { crate::glibc_internal_abi::__res_nsearch(statp, name, class, type_, answer, anslen) }
 }
 
 /// `__res_context_send(*ctx, *buf, buflen, *buf2, buflen2,
@@ -14283,7 +14428,16 @@ pub unsafe extern "C" fn __res_context_send(
     _ansp: *mut *mut c_void,
     _ansp2: *mut *mut c_void,
 ) -> c_int {
-    unsafe { crate::glibc_internal_abi::__res_nsend(ctx, buf, buflen, answer, anslen) }
+    let Some((statp, use_global)) =
+        (unsafe { crate::glibc_internal_abi::extract_resolv_context_statp(ctx) })
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if use_global {
+        return unsafe { crate::resolv_state::global::send(buf, buflen, answer, anslen) };
+    }
+    unsafe { crate::glibc_internal_abi::__res_nsend(statp, buf, buflen, answer, anslen) }
 }
 
 const fn empty_res_nsaddr() -> libc::sockaddr_in {
@@ -14295,9 +14449,27 @@ const fn empty_res_nsaddr() -> libc::sockaddr_in {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RES_NSADDR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<libc::sockaddr_in> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_res_nsaddr);
+
+#[cfg(not(test))]
+pub(crate) fn reclaim_native_thread_res_nsaddr_tls(tid: i32) {
+    RES_NSADDR_OWNED_TLS.release_tid(tid);
+}
+
+#[cfg(not(test))]
+pub(crate) fn lock_res_nsaddr_tls_for_fork()
+-> Option<crate::owned_tls_cache::OwnedTlsForkGuard<libc::sockaddr_in>> {
+    #[cfg(feature = "owned-tls-cache")]
+    let use_owned = true;
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let use_owned = crate::malloc_abi::native_thread_backend_active();
+    if use_owned {
+        Some(RES_NSADDR_OWNED_TLS.lock_for_fork())
+    } else {
+        None
+    }
+}
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
@@ -14307,19 +14479,21 @@ thread_local! {
 
 #[inline]
 fn with_res_nsaddr<R>(f: impl FnOnce(&mut libc::sockaddr_in) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        RES_NSADDR_OWNED_TLS.with(f)
-    }
-
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        RES_NSADDR.with(|cell| {
-            // SAFETY: RES_NSADDR is per-thread storage and this callback keeps
-            // the mutable reference scoped to the thread-local access.
-            f(unsafe { &mut *cell.get() })
-        })
+        #[cfg(not(test))]
+        let use_owned = crate::malloc_abi::native_thread_backend_active();
+        #[cfg(test)]
+        let use_owned = false;
+        if !use_owned {
+            return RES_NSADDR.with(|cell| {
+                // SAFETY: RES_NSADDR is per-thread storage and this callback keeps
+                // the mutable reference scoped to the thread-local access.
+                f(unsafe { &mut *cell.get() })
+            });
+        }
     }
+    RES_NSADDR_OWNED_TLS.with(f)
 }
 
 /// `__res_get_nsaddr(*statp, n) -> *struct sockaddr_in` — return
@@ -22562,59 +22736,158 @@ pub unsafe extern "C" fn readdir64_r(
 }
 
 // ===========================================================================
-// Batch: backtrace — Implemented
+// Batch: backtrace — Implemented (native owned DWARF CFI + dladdr formatter)
 // ===========================================================================
 
-type HostBacktraceFn = unsafe extern "C" fn(*mut *mut c_void, c_int) -> c_int;
-type HostBacktraceSymbolsFn = unsafe extern "C" fn(*const *mut c_void, c_int) -> *mut *mut c_char;
-type HostBacktraceSymbolsFdFn = unsafe extern "C" fn(*const *mut c_void, c_int, c_int);
-
-static HOST_BACKTRACE_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-static HOST_BACKTRACE_SYMBOLS_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-static HOST_BACKTRACE_SYMBOLS_FD_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-
-unsafe fn host_unistd_symbol(
-    slot: &std::sync::OnceLock<usize>,
-    symbol: &'static str,
-) -> Option<usize> {
-    crate::host_resolve::resolve_host_symbol_cached(slot, symbol)
+fn append_backtrace_bytes(out: &mut [u8], pos: &mut usize, src: &[u8]) {
+    let avail = out.len().saturating_sub(*pos);
+    let n = avail.min(src.len());
+    if n > 0 {
+        out[*pos..*pos + n].copy_from_slice(&src[..n]);
+        *pos += n;
+    }
 }
 
-unsafe fn host_backtrace_fn() -> Option<HostBacktraceFn> {
-    unsafe { host_unistd_symbol(&HOST_BACKTRACE_FN, "backtrace") }
-        .map(|addr| unsafe { std::mem::transmute(addr) }) // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+fn append_backtrace_hex(out: &mut [u8], pos: &mut usize, mut val: usize) {
+    append_backtrace_bytes(out, pos, b"0x");
+    if val == 0 {
+        append_backtrace_bytes(out, pos, b"0");
+        return;
+    }
+    let mut digits = [0u8; 16];
+    let mut len = 0usize;
+    while val != 0 {
+        let nibble = (val & 0xf) as u8;
+        digits[15 - len] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + (nibble - 10)
+        };
+        val >>= 4;
+        len += 1;
+    }
+    append_backtrace_bytes(out, pos, &digits[16 - len..]);
 }
 
-unsafe fn host_backtrace_symbols_fn() -> Option<HostBacktraceSymbolsFn> {
-    unsafe { host_unistd_symbol(&HOST_BACKTRACE_SYMBOLS_FN, "backtrace_symbols") }
-        .map(|addr| unsafe { std::mem::transmute(addr) }) // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+unsafe fn cstr_bounded_bytes<'a>(ptr: *const c_char, max_len: usize) -> &'a [u8] {
+    if ptr.is_null() {
+        return &[];
+    }
+    let mut len = 0usize;
+    while len < max_len {
+        // SAFETY: `ptr` comes from `dladdr` static/table metadata.
+        if unsafe { *ptr.add(len) } == 0 {
+            break;
+        }
+        len += 1;
+    }
+    // SAFETY: `0..len` are valid non-NUL bytes before terminator/cap.
+    unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) }
 }
 
-unsafe fn host_backtrace_symbols_fd_fn() -> Option<HostBacktraceSymbolsFdFn> {
-    unsafe { host_unistd_symbol(&HOST_BACKTRACE_SYMBOLS_FD_FN, "backtrace_symbols_fd") }
-        .map(|addr| unsafe { std::mem::transmute(addr) }) // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+/// Format a single backtrace address in GNU `<execinfo.h>` style (`fname(sname+0xoff) [0xip]`)
+/// without heap allocation so both `backtrace_symbols` and async-signal-safe
+/// `backtrace_symbols_fd` share the exact same formatter.
+unsafe fn format_backtrace_frame(addr: *mut c_void, out: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    let ip = addr as usize;
+    let mut info = core::mem::MaybeUninit::<libc::Dl_info>::zeroed();
+    // SAFETY: `info` is valid writable `Dl_info` storage.
+    let resolved = unsafe { crate::dlfcn_abi::dladdr(addr.cast_const(), info.as_mut_ptr().cast()) };
+    if resolved != 0 {
+        let info = unsafe { info.assume_init() };
+        let fname = unsafe { cstr_bounded_bytes(info.dli_fname, 256) };
+        let sname = unsafe { cstr_bounded_bytes(info.dli_sname, 192) };
+        if !fname.is_empty() {
+            append_backtrace_bytes(out, &mut pos, fname);
+            append_backtrace_bytes(out, &mut pos, b"(");
+            if !sname.is_empty() {
+                append_backtrace_bytes(out, &mut pos, sname);
+                let saddr = info.dli_saddr as usize;
+                if ip >= saddr {
+                    append_backtrace_bytes(out, &mut pos, b"+");
+                    append_backtrace_hex(out, &mut pos, ip - saddr);
+                } else {
+                    append_backtrace_bytes(out, &mut pos, b"-");
+                    append_backtrace_hex(out, &mut pos, saddr - ip);
+                }
+            } else {
+                let fbase = info.dli_fbase as usize;
+                if fbase != 0 && ip >= fbase {
+                    append_backtrace_bytes(out, &mut pos, b"+");
+                    append_backtrace_hex(out, &mut pos, ip - fbase);
+                }
+            }
+            append_backtrace_bytes(out, &mut pos, b") ");
+        }
+    }
+    append_backtrace_bytes(out, &mut pos, b"[");
+    append_backtrace_hex(out, &mut pos, ip);
+    append_backtrace_bytes(out, &mut pos, b"]");
+    pos
 }
 
-/// `backtrace` — capture stack backtrace.
+/// `backtrace` — capture stack backtrace via FrankenLibC's native unwinder.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int {
     if buffer.is_null() || size <= 0 {
         return 0;
     }
-    match unsafe { host_backtrace_fn() } {
-        Some(host_backtrace) => unsafe { host_backtrace(buffer, size) },
-        None => {
-            // SAFETY: `buffer` is non-null and `size > 0`; the backtrace ABI
-            // requires caller storage for at least `size` frame slots.
-            unsafe {
-                *buffer = backtrace as *const () as *mut c_void;
-            }
-            1
+    let ptr_size = core::mem::size_of::<*mut c_void>();
+    let mut max_frames = size as usize;
+    if runtime_policy::mode().heals_enabled()
+        && let Some(bound) = crate::malloc_abi::known_remaining(buffer as usize)
+    {
+        let cap_frames = bound / ptr_size;
+        if max_frames > cap_frames {
+            frankenlibc_membrane::heal::global_healing_policy().record(
+                "unistd",
+                "backtrace",
+                &frankenlibc_membrane::heal::HealingAction::ClampSize {
+                    requested: max_frames.saturating_mul(ptr_size),
+                    clamped: cap_frames.saturating_mul(ptr_size),
+                },
+                frankenlibc_membrane::heal::RepairLogContext::new(0, Some(buffer as usize)),
+            );
+            max_frames = cap_frames;
         }
     }
+    if max_frames == 0 {
+        return 0;
+    }
+    // SAFETY: `buffer` is non-null with capacity for `max_frames` pointers.
+    unsafe { crate::owned_unwind_abi::capture_owned_backtrace(buffer, max_frames) }
 }
 
-/// `backtrace_symbols` — convert backtrace addresses to symbol strings.
+#[inline]
+fn clamp_backtrace_input_count(
+    symbol: &'static str,
+    buffer: *const *mut c_void,
+    size: c_int,
+) -> usize {
+    let ptr_size = core::mem::size_of::<*mut c_void>();
+    let mut count = size as usize;
+    if runtime_policy::mode().heals_enabled()
+        && let Some(bound) = crate::malloc_abi::known_remaining(buffer as usize)
+    {
+        let cap_frames = bound / ptr_size;
+        if count > cap_frames {
+            frankenlibc_membrane::heal::global_healing_policy().record(
+                "unistd",
+                symbol,
+                &frankenlibc_membrane::heal::HealingAction::ClampSize {
+                    requested: count.saturating_mul(ptr_size),
+                    clamped: cap_frames.saturating_mul(ptr_size),
+                },
+                frankenlibc_membrane::heal::RepairLogContext::new(0, Some(buffer as usize)),
+            );
+            count = cap_frames;
+        }
+    }
+    count
+}
+
+/// `backtrace_symbols` — convert backtrace addresses to a single `free()`-able string array.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn backtrace_symbols(
     buffer: *const *mut c_void,
@@ -22623,20 +22896,85 @@ pub unsafe extern "C" fn backtrace_symbols(
     if buffer.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
-    match unsafe { host_backtrace_symbols_fn() } {
-        Some(host_backtrace_symbols) => unsafe { host_backtrace_symbols(buffer, size) },
-        None => std::ptr::null_mut(),
+    let count = clamp_backtrace_input_count("backtrace_symbols", buffer, size);
+    if count == 0 {
+        return std::ptr::null_mut();
     }
+    let ptr_table_bytes = match count.checked_mul(core::mem::size_of::<*mut c_char>()) {
+        Some(n) => n,
+        None => {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return std::ptr::null_mut();
+        }
+    };
+    let mut formatted: Vec<Vec<u8>> = Vec::new();
+    if formatted.try_reserve_exact(count).is_err() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return std::ptr::null_mut();
+    }
+    let mut str_bytes = 0usize;
+    let mut scratch = [0u8; 512];
+    for idx in 0..count {
+        // SAFETY: caller supplies `count` frame addresses in `buffer`.
+        let addr = unsafe { *buffer.add(idx) };
+        let len = unsafe { format_backtrace_frame(addr, &mut scratch) };
+        let Some(next_str_bytes) = str_bytes.checked_add(len + 1) else {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return std::ptr::null_mut();
+        };
+        str_bytes = next_str_bytes;
+        let mut line = Vec::new();
+        if line.try_reserve_exact(len + 1).is_err() {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return std::ptr::null_mut();
+        }
+        line.extend_from_slice(&scratch[..len]);
+        line.push(0);
+        formatted.push(line);
+    }
+    let Some(total_bytes) = ptr_table_bytes.checked_add(str_bytes) else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+    // SAFETY: single C-heap block released by caller via `free(ret)`.
+    let raw = unsafe { crate::malloc_abi::malloc(total_bytes) }.cast::<u8>();
+    if raw.is_null() {
+        return std::ptr::null_mut();
+    }
+    let ptrs = raw.cast::<*mut c_char>();
+    let mut cursor = unsafe { raw.add(ptr_table_bytes) };
+    for (idx, line) in formatted.iter().enumerate() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(line.as_ptr(), cursor, line.len());
+            *ptrs.add(idx) = cursor.cast::<c_char>();
+            cursor = cursor.add(line.len());
+        }
+    }
+    ptrs
 }
 
-/// `backtrace_symbols_fd` — write backtrace symbols to file descriptor.
+/// `backtrace_symbols_fd` — write backtrace symbols directly to `fd` without heap allocation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn backtrace_symbols_fd(buffer: *const *mut c_void, size: c_int, fd: c_int) {
-    if buffer.is_null() || size <= 0 {
+    if buffer.is_null() || size <= 0 || fd < 0 {
         return;
     }
-    if let Some(host_backtrace_symbols_fd) = unsafe { host_backtrace_symbols_fd_fn() } {
-        unsafe { host_backtrace_symbols_fd(buffer, size, fd) };
+    let count = clamp_backtrace_input_count("backtrace_symbols_fd", buffer, size);
+    let mut scratch = [0u8; 512];
+    for idx in 0..count {
+        // SAFETY: caller supplies `count` frame addresses in `buffer`.
+        let addr = unsafe { *buffer.add(idx) };
+        let mut len = unsafe { format_backtrace_frame(addr, &mut scratch[..511]) };
+        scratch[len] = b'\n';
+        len += 1;
+        let mut written = 0usize;
+        while written < len {
+            match unsafe { syscall::sys_write(fd, scratch[written..].as_ptr(), len - written) } {
+                Ok(n) if n > 0 => written += n,
+                Err(err) if err == libc::EINTR => continue,
+                Ok(_) | Err(_) => break,
+            }
+        }
     }
 }
 
@@ -25439,15 +25777,15 @@ pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
     std::ptr::null_mut()
 }
 
-/// `getaliasbyname_r` — reentrant alias lookup by name.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getaliasbyname_r(
+unsafe fn files_getaliasbyname_r(
     name: *const c_char,
     result_buf: *mut c_void,
     buffer: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
+    open_errno: &mut c_int,
 ) -> c_int {
+    *open_errno = 0;
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
@@ -25459,9 +25797,10 @@ pub unsafe extern "C" fn getaliasbyname_r(
     };
     let content = match std::fs::read(ALIASES_PATH) {
         Ok(c) => c,
-        Err(_) => {
-            unsafe { set_abi_errno(libc::ENOENT) };
-            return libc::ENOENT;
+        Err(err) => {
+            let code = err.raw_os_error().unwrap_or(libc::ENOENT);
+            *open_errno = code;
+            return code;
         }
     };
     for line in content.split(|&b| b == b'\n') {
@@ -25516,8 +25855,28 @@ pub unsafe extern "C" fn getaliasbyname_r(
             return 0;
         }
     }
-    unsafe { set_abi_errno(libc::ENOENT) };
     libc::ENOENT
+}
+
+/// `getaliasbyname_r` — reentrant alias lookup by name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getaliasbyname_r(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buffer: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    let mut open_errno = 0;
+    let rc = unsafe {
+        files_getaliasbyname_r(name, result_buf, buffer, buflen, result, &mut open_errno)
+    };
+    if rc == libc::ENOENT {
+        unsafe { set_abi_errno(libc::ENOENT) };
+    } else if open_errno != 0 {
+        unsafe { set_abi_errno(open_errno) };
+    }
+    rc
 }
 
 /// `getaliasent` — get next alias entry from /etc/aliases.
