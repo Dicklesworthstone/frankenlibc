@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "bead": "bd-2bu",
-  "generated_at_utc": "2026-11-18T04:38:00Z",
-  "source_commit": "148347cfed65c872310e363d3e61d0df3433deb8",
+  "generated_at_utc": "2026-11-18T23:15:02Z",
+  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
   "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
   "levels": [
     {
@@ -21,24 +21,22 @@
         "test_gate": "cargo test --workspace passes"
       },
       "current_state": {
-        "implemented_pct": 60,
+        "implemented_pct": 62,
         "raw_syscall_pct": 10,
         "callthrough_pct": 0,
-        "wraps_host_libc_pct": 30,
+        "wraps_host_libc_pct": 28,
         "glibc_callthrough_pct": 0,
-        "native_pct": 70,
+        "native_pct": 72,
         "stub_pct": 0,
         "callthrough_modules": [
           "c11threads_abi",
           "dirent_abi",
           "dlfcn_abi",
-          "err_abi",
           "glibc_internal_abi",
           "grp_abi",
           "inet_abi",
           "io_abi",
           "io_internal_abi",
-          "isoc_abi",
           "malloc_abi",
           "math_abi",
           "process_abi",
@@ -53,7 +51,6 @@
           "stdio_abi",
           "stdlib_abi",
           "string_abi",
-          "time_abi",
           "unistd_abi",
           "wchar_abi"
         ],
@@ -84,8 +81,14 @@
       "objective_gate": {
         "bead": "bd-gtf.4",
         "status": "pass",
-        "status_reason": "All 8 L1 objective obligations pass (0 Stub, 60% Implemented, 30% explicit WrapsHostLibc interpose, 11/11 L1 CRT/startup/TLS proof rows satisfied, claim reconciliation 0 errors, perf budgets aligned, and curated preload smoke run 20261117T074800Z-fec80ccf6 passing 360/360 executed cases across strict and hardened modes with 0 fails, 0 perf_failures, 0 signature_guard_failures, 0 xfails, and deployed_overhead passed).",
-        "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
+        "status_reason": "All 8 L1 objective obligations pass (0 Stub, 62% Implemented, 28% explicit WrapsHostLibc interpose, 11/11 L1 CRT/startup/TLS proof rows satisfied, claim reconciliation 0 errors, perf budgets aligned, and curated preload smoke run 20261117T074800Z-fec80ccf6 passing 360/360 executed cases across strict and hardened modes with 0 fails, 0 perf_failures, 0 signature_guard_failures, 0 xfails, and deployed_overhead passed).",
+        "required_log_fields": [
+          "trace_id",
+          "level",
+          "obligation_id",
+          "outcome",
+          "artifact_ref"
+        ],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
           "log_path": "target/conformance/replacement_levels_l1_gate.log.jsonl",
@@ -112,7 +115,7 @@
               "max_callthrough_pct": 35
             },
             "actual": {
-              "callthrough_pct": 30
+              "callthrough_pct": 28
             },
             "outcome": "pass"
           },
@@ -124,7 +127,7 @@
               "min_implemented_pct": 35
             },
             "actual": {
-              "implemented_pct": 60
+              "implemented_pct": 62
             },
             "outcome": "pass"
           },
@@ -138,7 +141,7 @@
               "hardened_status": "green",
               "perf_failures": 0,
               "signature_guard_failures": 0,
-          "xfails": 0
+              "xfails": 0
             },
             "actual": {
               "run_id": "20261117T074800Z-fec80ccf6",
@@ -293,77 +296,71 @@
   "current_level": "L1",
   "current_assessment": {
     "total_symbols": 4119,
-    "implemented": 2464,
+    "implemented": 2555,
     "raw_syscall": 408,
-    "native": 2872,
-    "wraps_host_libc": 1247,
+    "native": 2963,
+    "wraps_host_libc": 1156,
     "glibc_callthrough": 0,
-    "callthrough": 1247,
+    "callthrough": 1156,
     "stub": 0,
-    "implemented_pct": 60,
+    "implemented_pct": 62,
     "raw_syscall_pct": 10,
-    "native_pct": 70,
-    "wraps_host_libc_pct": 30,
+    "native_pct": 72,
+    "wraps_host_libc_pct": 28,
     "glibc_callthrough_pct": 0,
-    "callthrough_pct": 30,
+    "callthrough_pct": 28,
     "stub_pct": 0,
     "callthrough_breakdown": {
       "c11threads_abi": 5,
       "dirent_abi": 5,
       "dlfcn_abi": 6,
-      "err_abi": 12,
-      "glibc_internal_abi": 209,
+      "glibc_internal_abi": 205,
       "grp_abi": 3,
-      "inet_abi": 10,
+      "inet_abi": 8,
       "io_abi": 1,
-      "io_internal_abi": 63,
-      "isoc_abi": 3,
-      "malloc_abi": 11,
+      "io_internal_abi": 60,
+      "malloc_abi": 10,
       "math_abi": 507,
       "process_abi": 2,
       "pthread_abi": 30,
       "pwd_abi": 8,
-      "resolv_abi": 7,
-      "rpc_abi": 28,
+      "resolv_abi": 5,
+      "rpc_abi": 24,
       "search_abi": 1,
       "setjmp_abi": 4,
-      "signal_abi": 8,
+      "signal_abi": 1,
       "startup_abi": 3,
-      "stdio_abi": 113,
-      "stdlib_abi": 60,
-      "string_abi": 34,
-      "time_abi": 1,
-      "unistd_abi": 70,
-      "wchar_abi": 43
+      "stdio_abi": 104,
+      "stdlib_abi": 58,
+      "string_abi": 1,
+      "unistd_abi": 64,
+      "wchar_abi": 41
     },
     "wraps_host_libc_breakdown": {
       "c11threads_abi": 5,
       "dirent_abi": 5,
       "dlfcn_abi": 6,
-      "err_abi": 12,
-      "glibc_internal_abi": 209,
+      "glibc_internal_abi": 205,
       "grp_abi": 3,
-      "inet_abi": 10,
+      "inet_abi": 8,
       "io_abi": 1,
-      "io_internal_abi": 63,
-      "isoc_abi": 3,
-      "malloc_abi": 11,
+      "io_internal_abi": 60,
+      "malloc_abi": 10,
       "math_abi": 507,
       "process_abi": 2,
       "pthread_abi": 30,
       "pwd_abi": 8,
-      "resolv_abi": 7,
-      "rpc_abi": 28,
+      "resolv_abi": 5,
+      "rpc_abi": 24,
       "search_abi": 1,
       "setjmp_abi": 4,
-      "signal_abi": 8,
+      "signal_abi": 1,
       "startup_abi": 3,
-      "stdio_abi": 113,
-      "stdlib_abi": 60,
-      "string_abi": 34,
-      "time_abi": 1,
-      "unistd_abi": 70,
-      "wchar_abi": 43
+      "stdio_abi": 104,
+      "stdlib_abi": 58,
+      "string_abi": 1,
+      "unistd_abi": 64,
+      "wchar_abi": 41
     },
     "glibc_callthrough_breakdown": {},
     "stub_breakdown": {}

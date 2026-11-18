@@ -4,7 +4,7 @@
 
 ## Current Scope
 
-The declared replacement level is **L1 hardened interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,464 `Implemented`, 408 `RawSyscall`, 1,247 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,872 native/direct-syscall classifications (69.7%) measure ownership, not complete semantics or a standalone process.
+The declared replacement level is **L1 hardened interposition over host glibc**. The committed `support_matrix.json` classifies 4,119 exports as 2,555 `Implemented`, 408 `RawSyscall`, 1,156 `WrapsHostLibc`, zero `GlibcCallThrough`, and zero `Stub`. The 2,963 native/direct-syscall classifications (71.9%) measure ownership, not complete semantics or a standalone process.
 
 The committed support-maintenance report validates 4,119/4,119 classifications (0 status-invalid rows) while conservatively retaining unproven native wrapper rows under `WrapsHostLibc` until fixture/promotion-proof evidence is attached. Fixture linkage covers 1,205/4,119 rows (29.3%); linkage is not an executed pass rate. The 36-entry semantic overlay (`tests/conformance/support_semantic_overlay.v1.json`) is representative, not exhaustive.
 
@@ -39,22 +39,22 @@ The full POSIX/GNU objective remains. Historical exclusions must not silently re
 | NSS plugins (`_nss_*`) | Native files/DNS coexist with installed host-loaded NSS modules | Public lookup behavior and provider independence need separate qualification |
 | Thread debug (`_thread_db_*`) | GDB/debugger integration internals | Debuggers use libthread_db.so |
 | Dynamic linker globals (`_rtld_*`, `_dl_*`) | Host-loader internals differ from the public symbol surface | Owned startup, TLS and transitive loading remain standalone integration obligations |
-| Sun RPC/XDR | Declared legacy ABI remains in scope | Native XDR and RPC client/service transports exist; 28 RPC symbols remain classified as `WrapsHostLibc` due to standalone NSS `dlsym` reachability or conservative promotion evidence |
+| Sun RPC/XDR | Declared legacy ABI remains in scope | Native XDR and RPC client/service transports exist; 24 RPC symbols remain classified as `WrapsHostLibc` due to conservative promotion evidence |
 | STREAMS (`fattach`, `getmsg`, `putmsg`) | SVR4 legacy, never widely used on Linux | Effectively dead API |
 
 ## Support Matrix Breakdown
 
 | Status | Count | Description |
 |--------|-------|-------------|
-| Implemented | 2464 | Classified native Rust behavior |
+| Implemented | 2555 | Classified native Rust behavior |
 | RawSyscall | 408 | Classified direct syscall path |
-| WrapsHostLibc | 1247 | Explicit host-backed subset |
+| WrapsHostLibc | 1156 | Explicit host-backed subset |
 | GlibcCallThrough | 0 | Opaque call-through subset |
 | Stub | 0 | Explicit unsupported contracts |
 
-**Native-classified:** 2,872 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
+**Native-classified:** 2,963 symbols (`Implemented + RawSyscall`). This is not a standalone-capable process claim.
 
-**Host-backed:** 1,247 symbols (`WrapsHostLibc`). Conservative promotion-evidence boundaries are described above.
+**Host-backed:** 1,156 symbols (`WrapsHostLibc`). Conservative promotion-evidence boundaries are described above.
 
 ## Behavioral Parity Verification
 

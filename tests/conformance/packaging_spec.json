@@ -22,7 +22,10 @@
         "GlibcCallThrough",
         "Stub"
       ],
-      "replacement_levels": ["L0", "L1"],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
       "cargo_features": [],
       "cargo_profile": "release",
       "crate_type": "cdylib",
@@ -41,45 +44,49 @@
         "hardened": "FRANKENLIBC_MODE=hardened with direct link or LD_PRELOAD"
       },
       "host_glibc_required": false,
-      "allowed_statuses": ["Implemented", "RawSyscall"],
-      "replacement_levels": ["L2", "L3"],
-      "cargo_features": ["standalone"],
+      "allowed_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "replacement_levels": [
+        "L2",
+        "L3"
+      ],
+      "cargo_features": [
+        "standalone"
+      ],
       "cargo_profile": "release",
       "crate_type": "cdylib",
       "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
       "guarantee": "All exported symbols are self-contained. Zero host glibc dependency. Every symbol either runs native Rust code or issues raw Linux syscalls.",
       "status": "blocked_by_host_backed_rows",
       "blockers": {
-        "total_symbols_to_migrate": 1310,
+        "total_symbols_to_migrate": 1156,
         "WrapsHostLibc_remaining": {
-          "c11threads_abi": 9,
-          "dirent_abi": 7,
+          "c11threads_abi": 5,
+          "dirent_abi": 5,
           "dlfcn_abi": 6,
-          "err_abi": 12,
-          "fortify_abi": 53,
-          "glibc_internal_abi": 209,
+          "glibc_internal_abi": 205,
           "grp_abi": 3,
           "inet_abi": 8,
           "io_abi": 1,
-          "io_internal_abi": 63,
-          "isoc_abi": 3,
-          "malloc_abi": 11,
-          "math_abi": 509,
-          "process_abi": 3,
-          "pthread_abi": 28,
+          "io_internal_abi": 60,
+          "malloc_abi": 10,
+          "math_abi": 507,
+          "process_abi": 2,
+          "pthread_abi": 30,
           "pwd_abi": 8,
           "resolv_abi": 5,
-          "rpc_abi": 26,
+          "rpc_abi": 24,
           "search_abi": 1,
           "setjmp_abi": 4,
-          "signal_abi": 9,
-          "startup_abi": 4,
-          "stdio_abi": 116,
-          "stdlib_abi": 60,
-          "string_abi": 36,
-          "time_abi": 6,
-          "unistd_abi": 56,
-          "wchar_abi": 54
+          "signal_abi": 1,
+          "startup_abi": 3,
+          "stdio_abi": 104,
+          "stdlib_abi": 58,
+          "string_abi": 1,
+          "unistd_abi": 64,
+          "wchar_abi": 41
         },
         "GlibcCallThrough_remaining": {},
         "Stub_remaining": {},
@@ -126,17 +133,17 @@
   "current_assessment": {
     "total_symbols": 4119,
     "interpose_ready": 4119,
-    "replace_ready": 2809,
-    "replace_blocked": 1310,
+    "replace_ready": 2963,
+    "replace_blocked": 1156,
     "symbol_distribution": {
-      "Implemented": 2395,
-      "RawSyscall": 414,
-      "WrapsHostLibc": 1310,
+      "Implemented": 2555,
+      "RawSyscall": 408,
+      "WrapsHostLibc": 1156,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "interpose_pct": 100,
-    "replace_pct": 68.2
+    "replace_pct": 71.9
   },
   "naming_convention": {
     "interpose": {
@@ -157,18 +164,24 @@
     },
     "standalone": {
       "description": "Future feature gate for Replace artifact. When enabled, GlibcCallThrough symbols must have native implementations and Stub symbols must be eliminated.",
-      "features": ["standalone"],
+      "features": [
+        "standalone"
+      ],
       "compile_time_enforcement": "cfg(feature = \"standalone\") gates should reject GlibcCallThrough dispatch at compile time",
       "status": "planned"
     },
     "runtime-math-production": {
       "description": "Enables production-tier runtime_math modules (barrier, bandit, control, risk, etc.).",
-      "features": ["runtime-math-production"],
+      "features": [
+        "runtime-math-production"
+      ],
       "applies_to": "both"
     },
     "runtime-math-research": {
       "description": "Enables research-tier runtime_math modules (alien artifact modules).",
-      "features": ["runtime-math-research"],
+      "features": [
+        "runtime-math-research"
+      ],
       "applies_to": "both"
     }
   },

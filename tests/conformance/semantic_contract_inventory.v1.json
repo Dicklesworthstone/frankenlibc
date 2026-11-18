@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.1.1",
-  "source_commit": "current",
+  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
   "generated_at_utc": "2026-11-17T23:40:00Z",
   "purpose": "Inventory every declared export as an explicit semantic unknown, with representative source-observed limitations retained as obligations. Inventory completeness is not semantic review, runtime execution, dynamic-symbol availability or replacement readiness.",
   "source_artifacts": {
@@ -58,7 +58,7 @@
       ],
       "module": "frankenlibc-abi::pthread_abi",
       "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
-      "source_line": 11651,
+      "source_line": 11984,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __pthread_register_cancel(",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -86,7 +86,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9765,
+      "source_line": 9812,
       "line_marker": "DES is obsolete and unsupported",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -112,7 +112,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 11732,
+      "source_line": 11779,
       "line_marker": "_nss_files_endXX NSS plugin",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -138,7 +138,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 1779,
+      "source_line": 1784,
       "line_marker": "__nss_configure_lookup: process-local source selection",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -169,7 +169,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4038,
+      "source_line": 4043,
       "line_marker": "native file overflow bridge",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "limited_bootstrap",
@@ -196,7 +196,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5533,
+      "source_line": 5538,
       "line_marker": "bdflush: deprecated Linux syscall",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "unsupported_platform_contract",
@@ -223,7 +223,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 23751,
+      "source_line": 24121,
       "line_marker": "Malloc debug stubs",
       "support_matrix_status": "Implemented",
       "semantic_class": "compat_noop",
@@ -250,7 +250,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 28103,
+      "source_line": 28494,
       "line_marker": "pub unsafe extern \"C\" fn argp_help(",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -275,7 +275,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 283,
+      "source_line": 287,
       "line_marker": "// pthread_mutex_getprioceiling: the ceiling of a PRIO_PROTECT mutex; EINVAL otherwise.",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -304,7 +304,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 5218,
+      "source_line": 5223,
       "line_marker": "pub unsafe extern \"C\" fn __fentry__()",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "proof_gap",
@@ -334,7 +334,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 9381,
+      "source_line": 9364,
       "line_marker": "__gconv_open",
       "support_matrix_status": "mixed_or_not_listed_by_exact_name",
       "semantic_class": "limited_bootstrap",
@@ -363,7 +363,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 10483,
+      "source_line": 10530,
       "line_marker": "NIS / Yellow Pages is dead infrastructure",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -389,7 +389,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 11666,
+      "source_line": 11713,
       "line_marker": "Without a real NIS backend",
       "support_matrix_status": "Implemented",
       "semantic_class": "deterministic_fallback",
@@ -414,7 +414,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 32040,
+      "source_line": 32431,
       "line_marker": "/// GNU asynchronous name/service resolution using the native resolver.",
       "support_matrix_status": "Implemented",
       "semantic_class": "proof_gap",
@@ -470,7 +470,7 @@
       ],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 20456,
+      "source_line": 20662,
       "line_marker": "__cxa_pure_virtual",
       "support_matrix_status": "Implemented",
       "semantic_class": "abort_only",
@@ -494,7 +494,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 7019,
+      "source_line": 7002,
       "line_marker": "// rcmd/rcmd_af: rsh remote command",
       "support_matrix_status": "WrapsHostLibc",
       "semantic_class": "deterministic_fallback",
@@ -516,7 +516,7 @@
       ],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
-      "source_line": 4097,
+      "source_line": 4102,
       "line_marker": "pub unsafe extern \"C-unwind\" fn __printf_fp(",
       "support_matrix_status": "Implemented",
       "semantic_class": "limited_bootstrap",
@@ -619,10 +619,10 @@
         }
       }
     },
-    "source_tree_sha256": "eaebd88fcccaae53b62c7cfbd9ef3b3590740d279e4d7fc695fb4ec791fedb08",
+    "source_tree_sha256": "fe9db6dd012e1a6cdbdc40fda513c96628a0a8451bd8977d34ce41900e13ef75",
     "version_script_sha256": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
-    "support_rows_sha256": "3988f4e6e54c7c886be2edd0b062197a5f0d78dd5c49505c5e7153155137554e",
-    "contract_rows_sha256": "d1fa04bc0840d8b0c1c0996dc440227d6ef2f8ea212f854fa5d13180004d521a",
+    "support_rows_sha256": "3db765bc10ca2c2cbd9f877947879ad30c2861f4e30ac07144a3102f90945d3e",
+    "contract_rows_sha256": "92968c9d27f992d0cb481c7bac1d9302e79e2c71251a831570e0427be4f6c55f",
     "summary": {
       "declared_symbol_count": 4731,
       "raw_source_symbol_count": 4726,
@@ -636,7 +636,7 @@
       },
       "version_script_symbol_count": 4237,
       "support_symbol_count": 4119,
-      "group_count": 153,
+      "group_count": 151,
       "unknown_semantics_count": 4731,
       "full_semantics_count": 0,
       "unqualified_configuration_count": 26
@@ -666,11 +666,9 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "backtrace",
           "backtrace_symbols",
           "backtrace_symbols_fd",
           "clone",
-          "creat64",
           "crypt",
           "crypt_preferred_method",
           "crypt_r",
@@ -679,10 +677,6 @@
           "daemon",
           "fcrypt",
           "forkpty",
-          "fpathconf",
-          "fstat64",
-          "fstatat64",
-          "ftruncate64",
           "ftw",
           "getentropy",
           "gethostbyname2",
@@ -861,6 +855,7 @@
           "gcvt",
           "get_nprocs",
           "get_nprocs_conf",
+          "getbsize",
           "getenv",
           "getloadavg",
           "getusershell",
@@ -908,6 +903,7 @@
           "srand48_r",
           "srandom",
           "srandom_r",
+          "system",
           "tmpnam_r"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
@@ -1172,6 +1168,8 @@
           "inet_addr",
           "inet_aton",
           "inet_ntoa",
+          "inet_ntop",
+          "inet_pton",
           "ntohl",
           "ntohs"
         ],
@@ -1234,6 +1232,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
+          "_authenticate",
           "registerrpc",
           "svc_exit",
           "svc_getreq",
@@ -1379,34 +1378,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-1cb85ad7c6095b96",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "rpc_svc"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "WrapsHostLibc",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "_authenticate"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-1f2d2c231f474c1c",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -1526,7 +1497,6 @@
           "get_avphys_pages",
           "get_phys_pages",
           "getauxval",
-          "getbsize",
           "gets",
           "getsubopt",
           "initstate",
@@ -1559,7 +1529,6 @@
           "strtoull_l",
           "strtoumax",
           "strtouq",
-          "system",
           "ualarm",
           "unsetenv"
         ],
@@ -1596,9 +1565,7 @@
           "if_freenameindex",
           "if_indextoname",
           "if_nameindex",
-          "if_nametoindex",
-          "inet_ntop",
-          "inet_pton"
+          "if_nametoindex"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -1756,9 +1723,6 @@
           "__isoc23_vscanf",
           "__isoc23_vwscanf",
           "__isoc23_wscanf",
-          "__isoc99_fwscanf",
-          "__isoc99_vfwscanf",
-          "__isoc99_vwscanf",
           "__isoc99_wscanf"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
@@ -2757,14 +2721,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "psiginfo",
-          "sigaddset",
-          "sigandset",
-          "sigdelset",
-          "sigfillset",
-          "sigisemptyset",
-          "sigismember",
-          "sigorset"
+          "sigdelset"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -3132,10 +3089,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "__asprintf",
           "__clone",
-          "__close",
-          "__connect",
           "__dup2",
           "__fcntl",
           "__fdelt_warn",
@@ -3237,7 +3191,6 @@
           "chflags",
           "delete_module",
           "dladdr1",
-          "dlinfo",
           "dlmopen",
           "fattach",
           "fchflags",
@@ -3852,6 +3805,7 @@
           "__libc_freeres",
           "mallinfo",
           "mallinfo2",
+          "malloc_info",
           "malloc_stats",
           "malloc_trim",
           "malloc_usable_size",
@@ -4279,6 +4233,7 @@
           "__argz_count",
           "__argz_next",
           "__argz_stringify",
+          "__asprintf",
           "__b64_ntop",
           "__b64_pton",
           "__backtrace",
@@ -4287,7 +4242,9 @@
           "__bsd_getpgrp",
           "__bzero",
           "__call_tls_dtors",
+          "__close",
           "__cmsg_nxthdr",
+          "__connect",
           "__copy_grp",
           "__ctype32_b",
           "__ctype32_tolower",
@@ -4409,6 +4366,7 @@
           "advance",
           "b64_ntop",
           "b64_pton",
+          "dlinfo",
           "dysize",
           "ftime",
           "futimes",
@@ -4550,34 +4508,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-7312c32eb8bc3677",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "time_abi"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "WrapsHostLibc",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "mktime"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-7383519609bba196",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -4695,8 +4625,11 @@
           "__isoc23_wcstoull",
           "__isoc23_wcstoull_l",
           "__isoc23_wcstoumax",
+          "__isoc99_fwscanf",
           "__isoc99_swscanf",
-          "__isoc99_vswscanf"
+          "__isoc99_vfwscanf",
+          "__isoc99_vswscanf",
+          "__isoc99_vwscanf"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -4915,6 +4848,7 @@
           "mblen",
           "mbrtoc16",
           "mbsinit",
+          "open_wmemstream",
           "swprintf",
           "swscanf",
           "towctrans_l",
@@ -4935,6 +4869,7 @@
           "wcscoll_l",
           "wcscpy",
           "wcscspn",
+          "wcsdup",
           "wcslcat",
           "wcslcpy",
           "wcslen",
@@ -5136,12 +5071,14 @@
           "arc4random_buf",
           "arc4random_uniform",
           "argp_parse",
+          "backtrace",
           "bind_textdomain_codeset",
           "bsd_signal",
           "c8rtomb",
           "canonicalize_file_name",
           "clock_getcpuclockid",
           "closelog",
+          "creat64",
           "crypt_checksalt",
           "crypt_gensalt",
           "crypt_gensalt_r",
@@ -5190,10 +5127,14 @@
           "fgetspent",
           "fgetspent_r",
           "fmtmsg",
+          "fpathconf",
           "freeifaddrs",
+          "fstat64",
+          "fstatat64",
           "fstatfs64",
           "fstatvfs64",
           "ftok",
+          "ftruncate64",
           "fts64_children",
           "fts64_close",
           "fts64_open",
@@ -5658,40 +5599,7 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "__strdup",
-          "__strndup",
-          "__strtod_internal",
-          "__strtod_l",
-          "__strtof_internal",
-          "__strtof_l",
-          "__strtol_internal",
-          "__strtol_l",
-          "__strtoll_internal",
-          "__strtoll_l",
-          "__strtoul_internal",
-          "__strtoul_l",
-          "__strtoull_internal",
-          "__strtoull_l",
-          "argz_add",
-          "argz_add_sep",
-          "argz_append",
-          "argz_create",
-          "argz_create_sep",
-          "argz_delete",
-          "argz_insert",
-          "argz_replace",
-          "envz_add",
-          "envz_merge",
-          "envz_remove",
-          "envz_strip",
-          "glob",
-          "globfree",
-          "re_match",
-          "re_match_2",
-          "re_search",
-          "re_search_2",
-          "strdup",
-          "strndup"
+          "glob"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -5723,6 +5631,7 @@
           "__rpc_thread_svc_fdset",
           "__rpc_thread_svc_max_pollfd",
           "__rpc_thread_svc_pollfd",
+          "_rpc_dtablesize",
           "_seterr_reply",
           "authdes_create",
           "authdes_getucred",
@@ -6126,7 +6035,6 @@
           "cfree",
           "free",
           "malloc",
-          "malloc_info",
           "memalign",
           "posix_memalign",
           "pvalloc",
@@ -6198,13 +6106,16 @@
           "_IO_sungetwc",
           "_IO_switch_to_main_wget_area",
           "_IO_switch_to_wbackup_area",
+          "_IO_switch_to_wget_mode",
           "_IO_un_link",
           "_IO_unsave_markers",
           "_IO_unsave_wmarkers",
           "_IO_wdefault_doallocate",
           "_IO_wdefault_finish",
+          "_IO_wdefault_uflow",
           "_IO_wdo_write",
           "_IO_wdoallocbuf",
+          "_IO_wfile_sync",
           "_IO_wmarker_delta",
           "_IO_wsetb"
         ],
@@ -6337,7 +6248,6 @@
           "mbstowcs",
           "mbtowc",
           "mkstemp",
-          "open_wmemstream",
           "putwc",
           "putwc_unlocked",
           "putwchar",
@@ -6348,7 +6258,6 @@
           "vwprintf",
           "vwscanf",
           "wcrtomb",
-          "wcsdup",
           "wcsftime",
           "wcsftime_l",
           "wcsnrtombs",
@@ -6906,6 +6815,35 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
+        "id": "unknown-ae70e33b9fbceed4",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "rpc_client_create"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "Implemented",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "callrpc",
+          "clnt_create"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
         "id": "unknown-aeea6d6cb27ee9f1",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -7192,18 +7130,15 @@
           "_IO_sputbackc",
           "_IO_sputbackwc",
           "_IO_switch_to_get_mode",
-          "_IO_switch_to_wget_mode",
           "_IO_ungetc",
           "_IO_vfprintf",
           "_IO_vfscanf",
           "_IO_vsprintf",
           "_IO_wdefault_pbackfail",
-          "_IO_wdefault_uflow",
           "_IO_wdefault_xsgetn",
           "_IO_wdefault_xsputn",
           "_IO_wfile_overflow",
           "_IO_wfile_seekoff",
-          "_IO_wfile_sync",
           "_IO_wfile_underflow",
           "_IO_wfile_xsputn"
         ],
@@ -7713,35 +7648,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-c2bb946576d4b65b",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "rpc_client_create"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "WrapsHostLibc",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "callrpc",
-          "clnt_create"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-c48d2507938afdc9",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -7950,10 +7856,12 @@
           "__strcspn_c1",
           "__strcspn_c2",
           "__strcspn_c3",
+          "__strdup",
           "__strerror_r",
           "__strfmon_l",
           "__strftime_l",
           "__strncasecmp_l",
+          "__strndup",
           "__strpbrk_c2",
           "__strpbrk_c3",
           "__strsep_1c",
@@ -7963,26 +7871,51 @@
           "__strspn_c1",
           "__strspn_c2",
           "__strspn_c3",
+          "__strtod_internal",
+          "__strtod_l",
+          "__strtof_internal",
+          "__strtof_l",
           "__strtok_r",
           "__strtok_r_1c",
+          "__strtol_internal",
+          "__strtol_l",
           "__strtold_internal",
           "__strtold_l",
+          "__strtoll_internal",
+          "__strtoll_l",
+          "__strtoul_internal",
+          "__strtoul_l",
+          "__strtoull_internal",
+          "__strtoull_l",
           "__strverscmp",
           "__strxfrm_l",
+          "argz_add",
+          "argz_add_sep",
+          "argz_append",
           "argz_count",
+          "argz_create",
+          "argz_create_sep",
+          "argz_delete",
           "argz_extract",
+          "argz_insert",
           "argz_next",
+          "argz_replace",
           "argz_stringify",
           "bcmp",
           "bcopy",
           "bzero",
           "consttime_bcmp",
           "consttime_memequal",
+          "envz_add",
           "envz_entry",
           "envz_get",
+          "envz_merge",
+          "envz_remove",
+          "envz_strip",
           "explicit_bzero",
           "explicit_memset",
           "fnmatch",
+          "globfree",
           "index",
           "memccpy",
           "memchr",
@@ -7997,6 +7930,10 @@
           "rawmemchr",
           "re_compile_fastmap",
           "re_compile_pattern",
+          "re_match",
+          "re_match_2",
+          "re_search",
+          "re_search_2",
           "re_set_registers",
           "re_set_syntax",
           "regcomp",
@@ -8016,6 +7953,7 @@
           "strcoll",
           "strcpy",
           "strcspn",
+          "strdup",
           "strerror",
           "strerror_r",
           "strerrordesc_np",
@@ -8031,6 +7969,7 @@
           "strncat",
           "strncmp",
           "strncpy",
+          "strndup",
           "strnlen",
           "strnstr",
           "strpbrk",
@@ -8112,9 +8051,7 @@
           "getaddrinfo",
           "gethostbyaddr",
           "gethostbyname",
-          "getnameinfo",
-          "getprotobyname",
-          "getprotobynumber"
+          "getnameinfo"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -8297,7 +8234,6 @@
           "dprintf",
           "fclose",
           "fcloseall",
-          "fdopen",
           "feof",
           "feof_unlocked",
           "ferror",
@@ -8313,10 +8249,6 @@
           "fileno",
           "fileno_unlocked",
           "flockfile",
-          "fmemopen",
-          "fopen",
-          "fopen64",
-          "fopencookie",
           "fprintf",
           "fputc",
           "fputc_unlocked",
@@ -8346,10 +8278,7 @@
           "getdelim",
           "getline",
           "getw",
-          "mktemp",
-          "open_memstream",
           "pclose",
-          "perror",
           "popen",
           "printf",
           "putc",
@@ -8358,7 +8287,6 @@
           "putchar_unlocked",
           "puts",
           "putw",
-          "remove",
           "rewind",
           "scanf",
           "setbuf",
@@ -8530,7 +8458,6 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "_rpc_dtablesize",
           "host2netname",
           "user2netname",
           "xdr_accepted_reply",
@@ -8611,6 +8538,8 @@
         "symbols": [
           "__h_errno_location",
           "gai_strerror",
+          "getprotobyname",
+          "getprotobynumber",
           "getservbyname",
           "getservbyport"
         ],
@@ -8792,12 +8721,52 @@
           "gmtime",
           "gmtime_r",
           "localtime",
+          "mktime",
           "strftime",
           "strptime",
           "timegm",
           "timespec_get",
           "timespec_getres",
           "tzset"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
+        "id": "unknown-e9ba8d835f114c7f",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "err_abi"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "Implemented",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "err",
+          "errc",
+          "errx",
+          "verr",
+          "verrc",
+          "verrx",
+          "vwarn",
+          "vwarnc",
+          "vwarnx",
+          "warn",
+          "warnc",
+          "warnx"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -8823,45 +8792,6 @@
         "symbols": [
           "_environ",
           "environ"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
-        "id": "unknown-ebb951033bdc8a3d",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "err_abi"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "WrapsHostLibc",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "err",
-          "errc",
-          "errx",
-          "verr",
-          "verrc",
-          "verrx",
-          "vwarn",
-          "vwarnc",
-          "vwarnx",
-          "warn",
-          "warnc",
-          "warnx"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -8961,9 +8891,16 @@
         "symbols": [
           "__libc_current_sigrtmax",
           "__libc_current_sigrtmin",
+          "psiginfo",
           "sigabbrev_np",
+          "sigaddset",
+          "sigandset",
           "sigdescr_np",
-          "sigemptyset"
+          "sigemptyset",
+          "sigfillset",
+          "sigisemptyset",
+          "sigismember",
+          "sigorset"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -9377,6 +9314,15 @@
         "symbols": [
           "__isoc99_sscanf",
           "__isoc99_vsscanf",
+          "fdopen",
+          "fmemopen",
+          "fopen",
+          "fopen64",
+          "fopencookie",
+          "mktemp",
+          "open_memstream",
+          "perror",
+          "remove",
           "sscanf",
           "tmpnam",
           "vsscanf"

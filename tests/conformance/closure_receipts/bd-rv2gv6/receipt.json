@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "bead_id": "bd-rv2gv6",
+  "contract": {
+    "behavior": "Beat host glibc on deployed fmemopen_4k_fread_64b (<= 1.0x) via .init_array environ preseeding, parked static-slot fmemopen reuse with global ST->MT eviction, unified FastMemReadTls, FixedMemCursor::try_take_buffered, and frameless leaf fread",
+    "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claim_class": "executed_unit",
+    "evidence_class": "executed_unit",
+    "behavior_paths": [
+      "crates/frankenlibc-abi/src/io_internal_abi.rs",
+      "crates/frankenlibc-abi/src/startup_abi.rs",
+      "crates/frankenlibc-abi/src/stdio_abi.rs",
+      "crates/frankenlibc-core/src/stdio/file.rs"
+    ],
+    "test_paths": [
+      "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs"
+    ],
+    "source": {
+      "commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+      "files": {
+        "crates/frankenlibc-abi/src/io_internal_abi.rs": "93289103221d6746f2a72c2a990dfddb9070695dc84b34d9f1b5d930395c7774",
+        "crates/frankenlibc-abi/src/startup_abi.rs": "3587fdd2ed8e7f3d86101c4e3d0fd69b3c3ac87df54fc95cc133a911de0f8ed4",
+        "crates/frankenlibc-abi/src/stdio_abi.rs": "580a91692749ab5573f4a1bb29e53d2839110f20cfe48721b68edaeceea94e6a",
+        "crates/frankenlibc-core/src/stdio/file.rs": "defdf4a752a148c60ff01d3f9b01938285412d16bf786902a23e2c8cc7883199",
+        "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs": "b0c92baaeaaa19503a09055a964100058d7a1fd3a6443e699105e8bdd1ee69da"
+      }
+    },
+    "configuration": {
+      "architecture": "x86_64",
+      "mode": "strict",
+      "profile": "test",
+      "features": []
+    },
+    "not_before": "2026-11-18T00:00:00Z",
+    "gate": {
+      "command": [
+        "target/closure_bins/fmemopen_fread_perf_gate_test",
+        "--test-threads=1"
+      ],
+      "environment": {
+        "FRANKENLIBC_MODE": "strict"
+      },
+      "build_command": [
+        "rustc",
+        "--edition=2024",
+        "--test",
+        "-C",
+        "debuginfo=0",
+        "-C",
+        "strip=symbols",
+        "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs",
+        "-o",
+        "target/closure_bins/fmemopen_fread_perf_gate_test"
+      ],
+      "artifacts": [
+        "target/closure_bins/fmemopen_fread_perf_gate_test"
+      ],
+      "result_format": "libtest",
+      "required_tests": [
+        "fmemopen_fread_fast_path_contracts_are_wired",
+        "fmemopen_fread_live_preload_and_deepbind_gate_passes"
+      ]
+    }
+  },
+  "workspace_root": "/data/projects/frankenlibc",
+  "runner_architecture": "x86_64",
+  "build": {
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "-C",
+      "debuginfo=0",
+      "-C",
+      "strip=symbols",
+      "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs",
+      "-o",
+      "target/closure_bins/fmemopen_fread_perf_gate_test"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T23:06:28.509413+00:00",
+    "finished_at": "2026-11-18T23:06:29.025085+00:00",
+    "stdout": "build.stdout",
+    "stderr": "build.stderr",
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": null
+  },
+  "execution": {
+    "command": [
+      "target/closure_bins/fmemopen_fread_perf_gate_test",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "started_at": "2026-11-18T23:06:29.028841+00:00",
+    "finished_at": "2026-11-18T23:06:29.344530+00:00",
+    "stdout": "execution.stdout",
+    "stderr": "execution.stderr",
+    "stdout_sha256": "29b932dd3234e07d5e9cb284c26ab85dea880308dc07f926c4d2e34525ea61d8",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "executed_cases": 2
+  },
+  "artifacts": {
+    "target/closure_bins/fmemopen_fread_perf_gate_test": "7e90e1e3184661e9480c9dfd0e438da3440447e1395ca91ff59d7713c2f1f007"
+  },
+  "artifact_files": {
+    "target/closure_bins/fmemopen_fread_perf_gate_test": "artifact-0"
+  },
+  "source_files": {
+    "crates/frankenlibc-abi/src/io_internal_abi.rs": "93289103221d6746f2a72c2a990dfddb9070695dc84b34d9f1b5d930395c7774",
+    "crates/frankenlibc-abi/src/startup_abi.rs": "3587fdd2ed8e7f3d86101c4e3d0fd69b3c3ac87df54fc95cc133a911de0f8ed4",
+    "crates/frankenlibc-abi/src/stdio_abi.rs": "580a91692749ab5573f4a1bb29e53d2839110f20cfe48721b68edaeceea94e6a",
+    "crates/frankenlibc-core/src/stdio/file.rs": "defdf4a752a148c60ff01d3f9b01938285412d16bf786902a23e2c8cc7883199",
+    "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs": "b0c92baaeaaa19503a09055a964100058d7a1fd3a6443e699105e8bdd1ee69da"
+  },
+  "executable_sha256": "7e90e1e3184661e9480c9dfd0e438da3440447e1395ca91ff59d7713c2f1f007"
+}

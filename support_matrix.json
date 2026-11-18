@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-11-18T04:38:00Z",
-  "source_commit": "148347cfed65c872310e363d3e61d0df3433deb8",
+  "generated_at_utc": "2026-11-18T23:15:02Z",
+  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
@@ -21,8 +21,17 @@
       "hardened": "TSM repair enabled. Membrane applies deterministic healing (clamp, truncate, safe-default). Logs HealingAction."
     },
     "artifact_applicability": {
-      "Interpose": ["Implemented", "RawSyscall", "WrapsHostLibc", "GlibcCallThrough", "Stub"],
-      "Replace": ["Implemented", "RawSyscall"],
+      "Interpose": [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub"
+      ],
+      "Replace": [
+        "Implemented",
+        "RawSyscall"
+      ],
       "rule": "Implemented+RawSyscall apply to both artifacts; WrapsHostLibc+GlibcCallThrough+Stub are Interpose-only."
     }
   },
@@ -1569,7 +1578,7 @@
     },
     {
       "symbol": "argz_add",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Append string to argz vector via realloc",
@@ -1578,7 +1587,7 @@
     },
     {
       "symbol": "argz_add_sep",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Split string by separator and append to argz",
@@ -1587,7 +1596,7 @@
     },
     {
       "symbol": "argz_append",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Append raw argz buffer to argz",
@@ -1605,7 +1614,7 @@
     },
     {
       "symbol": "argz_create",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Create argz vector from argv array",
@@ -1614,7 +1623,7 @@
     },
     {
       "symbol": "argz_create_sep",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Create argz from string split by separator",
@@ -1623,7 +1632,7 @@
     },
     {
       "symbol": "argz_delete",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Remove entry from argz by shifting tail",
@@ -1641,7 +1650,7 @@
     },
     {
       "symbol": "argz_insert",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Insert string before entry in argz",
@@ -1659,7 +1668,7 @@
     },
     {
       "symbol": "argz_replace",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Replace all occurrences of string in argz",
@@ -1868,7 +1877,7 @@
     },
     {
       "symbol": "backtrace",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Capture stack backtrace via host glibc",
@@ -2493,7 +2502,7 @@
     },
     {
       "symbol": "creat64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
@@ -3123,7 +3132,7 @@
     },
     {
       "symbol": "envz_add",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Add or replace name=value in envz",
@@ -3150,7 +3159,7 @@
     },
     {
       "symbol": "envz_merge",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Merge envz2 into envz1 with optional override",
@@ -3159,7 +3168,7 @@
     },
     {
       "symbol": "envz_remove",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Remove name from envz",
@@ -3168,7 +3177,7 @@
     },
     {
       "symbol": "envz_strip",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Remove entries without values from envz",
@@ -3277,7 +3286,7 @@
     },
     {
       "symbol": "err",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print error message with program name and errno to stderr, then exit",
@@ -3286,7 +3295,7 @@
     },
     {
       "symbol": "errc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print error message with program name and explicit errno code to stderr, then exit",
@@ -3313,7 +3322,7 @@
     },
     {
       "symbol": "errx",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print error message with program name to stderr, then exit",
@@ -3772,7 +3781,7 @@
     },
     {
       "symbol": "fdopen",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "strict_fast",
       "strict_semantics": "Associate a FILE stream with an existing fd; mode validation",
@@ -4261,7 +4270,7 @@
     },
     {
       "symbol": "fmemopen",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
       "standalone_ready": true
@@ -4323,7 +4332,7 @@
     },
     {
       "symbol": "fopen",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
@@ -4333,7 +4342,7 @@
     },
     {
       "symbol": "fopen64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native fopen implementation",
@@ -4343,7 +4352,7 @@
     },
     {
       "symbol": "fopencookie",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
       "strict_semantics": "Native cookie-based stream with user-defined I/O callbacks",
@@ -4370,7 +4379,7 @@
     },
     {
       "symbol": "fpathconf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native fd-validated pathconf value table; EBADF/EINVAL contract preserved",
@@ -4678,7 +4687,7 @@
     },
     {
       "symbol": "fstat64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
@@ -4694,7 +4703,7 @@
     },
     {
       "symbol": "fstatat64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
@@ -4794,7 +4803,7 @@
     },
     {
       "symbol": "ftruncate64",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
@@ -5075,7 +5084,7 @@
     },
     {
       "symbol": "getbsize",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
       "strict_semantics": "BSD libutil BLOCKSIZE parser; writes static header string, header length, and resolved block size",
@@ -5759,7 +5768,7 @@
     },
     {
       "symbol": "getprotobyname",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc getprotobyname",
@@ -5777,7 +5786,7 @@
     },
     {
       "symbol": "getprotobynumber",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc getprotobynumber",
@@ -6353,7 +6362,7 @@
     },
     {
       "symbol": "globfree",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "default",
       "strict_semantics": "Frees glob_t pathv entries allocated by native glob",
@@ -6697,7 +6706,7 @@
     },
     {
       "symbol": "inet_ntop",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Pure-computation byte-order and address conversion; no syscalls",
@@ -6706,7 +6715,7 @@
     },
     {
       "symbol": "inet_pton",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Pure-computation byte-order and address conversion; no syscalls",
@@ -7952,7 +7961,7 @@
     },
     {
       "symbol": "malloc_info",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "cold",
       "strict_semantics": "FrankenLibC allocator counters formatted through host FILE/libio stream helpers",
@@ -8334,7 +8343,7 @@
     },
     {
       "symbol": "mktemp",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Generate unique temp filename; replaces trailing X chars (deprecated)",
@@ -8344,7 +8353,7 @@
     },
     {
       "symbol": "mktime",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native TZ engine: local wall time to UTC honouring TZ, tm_isdst=-1 resolution across DST gaps/overlaps with glibc's last-offset hint; normalizes fields",
@@ -8976,7 +8985,7 @@
     },
     {
       "symbol": "open_memstream",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast",
       "standalone_ready": true
@@ -8993,7 +9002,7 @@
     {
       "symbol": "open_wmemstream",
       "header": "<wchar.h>",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "Wide memory stream, dlsym delegate",
       "module": "wchar_abi"
     },
@@ -9076,7 +9085,7 @@
     },
     {
       "symbol": "perror",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native errno-to-message mapping with direct write to stderr fd; no host glibc delegation",
@@ -9676,7 +9685,7 @@
     },
     {
       "symbol": "psiginfo",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Print signal info to stderr",
@@ -11315,7 +11324,7 @@
     },
     {
       "symbol": "remove",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "strict_slow",
       "strict_semantics": "Remove file via unlinkat; falls back to rmdir for directories",
@@ -12437,7 +12446,7 @@
     },
     {
       "symbol": "sigaddset",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Pure bit manipulation on sigset_t; validates signal number, sets errno EINVAL on failure",
@@ -12455,7 +12464,7 @@
     },
     {
       "symbol": "sigandset",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Compute intersection of two signal sets",
@@ -12498,7 +12507,7 @@
     },
     {
       "symbol": "sigfillset",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Sets all bits in sigset_t structure; null pointer returns -1",
@@ -12543,7 +12552,7 @@
     },
     {
       "symbol": "sigisemptyset",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Test if signal set is empty",
@@ -12552,7 +12561,7 @@
     },
     {
       "symbol": "sigismember",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Pure bit query on sigset_t; returns 1 if signal in set, 0 if not, -1 on invalid input",
@@ -12615,7 +12624,7 @@
     },
     {
       "symbol": "sigorset",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Compute union of two signal sets",
@@ -13823,7 +13832,7 @@
     },
     {
       "symbol": "strdup",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string scan + malloc + copy; no repair; returns malloc'd duplicate",
@@ -14011,7 +14020,7 @@
     },
     {
       "symbol": "strndup",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string/memory ops; scans up to n bytes then malloc+copy; no repair",
@@ -14442,7 +14451,7 @@
     {
       "symbol": "system",
       "header": "stdlib.h",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdlib_abi",
       "notes": ""
     },
@@ -15326,7 +15335,7 @@
     },
     {
       "symbol": "verr",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "va_list version of err()",
@@ -15335,7 +15344,7 @@
     },
     {
       "symbol": "verrc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "va_list version of errc()",
@@ -15344,7 +15353,7 @@
     },
     {
       "symbol": "verrx",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "va_list version of errx()",
@@ -15509,7 +15518,7 @@
     },
     {
       "symbol": "vwarn",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "va_list version of warn()",
@@ -15518,7 +15527,7 @@
     },
     {
       "symbol": "vwarnc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "va_list version of warnc()",
@@ -15527,7 +15536,7 @@
     },
     {
       "symbol": "vwarnx",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "va_list version of warnx()",
@@ -15599,7 +15608,7 @@
     },
     {
       "symbol": "warn",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print warning message with program name and errno to stderr",
@@ -15608,7 +15617,7 @@
     },
     {
       "symbol": "warnc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print warning message with program name and explicit errno code to stderr",
@@ -15617,7 +15626,7 @@
     },
     {
       "symbol": "warnx",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print warning message with program name to stderr",
@@ -15729,7 +15738,7 @@
     },
     {
       "symbol": "wcsdup",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "hotpath",
       "strict_semantics": "pass-through",
@@ -16424,7 +16433,7 @@
     },
     {
       "symbol": "re_search",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "performance_class": "coldpath",
       "strict_semantics": "search for pattern in string",
@@ -16433,7 +16442,7 @@
     },
     {
       "symbol": "re_search_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "performance_class": "coldpath",
       "strict_semantics": "search for pattern in split string",
@@ -16442,7 +16451,7 @@
     },
     {
       "symbol": "re_match",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "performance_class": "coldpath",
       "strict_semantics": "match pattern at exact position",
@@ -16451,7 +16460,7 @@
     },
     {
       "symbol": "re_match_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "string_abi",
       "performance_class": "coldpath",
       "strict_semantics": "match pattern in split string",
@@ -17268,7 +17277,7 @@
     },
     {
       "symbol": "_IO_switch_to_wget_mode",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "io_internal_abi",
       "standalone_ready": true
     },
@@ -17329,7 +17338,7 @@
     },
     {
       "symbol": "_IO_wdefault_uflow",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "io_internal_abi",
       "standalone_ready": true
     },
@@ -17374,7 +17383,7 @@
     },
     {
       "symbol": "_IO_wfile_sync",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "io_internal_abi",
       "standalone_ready": true
     },
@@ -17432,7 +17441,7 @@
     },
     {
       "symbol": "__asprintf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17472,7 +17481,7 @@
     },
     {
       "symbol": "__close",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17482,7 +17491,7 @@
     },
     {
       "symbol": "__connect",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17805,7 +17814,7 @@
     },
     {
       "symbol": "__isoc99_fwscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "isoc_abi"
     },
     {
@@ -17815,7 +17824,7 @@
     },
     {
       "symbol": "__isoc99_vfwscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "isoc_abi"
     },
     {
@@ -17825,7 +17834,7 @@
     },
     {
       "symbol": "__isoc99_vwscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "isoc_abi"
     },
     {
@@ -18641,7 +18650,7 @@
     },
     {
       "symbol": "__strdup",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -18681,7 +18690,7 @@
     },
     {
       "symbol": "__strndup",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -18741,13 +18750,13 @@
     },
     {
       "symbol": "__strtod_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtod_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -18758,13 +18767,13 @@
     },
     {
       "symbol": "__strtof_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtof_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -18782,13 +18791,13 @@
     },
     {
       "symbol": "__strtol_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtol_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -18806,37 +18815,37 @@
     },
     {
       "symbol": "__strtoll_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtoll_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtoul_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtoul_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtoull_internal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
     {
       "symbol": "__strtoull_l",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "string_abi.rs",
       "module": "string_abi"
     },
@@ -19145,7 +19154,7 @@
     },
     {
       "symbol": "_authenticate",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19270,7 +19279,7 @@
     },
     {
       "symbol": "_rpc_dtablesize",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19380,7 +19389,7 @@
     },
     {
       "symbol": "callrpc",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19425,7 +19434,7 @@
     },
     {
       "symbol": "clnt_create",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19515,7 +19524,7 @@
     },
     {
       "symbol": "dlinfo",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "strict_semantics": "Native self-handle path for RTLD_DI_LINKMAP/ORIGIN, host delegation for others"
     },
@@ -33222,22 +33231,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2464,
+    "implemented": 2555,
     "raw_syscall": 408,
-    "wraps_host_libc": 1247,
+    "wraps_host_libc": 1156,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2464,
+  "implemented": 2555,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2464,
+    "implemented": 2555,
     "raw_syscall": 408,
+    "wraps_host_libc": 1156,
     "glibc_call_through": 0,
-    "stub": 0,
-    "wraps_host_libc": 1247
+    "stub": 0
   },
-  "wraps_host_libc": 1247
+  "wraps_host_libc": 1156
 }

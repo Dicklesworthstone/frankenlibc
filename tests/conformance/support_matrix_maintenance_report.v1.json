@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-11-18T04:39:33Z",
-  "source_commit": "148347cfed65c872310e363d3e61d0df3433deb8",
-  "source_generated_at_utc": "2026-11-18T04:38:00Z",
-  "newest_abi_commit": "148347cfed65c872310e363d3e61d0df3433deb8",
-  "newest_abi_commit_time": "2026-11-17T23:36:24-05:00",
+  "generated_at": "2026-11-18T23:25:07Z",
+  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+  "source_generated_at_utc": "2026-11-18T23:15:02Z",
+  "newest_abi_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+  "newest_abi_commit_time": "2026-11-18T18:04:50-05:00",
   "summary": {
     "total_symbols": 4119,
     "status_validated": 4119,
@@ -15,25 +15,25 @@
     "fixture_linked": 1205,
     "fixture_unlinked": 2914,
     "fixture_coverage_pct": 29.3,
-    "total_warnings": 590
+    "total_warnings": 633
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 2464,
+      "Implemented": 2555,
       "RawSyscall": 408,
-      "WrapsHostLibc": 1247,
+      "WrapsHostLibc": 1156,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 59.8,
+      "Implemented": 62.0,
       "RawSyscall": 9.9,
-      "WrapsHostLibc": 30.3,
+      "WrapsHostLibc": 28.1,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 69.7
+    "native_coverage_pct": 71.9
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -64,17 +64,17 @@
       "/data/projects/frankenlibc/tests/conformance/glibc_internal_abi_promotion_tranche.v1.json"
     ],
     "promotion_proof_symbol_count": 256,
-    "promotion_triage_manifest_path": null,
-    "promotion_triage_manifest_loaded": false,
+    "promotion_triage_manifest_path": "target/conformance/support_matrix_promotion_triage.v1.json",
+    "promotion_triage_manifest_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 0,
+      "Implemented": -10,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": 0
+      "WrapsHostLibc": 10
     },
-    "native_coverage_pct_delta": 0.03,
-    "reclassified_symbol_count": 0,
+    "native_coverage_pct_delta": -0.27,
+    "reclassified_symbol_count": 10,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -94,19 +94,19 @@
     "reclassification_requires_conformance": {
       "status": "pass",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 0,
+      "total_reclassified": 10,
       "violations": []
     },
     "fixture_coverage_ratchet": {
       "status": "pass",
       "implemented_promotion_delta": 0,
       "violation_count": 0,
-      "promotion_triage_manifest_loaded": false
+      "promotion_triage_manifest_loaded": true
     },
     "downgrade_only_evidence": {
       "status": "pass",
       "stub_annotation_count": 0,
-      "host_evidence_count": 38,
+      "host_evidence_count": 37,
       "downgrade_mismatch_count": 0,
       "promotion_suppressed_count": 0,
       "evidence_error_count": 0
@@ -126,17 +126,17 @@
       "stub_generator_macros": [],
       "host_census": {
         "path": "/data/projects/frankenlibc/tests/conformance/host_delegation_census.v1.json",
-        "artifact_sha256": "b9d774972f2ce0d713342119844bfe4f065fef3aa4e5e10af8d9141d57cb0800",
+        "artifact_sha256": "2940451299860ef1576e35ddc29fbe9d8b761aabb6dc18b5978f266ab2458706",
         "schema_version": "host_delegation_census.v1",
-        "detector_version": 18,
-        "source_tree_sha256": "eaebd88fcccaae53b62c7cfbd9ef3b3590740d279e4d7fc695fb4ec791fedb08"
+        "detector_version": 20,
+        "source_tree_sha256": "fe9db6dd012e1a6cdbdc40fda513c96628a0a8451bd8977d34ce41900e13ef75"
       }
     },
     "summary": {
       "status": "pass",
       "symbol_count": 4119,
       "stub_annotation_count": 0,
-      "host_evidence_count": 38,
+      "host_evidence_count": 37,
       "downgrade_mismatch_count": 0,
       "promotion_suppressed_count": 0,
       "evidence_error_count": 0
@@ -1346,10 +1346,10 @@
       {
         "symbol": "_IO_switch_to_wget_mode",
         "module": "io_internal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -1467,10 +1467,10 @@
       {
         "symbol": "_IO_wdefault_uflow",
         "module": "io_internal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -1555,10 +1555,10 @@
       {
         "symbol": "_IO_wfile_sync",
         "module": "io_internal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -1830,10 +1830,10 @@
       {
         "symbol": "__asprintf",
         "module": "glibc_internal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -2138,10 +2138,10 @@
       {
         "symbol": "__close",
         "module": "glibc_internal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -2193,10 +2193,10 @@
       {
         "symbol": "__connect",
         "module": "glibc_internal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -2432,7 +2432,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1861",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1889",
             "host_symbols": [
               "__cxa_thread_atexit_impl"
             ],
@@ -2441,7 +2441,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "startup_abi:__cxa_thread_atexit_impl:1861:001"
+              "startup_abi:__cxa_thread_atexit_impl:1889:001"
             ]
           }
         }
@@ -4374,10 +4374,10 @@
       {
         "symbol": "__isoc99_fwscanf",
         "module": "isoc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -4429,10 +4429,10 @@
       {
         "symbol": "__isoc99_vfwscanf",
         "module": "isoc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -4473,10 +4473,10 @@
       {
         "symbol": "__isoc99_vwscanf",
         "module": "isoc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -5262,7 +5262,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1423",
+            "source": "crates/frankenlibc-abi/src/startup_abi.rs:1434",
             "host_symbols": [
               "__libc_start_main"
             ],
@@ -5272,10 +5272,10 @@
             ],
             "callsite_count": 4,
             "callsite_ids": [
-              "startup_abi:__libc_start_main:1423:001",
-              "startup_abi:__libc_start_main:1423:002",
-              "startup_abi:__libc_start_main:1423:003",
-              "startup_abi:__libc_start_main:1423:004"
+              "startup_abi:__libc_start_main:1434:001",
+              "startup_abi:__libc_start_main:1434:002",
+              "startup_abi:__libc_start_main:1434:003",
+              "startup_abi:__libc_start_main:1434:004"
             ]
           }
         }
@@ -6545,7 +6545,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11709",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11984",
             "host_symbols": [
               "__pthread_register_cancel"
             ],
@@ -6554,7 +6554,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_register_cancel:11709:001"
+              "pthread_abi:__pthread_register_cancel:11984:001"
             ]
           }
         }
@@ -6570,7 +6570,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11738",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12015",
             "host_symbols": [
               "__pthread_register_cancel_defer"
             ],
@@ -6579,7 +6579,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_register_cancel_defer:11738:001"
+              "pthread_abi:__pthread_register_cancel_defer:12015:001"
             ]
           }
         }
@@ -6683,7 +6683,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11724",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12000",
             "host_symbols": [
               "__pthread_unregister_cancel"
             ],
@@ -6692,7 +6692,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unregister_cancel:11724:001"
+              "pthread_abi:__pthread_unregister_cancel:12000:001"
             ]
           }
         }
@@ -6708,7 +6708,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11752",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12030",
             "host_symbols": [
               "__pthread_unregister_cancel_restore"
             ],
@@ -6717,7 +6717,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unregister_cancel_restore:11752:001"
+              "pthread_abi:__pthread_unregister_cancel_restore:12030:001"
             ]
           }
         }
@@ -6733,7 +6733,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11800",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:12080",
             "host_symbols": [
               "__pthread_unwind_next"
             ],
@@ -6742,7 +6742,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:__pthread_unwind_next:11800:001"
+              "pthread_abi:__pthread_unwind_next:12080:001"
             ]
           }
         }
@@ -7971,10 +7971,10 @@
       {
         "symbol": "__strdup",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8070,10 +8070,10 @@
       {
         "symbol": "__strndup",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8180,10 +8180,10 @@
       {
         "symbol": "__strtod_internal",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8191,10 +8191,10 @@
       {
         "symbol": "__strtod_l",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8235,10 +8235,10 @@
       {
         "symbol": "__strtof_internal",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8246,10 +8246,10 @@
       {
         "symbol": "__strtof_l",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8290,10 +8290,10 @@
       {
         "symbol": "__strtol_internal",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8301,10 +8301,10 @@
       {
         "symbol": "__strtol_l",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8345,10 +8345,10 @@
       {
         "symbol": "__strtoll_internal",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8356,10 +8356,10 @@
       {
         "symbol": "__strtoll_l",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8367,10 +8367,10 @@
       {
         "symbol": "__strtoul_internal",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8378,10 +8378,10 @@
       {
         "symbol": "__strtoul_l",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8389,10 +8389,10 @@
       {
         "symbol": "__strtoull_internal",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -8400,10 +8400,10 @@
       {
         "symbol": "__strtoull_l",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -9577,10 +9577,10 @@
       {
         "symbol": "_authenticate",
         "module": "rpc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -9596,7 +9596,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5115",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5120",
             "host_symbols": [
               "_dl_find_object"
             ],
@@ -9605,7 +9605,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:_dl_find_object:5115:001"
+              "glibc_internal_abi:_dl_find_object:5120:001"
             ]
           }
         }
@@ -9841,7 +9841,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:254",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:258",
             "host_symbols": [
               "_pthread_cleanup_pop"
             ],
@@ -9850,7 +9850,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:_pthread_cleanup_pop:254:001"
+              "glibc_internal_abi:_pthread_cleanup_pop:258:001"
             ]
           }
         }
@@ -9866,7 +9866,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:268",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:272",
             "host_symbols": [
               "_pthread_cleanup_pop_restore"
             ],
@@ -9875,7 +9875,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:_pthread_cleanup_pop_restore:268:001"
+              "glibc_internal_abi:_pthread_cleanup_pop_restore:272:001"
             ]
           }
         }
@@ -9891,7 +9891,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:245",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:249",
             "host_symbols": [
               "_pthread_cleanup_push"
             ],
@@ -9900,7 +9900,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:_pthread_cleanup_push:245:001"
+              "glibc_internal_abi:_pthread_cleanup_push:249:001"
             ]
           }
         }
@@ -9916,7 +9916,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:259",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:263",
             "host_symbols": [
               "_pthread_cleanup_push_defer"
             ],
@@ -9925,7 +9925,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:_pthread_cleanup_push_defer:259:001"
+              "glibc_internal_abi:_pthread_cleanup_push_defer:263:001"
             ]
           }
         }
@@ -9955,10 +9955,10 @@
       {
         "symbol": "_rpc_dtablesize",
         "module": "rpc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10813,10 +10813,10 @@
       {
         "symbol": "argz_add",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10824,10 +10824,10 @@
       {
         "symbol": "argz_add_sep",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10835,10 +10835,10 @@
       {
         "symbol": "argz_append",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10857,10 +10857,10 @@
       {
         "symbol": "argz_create",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10868,10 +10868,10 @@
       {
         "symbol": "argz_create_sep",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10879,10 +10879,10 @@
       {
         "symbol": "argz_delete",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10901,10 +10901,10 @@
       {
         "symbol": "argz_insert",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -10923,10 +10923,10 @@
       {
         "symbol": "argz_replace",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -11836,10 +11836,10 @@
       {
         "symbol": "backtrace",
         "module": "unistd_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -12328,7 +12328,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8376",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8480",
             "host_symbols": [
               "calloc"
             ],
@@ -12337,7 +12337,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:calloc:8376:001"
+              "malloc_abi:calloc:8480:001"
             ]
           }
         }
@@ -12345,10 +12345,10 @@
       {
         "symbol": "callrpc",
         "module": "rpc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -13720,10 +13720,10 @@
       {
         "symbol": "clnt_create",
         "module": "rpc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -15095,10 +15095,10 @@
       {
         "symbol": "creat64",
         "module": "unistd_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -15873,7 +15873,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1355",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1399",
             "host_symbols": [
               "dl_iterate_phdr"
             ],
@@ -15882,8 +15882,8 @@
             ],
             "callsite_count": 2,
             "callsite_ids": [
-              "dlfcn_abi:dl_iterate_phdr:1355:001",
-              "dlfcn_abi:dl_iterate_phdr:1355:002"
+              "dlfcn_abi:dl_iterate_phdr:1399:001",
+              "dlfcn_abi:dl_iterate_phdr:1399:002"
             ]
           }
         }
@@ -15899,7 +15899,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1593",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1637",
             "host_symbols": [
               "dladdr"
             ],
@@ -15908,7 +15908,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "dlfcn_abi:dladdr:1593:001"
+              "dlfcn_abi:dladdr:1637:001"
             ]
           }
         }
@@ -15935,7 +15935,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1166",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:1207",
             "host_symbols": [
               "dlclose"
             ],
@@ -15944,8 +15944,8 @@
             ],
             "callsite_count": 2,
             "callsite_ids": [
-              "dlfcn_abi:dlclose:1166:001",
-              "dlfcn_abi:dlclose:1166:002"
+              "dlfcn_abi:dlclose:1207:001",
+              "dlfcn_abi:dlclose:1207:002"
             ]
           }
         }
@@ -15964,28 +15964,13 @@
       {
         "symbol": "dlinfo",
         "module": "glibc_internal_abi",
-        "current_status": "WrapsHostLibc",
-        "evidence_state": "observed_host_dependency",
-        "derived_status": "WrapsHostLibc",
-        "recommended_status": "WrapsHostLibc",
+        "current_status": "Implemented",
+        "evidence_state": "none",
+        "derived_status": null,
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
-        "provenance": {
-          "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5726",
-            "host_symbols": [
-              "dlinfo"
-            ],
-            "delegation_kinds": [
-              "resolve_host_symbol_raw_literal"
-            ],
-            "callsite_count": 2,
-            "callsite_ids": [
-              "glibc_internal_abi:dlinfo:5726:001",
-              "glibc_internal_abi:dlinfo:5726:002"
-            ]
-          }
-        }
+        "provenance": {}
       },
       {
         "symbol": "dlmopen",
@@ -16009,7 +15994,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:552",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:562",
             "host_symbols": [
               "dlopen"
             ],
@@ -16018,7 +16003,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "dlfcn_abi:dlopen:552:001"
+              "dlfcn_abi:dlopen:562:001"
             ]
           }
         }
@@ -16034,7 +16019,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:698",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:708",
             "host_symbols": [
               "dlsym"
             ],
@@ -16044,12 +16029,12 @@
             ],
             "callsite_count": 6,
             "callsite_ids": [
-              "dlfcn_abi:dlsym:698:001",
-              "dlfcn_abi:dlsym:698:002",
-              "dlfcn_abi:dlsym:698:003",
-              "dlfcn_abi:dlsym:698:004",
-              "dlfcn_abi:dlsym:698:005",
-              "dlfcn_abi:dlsym:698:006"
+              "dlfcn_abi:dlsym:708:001",
+              "dlfcn_abi:dlsym:708:002",
+              "dlfcn_abi:dlsym:708:003",
+              "dlfcn_abi:dlsym:708:004",
+              "dlfcn_abi:dlsym:708:005",
+              "dlfcn_abi:dlsym:708:006"
             ]
           }
         }
@@ -16065,7 +16050,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:913",
+            "source": "crates/frankenlibc-abi/src/dlfcn_abi.rs:935",
             "host_symbols": [
               "dlvsym"
             ],
@@ -16075,11 +16060,11 @@
             ],
             "callsite_count": 5,
             "callsite_ids": [
-              "dlfcn_abi:dlvsym:913:001",
-              "dlfcn_abi:dlvsym:913:002",
-              "dlfcn_abi:dlvsym:913:003",
-              "dlfcn_abi:dlvsym:913:004",
-              "dlfcn_abi:dlvsym:913:005"
+              "dlfcn_abi:dlvsym:935:001",
+              "dlfcn_abi:dlvsym:935:002",
+              "dlfcn_abi:dlvsym:935:003",
+              "dlfcn_abi:dlvsym:935:004",
+              "dlfcn_abi:dlvsym:935:005"
             ]
           }
         }
@@ -16549,10 +16534,10 @@
       {
         "symbol": "envz_add",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -16582,10 +16567,10 @@
       {
         "symbol": "envz_merge",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -16593,10 +16578,10 @@
       {
         "symbol": "envz_remove",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -16604,10 +16589,10 @@
       {
         "symbol": "envz_strip",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -16879,10 +16864,10 @@
       {
         "symbol": "err",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -16890,10 +16875,10 @@
       {
         "symbol": "errc",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -16967,10 +16952,10 @@
       {
         "symbol": "errx",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -18881,10 +18866,10 @@
       {
         "symbol": "fdopen",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -20234,10 +20219,10 @@
       {
         "symbol": "fmemopen",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -20905,10 +20890,10 @@
       {
         "symbol": "fopen",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -20916,10 +20901,10 @@
       {
         "symbol": "fopen64",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -20927,10 +20912,10 @@
       {
         "symbol": "fopencookie",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -20974,10 +20959,10 @@
       {
         "symbol": "fpathconf",
         "module": "unistd_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -21114,7 +21099,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7914",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8018",
             "host_symbols": [
               "free"
             ],
@@ -21123,7 +21108,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:free:7914:001"
+              "malloc_abi:free:8018:001"
             ]
           }
         }
@@ -21626,10 +21611,10 @@
       {
         "symbol": "fstat64",
         "module": "unistd_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -21648,10 +21633,10 @@
       {
         "symbol": "fstatat64",
         "module": "unistd_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -21802,10 +21787,10 @@
       {
         "symbol": "ftruncate64",
         "module": "unistd_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -22063,7 +22048,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5943",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5926",
             "host_symbols": [
               "fwide"
             ],
@@ -22072,7 +22057,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:fwide:5943:001"
+              "glibc_internal_abi:fwide:5926:001"
             ]
           }
         }
@@ -22366,10 +22351,10 @@
       {
         "symbol": "getbsize",
         "module": "stdlib_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -23279,10 +23264,10 @@
       {
         "symbol": "getprotobyname",
         "module": "resolv_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -23301,10 +23286,10 @@
       {
         "symbol": "getprotobynumber",
         "module": "resolv_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -24126,10 +24111,10 @@
       {
         "symbol": "globfree",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -25039,10 +25024,10 @@
       {
         "symbol": "inet_ntop",
         "module": "inet_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -25050,10 +25035,10 @@
       {
         "symbol": "inet_pton",
         "module": "inet_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -28424,7 +28409,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7650",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:7754",
             "host_symbols": [
               "malloc"
             ],
@@ -28433,7 +28418,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:malloc:7650:001"
+              "malloc_abi:malloc:7754:001"
             ]
           }
         }
@@ -28441,10 +28426,10 @@
       {
         "symbol": "malloc_info",
         "module": "malloc_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -29013,10 +28998,10 @@
       {
         "symbol": "mktemp",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -29024,10 +29009,10 @@
       {
         "symbol": "mktime",
         "module": "time_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -30905,10 +30890,10 @@
       {
         "symbol": "open_memstream",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -30927,10 +30912,10 @@
       {
         "symbol": "open_wmemstream",
         "module": "wchar_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -31103,10 +31088,10 @@
       {
         "symbol": "perror",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -32244,7 +32229,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5335",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5340",
             "host_symbols": [
               "profil"
             ],
@@ -32253,7 +32238,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:profil:5335:001"
+              "glibc_internal_abi:profil:5340:001"
             ]
           }
         }
@@ -32294,10 +32279,10 @@
       {
         "symbol": "psiginfo",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -32676,7 +32661,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6802",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6958",
             "host_symbols": [
               "pthread_cancel"
             ],
@@ -32685,7 +32670,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_cancel:6802:001"
+              "pthread_abi:pthread_cancel:6958:001"
             ]
           }
         }
@@ -32701,7 +32686,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10615",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10882",
             "host_symbols": [
               "pthread_clockjoin_np"
             ],
@@ -32710,7 +32695,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_clockjoin_np:10615:001"
+              "pthread_abi:pthread_clockjoin_np:10882:001"
             ]
           }
         }
@@ -32869,7 +32854,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4299",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4416",
             "host_symbols": [
               "pthread_create"
             ],
@@ -32878,7 +32863,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_create:4299:001"
+              "pthread_abi:pthread_create:4416:001"
             ]
           }
         }
@@ -32894,7 +32879,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4387",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4511",
             "host_symbols": [
               "pthread_detach"
             ],
@@ -32903,7 +32888,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_detach:4387:001"
+              "pthread_abi:pthread_detach:4511:001"
             ]
           }
         }
@@ -32930,7 +32915,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10839",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:11107",
             "host_symbols": [
               "pthread_exit"
             ],
@@ -32939,7 +32924,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_exit:10839:001"
+              "pthread_abi:pthread_exit:11107:001"
             ]
           }
         }
@@ -33054,7 +33039,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4359",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:4482",
             "host_symbols": [
               "pthread_join"
             ],
@@ -33063,7 +33048,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_join:4359:001"
+              "pthread_abi:pthread_join:4482:001"
             ]
           }
         }
@@ -33651,7 +33636,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6879",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7036",
             "host_symbols": [
               "pthread_setcancelstate"
             ],
@@ -33660,7 +33645,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_setcancelstate:6879:001"
+              "pthread_abi:pthread_setcancelstate:7036:001"
             ]
           }
         }
@@ -33676,7 +33661,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:6926",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:7084",
             "host_symbols": [
               "pthread_setcanceltype"
             ],
@@ -33685,7 +33670,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_setcanceltype:6926:001"
+              "pthread_abi:pthread_setcanceltype:7084:001"
             ]
           }
         }
@@ -33833,7 +33818,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8253",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:8517",
             "host_symbols": [
               "pthread_testcancel"
             ],
@@ -33842,7 +33827,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_testcancel:8253:001"
+              "pthread_abi:pthread_testcancel:8517:001"
             ]
           }
         }
@@ -33858,7 +33843,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10505",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10770",
             "host_symbols": [
               "pthread_timedjoin_np"
             ],
@@ -33867,7 +33852,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_timedjoin_np:10505:001"
+              "pthread_abi:pthread_timedjoin_np:10770:001"
             ]
           }
         }
@@ -33883,7 +33868,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10550",
+            "source": "crates/frankenlibc-abi/src/pthread_abi.rs:10816",
             "host_symbols": [
               "pthread_tryjoin_np"
             ],
@@ -33892,7 +33877,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "pthread_abi:pthread_tryjoin_np:10550:001"
+              "pthread_abi:pthread_tryjoin_np:10816:001"
             ]
           }
         }
@@ -34472,10 +34457,10 @@
       {
         "symbol": "re_match",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -34483,10 +34468,10 @@
       {
         "symbol": "re_match_2",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -34505,10 +34490,10 @@
       {
         "symbol": "re_search",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -34516,10 +34501,10 @@
       {
         "symbol": "re_search_2",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -34678,7 +34663,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8566",
+            "source": "crates/frankenlibc-abi/src/malloc_abi.rs:8670",
             "host_symbols": [
               "realloc"
             ],
@@ -34687,7 +34672,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "malloc_abi:realloc:8566:001"
+              "malloc_abi:realloc:8670:001"
             ]
           }
         }
@@ -34992,10 +34977,10 @@
       {
         "symbol": "remove",
         "module": "stdio_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -37654,10 +37639,10 @@
       {
         "symbol": "sigaddset",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -37676,10 +37661,10 @@
       {
         "symbol": "sigandset",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -37731,10 +37716,10 @@
       {
         "symbol": "sigfillset",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -37786,10 +37771,10 @@
       {
         "symbol": "sigisemptyset",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -37797,10 +37782,10 @@
       {
         "symbol": "sigismember",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -37896,10 +37881,10 @@
       {
         "symbol": "sigorset",
         "module": "signal_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -38509,7 +38494,7 @@
         "downgrade_mismatch": false,
         "provenance": {
           "host_census": {
-            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5364",
+            "source": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5369",
             "host_symbols": [
               "sprofil"
             ],
@@ -38518,7 +38503,7 @@
             ],
             "callsite_count": 1,
             "callsite_ids": [
-              "glibc_internal_abi:sprofil:5364:001"
+              "glibc_internal_abi:sprofil:5369:001"
             ]
           }
         }
@@ -39747,10 +39732,10 @@
       {
         "symbol": "strdup",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -40055,10 +40040,10 @@
       {
         "symbol": "strndup",
         "module": "string_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -41078,10 +41063,10 @@
       {
         "symbol": "system",
         "module": "stdlib_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43069,10 +43054,10 @@
       {
         "symbol": "verr",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43080,10 +43065,10 @@
       {
         "symbol": "verrc",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43091,10 +43076,10 @@
       {
         "symbol": "verrx",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43311,10 +43296,10 @@
       {
         "symbol": "vwarn",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43322,10 +43307,10 @@
       {
         "symbol": "vwarnc",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43333,10 +43318,10 @@
       {
         "symbol": "vwarnx",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43421,10 +43406,10 @@
       {
         "symbol": "warn",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43432,10 +43417,10 @@
       {
         "symbol": "warnc",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43443,10 +43428,10 @@
       {
         "symbol": "warnx",
         "module": "err_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -43597,10 +43582,10 @@
       {
         "symbol": "wcsdup",
         "module": "wchar_abi",
-        "current_status": "WrapsHostLibc",
+        "current_status": "Implemented",
         "evidence_state": "none",
         "derived_status": null,
-        "recommended_status": "WrapsHostLibc",
+        "recommended_status": "Implemented",
         "promotion_suppressed": false,
         "downgrade_mismatch": false,
         "provenance": {}
@@ -46008,7 +45993,7 @@
   "fixture_coverage_ratchet": {
     "schema_version": "fixture_coverage_ratchet.v1",
     "bead": "bd-8t1chf",
-    "promotion_triage_manifest_loaded": false,
+    "promotion_triage_manifest_loaded": true,
     "policy": {
       "high_impact_modules": [
         "math_abi",
@@ -46674,16 +46659,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 2464,
-      "fixture_linked": 790
+      "count": 2555,
+      "fixture_linked": 881
     },
     "RawSyscall": {
       "count": 408,
       "fixture_linked": 156
     },
     "WrapsHostLibc": {
-      "count": 1247,
-      "fixture_linked": 259
+      "count": 1156,
+      "fixture_linked": 168
     }
   },
   "module_coverage": {
@@ -46998,7 +46983,7 @@
     "_IO_switch_to_get_mode": "WrapsHostLibc",
     "_IO_switch_to_main_wget_area": "Implemented",
     "_IO_switch_to_wbackup_area": "Implemented",
-    "_IO_switch_to_wget_mode": "WrapsHostLibc",
+    "_IO_switch_to_wget_mode": "Implemented",
     "_IO_un_link": "Implemented",
     "_IO_ungetc": "WrapsHostLibc",
     "_IO_unsave_markers": "Implemented",
@@ -47009,7 +46994,7 @@
     "_IO_wdefault_doallocate": "Implemented",
     "_IO_wdefault_finish": "Implemented",
     "_IO_wdefault_pbackfail": "WrapsHostLibc",
-    "_IO_wdefault_uflow": "WrapsHostLibc",
+    "_IO_wdefault_uflow": "Implemented",
     "_IO_wdefault_xsgetn": "WrapsHostLibc",
     "_IO_wdefault_xsputn": "WrapsHostLibc",
     "_IO_wdo_write": "Implemented",
@@ -47017,7 +47002,7 @@
     "_IO_wfile_jumps": "Implemented",
     "_IO_wfile_overflow": "WrapsHostLibc",
     "_IO_wfile_seekoff": "WrapsHostLibc",
-    "_IO_wfile_sync": "WrapsHostLibc",
+    "_IO_wfile_sync": "Implemented",
     "_IO_wfile_underflow": "WrapsHostLibc",
     "_IO_wfile_xsputn": "WrapsHostLibc",
     "_IO_wmarker_delta": "Implemented",
@@ -47042,7 +47027,7 @@
     "__asinf128_finite": "Implemented",
     "__asinf_finite": "Implemented",
     "__asinl_finite": "Implemented",
-    "__asprintf": "WrapsHostLibc",
+    "__asprintf": "Implemented",
     "__asprintf_chk": "Implemented",
     "__assert": "WrapsHostLibc",
     "__assert_fail": "WrapsHostLibc",
@@ -47070,12 +47055,12 @@
     "__clog10f": "Implemented",
     "__clog10l": "Implemented",
     "__clone": "WrapsHostLibc",
-    "__close": "WrapsHostLibc",
+    "__close": "Implemented",
     "__close_nocancel": "RawSyscall",
     "__close_nocancel_nostatus": "RawSyscall",
     "__cmsg_nxthdr": "Implemented",
     "__confstr_chk": "Implemented",
-    "__connect": "WrapsHostLibc",
+    "__connect": "Implemented",
     "__copy_grp": "Implemented",
     "__cosh_finite": "Implemented",
     "__coshf128_finite": "Implemented",
@@ -47272,16 +47257,16 @@
     "__isoc23_wcstoumax": "Implemented",
     "__isoc23_wscanf": "WrapsHostLibc",
     "__isoc99_fscanf": "WrapsHostLibc",
-    "__isoc99_fwscanf": "WrapsHostLibc",
+    "__isoc99_fwscanf": "Implemented",
     "__isoc99_scanf": "WrapsHostLibc",
     "__isoc99_sscanf": "Implemented",
     "__isoc99_swscanf": "Implemented",
     "__isoc99_vfscanf": "WrapsHostLibc",
-    "__isoc99_vfwscanf": "WrapsHostLibc",
+    "__isoc99_vfwscanf": "Implemented",
     "__isoc99_vscanf": "WrapsHostLibc",
     "__isoc99_vsscanf": "Implemented",
     "__isoc99_vswscanf": "Implemented",
-    "__isoc99_vwscanf": "WrapsHostLibc",
+    "__isoc99_vwscanf": "Implemented",
     "__isoc99_wscanf": "WrapsHostLibc",
     "__isprint_l": "Implemented",
     "__ispunct_l": "Implemented",
@@ -47591,7 +47576,7 @@
     "__strcspn_c1": "Implemented",
     "__strcspn_c2": "Implemented",
     "__strcspn_c3": "Implemented",
-    "__strdup": "WrapsHostLibc",
+    "__strdup": "Implemented",
     "__strerror_r": "Implemented",
     "__strfmon_l": "Implemented",
     "__strftime_l": "Implemented",
@@ -47600,7 +47585,7 @@
     "__strncasecmp_l": "Implemented",
     "__strncat_chk": "Implemented",
     "__strncpy_chk": "Implemented",
-    "__strndup": "WrapsHostLibc",
+    "__strndup": "Implemented",
     "__strpbrk_c2": "Implemented",
     "__strpbrk_c3": "Implemented",
     "__strsep_1c": "Implemented",
@@ -47610,27 +47595,27 @@
     "__strspn_c1": "Implemented",
     "__strspn_c2": "Implemented",
     "__strspn_c3": "Implemented",
-    "__strtod_internal": "WrapsHostLibc",
-    "__strtod_l": "WrapsHostLibc",
+    "__strtod_internal": "Implemented",
+    "__strtod_l": "Implemented",
     "__strtod_nan": "Implemented",
     "__strtof128_internal": "WrapsHostLibc",
     "__strtof128_nan": "Implemented",
-    "__strtof_internal": "WrapsHostLibc",
-    "__strtof_l": "WrapsHostLibc",
+    "__strtof_internal": "Implemented",
+    "__strtof_l": "Implemented",
     "__strtof_nan": "Implemented",
     "__strtok_r": "Implemented",
     "__strtok_r_1c": "Implemented",
-    "__strtol_internal": "WrapsHostLibc",
-    "__strtol_l": "WrapsHostLibc",
+    "__strtol_internal": "Implemented",
+    "__strtol_l": "Implemented",
     "__strtold_internal": "Implemented",
     "__strtold_l": "Implemented",
     "__strtold_nan": "Implemented",
-    "__strtoll_internal": "WrapsHostLibc",
-    "__strtoll_l": "WrapsHostLibc",
-    "__strtoul_internal": "WrapsHostLibc",
-    "__strtoul_l": "WrapsHostLibc",
-    "__strtoull_internal": "WrapsHostLibc",
-    "__strtoull_l": "WrapsHostLibc",
+    "__strtoll_internal": "Implemented",
+    "__strtoll_l": "Implemented",
+    "__strtoul_internal": "Implemented",
+    "__strtoul_l": "Implemented",
+    "__strtoull_internal": "Implemented",
+    "__strtoull_l": "Implemented",
     "__strverscmp": "Implemented",
     "__strxfrm_l": "Implemented",
     "__swprintf_chk": "Implemented",
@@ -47737,7 +47722,7 @@
     "__ynf128_finite": "WrapsHostLibc",
     "__ynf_finite": "WrapsHostLibc",
     "__ynl_finite": "WrapsHostLibc",
-    "_authenticate": "WrapsHostLibc",
+    "_authenticate": "Implemented",
     "_dl_find_object": "WrapsHostLibc",
     "_dl_mcount_wrapper": "Implemented",
     "_dl_mcount_wrapper_check": "Implemented",
@@ -47765,7 +47750,7 @@
     "_pthread_cleanup_push_defer": "WrapsHostLibc",
     "_res": "Implemented",
     "_res_hconf": "Implemented",
-    "_rpc_dtablesize": "WrapsHostLibc",
+    "_rpc_dtablesize": "Implemented",
     "_seterr_reply": "Implemented",
     "_setjmp": "WrapsHostLibc",
     "_sys_errlist": "Implemented",
@@ -47843,17 +47828,17 @@
     "argp_program_version_hook": "Implemented",
     "argp_state_help": "Implemented",
     "argp_usage": "Implemented",
-    "argz_add": "WrapsHostLibc",
-    "argz_add_sep": "WrapsHostLibc",
-    "argz_append": "WrapsHostLibc",
+    "argz_add": "Implemented",
+    "argz_add_sep": "Implemented",
+    "argz_append": "Implemented",
     "argz_count": "Implemented",
-    "argz_create": "WrapsHostLibc",
-    "argz_create_sep": "WrapsHostLibc",
-    "argz_delete": "WrapsHostLibc",
+    "argz_create": "Implemented",
+    "argz_create_sep": "Implemented",
+    "argz_delete": "Implemented",
     "argz_extract": "Implemented",
-    "argz_insert": "WrapsHostLibc",
+    "argz_insert": "Implemented",
     "argz_next": "Implemented",
-    "argz_replace": "WrapsHostLibc",
+    "argz_replace": "Implemented",
     "argz_stringify": "Implemented",
     "asctime": "Implemented",
     "asctime_r": "Implemented",
@@ -47936,7 +47921,7 @@
     "authunix_create_default": "Implemented",
     "b64_ntop": "Implemented",
     "b64_pton": "Implemented",
-    "backtrace": "WrapsHostLibc",
+    "backtrace": "Implemented",
     "backtrace_symbols": "WrapsHostLibc",
     "backtrace_symbols_fd": "WrapsHostLibc",
     "basename": "Implemented",
@@ -47981,7 +47966,7 @@
     "cacosl": "WrapsHostLibc",
     "call_once": "Implemented",
     "calloc": "WrapsHostLibc",
-    "callrpc": "WrapsHostLibc",
+    "callrpc": "Implemented",
     "canonicalize": "Implemented",
     "canonicalize_file_name": "Implemented",
     "canonicalizef": "Implemented",
@@ -48106,7 +48091,7 @@
     "clearerr": "WrapsHostLibc",
     "clearerr_unlocked": "WrapsHostLibc",
     "clnt_broadcast": "Implemented",
-    "clnt_create": "WrapsHostLibc",
+    "clnt_create": "Implemented",
     "clnt_pcreateerror": "Implemented",
     "clnt_perrno": "Implemented",
     "clnt_perror": "Implemented",
@@ -48231,7 +48216,7 @@
     "crealf64x": "Implemented",
     "creall": "Implemented",
     "creat": "RawSyscall",
-    "creat64": "WrapsHostLibc",
+    "creat64": "Implemented",
     "create_module": "WrapsHostLibc",
     "crypt": "WrapsHostLibc",
     "crypt_checksalt": "Implemented",
@@ -48306,7 +48291,7 @@
     "dladdr1": "WrapsHostLibc",
     "dlclose": "WrapsHostLibc",
     "dlerror": "Implemented",
-    "dlinfo": "WrapsHostLibc",
+    "dlinfo": "Implemented",
     "dlmopen": "WrapsHostLibc",
     "dlopen": "WrapsHostLibc",
     "dlsym": "WrapsHostLibc",
@@ -48353,12 +48338,12 @@
     "endutent": "Implemented",
     "endutxent": "Implemented",
     "environ": "Implemented",
-    "envz_add": "WrapsHostLibc",
+    "envz_add": "Implemented",
     "envz_entry": "Implemented",
     "envz_get": "Implemented",
-    "envz_merge": "WrapsHostLibc",
-    "envz_remove": "WrapsHostLibc",
-    "envz_strip": "WrapsHostLibc",
+    "envz_merge": "Implemented",
+    "envz_remove": "Implemented",
+    "envz_strip": "Implemented",
     "epoll_create": "RawSyscall",
     "epoll_create1": "RawSyscall",
     "epoll_ctl": "RawSyscall",
@@ -48383,15 +48368,15 @@
     "erff64": "Implemented",
     "erff64x": "Implemented",
     "erfl": "Implemented",
-    "err": "WrapsHostLibc",
-    "errc": "WrapsHostLibc",
+    "err": "Implemented",
+    "errc": "Implemented",
     "errno": "Implemented",
     "error": "WrapsHostLibc",
     "error_at_line": "WrapsHostLibc",
     "error_message_count": "Implemented",
     "error_one_per_line": "Implemented",
     "error_print_progname": "Implemented",
-    "errx": "WrapsHostLibc",
+    "errx": "Implemented",
     "ether_aton": "Implemented",
     "ether_aton_r": "Implemented",
     "ether_hostton": "Implemented",
@@ -48565,7 +48550,7 @@
     "fdiml": "Implemented",
     "fdiv": "Implemented",
     "fdivl": "Implemented",
-    "fdopen": "WrapsHostLibc",
+    "fdopen": "Implemented",
     "fdopendir": "WrapsHostLibc",
     "feclearexcept": "Implemented",
     "fedisableexcept": "Implemented",
@@ -48688,7 +48673,7 @@
     "fmaxmagf64": "Implemented",
     "fmaxmagf64x": "Implemented",
     "fmaxmagl": "Implemented",
-    "fmemopen": "WrapsHostLibc",
+    "fmemopen": "Implemented",
     "fmin": "Implemented",
     "fminf": "Implemented",
     "fminf128": "Implemented",
@@ -48749,12 +48734,12 @@
     "fmul": "Implemented",
     "fmull": "Implemented",
     "fnmatch": "Implemented",
-    "fopen": "WrapsHostLibc",
-    "fopen64": "WrapsHostLibc",
-    "fopencookie": "WrapsHostLibc",
+    "fopen": "Implemented",
+    "fopen64": "Implemented",
+    "fopencookie": "Implemented",
     "fork": "WrapsHostLibc",
     "forkpty": "WrapsHostLibc",
-    "fpathconf": "WrapsHostLibc",
+    "fpathconf": "Implemented",
     "fprintf": "WrapsHostLibc",
     "fputc": "WrapsHostLibc",
     "fputc_unlocked": "WrapsHostLibc",
@@ -48812,9 +48797,9 @@
     "fsqrt": "WrapsHostLibc",
     "fsqrtl": "WrapsHostLibc",
     "fstat": "RawSyscall",
-    "fstat64": "WrapsHostLibc",
+    "fstat64": "Implemented",
     "fstatat": "RawSyscall",
-    "fstatat64": "WrapsHostLibc",
+    "fstatat64": "Implemented",
     "fstatfs": "RawSyscall",
     "fstatfs64": "Implemented",
     "fstatvfs": "RawSyscall",
@@ -48828,7 +48813,7 @@
     "ftime": "Implemented",
     "ftok": "Implemented",
     "ftruncate": "RawSyscall",
-    "ftruncate64": "WrapsHostLibc",
+    "ftruncate64": "Implemented",
     "ftrylockfile": "WrapsHostLibc",
     "fts64_children": "Implemented",
     "fts64_close": "Implemented",
@@ -48878,7 +48863,7 @@
     "getaliasent": "Implemented",
     "getaliasent_r": "Implemented",
     "getauxval": "WrapsHostLibc",
-    "getbsize": "WrapsHostLibc",
+    "getbsize": "Implemented",
     "getc": "WrapsHostLibc",
     "getc_unlocked": "WrapsHostLibc",
     "getchar": "WrapsHostLibc",
@@ -48961,9 +48946,9 @@
     "getpmsg": "WrapsHostLibc",
     "getppid": "RawSyscall",
     "getpriority": "RawSyscall",
-    "getprotobyname": "WrapsHostLibc",
+    "getprotobyname": "Implemented",
     "getprotobyname_r": "Implemented",
-    "getprotobynumber": "WrapsHostLibc",
+    "getprotobynumber": "Implemented",
     "getprotobynumber_r": "Implemented",
     "getprotoent": "Implemented",
     "getprotoent_r": "Implemented",
@@ -49038,7 +49023,7 @@
     "glob": "WrapsHostLibc",
     "glob64": "Implemented",
     "glob_pattern_p": "Implemented",
-    "globfree": "WrapsHostLibc",
+    "globfree": "Implemented",
     "globfree64": "Implemented",
     "gmtime": "Implemented",
     "gmtime_r": "Implemented",
@@ -49121,8 +49106,8 @@
     "inet_nsap_addr": "Implemented",
     "inet_nsap_ntoa": "Implemented",
     "inet_ntoa": "Implemented",
-    "inet_ntop": "WrapsHostLibc",
-    "inet_pton": "WrapsHostLibc",
+    "inet_ntop": "Implemented",
+    "inet_pton": "Implemented",
     "init_module": "WrapsHostLibc",
     "initgroups": "RawSyscall",
     "initstate": "WrapsHostLibc",
@@ -49429,7 +49414,7 @@
     "mallinfo": "Implemented",
     "mallinfo2": "Implemented",
     "malloc": "WrapsHostLibc",
-    "malloc_info": "WrapsHostLibc",
+    "malloc_info": "Implemented",
     "malloc_stats": "Implemented",
     "malloc_trim": "Implemented",
     "malloc_usable_size": "Implemented",
@@ -49481,8 +49466,8 @@
     "mkstemp64": "WrapsHostLibc",
     "mkstemps": "WrapsHostLibc",
     "mkstemps64": "WrapsHostLibc",
-    "mktemp": "WrapsHostLibc",
-    "mktime": "WrapsHostLibc",
+    "mktemp": "Implemented",
+    "mktime": "Implemented",
     "mlock": "RawSyscall",
     "mlock2": "RawSyscall",
     "mlockall": "RawSyscall",
@@ -49653,9 +49638,9 @@
     "open": "RawSyscall",
     "open64": "WrapsHostLibc",
     "open_by_handle_at": "RawSyscall",
-    "open_memstream": "WrapsHostLibc",
+    "open_memstream": "Implemented",
     "open_tree": "RawSyscall",
-    "open_wmemstream": "WrapsHostLibc",
+    "open_wmemstream": "Implemented",
     "openat": "RawSyscall",
     "openat64": "Implemented",
     "opendir": "RawSyscall",
@@ -49671,7 +49656,7 @@
     "pause": "RawSyscall",
     "pclose": "WrapsHostLibc",
     "perf_event_open": "RawSyscall",
-    "perror": "WrapsHostLibc",
+    "perror": "Implemented",
     "personality": "RawSyscall",
     "pidfd_getfd": "RawSyscall",
     "pidfd_getpid": "WrapsHostLibc",
@@ -49778,7 +49763,7 @@
     "program_invocation_name": "Implemented",
     "program_invocation_short_name": "Implemented",
     "pselect": "RawSyscall",
-    "psiginfo": "WrapsHostLibc",
+    "psiginfo": "Implemented",
     "psignal": "RawSyscall",
     "pthread_atfork": "Implemented",
     "pthread_attr_destroy": "Implemented",
@@ -49962,11 +49947,11 @@
     "re_compile_fastmap": "Implemented",
     "re_compile_pattern": "Implemented",
     "re_exec": "Implemented",
-    "re_match": "WrapsHostLibc",
-    "re_match_2": "WrapsHostLibc",
+    "re_match": "Implemented",
+    "re_match_2": "Implemented",
     "re_max_failures": "Implemented",
-    "re_search": "WrapsHostLibc",
-    "re_search_2": "WrapsHostLibc",
+    "re_search": "Implemented",
+    "re_search_2": "Implemented",
     "re_set_registers": "Implemented",
     "re_set_syntax": "Implemented",
     "re_syntax_options": "Implemented",
@@ -50008,7 +49993,7 @@
     "remainderf64x": "WrapsHostLibc",
     "remainderl": "WrapsHostLibc",
     "remap_file_pages": "RawSyscall",
-    "remove": "WrapsHostLibc",
+    "remove": "Implemented",
     "removexattr": "RawSyscall",
     "remque": "Implemented",
     "remquo": "WrapsHostLibc",
@@ -50250,20 +50235,20 @@
     "shutdown": "RawSyscall",
     "sigabbrev_np": "Implemented",
     "sigaction": "RawSyscall",
-    "sigaddset": "WrapsHostLibc",
+    "sigaddset": "Implemented",
     "sigaltstack": "RawSyscall",
-    "sigandset": "WrapsHostLibc",
+    "sigandset": "Implemented",
     "sigblock": "Implemented",
     "sigdelset": "WrapsHostLibc",
     "sigdescr_np": "Implemented",
     "sigemptyset": "Implemented",
-    "sigfillset": "WrapsHostLibc",
+    "sigfillset": "Implemented",
     "siggetmask": "Implemented",
     "sighold": "RawSyscall",
     "sigignore": "RawSyscall",
     "siginterrupt": "RawSyscall",
-    "sigisemptyset": "WrapsHostLibc",
-    "sigismember": "WrapsHostLibc",
+    "sigisemptyset": "Implemented",
+    "sigismember": "Implemented",
     "siglongjmp": "WrapsHostLibc",
     "signal": "RawSyscall",
     "signalfd": "RawSyscall",
@@ -50272,7 +50257,7 @@
     "significand": "Implemented",
     "significandf": "Implemented",
     "significandl": "Implemented",
-    "sigorset": "WrapsHostLibc",
+    "sigorset": "Implemented",
     "sigpause": "Implemented",
     "sigpending": "RawSyscall",
     "sigprocmask": "RawSyscall",
@@ -50439,7 +50424,7 @@
     "strcoll_l": "Implemented",
     "strcpy": "Implemented",
     "strcspn": "Implemented",
-    "strdup": "WrapsHostLibc",
+    "strdup": "Implemented",
     "strerror": "Implemented",
     "strerror_l": "Implemented",
     "strerror_r": "Implemented",
@@ -50467,7 +50452,7 @@
     "strncat": "Implemented",
     "strncmp": "Implemented",
     "strncpy": "Implemented",
-    "strndup": "WrapsHostLibc",
+    "strndup": "Implemented",
     "strnlen": "Implemented",
     "strnstr": "Implemented",
     "strpbrk": "Implemented",
@@ -50560,7 +50545,7 @@
     "sysctl": "WrapsHostLibc",
     "sysinfo": "RawSyscall",
     "syslog": "WrapsHostLibc",
-    "system": "WrapsHostLibc",
+    "system": "Implemented",
     "sysv_signal": "Implemented",
     "tan": "Implemented",
     "tanf": "Implemented",
@@ -50741,9 +50726,9 @@
     "valloc": "WrapsHostLibc",
     "vasprintf": "WrapsHostLibc",
     "vdprintf": "WrapsHostLibc",
-    "verr": "WrapsHostLibc",
-    "verrc": "WrapsHostLibc",
-    "verrx": "WrapsHostLibc",
+    "verr": "Implemented",
+    "verrc": "Implemented",
+    "verrx": "Implemented",
     "versionsort": "Implemented",
     "versionsort64": "Implemented",
     "vfork": "WrapsHostLibc",
@@ -50763,9 +50748,9 @@
     "vswscanf": "Implemented",
     "vsyslog": "WrapsHostLibc",
     "vtimes": "WrapsHostLibc",
-    "vwarn": "WrapsHostLibc",
-    "vwarnc": "WrapsHostLibc",
-    "vwarnx": "WrapsHostLibc",
+    "vwarn": "Implemented",
+    "vwarnc": "Implemented",
+    "vwarnx": "Implemented",
     "vwprintf": "WrapsHostLibc",
     "vwscanf": "WrapsHostLibc",
     "wait": "RawSyscall",
@@ -50773,9 +50758,9 @@
     "wait4": "RawSyscall",
     "waitid": "RawSyscall",
     "waitpid": "RawSyscall",
-    "warn": "WrapsHostLibc",
-    "warnc": "WrapsHostLibc",
-    "warnx": "WrapsHostLibc",
+    "warn": "Implemented",
+    "warnc": "Implemented",
+    "warnx": "Implemented",
     "wcpcpy": "Implemented",
     "wcpncpy": "Implemented",
     "wcrtomb": "WrapsHostLibc",
@@ -50789,7 +50774,7 @@
     "wcscoll_l": "Implemented",
     "wcscpy": "Implemented",
     "wcscspn": "Implemented",
-    "wcsdup": "WrapsHostLibc",
+    "wcsdup": "Implemented",
     "wcsftime": "WrapsHostLibc",
     "wcsftime_l": "WrapsHostLibc",
     "wcslcat": "Implemented",
@@ -51009,7 +50994,258 @@
     "yperr_string": "Implemented",
     "ypprot_err": "Implemented"
   },
-  "reclassified_symbols": [],
+  "reclassified_symbols": [
+    {
+      "symbol": "freeaddrinfo",
+      "module": "resolv_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getaddrinfo",
+      "module": "resolv_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 4,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getgrgid",
+      "module": "grp_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getgrnam",
+      "module": "grp_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "gethostbyaddr",
+      "module": "resolv_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "gethostbyname",
+      "module": "resolv_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getnameinfo",
+      "module": "resolv_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getpwnam",
+      "module": "pwd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "getpwuid",
+      "module": "pwd_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "glob",
+      "module": "string_abi",
+      "previous_status": "Implemented",
+      "current_status": "WrapsHostLibc",
+      "promotion_requires_evidence": false,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    }
+  ],
   "status_validation_issues": [
     {
       "symbol": "_Exit",
@@ -51831,6 +52067,58 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
+      "symbol": "argz_append",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "argz_delete",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "argz_insert",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "argz_replace",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "asin",
       "status": "Implemented",
       "module": "math_abi",
@@ -51961,6 +52249,71 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
+      "symbol": "envz_remove",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "envz_strip",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "err",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "errc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "errx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "exp",
       "status": "Implemented",
       "module": "math_abi",
@@ -52037,6 +52390,19 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "ftruncate64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "ftw",
@@ -52130,6 +52496,32 @@
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
+      "symbol": "getprotobyname",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "getprotobynumber",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "getresgid",
       "status": "RawSyscall",
       "module": "process_abi",
@@ -52154,6 +52546,32 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "getsgent",
+      "status": "WrapsHostLibc",
+      "module": "pwd_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "getsgent_r",
+      "status": "WrapsHostLibc",
+      "module": "pwd_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
       "symbol": "getsgnam",
@@ -52219,6 +52637,19 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "globfree",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "hcreate_r",
@@ -52715,7 +53146,7 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
-      "symbol": "mq_notify",
+      "symbol": "mmap64",
       "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "valid": true,
@@ -52793,6 +53224,19 @@
       "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
+      "symbol": "nftw",
+      "status": "WrapsHostLibc",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
       "symbol": "open_by_handle_at",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -52804,6 +53248,19 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "open_wmemstream",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "posix_spawnattr_getflags",
@@ -53482,19 +53939,6 @@
       "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
-      "symbol": "timer_create",
-      "status": "WrapsHostLibc",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [],
-      "warnings": [
-        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
-      ],
-      "issue_class": "taxonomy_overstates_host_dependency",
-      "scanner_bucket": "status_source_mismatch",
-      "actionable_next_step": "promote status only after strict+hardened evidence is present"
-    },
-    {
       "symbol": "towlower",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -53586,9 +54030,126 @@
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
     },
     {
+      "symbol": "verr",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "verrc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "verrx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "vsscanf",
       "status": "Implemented",
       "module": "stdio_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "vwarn",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "vwarnc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "vwarnx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "warn",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "warnc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "warnx",
+      "status": "Implemented",
+      "module": "err_abi",
       "valid": true,
       "findings": [],
       "warnings": [
@@ -53636,6 +54197,19 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "wcsdup",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "wcsftime_l",
@@ -54039,6 +54613,58 @@
       "issue_class": "missing_body",
       "scanner_bucket": "scanner_unknown",
       "actionable_next_step": "add a source locator pattern or update the support-matrix row"
+    },
+    {
+      "symbol": "re_search",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "re_search_2",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "re_match",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "re_match_2",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "__isoc23_strtol",
@@ -55198,6 +55824,32 @@
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
     },
     {
+      "symbol": "__strtod_internal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtod_l",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
       "symbol": "__strtof128_internal",
       "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
@@ -55209,6 +55861,58 @@
       "issue_class": "taxonomy_overstates_host_dependency",
       "scanner_bucket": "status_source_mismatch",
       "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "__strtof_internal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtof_l",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtol_internal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtol_l",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
     },
     {
       "symbol": "__strtold_internal",
@@ -55225,6 +55929,84 @@
     },
     {
       "symbol": "__strtold_l",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtoll_internal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtoll_l",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtoul_internal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtoul_l",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtoull_internal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "host delegation census covered by promotion proof manifest"
+      ],
+      "issue_class": "promotion_proof_accepted",
+      "scanner_bucket": "native_proven_errno_bridge",
+      "actionable_next_step": "keep proof manifest strict+hardened mode rows current"
+    },
+    {
+      "symbol": "__strtoull_l",
       "status": "Implemented",
       "module": "string_abi",
       "valid": true,
@@ -56707,6 +57489,19 @@
     },
     {
       "symbol": "strtof128",
+      "status": "WrapsHostLibc",
+      "module": "glibc_internal_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc has no detected host delegation; retained conservatively pending strict+hardened conformance proof"
+      ],
+      "issue_class": "taxonomy_overstates_host_dependency",
+      "scanner_bucket": "status_source_mismatch",
+      "actionable_next_step": "promote status only after strict+hardened evidence is present"
+    },
+    {
+      "symbol": "strtof128_l",
       "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
       "valid": true,

@@ -1,0 +1,2964 @@
+//! FILE stream state management.
+//!
+//! Clean-room implementation of the POSIX FILE abstraction.
+//! Manages file descriptor, buffering, flags, and position.
+//!
+//! Reference: POSIX.1-2024 fopen, ISO C11 7.21.5
+//!
+//! Design: `StdioStream` is the safe Rust model of a C `FILE`.
+//! The ABI layer wraps these in a registry and hands out opaque
+//! pointers to C callers. No raw FILE* from glibc is used internally.
+
+use std::collections::VecDeque;
+
+use super::buffer::{BUFSIZ, BufMode, StreamBuffer, WriteResult};
+
+// ---------------------------------------------------------------------------
+// Stream flags
+// ---------------------------------------------------------------------------
+
+/// File open mode flags.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenFlags {
+    pub readable: bool,
+    pub writable: bool,
+    pub append: bool,
+    pub truncate: bool,
+    pub create: bool,
+    pub binary: bool,
+    pub exclusive: bool,
+    pub cloexec: bool,
+    /// GNU fopen's `c` modifier keeps descriptor I/O out of cancellation points.
+    pub no_cancel: bool,
+}
+
+/// Runtime stream state flags.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StreamFlags {
+    pub eof: bool,
+    pub error: bool,
+    /// True if any read or write has occurred.
+    pub io_started: bool,
+    /// Direction of the most recent I/O operation: true if it was a write,
+    /// false if a read. Only meaningful when `io_started` is set. Drives
+    /// `__freading`/`__fwriting` parity with glibc.
+    pub last_write: bool,
+    /// Stream orientation for `fwide`: 0 = unset, >0 = wide, <0 = byte.
+    /// Sticky once set to a non-zero value.
+    pub orientation: i32,
+    /// `__fsetlocking` mode: false = FSETLOCKING_INTERNAL (the default), true =
+    /// FSETLOCKING_BYCALLER.
+    pub locking_bycaller: bool,
+    /// Whether the fd can seek, probed once by the ABI: 0 = not yet known,
+    /// 1 = seekable, 2 = not (pipe, socket, terminal).
+    pub seekability: u8,
+}
+
+// ---------------------------------------------------------------------------
+// Mode parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a POSIX fopen mode string (e.g. "r", "w+", "rb", "a+b").
+///
+/// Returns `None` if the mode string is invalid.
+pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
+    if mode.is_empty() {
+        return None;
+    }
+
+    let mut flags = OpenFlags::default();
+    let mut pos = 0;
+
+    // Base mode character.
+    match mode[pos] {
+        b'r' => {
+            flags.readable = true;
+        }
+        b'w' => {
+            flags.writable = true;
+            flags.create = true;
+            flags.truncate = true;
+        }
+        b'a' => {
+            flags.writable = true;
+            flags.create = true;
+            flags.append = true;
+        }
+        _ => return None,
+    }
+    pos += 1;
+
+    // Modifiers, as glibc reads them: only the next six characters are
+    // examined, a ',' (the ",ccs=" charset suffix) ends them, '+', 'b', 'x',
+    // 'e', 'm', 'c' have meaning, and ANY other character is ignored --
+    // "rt" (sed opens scripts with it), "rw", "r b" all open fine there.
+    // Rejecting them made sed -f fail with EINVAL.
+    while pos < mode.len() && pos < 7 {
+        match mode[pos] {
+            b',' => break,
+            b'+' => {
+                flags.readable = true;
+                flags.writable = true;
+            }
+            b'b' => flags.binary = true,
+            b'x' => flags.exclusive = true,
+            b'e' => flags.cloexec = true,
+            b'c' => flags.no_cancel = true,
+            _ => {} // 'm': no-op here; anything else is ignored
+        }
+        pos += 1;
+    }
+
+    Some(flags)
+}
+
+/// Convert open flags to POSIX O_* flag bits.
+pub fn flags_to_oflags(flags: &OpenFlags) -> i32 {
+    let mut oflags = 0i32;
+
+    if flags.readable && flags.writable {
+        oflags |= 2; // O_RDWR
+    } else if flags.writable {
+        oflags |= 1; // O_WRONLY
+    }
+    // O_RDONLY is 0, so readable-only needs no flag.
+
+    if flags.create {
+        oflags |= 0o100; // O_CREAT
+    }
+    if flags.truncate {
+        oflags |= 0o1000; // O_TRUNC
+    }
+    if flags.append {
+        oflags |= 0o2000; // O_APPEND
+    }
+    if flags.exclusive {
+        oflags |= 0o200; // O_EXCL
+    }
+    if flags.cloexec {
+        oflags |= 0o2000000; // O_CLOEXEC
+    }
+
+    oflags
+}
+
+// ---------------------------------------------------------------------------
+// Memory backing for fmemopen / open_memstream
+// ---------------------------------------------------------------------------
+
+/// Position and input buffering for a fixed, externally owned memory stream.
+///
+/// The ABI supplies bounded copies through closures: this model never borrows
+/// caller memory across calls. Output buffering belongs to `StdioStream`; a
+/// write here represents bytes actually delivered by its flush callback.
+#[derive(Debug)]
+pub struct FixedMemCursor {
+    capacity: usize,
+    position: usize,
+    content_end: usize,
+    append: bool,
+    input_start: usize,
+    input: Vec<u8>,
+}
+
+impl FixedMemCursor {
+    pub fn new(capacity: usize, content_end: usize, append: bool) -> Self {
+        Self::with_input_buffer(capacity, content_end, append, Vec::new())
+    }
+
+    pub fn with_input_buffer(
+        capacity: usize,
+        content_end: usize,
+        append: bool,
+        mut input: Vec<u8>,
+    ) -> Self {
+        input.clear();
+        let content_end = content_end.min(capacity);
+        Self {
+            capacity,
+            position: if append { content_end } else { 0 },
+            content_end,
+            append,
+            input_start: 0,
+            input,
+        }
+    }
+
+    pub fn take_input_buffer(&mut self) -> Vec<u8> {
+        self.input_start = 0;
+        let mut buf = std::mem::take(&mut self.input);
+        buf.clear();
+        buf
+    }
+
+    /// Reset cursor state in place while keeping its pooled `input` buffer
+    /// allocation (bounded to `64 KiB` so large transient buffers are released).
+    #[inline]
+    pub fn reset(&mut self, capacity: usize, content_end: usize, append: bool) {
+        if self.input.capacity() > 64 * 1024 {
+            self.input = Vec::new();
+        } else {
+            self.input.clear();
+        }
+        let content_end = content_end.min(capacity);
+        self.capacity = capacity;
+        self.position = if append { content_end } else { 0 };
+        self.content_end = content_end;
+        self.append = append;
+        self.input_start = 0;
+    }
+
+    pub fn position(&self) -> usize {
+        self.position
+    }
+
+    pub fn content_end(&self) -> usize {
+        self.content_end
+    }
+
+    pub fn discard_input(&mut self) {
+        self.input.clear();
+    }
+
+    /// A zero-distance seek preserves prefetched input, as on a cookie FILE.
+    /// Other seeks invalidate it. The fixed capacity bounds SEEK_SET/CUR;
+    /// SEEK_END is relative to the current logical extent.
+    pub fn seek(&mut self, offset: i64, whence: i32) -> Option<usize> {
+        let base = match whence {
+            0 => 0,
+            1 => i64::try_from(self.position).ok()?,
+            2 => i64::try_from(self.content_end).ok()?,
+            _ => return None,
+        };
+        let next = usize::try_from(base.checked_add(offset)?).ok()?;
+        if next > self.capacity {
+            return None;
+        }
+        if next != self.position {
+            self.discard_input();
+        }
+        self.position = next;
+        Some(next)
+    }
+
+    /// Copy input using a direct `Vec<u8>` refill callback (avoiding redundant
+    /// zero-initialization before overwriting). Only a refill reads caller
+    /// storage in buffered mode; unbuffered reads retain no snapshot.
+    /// Fast buffered slice probe for single-threaded `fread` hits: if `len`
+    /// bytes are already present in `self.input` at `self.position`, advances
+    /// `self.position` by `len` and returns that contiguous slice without call overhead.
+    #[inline(always)]
+    pub fn try_take_buffered(&mut self, len: usize) -> Option<&[u8]> {
+        let start = self.position.checked_sub(self.input_start)?;
+        let end = start.checked_add(len)?;
+        if end <= self.input.len() {
+            self.position += len;
+            Some(&self.input[start..end])
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn read_with_refill(
+        &mut self,
+        dst: &mut [u8],
+        delimiter: Option<u8>,
+        prefetch: usize,
+        mut refill_into: impl FnMut(usize, usize, &mut Vec<u8>),
+    ) -> usize {
+        if delimiter.is_none()
+            && let Some(start) = self.position.checked_sub(self.input_start)
+            && let Some(end) = start.checked_add(dst.len())
+            && end <= self.input.len()
+        {
+            dst.copy_from_slice(&self.input[start..end]);
+            self.position += dst.len();
+            return dst.len();
+        }
+        let mut written = 0;
+        while written < dst.len() && self.position < self.content_end {
+            let buffered = self.position.checked_sub(self.input_start);
+            if buffered.is_none_or(|i| i >= self.input.len()) {
+                self.input_start = self.position;
+                let count = prefetch.max(1).min(self.content_end - self.position);
+                self.input.clear();
+                refill_into(self.position, count, &mut self.input);
+                if self.input.len() > count {
+                    self.input.truncate(count);
+                }
+                if self.input.is_empty() {
+                    break;
+                }
+            }
+            let start = self.position - self.input_start;
+            let count = (dst.len() - written).min(self.input.len() - start);
+            let bytes = &self.input[start..start + count];
+            let stop = delimiter.and_then(|d| bytes.iter().position(|&b| b == d));
+            let count = stop.map_or(count, |i| i + 1);
+            dst[written..written + count].copy_from_slice(&bytes[..count]);
+            self.position += count;
+            written += count;
+            if stop.is_some() {
+                break;
+            }
+        }
+        written
+    }
+
+    /// Copy input, optionally stopping after a delimiter. Only a refill reads
+    /// caller storage in buffered mode; unbuffered reads retain no snapshot.
+    pub fn read_into(
+        &mut self,
+        dst: &mut [u8],
+        delimiter: Option<u8>,
+        prefetch: usize,
+        mut copy_from: impl FnMut(usize, &mut [u8]),
+    ) -> usize {
+        self.read_with_refill(dst, delimiter, prefetch, |start, count, input| {
+            input.resize(count, 0);
+            copy_from(start, input);
+        })
+    }
+
+    /// Commit one output callback, touching only its byte range and any
+    /// required terminator. Caller edits outside that range remain intact.
+    pub fn write(&mut self, src: &[u8], mut copy_to: impl FnMut(usize, &[u8])) -> usize {
+        self.discard_input();
+        let start = if self.append {
+            self.content_end
+        } else {
+            self.position
+        };
+        let count = src.len().min(self.capacity.saturating_sub(start));
+        let needs_nul = src.last() != Some(&0);
+        // On a short write, there must still be room for the terminator at
+        // the starting position. A one-byte buffer cannot accept "abc".
+        if count == 0
+            || (count < src.len()
+                && self.capacity.saturating_sub(self.position) <= usize::from(needs_nul))
+        {
+            return 0;
+        }
+        copy_to(start, &src[..count]);
+        self.position = start + count;
+        if self.position > self.content_end {
+            self.content_end = self.position;
+            if needs_nul {
+                if self.content_end < self.capacity {
+                    copy_to(self.content_end, &[0]);
+                } else if !self.append {
+                    copy_to(self.capacity - 1, &[0]);
+                }
+            }
+        }
+        count
+    }
+}
+
+/// Memory backing for memory-based stdio streams.
+///
+/// `Fixed` is for `fmemopen`: a position-tracked buffer with a fixed maximum
+/// size. `Dynamic` and `WideDynamic` are growable byte/wide write buffers.
+#[derive(Debug)]
+pub enum MemBacking {
+    /// `fmemopen`: position-tracked fixed-size buffer.
+    Fixed {
+        /// The backing data (capacity == max size).
+        data: Vec<u8>,
+        /// Current read/write position.
+        pos: usize,
+        /// Logical end of valid content (for reads and NUL termination).
+        content_end: usize,
+    },
+    /// `open_memstream`: dynamically growing write buffer.
+    Dynamic {
+        /// The backing data (grows on write past end).
+        data: Vec<u8>,
+        /// Current write position.
+        pos: usize,
+    },
+    /// `open_wmemstream`: positions and storage are wchar_t elements, not
+    /// bytes in a multibyte encoding. Retain the tail across backward seeks.
+    WideDynamic { data: Vec<u32>, pos: usize },
+}
+
+impl MemBacking {
+    /// Write data at the current position. Returns bytes actually written.
+    pub fn write(&mut self, src: &[u8]) -> usize {
+        match self {
+            MemBacking::Fixed {
+                data,
+                pos,
+                content_end,
+            } => {
+                let avail = data.len().saturating_sub(*pos);
+                let n = src.len().min(avail);
+                if n > 0 {
+                    data[*pos..*pos + n].copy_from_slice(&src[..n]);
+                    *pos += n;
+                    if *pos > *content_end {
+                        *content_end = *pos;
+                    }
+                }
+                n
+            }
+            MemBacking::Dynamic { data, pos } => {
+                let Some(end) = pos.checked_add(src.len()) else {
+                    return 0;
+                };
+                if end > data.len() {
+                    if data.try_reserve(end - data.len()).is_err() {
+                        return 0;
+                    }
+                    data.resize(end, 0);
+                }
+                data[*pos..end].copy_from_slice(src);
+                *pos = end;
+                src.len()
+            }
+            // Byte I/O is not admitted on a wide-oriented memory stream.
+            MemBacking::WideDynamic { .. } => 0,
+        }
+    }
+
+    /// Read up to `count` bytes from the current position. Returns the data read.
+    pub fn read(&mut self, count: usize) -> Vec<u8> {
+        match self {
+            MemBacking::Fixed {
+                data,
+                pos,
+                content_end,
+            } => {
+                let avail = (*content_end).saturating_sub(*pos);
+                let n = count.min(avail);
+                if n == 0 {
+                    return Vec::new();
+                }
+                let result = data[*pos..*pos + n].to_vec();
+                *pos += n;
+                result
+            }
+            MemBacking::Dynamic { data, pos } => {
+                let avail = data.len().saturating_sub(*pos);
+                let n = count.min(avail);
+                if n == 0 {
+                    return Vec::new();
+                }
+                let result = data[*pos..*pos + n].to_vec();
+                *pos += n;
+                result
+            }
+            MemBacking::WideDynamic { .. } => Vec::new(),
+        }
+    }
+
+    /// Peek the remaining readable bytes from the current position without
+    /// advancing it. Pairs with [`consume`](Self::consume) for scanning.
+    pub fn peek(&self) -> &[u8] {
+        match self {
+            MemBacking::Fixed {
+                data,
+                pos,
+                content_end,
+            } => {
+                let start = (*pos).min(*content_end);
+                &data[start..*content_end]
+            }
+            MemBacking::Dynamic { data, pos } => {
+                let start = (*pos).min(data.len());
+                &data[start..]
+            }
+            MemBacking::WideDynamic { .. } => &[],
+        }
+    }
+
+    /// Advance the read position by `n` bytes (clamped to the readable end).
+    pub fn consume(&mut self, n: usize) {
+        match self {
+            MemBacking::Fixed {
+                pos, content_end, ..
+            } => {
+                *pos = (*pos + n).min(*content_end);
+            }
+            MemBacking::Dynamic { data, pos } => {
+                *pos = (*pos + n).min(data.len());
+            }
+            MemBacking::WideDynamic { .. } => {}
+        }
+    }
+
+    /// Seek to a new position. `whence`: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END.
+    /// Returns the new position on success, or `None` on invalid seek.
+    pub fn seek(&mut self, offset: i64, whence: i32) -> Option<i64> {
+        if let MemBacking::WideDynamic { data, pos } = self {
+            // GNU wide memory streams use the current write position for
+            // SEEK_END, even when a backward seek left an older tail intact.
+            let base = match whence {
+                0 => 0,
+                1 | 2 => i64::try_from(*pos).ok()?,
+                _ => return None,
+            };
+            let next = base.checked_add(offset)?;
+            let next = usize::try_from(next).ok()?;
+            if next > data.len() {
+                data.try_reserve(next - data.len()).ok()?;
+                data.resize(next, 0);
+            }
+            *pos = next;
+            return i64::try_from(next).ok();
+        }
+        let (size, pos) = match self {
+            MemBacking::Fixed {
+                content_end, pos, ..
+            } => {
+                // bd-rv2gv6: use content_end for all whence modes. The logical
+                // extent is independent of the backing allocation size — for
+                // read-only fmemopen streams the cursor owns the content and
+                // the stream's backing may be empty.
+                (*content_end, pos)
+            }
+            MemBacking::Dynamic { data, pos } => (data.len(), pos),
+            MemBacking::WideDynamic { .. } => unreachable!(),
+        };
+
+        let base = match whence {
+            0 => 0i64,        // SEEK_SET
+            1 => *pos as i64, // SEEK_CUR
+            2 => size as i64, // SEEK_END
+            _ => return None,
+        };
+
+        let new_pos = base.checked_add(offset)?;
+        if new_pos < 0 {
+            return None;
+        }
+
+        let new_pos = new_pos as usize;
+        // bd-rv2gv6: clamp to content_end (the logical extent), not data.len().
+        // For read-only fmemopen the backing may be empty while content_end
+        // reflects the actual content size.
+        match self {
+            MemBacking::Fixed { content_end, .. } => {
+                if new_pos > *content_end {
+                    return None;
+                }
+            }
+            MemBacking::Dynamic { .. } => {
+                // Allow seeking beyond end; open_memstream semantics grow on write.
+            }
+            MemBacking::WideDynamic { .. } => unreachable!(),
+        }
+
+        match self {
+            MemBacking::Fixed { pos: p, .. } => *p = new_pos,
+            MemBacking::Dynamic { pos: p, .. } => *p = new_pos,
+            MemBacking::WideDynamic { .. } => unreachable!(),
+        }
+        Some(new_pos as i64)
+    }
+
+    /// Current position.
+    pub fn position(&self) -> usize {
+        match self {
+            MemBacking::Fixed { pos, .. }
+            | MemBacking::Dynamic { pos, .. }
+            | MemBacking::WideDynamic { pos, .. } => *pos,
+        }
+    }
+
+    /// Current data slice (for open_memstream sync).
+    pub fn data(&self) -> &[u8] {
+        match self {
+            MemBacking::Fixed {
+                data, content_end, ..
+            } => &data[..*content_end],
+            MemBacking::Dynamic { data, .. } => data.as_slice(),
+            MemBacking::WideDynamic { .. } => &[],
+        }
+    }
+
+    /// Clone the data as a new Vec (for returning to C caller via malloc).
+    pub fn data_clone(&self) -> Vec<u8> {
+        self.data().to_vec()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stream
+// ---------------------------------------------------------------------------
+
+/// Outcome of one [`StdioStream::read_until_delim`] step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadUntil {
+    /// The delimiter was found and consumed into the output buffer.
+    Found,
+    /// The available buffered data was drained without finding the delimiter;
+    /// an fd-backed caller should refill the buffer before calling again.
+    NeedRefill,
+    /// No more data is available (EOF / memory backing exhausted).
+    Eof,
+}
+
+/// POSIX FILE stream.
+///
+/// Holds the file descriptor, buffer, and stream state. This type lives
+/// entirely in safe Rust. The ABI layer allocates these on the heap and
+/// manages a registry mapping opaque `FILE*` pointers to stream IDs.
+#[derive(Debug)]
+pub struct StdioStream {
+    /// Underlying file descriptor (-1 if closed, -2 if memory-backed).
+    fd: i32,
+    /// I/O buffer (used for fd-backed streams only).
+    buffer: StreamBuffer,
+    /// How the file was opened.
+    open_flags: OpenFlags,
+    /// Runtime state (eof, error).
+    flags: StreamFlags,
+    /// Conversion engine fixed when the ABI first orients this stream wide.
+    wide_codec: Option<crate::iconv::MultibyteCodec>,
+    /// Logical file position (for seekable streams).
+    offset: i64,
+    /// One-byte pushback for ungetc (layered on top of buffer).
+    ungetc_byte: Option<u8>,
+    /// Multi-byte pushback for ABI helpers that must return over-read bytes.
+    read_pushback: VecDeque<u8>,
+    /// Optional memory backing for fmemopen/open_memstream.
+    mem_backing: Option<MemBacking>,
+    /// Bytes accepted into the modelled `BUFSIZ` stdio buffer since the last
+    /// flush on a `MemBacking::Fixed` (`fmemopen`) stream (bd-lamxlj).
+    mem_pending_write: usize,
+    /// Bytes accepted into the modelled `BUFSIZ` stdio buffer beyond the fixed
+    /// backing capacity since the last flush on a `MemBacking::Fixed` stream.
+    /// Reported as a flush error (`EOF`, `ferror`) on `fflush`/`fseek`/`fclose`.
+    mem_pending_overflow: usize,
+    /// Opaque token naming the C `FILE` this stream is published through
+    /// (0: none). The ABI layer uses it to find the handle whose glibc read
+    /// window mirrors [`read_window`](Self::read_window).
+    c_handle: usize,
+}
+
+impl StdioStream {
+    /// Whether descriptor reads/writes may act on a pending thread cancellation.
+    /// This follows the stream, including after buffering-mode changes.
+    pub fn cancellation_enabled(&self) -> bool {
+        !self.open_flags.no_cancel
+    }
+
+    fn advance_offset(&mut self, bytes: usize) {
+        let inc = i64::try_from(bytes).unwrap_or(i64::MAX);
+        self.offset = self.offset.saturating_add(inc);
+    }
+
+    fn rewind_offset_one(&mut self) {
+        self.offset = self.offset.saturating_sub(1);
+    }
+
+    /// Create a new stream for the given fd with default buffering.
+    pub fn new(fd: i32, open_flags: OpenFlags) -> Self {
+        let buf_mode = if fd <= 2 {
+            // stdin/stdout are line-buffered by default; stderr unbuffered.
+            if fd == 2 {
+                BufMode::None
+            } else {
+                BufMode::Line
+            }
+        } else {
+            BufMode::Full
+        };
+        Self {
+            fd,
+            buffer: StreamBuffer::new(buf_mode, BUFSIZ),
+            open_flags,
+            flags: StreamFlags::default(),
+            wide_codec: None,
+            offset: 0,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            c_handle: 0,
+            mem_backing: None,
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
+        }
+    }
+
+    /// Create a stream wrapping an existing fd with specified buffering.
+    pub fn with_mode(fd: i32, open_flags: OpenFlags, buf_mode: BufMode) -> Self {
+        Self {
+            fd,
+            buffer: StreamBuffer::new(buf_mode, BUFSIZ),
+            open_flags,
+            flags: StreamFlags::default(),
+            wide_codec: None,
+            offset: 0,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            c_handle: 0,
+            mem_backing: None,
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
+        }
+    }
+
+    /// Reset a recycled `StdioStream` in place for a fresh `fmemopen` lifecycle.
+    #[inline]
+    pub fn reset_for_fmemopen(&mut self, open_flags: OpenFlags, offset: i64, c_handle: usize) {
+        self.fd = -1;
+        self.buffer.reset_for_reuse(BufMode::Full, BUFSIZ);
+        self.open_flags = open_flags;
+        self.flags = StreamFlags {
+            orientation: -1,
+            ..StreamFlags::default()
+        };
+        self.wide_codec = None;
+        self.offset = offset;
+        self.ungetc_byte = None;
+        self.read_pushback.clear();
+        self.mem_backing = None;
+        self.mem_pending_write = 0;
+        self.mem_pending_overflow = 0;
+        self.c_handle = c_handle;
+    }
+
+    /// Create a memory-backed stream for `fmemopen`.
+    ///
+    /// If `data` is provided (user buffer), it becomes the fixed backing.
+    /// `content_len` is the initial amount of valid content for reading.
+    pub fn new_mem_fixed(data: Vec<u8>, content_len: usize, open_flags: OpenFlags) -> Self {
+        let cl = content_len.min(data.len());
+        // For write modes without append, position starts at 0.
+        // For append mode, position starts at content_end.
+        let pos = if open_flags.append { cl } else { 0 };
+        Self {
+            fd: -2, // sentinel: memory-backed
+            buffer: StreamBuffer::new(BufMode::None, 0),
+            open_flags,
+            flags: StreamFlags::default(),
+            wide_codec: None,
+            offset: pos as i64,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            c_handle: 0,
+            mem_backing: Some(MemBacking::Fixed {
+                data,
+                pos,
+                content_end: cl,
+            }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
+        }
+    }
+
+    /// Create a read-only memory stream that carries NO data internally.
+    ///
+    /// Used by fmemopen read-only mode (bd-rv2gv6): the content lives in the
+    /// registered `FastFixedMemRead` cursor (which owns its own copy), and ALL
+    /// reads — fast path and fallback — are served from that cursor. The
+    /// stream's `mem_backing` is present only for seek/ftell position tracking
+    /// (`content_end` drives clamping; `data` is empty because the generic
+    /// mem-read path is unreachable for properly registered streams).
+    ///
+    /// This eliminates the 4 KiB stream-side copy per fmemopen open
+    /// (bd-rv2gv6: the copy was redundant with the cursor's copy).
+    pub fn new_mem_fixed_readonly(content_len: usize, open_flags: OpenFlags) -> Self {
+        let pos = if open_flags.append { content_len } else { 0 };
+        Self {
+            fd: -2,
+            buffer: StreamBuffer::new(BufMode::None, 0),
+            open_flags,
+            flags: StreamFlags::default(),
+            wide_codec: None,
+            offset: pos as i64,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            c_handle: 0,
+            mem_backing: Some(MemBacking::Fixed {
+                data: Vec::new(),
+                pos,
+                content_end: content_len,
+            }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
+        }
+    }
+
+    /// Orientation as glibc reports it in `FILE::_mode`: explicit orientation,
+    /// or byte (-1) once any byte I/O happened on an unoriented stream.
+    pub fn effective_orientation(&self) -> i32 {
+        if self.flags.orientation == 0 && self.flags.io_started {
+            -1
+        } else {
+            self.flags.orientation
+        }
+    }
+
+    /// Bind an immutable conversion engine once. Later locale selections,
+    /// seeks, and buffering changes cannot replace a wide stream's encoding.
+    pub fn bind_wide_codec(&mut self, codec: crate::iconv::MultibyteCodec) {
+        self.wide_codec.get_or_insert(codec);
+    }
+
+    #[must_use]
+    pub fn wide_codec(&self) -> Option<crate::iconv::MultibyteCodec> {
+        self.wide_codec
+    }
+
+    /// Give a [`Self::new_mem_fixed_readonly`] stream its bytes.
+    ///
+    /// That constructor leaves the generic backing empty because the ABI's
+    /// fast cursor owns the bytes, but not every operation goes through the
+    /// cursor (`fscanf`, for one), and the generic read then indexed an empty
+    /// buffer and panicked across the FFI boundary (process abort). The ABI
+    /// calls this when it hands the stream back to the generic path; it is a
+    /// no-op once the data is present.
+    pub fn materialize_mem_fixed_data(&mut self, bytes: &[u8]) {
+        if let Some(MemBacking::Fixed {
+            data, content_end, ..
+        }) = &mut self.mem_backing
+            && data.is_empty()
+            && *content_end > 0
+        {
+            let n = (*content_end).min(bytes.len());
+            data.extend_from_slice(&bytes[..n]);
+            data.resize(*content_end, 0);
+        }
+    }
+
+    /// Create a dynamically-growing memory stream for `open_memstream`.
+    pub fn new_mem_dynamic() -> Self {
+        Self {
+            fd: -2,
+            buffer: StreamBuffer::new(BufMode::None, 0),
+            open_flags: OpenFlags {
+                writable: true,
+                ..Default::default()
+            },
+            flags: StreamFlags::default(),
+            wide_codec: None,
+            offset: 0,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            c_handle: 0,
+            mem_backing: Some(MemBacking::Dynamic {
+                data: Vec::new(),
+                pos: 0,
+            }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
+        }
+    }
+
+    /// Create a wide memory stream whose seek/tell offsets count wchar_t
+    /// elements. Values are stored verbatim, independently of LC_CTYPE.
+    pub fn new_mem_wide_dynamic() -> Self {
+        let mut stream = Self::new_mem_dynamic();
+        stream.mem_backing = Some(MemBacking::WideDynamic {
+            data: Vec::new(),
+            pos: 0,
+        });
+        stream.flags.orientation = 1;
+        stream
+    }
+
+    /// Create a dynamic memory-backed stream with custom open flags.
+    /// Used by fopencookie where the mode determines read/write permissions.
+    pub fn new_mem_dynamic_with_flags(open_flags: OpenFlags) -> Self {
+        Self {
+            fd: -2,
+            buffer: StreamBuffer::new(BufMode::None, 0),
+            open_flags,
+            flags: StreamFlags::default(),
+            wide_codec: None,
+            offset: 0,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            c_handle: 0,
+            mem_backing: Some(MemBacking::Dynamic {
+                data: Vec::new(),
+                pos: 0,
+            }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Accessors
+    // -----------------------------------------------------------------------
+
+    /// Get the underlying file descriptor.
+    pub fn fd(&self) -> i32 {
+        self.fd
+    }
+
+    /// Seekability of the fd as last recorded (see [`StreamFlags::seekability`]).
+    pub fn seekability(&self) -> u8 {
+        self.flags.seekability
+    }
+
+    /// Record the fd's seekability (1 seekable, 2 not).
+    pub fn set_seekability(&mut self, value: u8) {
+        self.flags.seekability = value;
+    }
+
+    /// Whether writes append (`"a"`/`"a+"`, O_APPEND): the kernel, not the
+    /// stream's position, decides where written bytes land.
+    pub fn is_appending(&self) -> bool {
+        self.open_flags.append
+    }
+
+    /// Check if the stream is readable.
+    pub fn is_readable(&self) -> bool {
+        self.open_flags.readable
+    }
+
+    /// Check if the stream is writable.
+    pub fn is_writable(&self) -> bool {
+        self.open_flags.writable
+    }
+
+    /// Check if the stream was opened with truncation semantics.
+    pub fn is_truncating(&self) -> bool {
+        self.open_flags.truncate
+    }
+
+    /// True iff the most recent I/O operation on this stream was a read.
+    /// (False before any operation.) Used by `__freading`.
+    pub fn last_was_read(&self) -> bool {
+        self.flags.io_started && !self.flags.last_write
+    }
+
+    /// True iff the most recent I/O operation on this stream was a write.
+    /// (False before any operation.) Used by `__fwriting`.
+    pub fn last_was_write(&self) -> bool {
+        self.flags.io_started && self.flags.last_write
+    }
+
+    /// `fwide` semantics: if the orientation is still unset and `mode` is
+    /// non-zero, fix it (wide for mode > 0, byte for mode < 0); orientation is
+    /// sticky thereafter. Returns the resulting orientation (>0 wide, <0 byte,
+    /// 0 unset).
+    pub fn set_orientation(&mut self, mode: i32) -> i32 {
+        // Byte I/O on an unoriented stream fixes it as byte-oriented (glibc:
+        // `fwide(fp, 0)` after `putc` returns -1, and `fwide(fp, 1)` cannot
+        // switch it afterwards).
+        if self.flags.orientation == 0 && self.flags.io_started {
+            self.flags.orientation = -1;
+        }
+        if self.flags.orientation == 0 && mode != 0 {
+            self.flags.orientation = if mode > 0 { 1 } else { -1 };
+        }
+        self.flags.orientation
+    }
+
+    /// `__fpurge`: discard all buffered data — unread input and unflushed
+    /// output, plus any pushed-back bytes — without writing it out.
+    ///
+    /// The logical offset already counts buffered writes and excludes unread
+    /// read-ahead, so it moves back to the descriptor's offset, as glibc's
+    /// ftell reports after `__fpurge`: before the discarded writes (gnulib
+    /// test-fpurge expects 4 after `fflush` at 4 then 2 purged bytes), and past
+    /// the discarded read-ahead.
+    pub fn purge(&mut self) {
+        let pending = self.buffer.pending_write_data().len() as i64;
+        let unread = self.readable_buffered() as i64;
+        self.offset = self.offset - pending + unread;
+        self.buffer.reset();
+        self.ungetc_byte = None;
+        self.read_pushback.clear();
+    }
+
+    /// Whether the caller owns synchronization of ordinary stream operations.
+    #[inline]
+    pub fn locking_bycaller(&self) -> bool {
+        self.flags.locking_bycaller
+    }
+
+    /// `__fsetlocking`: FSETLOCKING_QUERY(0) only reports the current locking
+    /// mode; INTERNAL(1)/BYCALLER(2) change it. Returns the mode that was in
+    /// effect BEFORE the call (glibc returns the previous mode on a set and the
+    /// current mode on a query), encoded as 1 (INTERNAL) or 2 (BYCALLER).
+    pub fn set_locking(&mut self, typ: i32) -> i32 {
+        let prev = if self.flags.locking_bycaller { 2 } else { 1 };
+        match typ {
+            1 => self.flags.locking_bycaller = false, // FSETLOCKING_INTERNAL
+            2 => self.flags.locking_bycaller = true,  // FSETLOCKING_BYCALLER
+            _ => {}                                   // FSETLOCKING_QUERY / other
+        }
+        prev
+    }
+
+    /// Check if EOF has been reached.
+    pub fn is_eof(&self) -> bool {
+        self.flags.eof
+    }
+
+    /// Check if an error has occurred.
+    pub fn is_error(&self) -> bool {
+        self.flags.error
+    }
+
+    /// Clear EOF and error indicators.
+    pub fn clear_err(&mut self) {
+        self.flags.eof = false;
+        self.flags.error = false;
+    }
+
+    /// Set the EOF indicator.
+    pub fn set_eof(&mut self) {
+        self.flags.eof = true;
+    }
+
+    /// Set the error indicator.
+    pub fn set_error(&mut self) {
+        self.flags.error = true;
+    }
+
+    /// Current logical file offset.
+    pub fn offset(&self) -> i64 {
+        self.offset
+    }
+
+    /// Set the logical offset (after a successful lseek).
+    pub fn set_offset(&mut self, off: i64) {
+        self.offset = off;
+    }
+
+    /// Get the current buffering mode.
+    pub fn buf_mode(&self) -> BufMode {
+        self.buffer.mode()
+    }
+
+    // -----------------------------------------------------------------------
+    // Buffering control
+    // -----------------------------------------------------------------------
+
+    /// Change the buffering mode (POSIX setvbuf).
+    ///
+    /// Must be called before any I/O. Returns false if too late.
+    pub fn set_buffering(&mut self, mode: BufMode, size: usize) -> bool {
+        self.buffer.set_mode(mode, size)
+    }
+
+    /// `setvbuf` on a stream already in use, which glibc accepts. With
+    /// `keep_buffer` (no caller buffer, Full or Line) the mode flips in place
+    /// and buffered bytes stay; otherwise the caller has synced the stream
+    /// (flushed staged output, given back unread input it could) and the
+    /// buffer is rebuilt. Returns false if output is still staged.
+    pub fn rebuffer(&mut self, mode: BufMode, size: usize, keep_buffer: bool) -> bool {
+        if keep_buffer && !matches!(mode, BufMode::None) {
+            self.buffer.switch_mode_in_place(mode, size);
+            return true;
+        }
+        if !self.buffer.pending_write_data().is_empty() {
+            return false;
+        }
+        let eof = self.flags.eof;
+        let _ = self.prepare_seek();
+        self.flags.eof = eof;
+        self.buffer.rebuild_after_sync(mode, size)
+    }
+
+    // -----------------------------------------------------------------------
+    // Write operations
+    // -----------------------------------------------------------------------
+
+    /// Buffer a write and return the buffering outcome.
+    ///
+    /// Caller is responsible for flushing `flush_data` and advancing the
+    /// logical offset by the number of bytes accepted for this call.
+    pub fn buffer_write<'a>(&mut self, data: &'a [u8]) -> Option<WriteResult<'a>> {
+        if !self.open_flags.writable {
+            self.flags.error = true;
+            return None;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        Some(self.buffer.write(data))
+    }
+
+    /// Fast single-byte buffered write for the common case (Full-buffered fd stream
+    /// with room). Returns `true` iff the byte was appended with no flush — exactly
+    /// the `buffer_write(&[byte])` path that returns `WriteResult { flush_needed:
+    /// false, .. }`, PLUS the caller's usual `set_offset(offset + 1)`. Returns `false`
+    /// (caller falls back to the full `buffer_write` + flush path, unchanged) for a
+    /// non-writable, mem-backed, Line/unbuffered, or full-buffer stream. Sets the same
+    /// flags as `buffer_write` so observable state is byte-identical.
+    #[inline]
+    pub fn fast_putc(&mut self, byte: u8) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_putc(byte) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Fast multi-byte buffered write (bulk sibling of `fast_putc`): appends `data` iff a
+    /// Full-buffered fd stream has room for all of it (no flush) — byte-identical to the
+    /// no-flush `buffer_write(data)` path plus the caller's `set_offset(offset + len)`.
+    /// Returns `false` (caller falls back to the full path) otherwise.
+    #[inline]
+    pub fn fast_write(&mut self, data: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write(data) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(data.len() as i64);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Like `fast_write`, but also buffers non-newline bytes on `BufMode::Line` streams.
+    #[inline]
+    pub fn fast_write_line_or_full(&mut self, data: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write_line_or_full(data) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(data.len() as i64);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Fast single-byte buffered read for the common case: returns `Some(byte)` iff a byte
+    /// is already in the read buffer for a clean readable fd stream — reusing
+    /// `buffered_read_into` (which advances the cursor/offset and clears `last_write`).
+    /// Returns `None` (caller falls back to the full path: refill / ungetc / transition /
+    /// mem) for an empty buffer, a write-pending stream, pending ungetc/pushback, a
+    /// mem-backed or non-readable stream. The C read/write-transition contract guarantees
+    /// the buffer is in a clean read state here.
+    #[inline]
+    pub fn fast_getc(&mut self) -> Option<u8> {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return None;
+        }
+        // Lean in-buffer read mirroring `buffered_read_into`'s effects for the buffered
+        // single-byte case (io_started=true, last_write=false, offset+1), skipping its
+        // dst-slice machinery and the redundant gates already checked above. `None` ⇒
+        // buffer exhausted ⇒ caller refills on the slow path.
+        match self.buffer.fast_getc() {
+            Some(b) => {
+                self.flags.io_started = true;
+                self.flags.last_write = false;
+                self.advance_offset(1);
+                Some(b)
+            }
+            None => None,
+        }
+    }
+
+    /// Fast `puts`: append `body` + `'\n'` iff a Full-buffered fd stream has room for all
+    /// of it (no flush) — byte-identical to `buffer_write(body)` then `buffer_write(b"\n")`
+    /// plus the offset bump. Returns `false` (caller's full path) otherwise.
+    #[inline]
+    pub fn fast_puts(&mut self, body: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write_line(body) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(body.len() as i64 + 1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The buffered, not yet consumed bytes a caller may read in place: what
+    /// glibc exposes as `[_IO_read_ptr, _IO_read_end)`, which the inline
+    /// `getc_unlocked` and gnulib's freadahead/freadptr/freadseek read and
+    /// advance directly. `None` unless the stream is a readable fd stream in a
+    /// clean read state (no pending write, no pushed-back bytes, which must be
+    /// returned first) with bytes buffered. The slice stays valid until the
+    /// stream is next modified.
+    pub fn read_window(&self) -> Option<&[u8]> {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.flags.orientation > 0
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return None;
+        }
+        let window = self.buffer.peek();
+        (!window.is_empty()).then_some(window)
+    }
+
+    /// Whether the C handle reports this stream as buffered (`_IO_UNBUFFERED`
+    /// clear): an fd-backed stream in Full or Line mode, as glibc reports it.
+    /// Code poking glibc's FILE fills such a stream's buffer in place ({fmt}
+    /// does once the bit is clear, after an `__overflow` that must leave a
+    /// [`write_window`](Self::write_window) behind), so memory-backed streams,
+    /// which never publish one, stay reported as unbuffered.
+    pub fn reports_buffered(&self) -> bool {
+        !self.is_mem_backed() && !matches!(self.buffer.mode(), BufMode::None)
+    }
+
+    /// Whether this stream can ever publish a [`write_window`](Self::write_window):
+    /// a writable stream [reported as buffered](Self::reports_buffered).
+    pub fn write_window_capable(&self) -> bool {
+        self.open_flags.writable && self.reports_buffered() && self.flags.orientation <= 0
+    }
+
+    /// The write buffer a caller may fill in place, as `(base address, bytes
+    /// staged, capacity)`: what glibc exposes as `[_IO_write_base,
+    /// _IO_write_ptr, _IO_write_end)`, which the inline `putc_unlocked` fills
+    /// directly. `None` unless the stream is [`write_window_capable`] and in
+    /// write mode (its last operation wrote), so a read-mode stream keeps only
+    /// its read window. Bytes stored in place are accounted for by
+    /// [`commit_write_window`](Self::commit_write_window).
+    ///
+    /// [`write_window_capable`]: Self::write_window_capable
+    pub fn write_window(&self) -> Option<(usize, usize, usize)> {
+        if !self.write_window_capable() || !self.flags.last_write {
+            return None;
+        }
+        self.buffer.write_window()
+    }
+
+    /// Account for the caller having filled the write window up to `used`
+    /// bytes from its base (see [`write_window`](Self::write_window)).
+    pub fn commit_write_window(&mut self, used: usize) {
+        let added = self.buffer.commit_write(used);
+        if added == 0 {
+            return;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        let _ = self.set_orientation(-1);
+        self.offset = self.offset.saturating_add(added as i64);
+    }
+
+    /// The opaque C handle token set by [`set_c_handle`](Self::set_c_handle).
+    #[inline]
+    pub fn c_handle(&self) -> usize {
+        self.c_handle
+    }
+
+    /// Record the C `FILE` handle token this stream is published through.
+    pub fn set_c_handle(&mut self, handle: usize) {
+        self.c_handle = handle;
+    }
+
+    /// Account for the first `n` bytes of [`read_window`](Self::read_window)
+    /// having been consumed in place by the caller.
+    pub fn consume_window(&mut self, n: usize) {
+        let n = n.min(self.buffer.readable());
+        if n == 0 {
+            return;
+        }
+        self.buffer.consume(n);
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+        let _ = self.set_orientation(-1);
+        self.advance_offset(n);
+    }
+
+    /// Fast bulk buffered read (bulk sibling of `fast_getc`): fills `dst` entirely iff all
+    /// `dst.len()` bytes are already buffered for a clean readable fd stream (no refill).
+    /// Mirrors `buffered_read_into`'s io_started/last_write/offset effects. Returns `false`
+    /// (caller falls back to the full path) otherwise.
+    #[inline]
+    pub fn fast_read(&mut self, dst: &mut [u8]) -> bool {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return false;
+        }
+        if self.buffer.fast_read(dst) {
+            self.flags.io_started = true;
+            self.flags.last_write = false;
+            self.advance_offset(dst.len());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get any pending write data that needs flushing.
+    pub fn pending_flush(&self) -> &[u8] {
+        self.buffer.pending_write_data()
+    }
+
+    /// Mark the write buffer as successfully flushed.
+    pub fn mark_flushed(&mut self) {
+        self.buffer.mark_flushed();
+    }
+
+    // -----------------------------------------------------------------------
+    // Read operations
+    // -----------------------------------------------------------------------
+
+    /// Read from the internal buffer. Returns available bytes.
+    ///
+    /// If empty, caller should call `fill_read_buffer` then retry.
+    pub fn buffered_read(&mut self, count: usize) -> Vec<u8> {
+        if count == 0 {
+            return Vec::new();
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return Vec::new();
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+
+        let mut result = Vec::new();
+        let mut remaining = count;
+
+        // First, return ungetc byte if present.
+        if let Some(b) = self.ungetc_byte.take() {
+            result.push(b);
+            remaining -= 1;
+            if remaining == 0 {
+                self.advance_offset(result.len());
+                return result;
+            }
+        }
+
+        while remaining > 0 {
+            let Some(b) = self.read_pushback.pop_front() else {
+                break;
+            };
+            result.push(b);
+            remaining -= 1;
+        }
+        if remaining == 0 {
+            self.advance_offset(result.len());
+            return result;
+        }
+
+        // Then read from buffer.
+        let data = self.buffer.read(remaining);
+        result.extend_from_slice(data);
+        self.advance_offset(result.len());
+        result
+    }
+
+    /// Zero-allocation sibling of [`buffered_read`](Self::buffered_read): fills
+    /// `dst` from the ungetc byte, pushback queue, then the read buffer, and
+    /// returns the number of bytes written. Behaviour is byte-for-byte identical
+    /// to `buffered_read(dst.len())` followed by a copy into `dst` — but it writes
+    /// straight into the caller's buffer, so `fread` no longer allocates a
+    /// throwaway `Vec` per call (which, in the shipped `libc.so`, would route
+    /// through the security-membrane allocator at ~100 ns each).
+    pub fn buffered_read_into(&mut self, dst: &mut [u8]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return 0;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+
+        let mut w = 0usize;
+
+        if let Some(b) = self.ungetc_byte.take() {
+            dst[w] = b;
+            w += 1;
+            if w == dst.len() {
+                self.advance_offset(w);
+                return w;
+            }
+        }
+
+        while w < dst.len() {
+            let Some(b) = self.read_pushback.pop_front() else {
+                break;
+            };
+            dst[w] = b;
+            w += 1;
+        }
+        if w == dst.len() {
+            self.advance_offset(w);
+            return w;
+        }
+
+        let data = self.buffer.read(dst.len() - w);
+        let n = data.len();
+        dst[w..w + n].copy_from_slice(data);
+        w += n;
+        self.advance_offset(w);
+        w
+    }
+
+    /// Number of bytes available for reading without I/O.
+    pub fn readable_buffered(&self) -> usize {
+        self.ungetc_byte.is_some() as usize + self.read_pushback.len() + self.buffer.readable()
+    }
+
+    /// Stage externally-fetched bytes so subsequent reads see them first.
+    ///
+    /// Used by scanf-family entrypoints after they bulk-read from a
+    /// non-seekable fd and parse only a prefix. Unlike `ungetc`, this does not
+    /// alter the logical offset; callers set the post-parse offset explicitly.
+    pub fn pushback_read_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        for &byte in bytes.iter().rev() {
+            self.read_pushback.push_front(byte);
+        }
+        self.flags.eof = false;
+    }
+
+    /// Return a previously consumed byte sequence in its original order.
+    ///
+    /// Buffered fd reads normally rewind in place without allocation. A
+    /// character crossing a refill, or a memory stream without an I/O buffer,
+    /// uses the pushback queue when the single-byte path has no more room.
+    /// `preserve_eof` distinguishes an incomplete decoded prefix at EOF from
+    /// an explicit unget operation, which must clear EOF.
+    pub fn unread_bytes(&mut self, bytes: &[u8], preserve_eof: bool) {
+        let was_eof = self.flags.eof;
+        if !bytes.is_empty() && (self.ungetc_byte.is_some() || !self.read_pushback.is_empty()) {
+            if let Some(byte) = self.ungetc_byte.take() {
+                self.read_pushback.push_front(byte);
+            }
+            self.pushback_read_bytes(bytes);
+            self.offset = self
+                .offset
+                .saturating_sub(i64::try_from(bytes.len()).unwrap_or(i64::MAX));
+            if preserve_eof && was_eof {
+                self.flags.eof = true;
+            }
+            return;
+        }
+        for index in (0..bytes.len()).rev() {
+            if !self.ungetc(bytes[index]) {
+                if let Some(byte) = self.ungetc_byte.take() {
+                    self.read_pushback.push_front(byte);
+                }
+                self.pushback_read_bytes(&bytes[..=index]);
+                self.offset = self
+                    .offset
+                    .saturating_sub(i64::try_from(index + 1).unwrap_or(i64::MAX));
+                break;
+            }
+        }
+        if preserve_eof && was_eof {
+            self.flags.eof = true;
+        }
+    }
+
+    /// Rewind a memory-backed stream by `unconsumed` bytes after a bulk scanf
+    /// read over-read the backing.
+    ///
+    /// `read_stream_for_scanf` consumes a whole chunk but `scanf` only parses a
+    /// prefix; the unparsed tail must be made available to the next read on the
+    /// same stream (glibc consumes exactly what it parses). No-op for fd-backed
+    /// streams, whose buffer/offset integration is tracked separately
+    /// (bd-2g7oyh.180).
+    pub fn scanf_rewind_mem(&mut self, unconsumed: usize) {
+        if unconsumed == 0 {
+            return;
+        }
+        if let Some(ref mut backing) = self.mem_backing {
+            // SEEK_CUR by the unconsumed count; mem_read already advanced pos
+            // past it, so this lands exactly on the first unparsed byte.
+            backing.seek(-(unconsumed as i64), 1);
+            self.offset = backing.position() as i64;
+            self.flags.eof = false;
+        }
+    }
+
+    /// Append bytes into `out` up to and including the first occurrence of
+    /// `delim`, consuming exactly that many bytes from the read buffer /
+    /// memory backing — never reading past the delimiter.
+    ///
+    /// This is the bulk primitive behind `getdelim`/`getline`: it lets the ABI
+    /// layer read a whole line under a single registry lock and a single policy
+    /// decision, instead of one `fgetc` (lock + policy decision + 1-byte `Vec`
+    /// allocation) per character. Refilling fd-backed streams from the
+    /// descriptor is left to the caller (signalled by [`ReadUntil::NeedRefill`]),
+    /// because that path lives in the ABI layer alongside the membrane policy.
+    pub fn read_until_delim(&mut self, delim: u8, out: &mut Vec<u8>) -> ReadUntil {
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return ReadUntil::Eof;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+
+        // A pending ungetc byte is logically first (mirrors buffered_read/mem_read).
+        if let Some(b) = self.ungetc_byte.take() {
+            out.push(b);
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            } else {
+                self.advance_offset(1);
+            }
+            if b == delim {
+                return ReadUntil::Found;
+            }
+        }
+
+        while let Some(b) = self.read_pushback.pop_front() {
+            out.push(b);
+            self.advance_offset(1);
+            if b == delim {
+                return ReadUntil::Found;
+            }
+        }
+
+        if let Some(backing) = self.mem_backing.as_mut() {
+            let rem = backing.peek();
+            if rem.is_empty() {
+                self.flags.eof = true;
+                return ReadUntil::Eof;
+            }
+            let outcome = match crate::string::mem::memchr(rem, delim, rem.len()) {
+                Some(k) => {
+                    out.extend_from_slice(&rem[..=k]);
+                    backing.consume(k + 1);
+                    ReadUntil::Found
+                }
+                None => {
+                    let n = rem.len();
+                    out.extend_from_slice(rem);
+                    backing.consume(n);
+                    // Unlike a bounded read, getdelim keeps looking until
+                    // the delimiter or an attempted read past the end. The
+                    // final unterminated line therefore sets EOF immediately.
+                    self.flags.eof = true;
+                    ReadUntil::Eof
+                }
+            };
+            self.offset = backing.position() as i64;
+            outcome
+        } else {
+            let buffered = self.buffer.peek();
+            if buffered.is_empty() {
+                return ReadUntil::NeedRefill;
+            }
+            match crate::string::mem::memchr(buffered, delim, buffered.len()) {
+                Some(k) => {
+                    out.extend_from_slice(&buffered[..=k]);
+                    self.buffer.consume(k + 1);
+                    self.advance_offset(k + 1);
+                    ReadUntil::Found
+                }
+                None => {
+                    let n = buffered.len();
+                    out.extend_from_slice(buffered);
+                    self.buffer.consume(n);
+                    self.advance_offset(n);
+                    ReadUntil::NeedRefill
+                }
+            }
+        }
+    }
+
+    /// Fill `dst` with bytes up to and including the first `delim`, or until
+    /// `dst` is full — whichever comes first — consuming exactly the bytes
+    /// written. Returns `(bytes_written_this_call, outcome)`.
+    ///
+    /// Zero-allocation, length-bounded sibling of [`read_until_delim`]: the bulk
+    /// primitive behind `fgets`, which previously read one byte at a time via
+    /// `buffered_read(1)` — a 1-byte `Vec` allocation per character. Writes
+    /// straight into the caller's destination (e.g. the C `char*`), so a whole
+    /// line copies with zero heap traffic. fd-backed refill is the caller's job
+    /// (signalled by [`ReadUntil::NeedRefill`]); the caller stops once `dst` is
+    /// full regardless of the outcome.
+    pub fn read_into_slice(&mut self, delim: u8, dst: &mut [u8]) -> (usize, ReadUntil) {
+        if dst.is_empty() {
+            return (0, ReadUntil::NeedRefill);
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return (0, ReadUntil::Eof);
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+
+        let mut written = 0usize;
+
+        // A pending ungetc byte is logically first (mirrors buffered_read).
+        if let Some(b) = self.ungetc_byte.take() {
+            dst[written] = b;
+            written += 1;
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            } else {
+                self.advance_offset(1);
+            }
+            if b == delim {
+                return (written, ReadUntil::Found);
+            }
+            if written == dst.len() {
+                return (written, ReadUntil::NeedRefill);
+            }
+        }
+
+        while written < dst.len() {
+            let Some(b) = self.read_pushback.pop_front() else {
+                break;
+            };
+            dst[written] = b;
+            written += 1;
+            self.advance_offset(1);
+            if b == delim {
+                return (written, ReadUntil::Found);
+            }
+        }
+        if written == dst.len() {
+            return (written, ReadUntil::NeedRefill);
+        }
+
+        let limit = dst.len() - written;
+
+        if let Some(backing) = self.mem_backing.as_mut() {
+            let rem = backing.peek();
+            let rem_len = rem.len();
+            if rem_len == 0 {
+                self.flags.eof = true;
+                return (written, ReadUntil::Eof);
+            }
+            let scan_len = rem_len.min(limit);
+            let (n, found) = match crate::string::mem::memchr(rem, delim, scan_len) {
+                Some(k) => (k + 1, true),
+                None => (scan_len, false),
+            };
+            dst[written..written + n].copy_from_slice(&rem[..n]);
+            backing.consume(n);
+            self.offset = backing.position() as i64;
+            written += n;
+            let outcome = if found {
+                ReadUntil::Found
+            } else if written == dst.len() {
+                // Filling the caller's request is not an attempt past EOF,
+                // even when its last byte is the last byte of the backing.
+                ReadUntil::NeedRefill
+            } else {
+                self.flags.eof = true;
+                ReadUntil::Eof
+            };
+            (written, outcome)
+        } else {
+            let buffered = self.buffer.peek();
+            if buffered.is_empty() {
+                return (written, ReadUntil::NeedRefill);
+            }
+            let scan_len = buffered.len().min(limit);
+            let (n, found) = match crate::string::mem::memchr(buffered, delim, scan_len) {
+                Some(k) => (k + 1, true),
+                None => (scan_len, false),
+            };
+            dst[written..written + n].copy_from_slice(&buffered[..n]);
+            self.buffer.consume(n);
+            self.advance_offset(n);
+            written += n;
+            let outcome = if found {
+                ReadUntil::Found
+            } else {
+                ReadUntil::NeedRefill
+            };
+            (written, outcome)
+        }
+    }
+
+    /// ASCII-only wide-line fast path for `fgetws`.
+    ///
+    /// This consumes bytes only when the currently buffered data can complete a
+    /// valid `fgetws` result without decoding: either a newline is present before
+    /// `dst` fills, or `dst` fills with ASCII bytes. If the buffer starts with a
+    /// multibyte character or holds only an incomplete ASCII prefix, it returns
+    /// `None` without advancing the stream so the caller can use the normal
+    /// `fgetwc` decoder.
+    pub fn read_ascii_line_into_wide(&mut self, dst: &mut [u32]) -> Option<(usize, ReadUntil)> {
+        if dst.is_empty() {
+            return Some((0, ReadUntil::NeedRefill));
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return Some((0, ReadUntil::Eof));
+        }
+        if self.is_mem_backed() || self.ungetc_byte.is_some() || !self.read_pushback.is_empty() {
+            return None;
+        }
+
+        let buffered = self.buffer.peek();
+        if buffered.is_empty() {
+            return Some((0, ReadUntil::NeedRefill));
+        }
+
+        let limit = dst.len().min(buffered.len());
+        for i in 0..limit {
+            let byte = buffered[i];
+            if byte >= 0x80 {
+                return None;
+            }
+            dst[i] = byte as u32;
+            if byte == b'\n' {
+                let n = i + 1;
+                self.flags.io_started = true;
+                self.flags.last_write = false;
+                self.buffer.consume(n);
+                self.advance_offset(n);
+                return Some((n, ReadUntil::Found));
+            }
+        }
+
+        if limit == dst.len() {
+            self.flags.io_started = true;
+            self.flags.last_write = false;
+            self.buffer.consume(limit);
+            self.advance_offset(limit);
+            return Some((limit, ReadUntil::NeedRefill));
+        }
+
+        None
+    }
+
+    /// Fill the read buffer with externally-fetched data.
+    /// Returns the number of bytes actually buffered.
+    pub fn fill_read_buffer(&mut self, data: &[u8]) -> usize {
+        self.buffer.fill(data)
+    }
+
+    /// Total capacity of the internal buffer.
+    pub fn buffer_capacity(&self) -> usize {
+        self.buffer.capacity()
+    }
+
+    /// Push a byte back (ungetc). Returns false if already one pushed back.
+    pub fn ungetc(&mut self, byte: u8) -> bool {
+        // Like glibc, back the read position up over the byte just consumed
+        // (storing `byte` there; a seek discards the buffer, so the slot is
+        // never re-read as file data) instead of parking it aside: the
+        // pushed-back byte then stays inside the read window, which gnulib's
+        // freadahead counts (`ungetc` must leave its value unchanged).
+        let in_buffer = self.ungetc_byte.is_none()
+            && self.read_pushback.is_empty()
+            && !self.is_mem_backed()
+            && !self.flags.last_write
+            && self.buffer.readable() < self.buffer.capacity()
+            && self.buffer.unget(byte);
+        let pushed = if in_buffer {
+            true
+        } else if let Some(existing) = self.ungetc_byte {
+            // Push the existing byte into the buffer, and replace ungetc_byte
+            // with the new byte, maintaining LIFO order.
+            if self.buffer.unget(existing) {
+                self.ungetc_byte = Some(byte);
+                true
+            } else {
+                false
+            }
+        } else {
+            self.ungetc_byte = Some(byte);
+            true
+        };
+
+        if pushed {
+            self.flags.io_started = true;
+            self.flags.eof = false; // POSIX: ungetc clears EOF
+            self.rewind_offset_one();
+        }
+        pushed
+    }
+
+    // -----------------------------------------------------------------------
+    // Seeking
+    // -----------------------------------------------------------------------
+
+    /// Prepare for a seek: discard read buffer and flush writes.
+    ///
+    /// Returns pending write data that must be flushed before the seek.
+    pub fn prepare_seek(&mut self) -> Vec<u8> {
+        let pending = self.buffer.pending_write_data().to_vec();
+        self.ungetc_byte = None;
+        self.read_pushback.clear();
+        self.buffer.reset();
+        self.flags.eof = false;
+        self.buffer.mark_flushed();
+        pending
+    }
+
+    // -----------------------------------------------------------------------
+    // Close
+    // -----------------------------------------------------------------------
+
+    /// Prepare for close: returns pending write data.
+    pub fn prepare_close(&mut self) -> Vec<u8> {
+        let pending = self.buffer.pending_write_data().to_vec();
+        self.buffer.mark_flushed();
+        pending
+    }
+
+    /// Check if the stream is closed.
+    pub fn is_closed(&self) -> bool {
+        self.fd < 0 && self.mem_backing.is_none()
+    }
+
+    // -----------------------------------------------------------------------
+    // Memory-backed stream operations
+    // -----------------------------------------------------------------------
+
+    /// Check if this stream is memory-backed (fmemopen/open_memstream).
+    pub fn is_mem_backed(&self) -> bool {
+        self.mem_backing.is_some()
+    }
+
+    /// Write data to a memory-backed stream. Returns bytes written.
+    /// For fd-backed streams, returns 0 (caller should use buffer_write).
+    pub fn mem_write(&mut self, data: &[u8]) -> usize {
+        if !self.open_flags.writable {
+            self.flags.error = true;
+            return 0;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        if let Some(ref mut backing) = self.mem_backing {
+            let n = backing.write(data);
+            if self.open_flags.truncate
+                && let MemBacking::Fixed { data, pos, .. } = backing
+                && *pos == data.len()
+                && !data.is_empty()
+            {
+                let last = data.len() - 1;
+                data[last] = 0;
+            }
+            if matches!(backing, MemBacking::Fixed { .. }) {
+                let next_pending = self.mem_pending_write.saturating_add(data.len());
+                if n == data.len() && self.mem_pending_overflow == 0 {
+                    self.mem_pending_write = next_pending % BUFSIZ;
+                    self.offset = backing.position() as i64;
+                    return data.len();
+                }
+                if next_pending <= BUFSIZ {
+                    self.mem_pending_write = next_pending;
+                    self.mem_pending_overflow =
+                        self.mem_pending_overflow.saturating_add(data.len() - n);
+                    self.offset =
+                        backing.position().saturating_add(self.mem_pending_overflow) as i64;
+                    return data.len();
+                }
+                // Write exceeds glibc's 8192-byte (`BUFSIZ`) FILE buffer: flush
+                // immediately and report the short write / overflow at write time.
+                self.mem_pending_write = 0;
+                self.mem_pending_overflow = 0;
+                self.flags.error = true;
+                self.offset = backing.position() as i64;
+                return n;
+            }
+            self.offset = backing.position() as i64;
+            n
+        } else {
+            0
+        }
+    }
+
+    /// Write complete wide elements without an intermediate byte encoding.
+    /// None identifies a different stream kind; a short result is an output
+    /// failure. Allocation failure preserves the prior contents and position.
+    pub fn mem_write_wide(&mut self, source: &[u32]) -> Option<usize> {
+        let Some(MemBacking::WideDynamic { data, pos }) = &mut self.mem_backing else {
+            return None;
+        };
+        if !self.open_flags.writable {
+            self.flags.error = true;
+            return Some(0);
+        }
+        if source.is_empty() {
+            return Some(0);
+        }
+        let Some(end) = pos.checked_add(source.len()) else {
+            self.flags.error = true;
+            return Some(0);
+        };
+        if end > data.len() {
+            if data.try_reserve(end - data.len()).is_err() {
+                self.flags.error = true;
+                return Some(0);
+            }
+            data.resize(end, 0);
+        }
+        data[*pos..end].copy_from_slice(source);
+        *pos = end;
+        self.offset = end as i64;
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        Some(source.len())
+    }
+
+    /// Flush staged writes on a memory-backed stream (`bd-lamxlj`).
+    ///
+    /// Returns `false` (and sets `error` + clamps `offset` to the backing
+    /// position) if bytes buffered in the modelled `BUFSIZ` window overflowed a
+    /// `MemBacking::Fixed` (`fmemopen`) stream since the last flush.
+    pub fn mem_flush(&mut self) -> bool {
+        self.mem_pending_write = 0;
+        if self.mem_pending_overflow > 0 {
+            self.mem_pending_overflow = 0;
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            }
+            self.flags.error = true;
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Read data from a memory-backed stream. Returns data read.
+    /// For fd-backed streams, returns empty (caller should use buffered_read).
+    pub fn mem_read(&mut self, count: usize) -> Vec<u8> {
+        if count == 0 {
+            return Vec::new();
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return Vec::new();
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+
+        let mut result = Vec::new();
+        let mut remaining = count;
+
+        // Handle ungetc byte first.
+        if let Some(b) = self.ungetc_byte.take() {
+            result.push(b);
+            remaining -= 1;
+            if remaining == 0 {
+                self.advance_offset(result.len());
+                return result;
+            }
+        }
+
+        while remaining > 0 {
+            let Some(byte) = self.read_pushback.pop_front() else {
+                break;
+            };
+            result.push(byte);
+            remaining -= 1;
+        }
+        if remaining == 0 {
+            self.advance_offset(result.len());
+            return result;
+        }
+
+        if let Some(ref mut backing) = self.mem_backing {
+            let data = backing.read(remaining);
+            if data.len() < remaining {
+                self.flags.eof = true;
+            }
+            result.extend(data);
+            self.offset = backing.position() as i64;
+        }
+        result
+    }
+
+    /// Zero-allocation sibling of [`mem_read`](Self::mem_read): fills `dst` from
+    /// the ungetc byte then the memory backing, returning the number of bytes
+    /// written. Byte-for-byte identical to `mem_read(dst.len())` + copy, but
+    /// writes straight into the caller's buffer (no per-`fread` `Vec`).
+    pub fn mem_read_into(&mut self, dst: &mut [u8]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return 0;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+
+        let mut w = 0usize;
+
+        if let Some(b) = self.ungetc_byte.take() {
+            dst[w] = b;
+            w += 1;
+            if w == dst.len() {
+                self.advance_offset(w);
+                return w;
+            }
+        }
+
+        while w < dst.len() {
+            let Some(byte) = self.read_pushback.pop_front() else {
+                break;
+            };
+            dst[w] = byte;
+            w += 1;
+        }
+        if w == dst.len() {
+            self.advance_offset(w);
+            return w;
+        }
+
+        let mut hit_eof = false;
+        if let Some(ref mut backing) = self.mem_backing {
+            // peek + consume is zero-copy (the owned `backing.read` would allocate);
+            // copying the slice ends the immutable borrow before `consume`.
+            let avail = backing.peek();
+            let want = dst.len() - w;
+            let n = avail.len().min(want);
+            dst[w..w + n].copy_from_slice(&avail[..n]);
+            hit_eof = n < want;
+            backing.consume(n);
+            w += n;
+            self.offset = backing.position() as i64;
+        }
+        if hit_eof {
+            self.flags.eof = true;
+        }
+        w
+    }
+
+    /// Seek within a memory-backed stream.
+    /// Returns the new position on success, or -1 on failure.
+    pub fn mem_seek(&mut self, offset: i64, whence: i32) -> i64 {
+        if !self.mem_flush() {
+            return -1;
+        }
+        // Queued pushback precedes the backing's physical position. A relative
+        // seek starts at the logical position, then discards that pushback.
+        let (offset, whence) = if whence == 1 {
+            let Some(absolute) = self.offset.checked_add(offset) else {
+                return -1;
+            };
+            (absolute, 0)
+        } else {
+            (offset, whence)
+        };
+        if let Some(ref mut backing) = self.mem_backing {
+            if let Some(new_pos) = backing.seek(offset, whence) {
+                self.ungetc_byte = None;
+                self.read_pushback.clear();
+                self.flags.eof = false;
+                self.offset = new_pos;
+                new_pos
+            } else {
+                -1
+            }
+        } else {
+            -1
+        }
+    }
+
+    /// Get a reference to the memory backing data (for open_memstream sync).
+    pub fn mem_data(&self) -> Option<&[u8]> {
+        self.mem_backing.as_ref().map(|b| b.data())
+    }
+
+    /// Wide storage for publication by open_wmemstream's ABI owner. The
+    /// current position may precede its retained tail after a backward seek.
+    pub fn mem_wide_data(&self) -> Option<&[u32]> {
+        match self.mem_backing.as_ref()? {
+            MemBacking::WideDynamic { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Clone the memory backing data (for returning to C caller).
+    pub fn mem_data_clone(&self) -> Option<Vec<u8>> {
+        self.mem_backing.as_ref().map(|b| b.data_clone())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_seek_cur_accounts_for_pending_pushback() {
+        let flags = parse_mode(b"r").unwrap();
+        for (relative, position, suffix) in [
+            (-1, 3, b"def".as_slice()),
+            (0, 4, b"ef".as_slice()),
+            (1, 5, b"f".as_slice()),
+        ] {
+            let mut stream = StdioStream::new_mem_fixed(b"abcdef".to_vec(), 6, flags);
+            assert_eq!(stream.mem_read(6), b"abcdef");
+            stream.unread_bytes(b"XY", false);
+            assert_eq!(stream.offset(), 4);
+            assert_eq!(stream.mem_seek(relative, 1), position);
+            assert_eq!(stream.offset(), position);
+            assert_eq!(stream.mem_read(suffix.len()), suffix);
+            assert_eq!(stream.offset(), 6);
+        }
+
+        let mut stream = StdioStream::new_mem_fixed(b"abcdef".to_vec(), 6, flags);
+        assert_eq!(stream.mem_read(6), b"abcdef");
+        stream.unread_bytes(b"XY", false);
+        assert_eq!(stream.mem_seek(i64::MAX, 1), -1);
+        assert_eq!(stream.offset(), 4);
+        assert_eq!(
+            stream.mem_read(2),
+            b"XY",
+            "a failed seek preserves pushback"
+        );
+        assert_eq!(stream.offset(), 6);
+    }
+
+    #[test]
+    fn wide_codec_is_bound_once_and_survives_seek() {
+        let mut stream = StdioStream::new(7, parse_mode(b"r").unwrap());
+        assert!(stream.wide_codec().is_none());
+        stream.set_orientation(1);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Utf8);
+        stream.bind_wide_codec(crate::iconv::MultibyteCodec::Ascii);
+        let _ = stream.prepare_seek();
+        assert_eq!(stream.effective_orientation(), 1);
+        assert!(matches!(
+            stream.wide_codec(),
+            Some(crate::iconv::MultibyteCodec::Utf8)
+        ));
+    }
+
+    #[test]
+    fn memory_wide_pushback_preserves_multiple_characters_and_offsets() {
+        let bytes = "é€X".as_bytes();
+        for bulk in [false, true] {
+            let mut stream =
+                StdioStream::new_mem_fixed(bytes.to_vec(), bytes.len(), parse_mode(b"r").unwrap());
+            assert_eq!(stream.mem_read(bytes.len()), bytes);
+            assert_eq!(stream.offset(), bytes.len() as i64);
+            stream.unread_bytes(b"X", false);
+            stream.unread_bytes("€".as_bytes(), false);
+            stream.unread_bytes("é".as_bytes(), false);
+            assert_eq!(stream.offset(), 0);
+            let mut actual = [0; 6];
+            for (index, byte) in actual.iter_mut().enumerate() {
+                if bulk {
+                    assert_eq!(stream.mem_read_into(std::slice::from_mut(byte)), 1);
+                } else {
+                    *byte = stream.mem_read(1)[0];
+                }
+                assert_eq!(stream.offset(), (index + 1) as i64);
+            }
+            assert_eq!(&actual, bytes);
+            assert!(stream.mem_read(1).is_empty());
+            assert!(stream.is_eof());
+        }
+    }
+
+    #[test]
+    fn incomplete_character_rollback_retains_eof_but_explicit_unget_clears_it() {
+        let mut stream = StdioStream::new_mem_fixed(vec![0xe2, 0x82], 2, parse_mode(b"r").unwrap());
+        assert_eq!(stream.mem_read(3), [0xe2, 0x82]);
+        assert!(stream.is_eof());
+        stream.unread_bytes(&[0xe2, 0x82], true);
+        assert_eq!(stream.offset(), 0);
+        assert!(stream.is_eof());
+        stream.unread_bytes(b"A", false);
+        assert!(!stream.is_eof());
+        assert_eq!(stream.mem_read(3), [b'A', 0xe2, 0x82]);
+        assert_eq!(stream.offset(), 2);
+    }
+
+    #[test]
+    fn wide_pushback_survives_a_read_buffer_refill() {
+        let mut stream = StdioStream::with_mode(7, parse_mode(b"r").unwrap(), BufMode::Full);
+        stream.fill_read_buffer(b"ab");
+        assert_eq!(stream.buffered_read(2), b"ab");
+        stream.fill_read_buffer(b"cd");
+        assert_eq!(stream.buffered_read(2), b"cd");
+        stream.unread_bytes(b"abcd", false);
+        assert_eq!(stream.offset(), 0);
+        assert_eq!(stream.buffered_read(4), b"abcd");
+        assert_eq!(stream.offset(), 4);
+    }
+
+    #[test]
+    fn fixed_cursor_refills_and_preserves_only_prefetched_input() {
+        let mut source = *b"abcdef";
+        let mut cursor = FixedMemCursor::new(source.len(), source.len(), false);
+        let mut byte = [0];
+        let read = |cursor: &mut FixedMemCursor, source: &[u8], byte: &mut [u8]| {
+            cursor.read_into(byte, None, 3, |start, dst| {
+                dst.copy_from_slice(&source[start..start + dst.len()]);
+            })
+        };
+        source[0] = b'X';
+        assert_eq!(read(&mut cursor, &source, &mut byte), 1);
+        assert_eq!(byte, *b"X");
+        source[1..].fill(b'Y');
+        assert_eq!(cursor.seek(0, 1), Some(1));
+        let mut tail = [0; 5];
+        assert_eq!(read(&mut cursor, &source, &mut tail), 5);
+        assert_eq!(&tail, b"bcYYY");
+        assert_eq!(cursor.seek(0, 0), Some(0));
+        assert_eq!(read(&mut cursor, &source, &mut byte), 1);
+        assert_eq!(byte, *b"X");
+        assert_eq!(cursor.seek(-1, 0), None);
+        assert_eq!(cursor.seek(i64::MAX, 1), None);
+        assert_eq!(cursor.seek(0, 99), None);
+        assert_eq!(cursor.position(), 1);
+    }
+
+    #[test]
+    fn fixed_cursor_output_preserves_unwritten_storage_and_bounded_seeks() {
+        let mut source = [b'Z'; 8];
+        let mut cursor = FixedMemCursor::new(source.len(), 0, false);
+        assert_eq!(cursor.seek(3, 0), Some(3));
+        assert_eq!(
+            cursor.write(b"AB", |start, bytes| {
+                source[start..start + bytes.len()].copy_from_slice(bytes);
+            }),
+            2
+        );
+        assert_eq!(&source, b"ZZZAB\0ZZ");
+        assert_eq!(cursor.seek(4, 2), None);
+        assert_eq!(cursor.position(), 5);
+        assert_eq!(cursor.seek(3, 2), Some(8));
+        assert_eq!(
+            cursor.write(b"X", |_, _| panic!("full buffer must not be touched")),
+            0
+        );
+        let mut empty = FixedMemCursor::new(0, 0, false);
+        assert_eq!(
+            empty.read_into(&mut [0], None, 1, |_, _| panic!("empty input")),
+            0
+        );
+        assert_eq!(empty.write(b"X", |_, _| panic!("empty output")), 0);
+    }
+
+    #[test]
+    fn fixed_cursor_read_with_refill_recycles_buffer_without_leaking_stale_bytes() {
+        let mut backing = Vec::with_capacity(4096);
+        backing.extend_from_slice(b"stale-secret-bytes");
+        let source = b"hello\nworld!";
+        let mut cursor =
+            FixedMemCursor::with_input_buffer(source.len(), source.len(), false, backing);
+        let mut first_line = [0u8; 16];
+        let n = cursor.read_with_refill(&mut first_line, Some(b'\n'), 4096, |start, count, buf| {
+            assert!(buf.is_empty());
+            assert!(buf.capacity() >= 4096);
+            buf.extend_from_slice(&source[start..start + count]);
+        });
+        assert_eq!(&first_line[..n], b"hello\n");
+
+        let mut rest = [0u8; 16];
+        let m = cursor.read_with_refill(&mut rest, None, 4096, |_, _, _| {
+            panic!("prefetched input must serve remaining bytes without refill");
+        });
+        assert_eq!(&rest[..m], b"world!");
+
+        let recycled = cursor.take_input_buffer();
+        assert!(recycled.is_empty());
+        assert!(recycled.capacity() >= 4096);
+    }
+
+    #[test]
+    fn committed_read_window_sets_sticky_byte_orientation() {
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                readable: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+        stream.consume_window(0);
+        assert_eq!(stream.set_orientation(0), 0);
+        stream.consume_window(2);
+        assert_eq!(stream.flags.orientation, -1);
+        assert_eq!(stream.set_orientation(1), -1);
+        assert_eq!(stream.offset(), 2);
+        assert_eq!(stream.read_window(), Some(b"c".as_slice()));
+    }
+
+    #[test]
+    fn committed_write_window_sets_sticky_byte_orientation() {
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                writable: true,
+                ..Default::default()
+            },
+        );
+        assert!(stream.buffer_write(b"a").is_some());
+        stream.set_offset(1);
+        let (_, used, capacity) = stream.write_window().unwrap();
+        assert_eq!(used, 1);
+        assert!(capacity > used);
+        stream.commit_write_window(used + 1);
+        assert_eq!(stream.flags.orientation, -1);
+        assert_eq!(stream.set_orientation(1), -1);
+        assert_eq!(stream.offset(), 2);
+        stream.commit_write_window(used + 1);
+        assert_eq!(
+            stream.offset(),
+            2,
+            "repeated absorption must not double count"
+        );
+    }
+
+    #[test]
+    fn wide_streams_do_not_publish_byte_windows() {
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                readable: true,
+                writable: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(stream.set_orientation(1), 1);
+        assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+        assert!(stream.read_window().is_none());
+        assert!(!stream.write_window_capable());
+        assert_eq!(stream.set_orientation(-1), 1);
+    }
+
+    #[test]
+    fn test_parse_mode_read() {
+        let f = parse_mode(b"r").unwrap();
+        assert!(f.readable);
+        assert!(!f.writable);
+        assert!(!f.append);
+    }
+
+    #[test]
+    fn no_cancel_mode_follows_the_open_stream() {
+        let normal = StdioStream::new(7, parse_mode(b"r+").unwrap());
+        assert!(normal.cancellation_enabled());
+        let mut suppressed = StdioStream::new(7, parse_mode(b"r+ce").unwrap());
+        assert!(!suppressed.cancellation_enabled());
+        assert!(suppressed.set_buffering(BufMode::None, 0));
+        assert!(!suppressed.cancellation_enabled());
+        assert!(!parse_mode(b"r,ccs=UTF-8").unwrap().no_cancel);
+        assert!(!parse_mode(b"rbbbbbbc").unwrap().no_cancel);
+    }
+
+    #[test]
+    fn test_parse_mode_write() {
+        let f = parse_mode(b"w").unwrap();
+        assert!(!f.readable);
+        assert!(f.writable);
+        assert!(f.truncate);
+        assert!(f.create);
+    }
+
+    #[test]
+    fn test_parse_mode_append_plus() {
+        let f = parse_mode(b"a+").unwrap();
+        assert!(f.readable);
+        assert!(f.writable);
+        assert!(f.append);
+    }
+
+    #[test]
+    fn test_parse_mode_binary() {
+        let f = parse_mode(b"rb").unwrap();
+        assert!(f.readable);
+        assert!(f.binary);
+    }
+
+    #[test]
+    fn test_parse_mode_exclusive() {
+        let f = parse_mode(b"wx").unwrap();
+        assert!(f.writable);
+        assert!(f.exclusive);
+    }
+
+    #[test]
+    fn test_parse_mode_invalid() {
+        // Only an empty mode or a bad first character is invalid.
+        assert!(parse_mode(b"").is_none());
+        assert!(parse_mode(b"z").is_none());
+        assert!(parse_mode(b"tr").is_none());
+    }
+
+    /// glibc ignores unknown modifier characters ("rt", "rw", "r b"), reads
+    /// at most six of them, and stops at the ",ccs=" suffix. Verified against
+    /// glibc 2.43 fopen: "rt", "rbt", "rq", "rw", "ar", "r b", "r,ccs=UTF-8"
+    /// all open; "rw" is read-only.
+    #[test]
+    fn test_parse_mode_ignores_unknown_modifiers_like_glibc() {
+        let rt = parse_mode(b"rt").unwrap();
+        assert!(rt.readable && !rt.writable);
+        let rw = parse_mode(b"rw").unwrap();
+        assert!(rw.readable && !rw.writable && !rw.truncate);
+        let ar = parse_mode(b"ar").unwrap();
+        assert!(ar.writable && ar.append && !ar.readable);
+        assert!(parse_mode(b"r b").unwrap().binary);
+        let ccs = parse_mode(b"r,ccs=UTF-8").unwrap();
+        assert!(ccs.readable && !ccs.writable);
+        // '+' after the comma is part of the charset name, not a modifier.
+        assert!(!parse_mode(b"r,ccs=+").unwrap().writable);
+        // Only six modifier characters are read: a '+' in the seventh is not.
+        assert!(!parse_mode(b"rqqqqqq+").unwrap().writable);
+        assert!(parse_mode(b"rqqqqq+").unwrap().writable);
+    }
+
+    #[test]
+    fn test_stream_write_buffer() {
+        let flags = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        let result = s.buffer_write(b"hello").expect("write ok");
+        assert!(!result.flush_needed);
+        assert!(result.flush_data.is_empty()); // fully buffered, not full yet
+        assert_eq!(s.pending_flush(), b"hello");
+    }
+
+    #[test]
+    fn test_stream_read_ungetc() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"ello");
+        assert!(s.ungetc(b'h'));
+        let data = s.buffered_read(5);
+        assert_eq!(&data, b"hello");
+    }
+
+    #[test]
+    fn test_stream_pushback_read_bytes_preserves_order_and_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"tail");
+        let prefix = s.buffered_read(2);
+        assert_eq!(&prefix, b"ta");
+        assert_eq!(s.offset(), 2);
+
+        s.pushback_read_bytes(b"abc");
+        s.set_offset(1);
+        let data = s.buffered_read(5);
+        assert_eq!(&data, b"abcil");
+        assert_eq!(s.offset(), 6);
+    }
+
+    #[test]
+    fn test_stream_offset_tracks_reads_and_writes() {
+        let write_flags = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let mut writer = StdioStream::new(3, write_flags);
+        assert_eq!(writer.offset(), 0);
+        let first = writer.buffer_write(b"hello").expect("write ok");
+        assert!(!first.flush_needed);
+        writer.set_offset(writer.offset().saturating_add(first.buffered as i64));
+        assert_eq!(writer.offset(), 5);
+        let second = writer.buffer_write(b" world").expect("write ok");
+        assert!(!second.flush_needed);
+        writer.set_offset(writer.offset().saturating_add(second.buffered as i64));
+        assert_eq!(writer.offset(), 11);
+
+        let read_flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut reader = StdioStream::new(3, read_flags);
+        reader.fill_read_buffer(b"abcdef");
+        let first = reader.buffered_read(2);
+        assert_eq!(&first, b"ab");
+        assert_eq!(reader.offset(), 2);
+        let second = reader.buffered_read(4);
+        assert_eq!(&second, b"cdef");
+        assert_eq!(reader.offset(), 6);
+    }
+
+    #[test]
+    fn test_ungetc_rewinds_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"abc");
+        let first = s.buffered_read(2);
+        assert_eq!(&first, b"ab");
+        assert_eq!(s.offset(), 2);
+        assert!(s.ungetc(b'b'));
+        assert_eq!(s.offset(), 1);
+        let replay = s.buffered_read(2);
+        assert_eq!(&replay, b"bc");
+        assert_eq!(s.offset(), 3);
+    }
+
+    #[test]
+    fn test_ungetc_single_byte_read_restores_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"abc");
+        let first = s.buffered_read(2);
+        assert_eq!(&first, b"ab");
+        assert_eq!(s.offset(), 2);
+        assert!(s.ungetc(b'b'));
+        assert_eq!(s.offset(), 1);
+        let replay = s.buffered_read(1);
+        assert_eq!(&replay, b"b");
+        assert_eq!(s.offset(), 2);
+    }
+
+    #[test]
+    fn test_prepare_seek_flushes_pending_writes_and_clears_read_state() {
+        let flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        let result = s.buffer_write(b"buffered").expect("write ok");
+        assert!(!result.flush_needed);
+        assert_eq!(s.pending_flush(), b"buffered");
+
+        assert!(s.ungetc(b'w'));
+        assert!(s.readable_buffered() > 0);
+        s.set_eof();
+
+        let pending = s.prepare_seek();
+        assert_eq!(&pending, b"buffered");
+        assert!(s.pending_flush().is_empty());
+        assert_eq!(s.readable_buffered(), 0);
+        assert!(!s.is_eof());
+    }
+
+    #[test]
+    fn test_stream_eof_clear() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.set_eof();
+        assert!(s.is_eof());
+        s.clear_err();
+        assert!(!s.is_eof());
+    }
+
+    #[test]
+    fn test_stream_stderr_unbuffered() {
+        let flags = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let s = StdioStream::new(2, flags);
+        assert_eq!(s.buf_mode(), BufMode::None);
+    }
+
+    #[test]
+    fn test_stream_stdout_line_buffered() {
+        let flags = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let s = StdioStream::new(1, flags);
+        assert_eq!(s.buf_mode(), BufMode::Line);
+    }
+
+    #[test]
+    fn test_flags_to_oflags_write_create_trunc() {
+        let f = parse_mode(b"w").unwrap();
+        let o = flags_to_oflags(&f);
+        assert_ne!(o & 1, 0); // O_WRONLY
+        assert_ne!(o & 0o100, 0); // O_CREAT
+        assert_ne!(o & 0o1000, 0); // O_TRUNC
+    }
+
+    #[test]
+    fn test_flags_to_oflags_read_write() {
+        let f = parse_mode(b"r+").unwrap();
+        let o = flags_to_oflags(&f);
+        assert_ne!(o & 2, 0); // O_RDWR
+    }
+
+    // -----------------------------------------------------------------------
+    // MemBacking tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_mem_backing_fixed_write_read() {
+        let mut b = MemBacking::Fixed {
+            data: vec![0u8; 32],
+            pos: 0,
+            content_end: 0,
+        };
+        assert_eq!(b.write(b"hello"), 5);
+        assert_eq!(b.position(), 5);
+        // Seek back to start.
+        assert_eq!(b.seek(0, 0), Some(0));
+        let out = b.read(5);
+        assert_eq!(&out, b"hello");
+        assert_eq!(b.position(), 5);
+    }
+
+    #[test]
+    fn test_mem_backing_fixed_write_at_capacity() {
+        let mut b = MemBacking::Fixed {
+            data: vec![0u8; 4],
+            pos: 0,
+            content_end: 0,
+        };
+        // Writing more than capacity truncates.
+        assert_eq!(b.write(b"abcdef"), 4);
+        assert_eq!(b.data(), b"abcd");
+    }
+
+    #[test]
+    fn test_mem_backing_fixed_read_past_content_end() {
+        let mut b = MemBacking::Fixed {
+            data: vec![0u8; 32],
+            pos: 0,
+            content_end: 3,
+        };
+        // Only 3 bytes of content available.
+        let out = b.read(10);
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn test_mem_backing_dynamic_write_grows() {
+        let mut b = MemBacking::Dynamic {
+            data: Vec::new(),
+            pos: 0,
+        };
+        assert_eq!(b.write(b"hello"), 5);
+        assert_eq!(b.write(b" world"), 6);
+        assert_eq!(b.data(), b"hello world");
+        assert_eq!(b.position(), 11);
+    }
+
+    #[test]
+    fn test_mem_read_short_sets_eof() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(b"hi".to_vec(), 2, flags);
+        let data = s.mem_read(4);
+        assert_eq!(&data, b"hi");
+        assert!(s.is_eof(), "EOF should be set after short mem_read");
+    }
+
+    #[test]
+    fn test_mem_read_ungetc_updates_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(b"ab".to_vec(), 2, flags);
+        let first = s.mem_read(1);
+        assert_eq!(&first, b"a");
+        assert_eq!(s.offset(), 1);
+        assert!(s.ungetc(b'a'));
+        assert_eq!(s.offset(), 0);
+        let replay = s.mem_read(1);
+        assert_eq!(&replay, b"a");
+        assert_eq!(s.offset(), 1);
+    }
+
+    #[test]
+    fn test_mem_backing_dynamic_overwrite() {
+        let mut b = MemBacking::Dynamic {
+            data: Vec::new(),
+            pos: 0,
+        };
+        b.write(b"hello world");
+        // Seek to position 5 and overwrite.
+        assert_eq!(b.seek(5, 0), Some(5));
+        b.write(b"_RUST");
+        assert_eq!(b.data(), b"hello_RUSTd");
+    }
+
+    #[test]
+    fn test_mem_backing_dynamic_seek_past_end_grows_on_write() {
+        let mut b = MemBacking::Dynamic {
+            data: Vec::new(),
+            pos: 0,
+        };
+        b.write(b"hi");
+        // Seek past end and write; gap should be zero-filled.
+        assert_eq!(b.seek(5, 0), Some(5));
+        b.write(b"!");
+        assert_eq!(b.data(), b"hi\0\0\0!");
+    }
+
+    #[test]
+    fn test_mem_backing_dynamic_huge_seek_write_fails_without_panic() {
+        let mut b = MemBacking::Dynamic {
+            data: Vec::new(),
+            pos: 0,
+        };
+        assert_eq!(b.seek(i64::MAX, 0), Some(i64::MAX));
+        assert_eq!(b.write(b"!"), 0);
+        assert!(b.data().is_empty());
+        assert_eq!(b.position(), i64::MAX as usize);
+    }
+
+    #[test]
+    fn test_mem_backing_seek_set_cur_end() {
+        let mut b = MemBacking::Fixed {
+            data: vec![0u8; 10],
+            pos: 0,
+            content_end: 5,
+        };
+        // SEEK_SET
+        assert_eq!(b.seek(3, 0), Some(3));
+        assert_eq!(b.position(), 3);
+        // SEEK_CUR
+        assert_eq!(b.seek(2, 1), Some(5));
+        assert_eq!(b.position(), 5);
+        // SEEK_END (relative to content_end for Fixed)
+        assert_eq!(b.seek(-2, 2), Some(3));
+        assert_eq!(b.position(), 3);
+    }
+
+    #[test]
+    fn test_mem_backing_seek_invalid() {
+        let mut b = MemBacking::Fixed {
+            data: vec![0u8; 10],
+            pos: 0,
+            content_end: 5,
+        };
+        // Negative resulting position.
+        assert_eq!(b.seek(-1, 0), None);
+        // Past buffer size.
+        assert_eq!(b.seek(11, 0), None);
+        // Invalid whence.
+        assert_eq!(b.seek(0, 99), None);
+    }
+
+    #[test]
+    fn test_mem_backing_data_clone() {
+        let b = MemBacking::Fixed {
+            data: vec![1, 2, 3, 4, 5],
+            pos: 0,
+            content_end: 3,
+        };
+        let cloned = b.data_clone();
+        assert_eq!(&cloned, &[1, 2, 3]);
+    }
+
+    // -----------------------------------------------------------------------
+    // StdioStream memory-backed tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_stream_mem_fixed_write_read_cycle() {
+        let data = vec![0u8; 64];
+        let flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(data, 0, flags);
+        assert!(s.is_mem_backed());
+        assert!(!s.is_closed());
+
+        // Write.
+        assert_eq!(s.mem_write(b"POSIX"), 5);
+        assert_eq!(s.offset(), 5);
+
+        // Seek back.
+        assert_eq!(s.mem_seek(0, 0), 0);
+
+        // Read.
+        let out = s.mem_read(5);
+        assert_eq!(&out, b"POSIX");
+    }
+
+    #[test]
+    fn test_stream_mem_fixed_read_only() {
+        let data = b"Hello, World!".to_vec();
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(data, 13, flags);
+
+        let out = s.mem_read(5);
+        assert_eq!(&out, b"Hello");
+
+        // Writing should fail (not writable).
+        assert_eq!(s.mem_write(b"x"), 0);
+        assert!(s.is_error());
+    }
+
+    #[test]
+    fn test_stream_mem_fixed_append_position() {
+        let mut data = b"abc".to_vec();
+        data.resize(16, 0);
+        let flags = OpenFlags {
+            writable: true,
+            append: true,
+            ..Default::default()
+        };
+        let s = StdioStream::new_mem_fixed(data, 3, flags);
+        // Append mode: position starts at content_end.
+        assert_eq!(s.offset(), 3);
+    }
+
+    #[test]
+    fn test_stream_mem_dynamic_write_and_data() {
+        let mut s = StdioStream::new_mem_dynamic();
+        assert!(s.is_mem_backed());
+
+        assert_eq!(s.mem_write(b"dynamic"), 7);
+        assert_eq!(s.mem_write(b" stream"), 7);
+        assert_eq!(s.offset(), 14);
+
+        let data = s.mem_data().unwrap();
+        assert_eq!(data, b"dynamic stream");
+    }
+
+    #[test]
+    fn test_stream_mem_dynamic_data_clone() {
+        let mut s = StdioStream::new_mem_dynamic();
+        s.mem_write(b"test");
+        let cloned = s.mem_data_clone().unwrap();
+        assert_eq!(&cloned, b"test");
+    }
+
+    #[test]
+    fn test_stream_mem_seek_resets_eof() {
+        let data = vec![0u8; 8];
+        let flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(data, 0, flags);
+        s.set_eof();
+        assert!(s.is_eof());
+        s.mem_seek(0, 0);
+        assert!(!s.is_eof());
+    }
+
+    #[test]
+    fn test_stream_mem_failed_seek_preserves_eof() {
+        let data = vec![0u8; 8];
+        let flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(data, 0, flags);
+        s.set_eof();
+        assert_eq!(s.mem_seek(9, 0), -1);
+        assert!(s.is_eof());
+        assert_eq!(s.offset(), 0);
+    }
+
+    #[test]
+    fn test_stream_mem_read_sets_eof() {
+        let data = b"ab".to_vec();
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(data, 2, flags);
+        let out = s.mem_read(2);
+        assert_eq!(&out, b"ab");
+        // Next read at end should set EOF.
+        let out2 = s.mem_read(1);
+        assert!(out2.is_empty());
+        assert!(s.is_eof());
+    }
+
+    #[test]
+    fn test_stream_fd_not_mem_backed() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let s = StdioStream::new(3, flags);
+        assert!(!s.is_mem_backed());
+        assert!(s.mem_data().is_none());
+    }
+
+    #[test]
+    fn test_fixed_cursor_reset_and_stream_reset_for_fmemopen() {
+        let mut cursor = FixedMemCursor::new(16, 16, false);
+        let src1 = *b"0123456789abcdef";
+        let mut dst = [0u8; 4];
+        assert_eq!(
+            cursor.read_with_refill(&mut dst, None, 16, |start, count, out| {
+                out.extend_from_slice(&src1[start..start + count]);
+            }),
+            4
+        );
+        assert_eq!(&dst, b"0123");
+        // Second buffered read hits the inline fast path without invoking refill.
+        assert_eq!(
+            cursor.read_with_refill(&mut dst, None, 16, |_, _, _| {
+                panic!("buffered read should not refill");
+            }),
+            4
+        );
+        assert_eq!(&dst, b"4567");
+
+        // Reset cursor in place for a smaller stream and verify clean state.
+        cursor.reset(5, 5, false);
+        assert_eq!(cursor.position(), 0);
+        assert_eq!(cursor.content_end(), 5);
+        let src2 = *b"hello";
+        let mut dst6 = [0u8; 6];
+        assert_eq!(
+            cursor.read_with_refill(&mut dst6, None, 16, |start, count, out| {
+                out.extend_from_slice(&src2[start..start + count]);
+            }),
+            5
+        );
+        assert_eq!(&dst6[..5], b"hello");
+
+        let ro_flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut stream = StdioStream::with_mode(-1, ro_flags, BufMode::Full);
+        stream.set_eof();
+        stream.set_error();
+        let _ = stream.ungetc(b'X');
+        stream.reset_for_fmemopen(ro_flags, 0, 0x1234);
+        assert!(!stream.is_eof());
+        assert!(!stream.is_error());
+        assert_eq!(stream.effective_orientation(), -1);
+        assert_eq!(stream.c_handle(), 0x1234);
+        assert_eq!(stream.offset(), 0);
+    }
+}

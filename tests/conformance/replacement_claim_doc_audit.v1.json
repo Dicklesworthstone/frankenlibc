@@ -3,8 +3,8 @@
   "manifest_id": "replacement-claim-doc-audit",
   "bead": "bd-5unc9",
   "owner_bead": "bd-zyck1",
-  "generated_utc": "2026-11-18T04:38:00Z",
-  "source_commit": "148347cfed65c872310e363d3e61d0df3433deb8",
+  "generated_utc": "2026-11-18T23:15:02Z",
+  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
   "source_commit_freshness_policy": {
     "recorded_source_commit_field": "source_commit",
     "comparison_target": "current git HEAD",
@@ -12,9 +12,12 @@
     "claim_text_allowed_when_stale": false,
     "rejected_evidence_kind": "stale_source_commit"
   },
-  "purpose": "Doc-claim audit binder. README and release docs cannot imply standalone replacement readiness — words like 'standalone-ready', 'L1 production-ready', 'replaces glibc' — unless the L1 dry-run dashboard (tests/conformance/l1_dry_run_readiness_dashboard.v1.json) currently shows every row passing AND replacement_levels.json#current_level has been promoted to L1 by an explicit human signoff. The audit fails closed on overclaim phrasing in any cited doc, and pins forbidden phrasing inline so reviewers see the exact language that would have shipped.",
+  "purpose": "Doc-claim audit binder. README and release docs cannot imply standalone replacement readiness \u2014 words like 'standalone-ready', 'L1 production-ready', 'replaces glibc' \u2014 unless the L1 dry-run dashboard (tests/conformance/l1_dry_run_readiness_dashboard.v1.json) currently shows every row passing AND replacement_levels.json#current_level has been promoted to L1 by an explicit human signoff. The audit fails closed on overclaim phrasing in any cited doc, and pins forbidden phrasing inline so reviewers see the exact language that would have shipped.",
   "subject": {
-    "doc_paths": ["README.md", "FEATURE_PARITY.md"],
+    "doc_paths": [
+      "README.md",
+      "FEATURE_PARITY.md"
+    ],
     "release_script": "scripts/release/check_replacement_claim_evidence.sh"
   },
   "inputs": {
@@ -61,7 +64,14 @@
       "phrase_id": "drop-in-replacement",
       "phrase": "drop-in replacement",
       "phrase_kind": "case_insensitive_substring_unless_disclaimed",
-      "disclaimer_anchors": ["?", "No.", "not yet", "remains planned", "not established properties", "not an established property"],
+      "disclaimer_anchors": [
+        "?",
+        "No.",
+        "not yet",
+        "remains planned",
+        "not established properties",
+        "not an established property"
+      ],
       "rationale": "Marketing copy for full glibc parity; allowed only inside an explicit disclaimer / question form so the FAQ entry 'Is FrankenLibC a drop-in replacement for glibc today? No.' is preserved as the canonical disclaimer."
     },
     {

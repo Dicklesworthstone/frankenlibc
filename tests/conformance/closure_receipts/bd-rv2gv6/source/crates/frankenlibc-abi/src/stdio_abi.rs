@@ -1,0 +1,22115 @@
+//! ABI layer for `<stdio.h>` functions.
+//!
+//! Provides the full POSIX stdio surface: file stream management (fopen/fclose),
+//! buffered I/O (fread/fwrite/fgetc/fputc/fgets/fputs), seeking (fseek/ftell/rewind),
+//! status (feof/ferror/clearerr), buffering control (setvbuf/setbuf), and
+//! character output (putchar/puts/getchar). The printf family is handled via
+//! the core printf formatting engine with manual va_list extraction.
+//!
+//! Architecture: A global stream registry maps opaque `FILE*` addresses to
+//! `StdioStream` instances from frankenlibc-core. stdin/stdout/stderr are
+//! pre-registered at well-known sentinel addresses.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ffi::{CStr, c_char, c_int, c_long, c_uint, c_void};
+use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use frankenlibc_core::errno;
+use frankenlibc_core::stdio::{
+    BufMode, OpenFlags, ReadUntil, StdioStream, flags_to_oflags, parse_mode,
+};
+use frankenlibc_core::syscall as raw_syscall;
+use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, RuntimeDecision};
+
+use crate::errno_abi::set_abi_errno;
+use crate::io_internal_abi::{self, NativeFileBufMode};
+use crate::locale_abi::NumericLocale;
+use crate::malloc_abi::{free, known_remaining, malloc};
+use crate::runtime_policy;
+use crate::unistd_abi::sys_write_fd;
+use crate::util::{ArtifactHashMap, artifact_hash_map};
+
+type HostFcloseFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type HostFwriteFn = unsafe extern "C-unwind" fn(*const c_void, usize, usize, *mut c_void) -> usize;
+type HostFputsFn = unsafe extern "C-unwind" fn(*const c_char, *mut c_void) -> c_int;
+type HostFputcFn = unsafe extern "C-unwind" fn(c_int, *mut c_void) -> c_int;
+type HostFilenoFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type HostFeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type HostFerrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type HostClearerrFn = unsafe extern "C" fn(*mut c_void);
+type HostFgetcFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type HostFgetsFn = unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
+type HostFreadFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+type HostUngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
+type HostFseekFn = unsafe extern "C-unwind" fn(*mut c_void, c_long, c_int) -> c_int;
+type HostFtellFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_long;
+type HostFflushFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type HostSetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
+type HostGetdelimFn =
+    unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, c_int, *mut c_void) -> isize;
+type HostGetlineFn =
+    unsafe extern "C-unwind" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
+type HostVfscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
+#[cfg(not(feature = "standalone"))]
+type HostVfwscanfFn =
+    unsafe extern "C-unwind" fn(*mut c_void, *const libc::wchar_t, *mut c_void) -> c_int;
+type HostFgetposFn = unsafe extern "C-unwind" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
+type HostFsetposFn = unsafe extern "C-unwind" fn(*mut c_void, *const libc::fpos_t) -> c_int;
+type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
+type HostFlockfileFn = unsafe extern "C" fn(*mut c_void);
+type HostFunlockfileFn = unsafe extern "C" fn(*mut c_void);
+type HostFtrylockfileFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+static HOST_FCLOSE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FWRITE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FWRITE_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FPUTS_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FPUTC_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FILENO_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FEOF_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FERROR_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_CLEARERR_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FGETC_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FGETS_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FREAD_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_UNGETC_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FSEEK_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FTELL_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FFLUSH_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FFLUSH_UNLOCKED_FN: OnceLock<usize> = OnceLock::new();
+static HOST_SETVBUF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_GETDELIM_FN: OnceLock<usize> = OnceLock::new();
+static HOST_GETLINE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_ISOC99_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_ISOC23_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
+static HOST_VFWSCANF_FN: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
+static HOST_ISOC99_VFWSCANF_FN: OnceLock<usize> = OnceLock::new();
+#[cfg(not(feature = "standalone"))]
+static HOST_ISOC23_VFWSCANF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FGETPOS_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FSETPOS_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FREOPEN_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FUNLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FTRYLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
+
+const LITERAL_FORMAT_CACHE_SIZE: usize = 64;
+
+struct LiteralFormatCacheEntry {
+    key: AtomicUsize,
+    len: AtomicUsize,
+}
+
+impl LiteralFormatCacheEntry {
+    const fn new() -> Self {
+        Self {
+            key: AtomicUsize::new(0),
+            len: AtomicUsize::new(0),
+        }
+    }
+}
+
+const MAX_READ_ONLY_MAPPINGS: usize = 128;
+const RO_MAP_UNINIT: u8 = 0;
+const RO_MAP_INIT: u8 = 1;
+const RO_MAP_READY: u8 = 2;
+
+struct ReadOnlyMappingSlot {
+    start: AtomicUsize,
+    end: AtomicUsize,
+}
+
+impl ReadOnlyMappingSlot {
+    const fn new() -> Self {
+        Self {
+            start: AtomicUsize::new(0),
+            end: AtomicUsize::new(0),
+        }
+    }
+}
+
+static LITERAL_FORMAT_CACHE: [LiteralFormatCacheEntry; LITERAL_FORMAT_CACHE_SIZE] =
+    [const { LiteralFormatCacheEntry::new() }; LITERAL_FORMAT_CACHE_SIZE];
+static READ_ONLY_MAPPING_STATE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(RO_MAP_UNINIT);
+static READ_ONLY_MAPPING_LEN: AtomicUsize = AtomicUsize::new(0);
+static READ_ONLY_MAPPING_SLOTS: [ReadOnlyMappingSlot; MAX_READ_ONLY_MAPPINGS] =
+    [const { ReadOnlyMappingSlot::new() }; MAX_READ_ONLY_MAPPINGS];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
+    heals_enabled || matches!(action, MembraneAction::Repair(_))
+}
+
+#[inline]
+#[cfg_attr(feature = "standalone", allow(dead_code))]
+fn native_file_buf_mode(mode: BufMode) -> NativeFileBufMode {
+    match mode {
+        BufMode::Full => NativeFileBufMode::Full,
+        BufMode::Line => NativeFileBufMode::Line,
+        BufMode::None => NativeFileBufMode::None,
+    }
+}
+
+unsafe fn scan_c_str_len(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    let limit = bound.or_else(|| known_remaining(ptr as usize));
+    match limit {
+        Some(limit) => {
+            for i in 0..limit {
+                if unsafe { *ptr.add(i) } == 0 {
+                    return (i, true);
+                }
+            }
+            (limit, false)
+        }
+        None => {
+            let mut len = 0usize;
+            // SAFETY: caller guarantees `ptr` references a NUL-terminated C string
+            // when unbounded scan mode is requested.
+            while unsafe { *ptr.add(len) } != 0 {
+                len = len.saturating_add(1);
+            }
+            (len, true)
+        }
+    }
+}
+
+#[inline]
+unsafe fn strict_c_str_len(ptr: *const c_char) -> (usize, bool) {
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { crate::string_abi::scan_c_string(ptr, None) }
+    } else {
+        unsafe { scan_c_str_len(ptr, None) }
+    }
+}
+
+// PERF CHOKEPOINT (bd-2g7oyh):
+// This helper is the shared format-string length scan for the ENTIRE printf family
+// (printf/fprintf/sprintf/snprintf/vprintf/vsnprintf/dprintf/asprintf — ~12 entry
+// points each call `c_str_bytes(format)`) and other caller-string sites. Strict mode
+// uses `string_abi::scan_c_string(ptr, None)` (page-safe SWAR, no allocation-table
+// lock); hardened mode keeps `scan_c_str_len` and its known_remaining bound. NOT
+// byte-identical for the UB case (a tracked-but-unterminated buffer: the bound stops
+// at the alloc end, scan_c_string scans to NUL = glibc-compatible) — same caveat as
+// the sscanf/scanf_core levers, so gate on strict + verify with printf/scanf
+// conformance.
+#[inline]
+pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
+    let (len, _) = unsafe { strict_c_str_len(ptr) };
+    // SAFETY: the selected C-string scan reached the first NUL byte, so this range is readable.
+    unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct StrictDecimalIntsScan {
+    pub(crate) count: c_int,
+    pub(crate) input_failure: bool,
+    #[allow(dead_code)]
+    pub(crate) values: [c_int; STRICT_INT_LIST_MAX],
+}
+
+enum StrictIntScan {
+    Value(c_int, *const u8),
+    InputEnd,
+    MatchFail,
+}
+
+#[inline]
+fn scanf_ascii_space(b: u8) -> bool {
+    b == b' ' || (b'\t'..=b'\r').contains(&b)
+}
+
+/// The largest int list the fast path serves. Four covers the shapes that
+/// matter — `%d.%d.%d.%d` for IPv4, `%d/%d/%d` for a date, `%d:%d:%d` for a
+/// time — and bounds the value array that lives on the stack.
+pub(crate) const STRICT_INT_LIST_MAX: usize = 4;
+
+/// A format that is nothing but `%d`, `%s` and `%[^X]` conversions joined by ONE
+/// repeated separator.
+///
+/// Returns the field count, the separator, the conversion of each field, and for
+/// a `%[^X]` field the delimiter `X`. `sep` is `b' '` for the whitespace form,
+/// where the separator matches nothing itself because every conversion here
+/// skips leading whitespace. Any other byte is a LITERAL that must appear
+/// exactly once between conversions.
+///
+/// The shape has grown four times, each time under measurement: whitespace-only
+/// `%d` lists of at most three fields; then any single separator and four fields
+/// (`"%d.%d.%d.%d"`, the IPv4 shape, 1.795x loss -> 0.228x by instructions);
+/// then mixed `%d`/`%s` (`"%s %s"` and `"%s %d"`, certified 2.012x and 1.685x);
+/// and now a one-character negated scanset, which is what `"%[^=]=%s"` needs.
+#[inline]
+pub(crate) unsafe fn strict_decimal_int_format_count(
+    format: *const c_char,
+) -> Option<(
+    usize,
+    u8,
+    [u8; STRICT_INT_LIST_MAX],
+    [u8; STRICT_INT_LIST_MAX],
+)> {
+    let f = format.cast::<u8>();
+    let mut kinds = [0u8; STRICT_INT_LIST_MAX];
+    let mut delims = [0u8; STRICT_INT_LIST_MAX];
+    let mut i = 0usize;
+    let mut fields = 0usize;
+    let mut sep = 0u8;
+    // SAFETY: `format` is non-null and NUL-terminated under the scanf contract;
+    // every read below is guarded by the previous byte not being the terminator.
+    unsafe {
+        loop {
+            if *f.add(i) != b'%' {
+                return None;
+            }
+            match *f.add(i + 1) {
+                c @ (b'd' | b's') => {
+                    kinds[fields] = c;
+                    i += 2;
+                }
+                // `%f` writes a `float *`; `%lf` writes a `double *`. Recorded as
+                // DIFFERENT kinds because the destination width differs —
+                // treating them alike would write eight bytes into a four-byte
+                // slot, the shape of a bug that has taken a test binary down
+                // twice in this family.
+                b'f' => {
+                    kinds[fields] = b'f';
+                    i += 2;
+                }
+                b'l' if *f.add(i + 2) == b'f' => {
+                    kinds[fields] = b'F';
+                    i += 3;
+                }
+                b'[' => {
+                    // Exactly `%[^X]`, the one scanset shape held inline. The
+                    // grammar exclusions match `strict_single_negated_scanset`:
+                    // a leading `]` is a literal member and `-` forms a range.
+                    if *f.add(i + 2) != b'^' {
+                        return None;
+                    }
+                    let delimiter = *f.add(i + 3);
+                    if delimiter == 0 || delimiter == b']' || delimiter == b'-' {
+                        return None;
+                    }
+                    if *f.add(i + 4) != b']' {
+                        return None;
+                    }
+                    kinds[fields] = b'[';
+                    delims[fields] = delimiter;
+                    i += 5;
+                }
+                _ => return None,
+            }
+            fields += 1;
+
+            let next = *f.add(i);
+            if next == 0 {
+                // A LONE `%s` or `%[^X]` is left to its own dedicated fast path,
+                // which is leaner than the list machinery: no destination array,
+                // no per-field dispatch. Those two paths measured 0.254x and
+                // 0.186x of host glibc, the best in the family, and this probe
+                // runs FIRST — so without this decline the list path would
+                // silently take their traffic and give some of that back.
+                if fields == 1 && kinds[0] != b'd' {
+                    return None;
+                }
+                return Some((fields, if sep == 0 { b' ' } else { sep }, kinds, delims));
+            }
+            // A `%` here would be a second conversion with no separator, which
+            // this path does not model.
+            if next == b'%' {
+                return None;
+            }
+            // One separator character, and every separator must be the SAME one:
+            // mixing them is rare enough not to be worth a second scan shape.
+            if sep == 0 {
+                sep = next;
+            } else if next != sep {
+                return None;
+            }
+            i += 1;
+            if fields == STRICT_INT_LIST_MAX {
+                return None;
+            }
+        }
+    }
+}
+
+/// A field that runs to whitespace cannot be followed by a LITERAL separator.
+///
+/// `sscanf("a,b", "%s,%s")` is a one-field match in glibc, not two: `%s` takes
+/// every non-whitespace byte, so it swallows `"a,b"` whole and the literal `,`
+/// then has nothing to match. `%d` and `%[^X]` do not have that problem — both
+/// stop at a character the separator can be — which is exactly why `"%d.%d"` and
+/// `"%[^=]=%s"` work while `"%s,%s"` does not. A trailing `%s` is fine, since no
+/// separator follows it.
+#[inline]
+pub(crate) fn strict_field_list_is_scannable(
+    fields: usize,
+    sep: u8,
+    kinds: &[u8; STRICT_INT_LIST_MAX],
+) -> bool {
+    if sep == b' ' {
+        return true;
+    }
+    !kinds[..fields.saturating_sub(1)].contains(&b's')
+}
+/// True when the format is exactly `"%s"` — no width, no suppression, no length
+/// modifier. Tested only AFTER the decimal-int probe declines.
+///
+/// The two probes are separate on purpose, and it was measured: folding them
+/// into one classifier that returned an enum cost the decimal path 19
+/// instructions per call (single_int 48.86M -> 52.66M per 200k). `#[inline(always)]`
+/// on the classifier recovered 0.18 of those 19, so it was not a call that the
+/// merge introduced — keeping the declining path's branch structure is what
+/// matters here.
+#[inline]
+pub(crate) unsafe fn strict_single_string_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and NUL-terminated under the scanf contract,
+    // so reading up to and including the terminator is in bounds.
+    unsafe { *f == b'%' && *f.add(1) == b's' && *f.add(2) == 0 }
+}
+
+/// Exactly `%[^X]` for a single ordinary delimiter `X`, which is the shape real
+/// code uses constantly: `%[^\n]` to take a line, `%[^,]` a CSV field, `%[^=]`
+/// a key.
+///
+/// Declines anything whose set grammar is not one plain character: `]` first in
+/// a set is a literal member, `-` forms a range, and a NUL means the format was
+/// truncated. Those go to the engine, which knows the whole grammar.
+#[inline]
+pub(crate) unsafe fn strict_single_negated_scanset(format: *const c_char) -> Option<u8> {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and NUL-terminated; each read is guarded by
+    // the previous byte not being the terminator.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'[' || *f.add(2) != b'^' {
+            return None;
+        }
+        let delim = *f.add(3);
+        if delim == 0 || delim == b']' || delim == b'-' {
+            return None;
+        }
+        if *f.add(4) != b']' || *f.add(5) != 0 {
+            return None;
+        }
+        Some(delim)
+    }
+}
+
+/// Copy bytes up to `delim` into `dst`, NUL-terminated.
+///
+/// `%[` does NOT skip leading whitespace — that is the difference from `%s` and
+/// it is why this cannot share that path. Returns 1 on a non-empty match, 0 on a
+/// matching failure (the very first byte is the delimiter, and glibc writes
+/// nothing at all in that case, not even a terminator), and `EOF` when the input
+/// was already exhausted.
+pub(crate) unsafe fn strict_scan_negated_scanset(
+    s: *const c_char,
+    dst: *mut c_char,
+    delim: u8,
+) -> c_int {
+    let mut p = s.cast::<u8>();
+    // SAFETY: `s` is NUL-terminated.
+    let first = unsafe { *p };
+    if first == 0 {
+        return libc::EOF;
+    }
+    if first == delim {
+        return 0;
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: the scan stops at the terminator or the delimiter.
+        let b = unsafe { *p };
+        if b == 0 || b == delim {
+            break;
+        }
+        // SAFETY: the caller sized `dst` for the field plus its NUL, which is
+        // C's `%[` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied field.
+    unsafe { *d = 0 };
+    1
+}
+
+/// Copy one whitespace-delimited token out of `s` into `dst`, NUL-terminated.
+///
+/// Returns 1 when a token was written and `EOF` when the input held nothing but
+/// whitespace, which is what the engine's `%s` does for a narrow stream: leading
+/// whitespace is skipped, the token ends at the next ASCII space, and an input
+/// that ends before any non-space byte is an input failure rather than a match
+/// failure.
+///
+/// `dst` is unbounded, exactly as C's `%s` is — the caller owns that contract and
+/// the engine path does not check it either.
+pub(crate) unsafe fn strict_scan_single_string(s: *const c_char, dst: *mut c_char) -> c_int {
+    let mut p = s.cast::<u8>();
+    loop {
+        // SAFETY: `s` is NUL-terminated, and the loop stops at the terminator.
+        let b = unsafe { *p };
+        if b == 0 {
+            return libc::EOF;
+        }
+        if !scanf_ascii_space(b) {
+            break;
+        }
+        // SAFETY: `b` was not the terminator, so `p + 1` is still in bounds.
+        p = unsafe { p.add(1) };
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: as above; the token ends at the terminator or at a space.
+        let b = unsafe { *p };
+        if b == 0 || scanf_ascii_space(b) {
+            break;
+        }
+        // SAFETY: the caller guarantees `dst` holds the token plus a NUL, which
+        // is C's `%s` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied token, still the caller's buffer.
+    unsafe { *d = 0 };
+    1
+}
+
+#[inline]
+fn clamp_scanf_i64_magnitude(val: u64, negative: bool, overflowed: bool) -> i64 {
+    if negative {
+        const MIN_MAGNITUDE: u64 = 1u64 << 63;
+        if overflowed || val >= MIN_MAGNITUDE {
+            i64::MIN
+        } else {
+            -(val as i64)
+        }
+    } else if overflowed || val > i64::MAX as u64 {
+        i64::MAX
+    } else {
+        val as i64
+    }
+}
+
+#[inline]
+unsafe fn strict_scan_decimal_int(mut p: *const u8) -> StrictIntScan {
+    loop {
+        let b = unsafe { *p };
+        if !scanf_ascii_space(b) {
+            break;
+        }
+        p = unsafe { p.add(1) };
+    }
+
+    let mut b = unsafe { *p };
+    if b == 0 {
+        return StrictIntScan::InputEnd;
+    }
+
+    let negative = match b {
+        b'-' => {
+            p = unsafe { p.add(1) };
+            true
+        }
+        b'+' => {
+            p = unsafe { p.add(1) };
+            false
+        }
+        _ => false,
+    };
+
+    let mut val = 0u64;
+    let mut overflowed = false;
+    let mut any_digit = false;
+    loop {
+        b = unsafe { *p };
+        if !b.is_ascii_digit() {
+            break;
+        }
+        any_digit = true;
+        let d = (b - b'0') as u64;
+        match val.checked_mul(10).and_then(|v| v.checked_add(d)) {
+            Some(next) => val = next,
+            None => {
+                val = u64::MAX;
+                overflowed = true;
+            }
+        }
+        p = unsafe { p.add(1) };
+    }
+
+    if !any_digit {
+        return StrictIntScan::MatchFail;
+    }
+
+    let wide = clamp_scanf_i64_magnitude(val, negative, overflowed);
+    StrictIntScan::Value(wide as c_int, p)
+}
+
+#[inline]
+pub(crate) unsafe fn strict_scan_decimal_ints(
+    s: *const c_char,
+    fields: usize,
+    sep: u8,
+    kinds: &[u8; STRICT_INT_LIST_MAX],
+    delims: &[u8; STRICT_INT_LIST_MAX],
+    destinations: &[*mut c_void; STRICT_INT_LIST_MAX],
+) -> StrictDecimalIntsScan {
+    let mut p = s.cast::<u8>();
+    let mut values = [0; STRICT_INT_LIST_MAX];
+    let mut count = 0usize;
+
+    // The float scanner needs a SLICE where these paths otherwise walk raw
+    // pointers, so the end of the input is found LAZILY: never for a format
+    // without a float, and at most once for a format with one. Computing it up
+    // front behind an `any()` over the kinds cost every OTHER format 18 to 73
+    // instructions per call for a value it never read.
+    let mut input_end: *const u8 = std::ptr::null();
+
+    for index in 0..fields {
+        // A LITERAL separator must match exactly, and unlike the conversions it
+        // does not skip whitespace first — `sscanf("1 .2", "%d.%d")` matches one
+        // field in glibc, not two. The whitespace form needs nothing here
+        // because both conversions skip leading whitespace themselves.
+        if count > 0 && sep != b' ' {
+            // SAFETY: `p` is inside the NUL-terminated input.
+            if unsafe { *p } != sep {
+                return StrictDecimalIntsScan {
+                    count: count as c_int,
+                    input_failure: false,
+                    values,
+                };
+            }
+            // SAFETY: the byte just read was the separator, not the terminator.
+            p = unsafe { p.add(1) };
+        }
+        if kinds[index] == b'f' || kinds[index] == b'F' {
+            // The engine's own float scanner, so hex floats, inf/nan, subnormals
+            // and the sign rules have exactly one implementation.
+            if input_end.is_null() {
+                let mut tail = p;
+                // SAFETY: the input is NUL-terminated, so this stops.
+                while unsafe { *tail } != 0 {
+                    tail = unsafe { tail.add(1) };
+                }
+                input_end = tail;
+            }
+            let remaining = input_end as usize - p as usize;
+            // SAFETY: `p` points at `remaining` readable bytes before the NUL,
+            // with `input_end` found once above.
+            let slice = unsafe { std::slice::from_raw_parts(p, remaining) };
+
+            match frankenlibc_core::stdio::scanf::scan_default_float(slice, 0) {
+                Some((value, next)) => {
+                    if kinds[index] == b'F' {
+                        // SAFETY: `%lf` was parsed, so the caller passed a `double *`.
+                        unsafe { *destinations[index].cast::<f64>() = value };
+                    } else {
+                        // SAFETY: `%f` was parsed, so the caller passed a `float *`.
+                        unsafe { *destinations[index].cast::<f32>() = value as f32 };
+                    }
+                    // SAFETY: `next` is an offset the engine reached inside `slice`.
+                    p = unsafe { p.add(next) };
+                    count += 1;
+                    continue;
+                }
+                None => {
+                    // The engine returns `None` for BOTH an exhausted input and a
+                    // malformed one, so the difference is decided here: nothing
+                    // but whitespace left is an INPUT failure, anything else a
+                    // MATCH failure. This runs only on the failure path.
+                    let exhausted = slice.iter().all(|&b| scanf_ascii_space(b));
+                    return StrictDecimalIntsScan {
+                        count: if exhausted && count == 0 {
+                            libc::EOF
+                        } else {
+                            count as c_int
+                        },
+                        input_failure: exhausted && count == 0,
+                        values,
+                    };
+                }
+            }
+        }
+        if kinds[index] == b'[' {
+            // SAFETY: the probe accepted a `%[^X]` here, so the caller passed a
+            // `char *` sized for the field plus its NUL.
+            let rc = unsafe {
+                strict_scan_negated_scanset_from(
+                    p,
+                    destinations[index].cast(),
+                    delims[index],
+                    &mut p,
+                )
+            };
+            if rc == libc::EOF {
+                return StrictDecimalIntsScan {
+                    count: if count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
+                    input_failure: count == 0,
+                    values,
+                };
+            }
+            if rc == 0 {
+                // Matching failure: the very first byte was the delimiter. glibc
+                // writes NOTHING for that field, which the helper honours.
+                return StrictDecimalIntsScan {
+                    count: count as c_int,
+                    input_failure: false,
+                    values,
+                };
+            }
+            count += 1;
+            continue;
+        }
+        if kinds[index] == b's' {
+            // SAFETY: the probe accepted a `%s` at this position, so the caller
+            // passed a `char *` sized for the token plus its NUL.
+            let rc =
+                unsafe { strict_scan_single_string_from(p, destinations[index].cast(), &mut p) };
+            if rc == libc::EOF {
+                return StrictDecimalIntsScan {
+                    count: if count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
+                    input_failure: count == 0,
+                    values,
+                };
+            }
+            count += 1;
+            continue;
+        }
+        match unsafe { strict_scan_decimal_int(p) } {
+            StrictIntScan::Value(value, next) => {
+                values[index] = value;
+                // SAFETY: the probe accepted a `%d` here, so the caller passed
+                // an `int *`.
+                unsafe { *destinations[index].cast::<c_int>() = value };
+                p = next;
+                count += 1;
+            }
+            StrictIntScan::InputEnd => {
+                return StrictDecimalIntsScan {
+                    count: if count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
+                    input_failure: count == 0,
+                    values,
+                };
+            }
+            StrictIntScan::MatchFail => {
+                return StrictDecimalIntsScan {
+                    count: count as c_int,
+                    input_failure: false,
+                    values,
+                };
+            }
+        }
+    }
+    StrictDecimalIntsScan {
+        count: fields as c_int,
+        input_failure: false,
+        values,
+    }
+}
+
+/// `%[^X]` for one field of a list: copy up to the delimiter and report where the
+/// scan stopped, so the next field can continue from there.
+///
+/// Shares its rules with [`strict_scan_negated_scanset`]: no leading-whitespace
+/// skip, `EOF` when the input is already exhausted, and `0` when the very first
+/// byte is the delimiter — in which case NOTHING is written, not even a
+/// terminator, because that is what glibc does on a matching failure.
+unsafe fn strict_scan_negated_scanset_from(
+    start: *const u8,
+    dst: *mut c_char,
+    delim: u8,
+    end: &mut *const u8,
+) -> c_int {
+    let mut p = start;
+    // SAFETY: the input is NUL-terminated.
+    let first = unsafe { *p };
+    if first == 0 {
+        *end = p;
+        return libc::EOF;
+    }
+    if first == delim {
+        *end = p;
+        return 0;
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: the scan stops at the terminator or the delimiter.
+        let b = unsafe { *p };
+        if b == 0 || b == delim {
+            break;
+        }
+        // SAFETY: the caller sized `dst` for the field plus its NUL, which is
+        // C's `%[` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied field.
+    unsafe { *d = 0 };
+    *end = p;
+    1
+}
+
+/// `%s` for one field of a list: copy a whitespace-delimited token and report
+/// where the scan stopped, so the next field can continue from there.
+///
+/// Shares its rules with [`strict_scan_single_string`] — skip leading ASCII
+/// whitespace, stop at the next — and returns `EOF` when the input held nothing
+/// but whitespace.
+unsafe fn strict_scan_single_string_from(
+    start: *const u8,
+    dst: *mut c_char,
+    end: &mut *const u8,
+) -> c_int {
+    let mut p = start;
+    loop {
+        // SAFETY: the input is NUL-terminated and the loop stops there.
+        let b = unsafe { *p };
+        if b == 0 {
+            *end = p;
+            return libc::EOF;
+        }
+        if !scanf_ascii_space(b) {
+            break;
+        }
+        // SAFETY: `b` was not the terminator.
+        p = unsafe { p.add(1) };
+    }
+    let mut d = dst.cast::<u8>();
+    loop {
+        // SAFETY: as above; the token ends at the terminator or at a space.
+        let b = unsafe { *p };
+        if b == 0 || scanf_ascii_space(b) {
+            break;
+        }
+        // SAFETY: the caller sized `dst` for the token plus its NUL, which is
+        // C's `%s` contract.
+        unsafe { *d = b };
+        p = unsafe { p.add(1) };
+        d = unsafe { d.add(1) };
+    }
+    // SAFETY: one byte past the copied token.
+    unsafe { *d = 0 };
+    *end = p;
+    1
+}
+/// Encode wide-renderer input as UTF-8, stopping at NUL or a wide-character
+/// precision. A precision-bounded array need not have a terminator.
+/// Returns `(utf8_bytes, wide_char_count)`.
+unsafe fn wide_cstr_to_utf8(ptr: *const u32, limit: Option<usize>) -> (Vec<u8>, usize) {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    loop {
+        if limit.is_some_and(|n| i >= n) {
+            break;
+        }
+        // SAFETY: the caller supplies readable wide characters until NUL or
+        // precision is satisfied. The limit is checked before this read.
+        let wc = unsafe { *ptr.add(i) };
+        if wc == 0 {
+            break;
+        }
+        let mut encoded = [0; 6];
+        let Some(length) = frankenlibc_core::string::wchar::wctomb(wc, &mut encoded) else {
+            // This internal transport cannot encode a surrogate or high-bit
+            // wchar value. GNU's supported extended UTF-8 values still fit.
+            break;
+        };
+        out.extend_from_slice(&encoded[..length]);
+        i += 1;
+    }
+    (out, i)
+}
+
+/// Encode a narrow printf's `%ls` using the active multibyte locale. Precision
+/// bounds output bytes; an array need not continue once that budget is met.
+/// Returns an encoding/allocation errno without publishing character data.
+unsafe fn wide_cstr_to_multibyte(
+    ptr: *const u32,
+    byte_limit: Option<usize>,
+) -> Result<Vec<u8>, c_int> {
+    let codec = crate::locale_abi::active_multibyte_codec();
+    let mut out = Vec::new();
+    let mut index = 0;
+    while byte_limit.is_none_or(|limit| out.len() < limit) {
+        // SAFETY: the caller supplies wide characters through NUL or the
+        // byte-precision boundary, which is checked before this read.
+        let wc = unsafe { *ptr.add(index) };
+        if wc == 0 {
+            break;
+        }
+        let mut encoded = [0; 6];
+        let length = codec.encode(wc, &mut encoded).ok_or(errno::EILSEQ)?;
+        if byte_limit.is_some_and(|limit| length > limit - out.len()) {
+            break;
+        }
+        out.try_reserve(length).map_err(|_| errno::ENOMEM)?;
+        out.extend_from_slice(&encoded[..length]);
+        index += 1;
+    }
+    Ok(out)
+}
+
+/// Runtime-dispatch state for stream/syscall policy lookups.
+/// Seek/Close rows are reserved for upcoming policy-routing of those operations.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyState {
+    Read = 0,
+    Write = 1,
+    Seek = 2,
+    Close = 3,
+}
+
+const STREAM_POLICY_STATE_COUNT: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyReturnClass {
+    Positive = 0,
+    Zero = 1,
+    Negative = 2,
+}
+
+const STREAM_POLICY_RETURN_COUNT: usize = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyErrnoClass {
+    None = 0,
+    Eintr = 1,
+    Again = 2,
+    Other = 3,
+}
+
+const STREAM_POLICY_ERRNO_COUNT: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyAction {
+    Retry,
+    Buffer,
+    Flush,
+    Escalate,
+    Yield,
+}
+
+const STREAM_POLICY_TABLE: [[[StreamPolicyAction; STREAM_POLICY_ERRNO_COUNT];
+    STREAM_POLICY_RETURN_COUNT]; STREAM_POLICY_STATE_COUNT] = [
+    // Read errors are observable FILE results, including EINTR and EAGAIN.
+    // Retrying an interrupted read can block after the caller's signal handler
+    // asked it to stop; treating EAGAIN as zero hides the sticky error flag.
+    // Only a successful zero-byte read denotes EOF.
+    [
+        [StreamPolicyAction::Buffer; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Yield; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Escalate; STREAM_POLICY_ERRNO_COUNT],
+    ],
+    // Write
+    [
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Escalate; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Yield,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+    // Seek
+    [
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Retry,
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+    // Close
+    [
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Retry,
+            StreamPolicyAction::Yield,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+];
+
+#[inline]
+fn classify_stream_return(rc: isize) -> StreamPolicyReturnClass {
+    if rc > 0 {
+        StreamPolicyReturnClass::Positive
+    } else if rc == 0 {
+        StreamPolicyReturnClass::Zero
+    } else {
+        StreamPolicyReturnClass::Negative
+    }
+}
+
+#[inline]
+fn classify_stream_errno(errno_val: c_int) -> StreamPolicyErrnoClass {
+    if errno_val == 0 {
+        StreamPolicyErrnoClass::None
+    } else if errno_val == errno::EINTR {
+        StreamPolicyErrnoClass::Eintr
+    } else if errno_val == errno::EAGAIN || errno_val == libc::EWOULDBLOCK {
+        StreamPolicyErrnoClass::Again
+    } else {
+        StreamPolicyErrnoClass::Other
+    }
+}
+
+#[inline]
+fn stream_policy_action(
+    state: StreamPolicyState,
+    rc: isize,
+    errno_val: c_int,
+) -> StreamPolicyAction {
+    let state_ix = state as usize;
+    let return_ix = classify_stream_return(rc) as usize;
+    let errno_ix = classify_stream_errno(errno_val) as usize;
+    STREAM_POLICY_TABLE[state_ix][return_ix][errno_ix]
+}
+
+// ---------------------------------------------------------------------------
+// Stream registry
+// ---------------------------------------------------------------------------
+
+/// Sentinel FILE* addresses for the three standard streams.
+/// These are distinct non-null addresses that cannot collide with heap pointers.
+const STDIN_SENTINEL: usize = 0x1000_0001;
+const STDOUT_SENTINEL: usize = 0x1000_0002;
+const STDERR_SENTINEL: usize = 0x1000_0003;
+
+/// First id `alloc_stream_id` hands out for a dynamically opened stream.
+///
+/// Named rather than inlined so the ordering invariant below can be a `const`
+/// assertion (bd-xh08pf).
+const FIRST_DYNAMIC_STREAM_ID: usize = 0x1000_0010;
+
+/// Next stream ID for dynamically opened files.
+static NEXT_STREAM_ID: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(FIRST_DYNAMIC_STREAM_ID);
+
+// `sorted_stream_ids` sorts numerically, and `_IO_flush_all` / `fflush(NULL)`
+// walk that order, so stdin/stdout/stderr flush before any stream the program
+// opened — the ordering a program relies on when its own output and its error
+// messages have to interleave sensibly at exit.
+//
+// That ordering is not a property of the sort; it is a property of these four
+// numbers, and it was previously asserted only by a `#[test]` inside this
+// module's dead `#[cfg(test)]` block, which `lib.rs`'s `#[cfg(not(test))]` gate
+// meant had NEVER run (bd-xh08pf). As `const` assertions they hold in the build
+// that ships, and moving any sentinel — or lowering the dynamic base — is a
+// compile error instead of a silent reordering.
+const _: () = assert!(
+    STDIN_SENTINEL < STDOUT_SENTINEL && STDOUT_SENTINEL < STDERR_SENTINEL,
+    "the standard streams must sort stdin, stdout, stderr"
+);
+const _: () = assert!(
+    STDERR_SENTINEL < FIRST_DYNAMIC_STREAM_ID,
+    "every dynamically opened stream must sort AFTER the three standard ones,      or fflush(NULL) could flush a program's own file before its stderr"
+);
+
+#[derive(Clone)]
+struct StreamIdHasher {
+    state: u64,
+}
+
+impl Default for StreamIdHasher {
+    fn default() -> Self {
+        Self {
+            state: 0xcbf2_9ce4_8422_2325,
+        }
+    }
+}
+
+impl Hasher for StreamIdHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        self.state ^= value;
+        self.state = self.state.wrapping_mul(PRIME);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state
+    }
+}
+
+type StreamIdBuildHasher = BuildHasherDefault<StreamIdHasher>;
+type StreamMap<V> = HashMap<usize, V, StreamIdBuildHasher>;
+
+#[inline]
+fn stream_map<V>() -> StreamMap<V> {
+    StreamMap::default()
+}
+
+struct FastRegistryMutex<T> {
+    inner: parking_lot::Mutex<T>,
+}
+
+struct FastRegistryPoisonError<G> {
+    _marker: std::marker::PhantomData<G>,
+}
+
+struct FastRegistryLockResult<G> {
+    guard: G,
+}
+
+impl<T> FastRegistryMutex<T> {
+    fn new(value: T) -> Self {
+        Self {
+            inner: parking_lot::Mutex::new(value),
+        }
+    }
+
+    fn lock(&self) -> FastRegistryLockResult<parking_lot::MutexGuard<'_, T>> {
+        FastRegistryLockResult {
+            guard: crate::runtime_policy::lock_parking_lot_preserving_errno(&self.inner),
+        }
+    }
+
+    fn try_lock(&self) -> Result<parking_lot::MutexGuard<'_, T>, ()> {
+        self.inner.try_lock().ok_or(())
+    }
+}
+
+impl<G> FastRegistryPoisonError<G> {
+    fn into_inner(self) -> G {
+        unreachable!("parking_lot mutexes do not poison")
+    }
+}
+
+impl<G> FastRegistryLockResult<G> {
+    fn unwrap_or_else<F>(self, _f: F) -> G
+    where
+        F: FnOnce(FastRegistryPoisonError<G>) -> G,
+    {
+        self.guard
+    }
+}
+
+struct FastFixedMemRead {
+    memory: Arc<FixedMemCookie>,
+    eof: AtomicBool,
+    closed: AtomicBool,
+    /// The stream's glibc-layout FILE handle (its id), whose `_flags` EOF bit
+    /// must track `eof`: this lock-free path never passes a cell guard, and
+    /// callers read the bit with `feof_unlocked` (bd-rc0923-epic-eeuy4f.1).
+    handle: AtomicUsize,
+    /// Address of the paired `StreamCellInner::slow_touched` flag (`0` if unbound).
+    cell_slow_touched: AtomicUsize,
+}
+
+impl FastFixedMemRead {
+    fn new(memory: Arc<FixedMemCookie>, handle: usize, cell_slow_touched: usize) -> Self {
+        Self {
+            memory,
+            eof: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            handle: AtomicUsize::new(handle),
+            cell_slow_touched: AtomicUsize::new(cell_slow_touched),
+        }
+    }
+
+    #[inline]
+    fn reset_mut(&mut self, handle: usize, cell_slow_touched: usize) {
+        *self.handle.get_mut() = handle;
+        *self.eof.get_mut() = false;
+        *self.closed.get_mut() = false;
+        *self.cell_slow_touched.get_mut() = cell_slow_touched;
+    }
+
+    #[inline]
+    fn set_eof(&self, eof: bool) {
+        if !eof && !self.eof.load(Ordering::Acquire) {
+            return;
+        }
+        self.eof.store(eof, Ordering::Release);
+        let handle = self.handle.load(Ordering::Relaxed);
+        if handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+            // SAFETY: a non-legacy id is the address of the stream's live
+            // NativeFile handle; `_flags` is its first, aligned int field.
+            let bit = io_internal_abi::glibc_flag_bits::EOF_SEEN;
+            if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+                && !crate::malloc_abi::is_multi_threaded()
+            {
+                let flags_ptr = handle as *mut i32;
+                let cur = unsafe { flags_ptr.read() };
+                let next = if eof { cur | bit } else { cur & !bit };
+                if next != cur {
+                    unsafe { flags_ptr.write(next) };
+                }
+            } else {
+                let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+                if eof {
+                    word.fetch_or(bit, Ordering::Relaxed);
+                } else {
+                    word.fetch_and(!bit, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn read_byte(&self) -> Option<u8> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let mut byte = [0];
+        let n = self.memory.read_into(&mut byte, None);
+        self.set_eof(n == 0);
+        (n != 0).then_some(byte[0])
+    }
+
+    #[inline]
+    fn read_byte_st_with_anchor(&self, tls_anchor: usize) -> Option<u8> {
+        if self.closed.load(Ordering::Relaxed) {
+            return None;
+        }
+        let mut byte = [0];
+        let n = self.memory.read_into_st_with_anchor(&mut byte, tls_anchor);
+        self.set_eof(n == 0);
+        (n != 0).then_some(byte[0])
+    }
+
+    /// Bulk sibling of `read_byte` for `fread`: copies up to `dst.len()` bytes from the current
+    /// position into `dst`, advances the shared cursor by the amount copied, and returns that
+    /// count. `None` iff the cursor is closed (⇒ caller falls through to the pushback-aware slow
+    /// path, mirroring `read_byte`). The EOF flag is left exactly as the per-byte `read_byte`
+    /// loop would leave it: `true` iff the request exceeded the bytes available (a read that
+    /// reached end-of-buffer), `false` otherwise. The shared memory cursor
+    /// serializes refill and consumption, including concurrent readers.
+    #[inline]
+    fn read_bytes(&self, dst: &mut [u8]) -> Option<usize> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let n = self.memory.read_into(dst, None);
+        self.set_eof(n < dst.len());
+        Some(n)
+    }
+
+    #[inline]
+    fn read_bytes_st_with_anchor(&self, dst: &mut [u8], tls_anchor: usize) -> Option<usize> {
+        if self.closed.load(Ordering::Relaxed) {
+            return None;
+        }
+        let n = self.memory.read_into_st_with_anchor(dst, tls_anchor);
+        self.set_eof(n < dst.len());
+        Some(n)
+    }
+
+    /// Line sibling of `read_bytes` for `fgets`: copies bytes from the current position into
+    /// `dst`, stopping after the first `\n` (inclusive) or at `dst.len()` bytes, whichever is
+    /// first; advances the shared cursor by the amount copied and returns it. `None` iff the
+    /// cursor is closed (⇒ caller falls through to the registry slow path). EOF flag mirrors
+    /// the byte-loop `fgets` semantics: set iff the scan ran off the end of the data WITHOUT
+    /// finding a newline while more bytes were wanted (this includes the 0-byte read at end,
+    /// which is fgets's NULL-return case); a newline stop or a capacity stop leaves it false —
+    /// refill and copying share the same locked cursor as generic cookie reads.
+    #[inline]
+    fn read_line(&self, dst: &mut [u8]) -> Option<usize> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let n = self.memory.read_into(dst, Some(b'\n'));
+        self.set_eof(n < dst.len() && dst.get(n.wrapping_sub(1)) != Some(&b'\n'));
+        Some(n)
+    }
+
+    #[inline]
+    fn seek(&self, offset: i64, whence: c_int) -> Option<usize> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let next = self.memory.lock_inner().cursor.seek(offset, whence)?;
+        self.set_eof(false);
+        Some(next)
+    }
+
+    #[inline]
+    fn sync_to_stream(&self, stream: &mut StdioStream) {
+        // Fast and generic reads share storage and position. Only the generic
+        // stream's observable offset/EOF need catching up after a fast read.
+        stream.set_offset(self.memory.lock_inner().cursor.position() as i64);
+        if self.eof.load(Ordering::Acquire) {
+            stream.set_eof();
+        }
+    }
+}
+
+type FastFixedMemReadMap = StreamMap<Arc<FastFixedMemRead>>;
+
+#[inline]
+fn dynamic_static_slot_for_id(id: usize) -> Option<usize> {
+    io_internal_abi::static_native_slot_for_ptr_lockfree(id as *const c_void)
+        .filter(|&slot| slot >= 3)
+}
+
+/// Lock-free cookie classification per static slot (`0..256`):
+/// `0` = not cookie-backed, `1` = builtin `fmemopen` (no user close callback),
+/// `2` = custom `fopencookie` / `funopen`.
+static STATIC_SLOT_COOKIE_KIND: [std::sync::atomic::AtomicU8;
+    io_internal_abi::STREAM_REGISTRY_CAPACITY] =
+    [const { std::sync::atomic::AtomicU8::new(0) }; io_internal_abi::STREAM_REGISTRY_CAPACITY];
+
+struct StaticSlotAux {
+    id: usize,
+    cookie: Option<CookieStreamInfo>,
+    fast_mem_read: Option<Arc<FastFixedMemRead>>,
+}
+
+impl StaticSlotAux {
+    const EMPTY: Self = Self {
+        id: 0,
+        cookie: None,
+        fast_mem_read: None,
+    };
+}
+
+static STATIC_SLOT_AUX: [std::sync::Mutex<StaticSlotAux>;
+    io_internal_abi::STREAM_REGISTRY_CAPACITY] = [const { std::sync::Mutex::new(StaticSlotAux::EMPTY) };
+    io_internal_abi::STREAM_REGISTRY_CAPACITY];
+
+#[inline]
+fn lock_static_slot_aux(slot: usize) -> std::sync::MutexGuard<'static, StaticSlotAux> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&STATIC_SLOT_AUX[slot])
+}
+
+/// Zero-`RefCell` POD TLS pointer cache for the single-threaded `fread` fast path:
+/// `(stream_ptr, registry_gen, *const FastFixedMemRead)`.
+///
+/// Sound exclusively when `__libc_single_threaded != 0`: no sibling thread exists
+/// to close `stream` concurrently, `read_bytes_st` invokes no user callbacks, and
+/// every removal/replacement of `FastFixedMemRead` clears `TLS_FAST_MEM_READ` and
+/// bumps `REGISTRY_GEN` before dropping its owning `Arc<FastFixedMemRead>`.
+#[derive(Clone, Copy)]
+struct ParkedStFmemopenSlot {
+    slot: usize,
+    handle: usize,
+    cursor: *const FastFixedMemRead,
+}
+
+impl ParkedStFmemopenSlot {
+    const EMPTY: Self = Self {
+        slot: 0,
+        handle: 0,
+        cursor: std::ptr::null(),
+    };
+}
+
+/// Consolidated single-threaded POD TLS block for `fmemopen`/`fread`/`fclose`
+/// so each entrypoint resolves TLS base once (`1` `tlsdesc` call instead of `2–3`).
+#[repr(C)]
+struct StFastMemTls {
+    stream: std::cell::Cell<usize>,
+    reg_gen: std::cell::Cell<u64>,
+    cursor: std::cell::Cell<*const FastFixedMemRead>,
+    /// `0` = idle, `1` = actively borrowed, `2` = cleared by signal handler while borrowed.
+    borrowed: std::cell::Cell<u8>,
+    parked: std::cell::Cell<ParkedStFmemopenSlot>,
+}
+
+impl StFastMemTls {
+    const fn empty() -> Self {
+        Self {
+            stream: std::cell::Cell::new(0),
+            reg_gen: std::cell::Cell::new(0),
+            cursor: std::cell::Cell::new(std::ptr::null()),
+            borrowed: std::cell::Cell::new(0),
+            parked: std::cell::Cell::new(ParkedStFmemopenSlot::EMPTY),
+        }
+    }
+}
+
+#[thread_local]
+static TLS_FAST_MEM_READ: StFastMemTls = StFastMemTls::empty();
+
+#[thread_local]
+static TLS_REFCELL_MEM_CACHED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+
+#[inline]
+fn current_fast_mem_tls_anchor() -> usize {
+    std::ptr::addr_of!(TLS_FAST_MEM_READ) as usize
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn drop_evicted_st_fast_mem_cursor(ptr: *const FastFixedMemRead) {
+    unsafe { Arc::decrement_strong_count(ptr) };
+}
+
+static PARKED_GLOBAL_HANDLE: AtomicUsize = AtomicUsize::new(0);
+static PARKED_GLOBAL_CURSOR: AtomicUsize = AtomicUsize::new(0);
+
+/// Evict any parked single-threaded `fmemopen` slot (across any thread or
+/// threading backend) before entering multi-threaded execution, `fork`, or `freopen`.
+pub(crate) fn evict_parked_st_fmemopen_slot() {
+    if !crate::malloc_abi::native_thread_backend_active() {
+        TLS_FAST_MEM_READ.parked.set(ParkedStFmemopenSlot::EMPTY);
+    }
+    let slot = io_internal_abi::take_parked_static_slot();
+    if !(3..io_internal_abi::STREAM_REGISTRY_CAPACITY).contains(&slot) {
+        return;
+    }
+    let handle = PARKED_GLOBAL_HANDLE.swap(0, Ordering::Acquire);
+    let cursor = PARKED_GLOBAL_CURSOR.swap(0, Ordering::Acquire) as *const FastFixedMemRead;
+    if handle != 0 {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let _ = reg.remove_stream(handle);
+    }
+    let (cookie_info, aux_cursor) = {
+        let mut aux = lock_static_slot_aux(slot);
+        if handle != 0 && aux.id == handle {
+            aux.id = 0;
+            (aux.cookie.take(), aux.fast_mem_read.take())
+        } else {
+            (None, None)
+        }
+    };
+    if aux_cursor.is_some() {
+        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+    }
+    drop(cookie_info);
+    drop(aux_cursor);
+    if !cursor.is_null() {
+        // SAFETY: claiming `slot` via `take_parked_static_slot()` exclusively transfers
+        // ownership of the parked `Arc<FastFixedMemRead>` raw pointer.
+        let mut cursor_arc = unsafe { Arc::from_raw(cursor) };
+        if let Some(c_mut) = Arc::get_mut(&mut cursor_arc)
+            && let Some(m_mut) = Arc::get_mut(&mut c_mut.memory)
+        {
+            let buf = m_mut.inner.get_mut().cursor.take_input_buffer();
+            return_pooled_fixed_mem_input(buf);
+        }
+        drop(cursor_arc);
+    }
+    io_internal_abi::unregister_dynamic_static_slot(slot);
+}
+
+thread_local! {
+    static FAST_FIXED_MEM_READ_CACHE: RefCell<Option<(usize, Arc<FastFixedMemRead>)>> =
+        const { RefCell::new(None) };
+}
+
+fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
+    static MAP: OnceLock<FastRegistryMutex<FastFixedMemReadMap>> = OnceLock::new();
+    MAP.get_or_init(|| FastRegistryMutex::new(stream_map()))
+}
+
+/// Live fixed-mem cursor count — the `fast_fixed_mem_read` zero-cursor fast-out. Every
+/// `fgetc`/`fread`/`fgets` SLOW path probes the cursor map by id; for fd streams (no
+/// fmemopen open — the common program state) that was a guaranteed miss costing a TLS
+/// borrow + the map's global lock PER CALL (perf: 12.9% of cycles + a second contended
+/// lock in the MT fd path). Over-approximates by construction: incremented BEFORE the map
+/// insert and decremented AFTER a successful remove, so `0` PROVES the map is empty and
+/// `None` is exactly what the probe would return; a transient over-count merely re-adds
+/// today's probe cost.
+static FIXED_MEM_CURSOR_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+fn release_replaced_tls_fast_mem_ptr(tls: &StFastMemTls, old_ptr: *const FastFixedMemRead) {
+    if old_ptr.is_null() {
+        return;
+    }
+    if tls.borrowed.get() == 1 {
+        tls.borrowed.set(2);
+    } else {
+        // SAFETY: every non-null pointer in `TLS_FAST_MEM_READ` was created via
+        // `Arc::into_raw` and is owned exclusively by this thread's TLS slot.
+        unsafe { drop_evicted_st_fast_mem_cursor(old_ptr) };
+    }
+}
+
+#[inline]
+fn set_tls_fast_mem_read(
+    tls_cell: *const StFastMemTls,
+    id: usize,
+    cur_gen: u64,
+    cursor: Option<Arc<FastFixedMemRead>>,
+) {
+    let tls = unsafe { &*tls_cell };
+    if tls.borrowed.get() != 0 && cursor.is_some() {
+        return;
+    }
+    let (next_id, next_gen, next_ptr) = match cursor {
+        Some(c) => (id, cur_gen, Arc::into_raw(c)),
+        None => (0, 0, std::ptr::null()),
+    };
+    tls.stream.set(next_id);
+    tls.reg_gen.set(next_gen);
+    let old_ptr = tls.cursor.replace(next_ptr);
+    release_replaced_tls_fast_mem_ptr(tls, old_ptr);
+}
+
+#[inline(always)]
+fn with_st_fast_mem_read<R>(
+    tls_cell: *const StFastMemTls,
+    stream: usize,
+    cur_gen: u64,
+    f: impl FnOnce(&FastFixedMemRead) -> Option<R>,
+) -> Option<R> {
+    let tls = unsafe { &*tls_cell };
+    let cp = tls.stream.get();
+    let cg = tls.reg_gen.get();
+    let ptr = tls.cursor.get();
+    if cp != stream {
+        if !ptr.is_null() && cg != cur_gen && tls.borrowed.get() == 0 {
+            tls.stream.set(0);
+            tls.reg_gen.set(0);
+            tls.cursor.set(std::ptr::null());
+            unsafe { drop_evicted_st_fast_mem_cursor(ptr) };
+        }
+        return None;
+    }
+    if ptr.is_null() || tls.borrowed.get() != 0 {
+        return None;
+    }
+    if cg != cur_gen {
+        tls.stream.set(0);
+        tls.reg_gen.set(0);
+        tls.cursor.set(std::ptr::null());
+        unsafe { drop_evicted_st_fast_mem_cursor(ptr) };
+        return None;
+    }
+    tls.borrowed.set(1);
+    struct BorrowTlsGuard {
+        tls_cell: *const StFastMemTls,
+        ptr: *const FastFixedMemRead,
+    }
+    impl Drop for BorrowTlsGuard {
+        #[inline(always)]
+        fn drop(&mut self) {
+            let tls = unsafe { &*self.tls_cell };
+            let state = tls.borrowed.get();
+            tls.borrowed.set(0);
+            if state == 2 {
+                unsafe { drop_evicted_st_fast_mem_cursor(self.ptr) };
+            }
+        }
+    }
+    let _borrow = BorrowTlsGuard { tls_cell, ptr };
+    f(unsafe { &*ptr })
+}
+
+#[inline]
+fn populate_fast_fixed_mem_read_tls(
+    tls_cell: *const StFastMemTls,
+    id: usize,
+    cur_gen: u64,
+    st_cursor: Option<Arc<FastFixedMemRead>>,
+    mt_cursor: Option<&Arc<FastFixedMemRead>>,
+) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
+    set_tls_fast_mem_read(tls_cell, id, cur_gen, st_cursor);
+    if let Some(cursor) = mt_cursor {
+        TLS_REFCELL_MEM_CACHED.set(true);
+        let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+            *cache.borrow_mut() = Some((id, Arc::clone(cursor)));
+        });
+        let _ = FGETC_MEM_PTR_CACHE.try_with(|cache| {
+            *cache.borrow_mut() = Some((id, cur_gen, Arc::clone(cursor)));
+        });
+    }
+}
+
+/// Drain creator-thread compiler-TLS `stdio` caches before spawning the first
+/// native `clone` thread without `CLONE_SETTLS`, so no child thread sharing
+/// `%fs` can ever observe or race on a cached `Arc` / `RefCell`.
+pub(crate) fn drain_creator_compiler_tls_for_native_threads() {
+    evict_parked_st_fmemopen_slot();
+    frankenlibc_core::stdio::printf::migrate_creator_thread_numeric_for_native_threads();
+    let tls = &TLS_FAST_MEM_READ;
+    tls.stream.set(0);
+    tls.reg_gen.set(0);
+    let old_ptr = tls.cursor.replace(std::ptr::null());
+    release_replaced_tls_fast_mem_ptr(tls, old_ptr);
+    TLS_REFCELL_MEM_CACHED.set(false);
+    let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+        if let Ok(mut guard) = cache.try_borrow_mut() {
+            *guard = None;
+        }
+    });
+    let _ = FGETC_MEM_PTR_CACHE.try_with(|cache| {
+        if let Ok(mut guard) = cache.try_borrow_mut() {
+            *guard = None;
+        }
+    });
+    let _ = STREAM_CELL_CACHE.try_with(|cache| {
+        if let Ok(mut guard) = cache.try_borrow_mut() {
+            *guard = [None, None, None];
+        }
+    });
+}
+
+#[inline]
+fn clear_fast_fixed_mem_read_tls(id: usize) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
+    let tls = &TLS_FAST_MEM_READ;
+    if tls.stream.get() == id {
+        tls.stream.set(0);
+        tls.reg_gen.set(0);
+        let old_ptr = tls.cursor.replace(std::ptr::null());
+        release_replaced_tls_fast_mem_ptr(tls, old_ptr);
+    }
+    if !TLS_REFCELL_MEM_CACHED.get() {
+        return;
+    }
+    let mut any_left = false;
+    let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+        let mut guard = cache.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|(cached_id, _)| *cached_id == id)
+        {
+            *guard = None;
+        } else if guard.is_some() {
+            any_left = true;
+        }
+    });
+    let _ = FGETC_MEM_PTR_CACHE.try_with(|cache| {
+        let mut guard = cache.borrow_mut();
+        if guard
+            .as_ref()
+            .is_some_and(|(cached_ptr, _, _)| *cached_ptr == id)
+        {
+            *guard = None;
+        } else if guard.is_some() {
+            any_left = true;
+        }
+    });
+    if !any_left {
+        TLS_REFCELL_MEM_CACHED.set(false);
+    }
+}
+
+fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
+    if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    if !crate::malloc_abi::native_thread_backend_active()
+        && TLS_REFCELL_MEM_CACHED.get()
+        && let Ok(Some(cursor)) = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+            if let Some((cached_id, cursor)) = cache.borrow().as_ref()
+                && *cached_id == id
+                && !cursor.closed.load(Ordering::Acquire)
+            {
+                return Some(Arc::clone(cursor));
+            }
+            None
+        })
+    {
+        return Some(cursor);
+    }
+
+    let cursor = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) == 0 {
+            return None;
+        }
+        let aux = lock_static_slot_aux(slot);
+        (aux.id == id)
+            .then(|| aux.fast_mem_read.as_ref().cloned())
+            .flatten()
+    } else {
+        let map = fast_fixed_mem_reads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.get(&id).cloned()
+    }?;
+    if cursor.closed.load(Ordering::Acquire) {
+        return None;
+    }
+    if cursor.memory.owner_tls.load(Ordering::Acquire) != current_fast_mem_tls_anchor() {
+        cursor.memory.owner_tls.store(0, Ordering::Release);
+    }
+    if !crate::malloc_abi::native_thread_backend_active() {
+        TLS_REFCELL_MEM_CACHED.set(true);
+        let _ = FAST_FIXED_MEM_READ_CACHE.try_with(|cache| {
+            *cache.borrow_mut() = Some((id, Arc::clone(&cursor)));
+        });
+    }
+    Some(cursor)
+}
+
+thread_local! {
+    /// Pointer-keyed fmemopen `fgetc` fast path: caches the `Arc<FastFixedMemRead>` for a stream
+    /// `FILE*` so repeated reads skip `canonical_stream_id` (native lock — the dominant per-byte
+    /// cost for mem streams, which the write-cache fast path EXCLUDES) + `decide` + the
+    /// `fast_fixed_mem_reads` map lock. MT-SAFE (unlike the ST-gated write cache): the cursor is
+    /// `Arc` (held here ⇒ stays alive) + atomic `pos`; thread-local ⇒ no cross-thread race. `gen`
+    /// (`REGISTRY_GEN`, bumped by every fmemopen/fclose) invalidates on register/unregister and
+    /// on pointer reuse; `read_byte`'s `closed` check invalidates on ungetc/fseek (which
+    /// `sync_and_unregister_fast_fixed_mem_read` the cursor) ⇒ falls through to the pushback-aware
+    /// slow path. Inherits the exact read semantics of the existing `fast_fixed_mem_read` path.
+    static FGETC_MEM_PTR_CACHE: RefCell<Option<(usize, u64, Arc<FastFixedMemRead>)>> =
+        const { RefCell::new(None) };
+}
+
+/// Pointer-keyed fmemopen read fast path. `Some(byte)` on a gen-valid, open, non-empty cached
+/// cursor; `None` on any miss (uncached / gen-stale / closed / EOF) ⇒ caller falls through.
+fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+        if let Some(b) = with_st_fast_mem_read(tls_cell, key, cur_gen, |cursor| {
+            cursor.read_byte_st_with_anchor(tls_cell as usize)
+        }) {
+            return Some(b as c_int);
+        }
+    }
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
+        return None;
+    }
+    FGETC_MEM_PTR_CACHE
+        .try_with(|c| {
+            let cache = c.borrow();
+            let (cp, cg, cursor) = cache.as_ref()?;
+            if *cp != key || *cg != cur_gen {
+                return None;
+            }
+            cursor.read_byte().map(|b| b as c_int)
+        })
+        .ok()
+        .flatten()
+}
+
+/// Populate the pointer cache after a slow-path resolve confirms `stream` is a fixed-mem reader.
+fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>) {
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && cursor.memory.owner_tls.load(Ordering::Acquire) == tls_cell as usize
+    {
+        set_tls_fast_mem_read(tls_cell, stream as usize, cur_gen, Some(Arc::clone(cursor)));
+    } else {
+        cursor.memory.owner_tls.store(0, Ordering::Release);
+    }
+    if !crate::malloc_abi::native_thread_backend_active() {
+        TLS_REFCELL_MEM_CACHED.set(true);
+        let _ = FGETC_MEM_PTR_CACHE.try_with(|c| {
+            *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
+        });
+    }
+}
+
+/// Single-threaded POD TLS fast path for `fread` on read-only `fmemopen` streams.
+#[inline]
+fn try_fread_fast_fixed_mem_st(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    with_st_fast_mem_read(tls_cell, stream as usize, cur_gen, |cursor| {
+        cursor.read_bytes_st_with_anchor(dst, tls_cell as usize)
+    })
+}
+
+/// Pointer-keyed fmemopen bulk-read fast path — the `fread` sibling of
+/// `try_fgetc_fast_fixed_mem_by_stream`, sharing the same `FGETC_MEM_PTR_CACHE` slot and cursor.
+/// `Some(bytes_read)` on a gen-valid, open cached cursor for `stream`; `None` on any miss
+/// (uncached / different stream / gen-stale / closed) ⇒ caller falls through and re-caches.
+fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
+        return None;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    FGETC_MEM_PTR_CACHE
+        .try_with(|c| {
+            let cache = c.borrow();
+            let (cp, cg, cursor) = cache.as_ref()?;
+            if *cp != key || *cg != cur_gen {
+                return None;
+            }
+            cursor.read_bytes(dst)
+        })
+        .ok()
+        .flatten()
+}
+
+/// Pointer-keyed fmemopen line-read fast path — the `fgets` sibling of
+/// `try_fread_fast_fixed_mem_by_stream`, sharing the same `FGETC_MEM_PTR_CACHE` slot and
+/// cursor. `Some(bytes_written)` on a gen-valid, open cached cursor; `None` on any miss ⇒
+/// caller falls through to `canonical_stream_id` and re-caches on the registry slow path.
+fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+        if let Some(n) =
+            with_st_fast_mem_read(tls_cell, key, cur_gen, |cursor| cursor.read_line(dst))
+        {
+            return Some(n);
+        }
+    }
+    if crate::malloc_abi::native_thread_backend_active() || !TLS_REFCELL_MEM_CACHED.get() {
+        return None;
+    }
+    FGETC_MEM_PTR_CACHE
+        .try_with(|c| {
+            let cache = c.borrow();
+            let (cp, cg, cursor) = cache.as_ref()?;
+            if *cp != key || *cg != cur_gen {
+                return None;
+            }
+            cursor.read_line(dst)
+        })
+        .ok()
+        .flatten()
+}
+
+fn sync_fast_fixed_mem_read_to_stream(id: usize, stream: &mut StdioStream) -> bool {
+    let Some(cursor) = fast_fixed_mem_read(id) else {
+        return false;
+    };
+    cursor.sync_to_stream(stream);
+    true
+}
+
+fn unregister_fast_fixed_mem_read(id: usize) {
+    if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let cursor = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let mut aux = lock_static_slot_aux(slot);
+        if aux.id == id {
+            aux.fast_mem_read.take()
+        } else {
+            None
+        }
+    } else {
+        let mut map = fast_fixed_mem_reads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.remove(&id)
+    };
+    clear_fast_fixed_mem_read_tls(id);
+    if let Some(cursor) = cursor {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        // Decrement AFTER the successful remove (see FIXED_MEM_CURSOR_COUNT: the count may
+        // transiently over-approximate but must never hit 0 while a cursor is live).
+        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+        cursor.closed.store(true, Ordering::Release);
+    }
+}
+
+fn sync_and_unregister_fast_fixed_mem_read(id: usize, stream: &mut StdioStream) {
+    let _ = sync_fast_fixed_mem_read_to_stream(id, stream);
+    unregister_fast_fixed_mem_read(id);
+}
+
+/// Per-stream cell: the registry map holds `Arc<Mutex<StdioStream>>` so an operation on
+/// one stream locks ONLY that stream. The registry map lock is held just long enough to
+/// clone the Arc (or mutate the map), so concurrent ops on DIFFERENT streams no longer
+/// serialize on one global mutex (bd-h0n1mf: fd-stream MT fgetc measured 63.3x behind
+/// glibc with the whole-registry lock held per op). Arc contents never move on HashMap
+/// rehash, so raw `*mut StdioStream` caches keyed by REGISTRY_GEN remain valid across
+/// inserts (stronger than the old map-value pointers, which DID move).
+type StreamCell = Arc<StreamCellInner>;
+
+fn new_stream_cell(stream: StdioStream) -> StreamCell {
+    new_stream_cell_with_handle(stream, 0)
+}
+
+/// `handle` is the glibc-layout `FILE` whose `_flags` word mirrors this
+/// stream's EOF/ERR state (0 for streams without one).
+fn new_stream_cell_with_handle(mut stream: StdioStream, handle: usize) -> StreamCell {
+    stream.set_c_handle(handle);
+    Arc::new(StreamCellInner {
+        stream: parking_lot::Mutex::new(stream),
+        flags_word: AtomicUsize::new(handle),
+        slow_touched: AtomicBool::new(false),
+    })
+}
+
+/// A registry stream plus the address of the `FILE` handle callers hold.
+///
+/// glibc's `feof_unlocked`/`ferror_unlocked` macros read `_flags` directly,
+/// never calling into libc, so the EOF/ERR bits must be written into the
+/// handle whenever the stream state changes. Every mutation happens under
+/// this cell's lock, so the guard mirrors the bits on release
+/// (bd-rc0923-epic-eeuy4f.1). Known gap: the single-threaded raw write cache
+/// bypasses the guard, so a write *error* on that path is mirrored at the next
+/// locked operation rather than immediately.
+struct StreamCellInner {
+    stream: parking_lot::Mutex<StdioStream>,
+    flags_word: AtomicUsize,
+    slow_touched: AtomicBool,
+}
+
+impl StreamCellInner {
+    /// Lock the stream, first folding in what the program consumed through
+    /// the published read window.
+    #[inline]
+    fn lock(&self) -> StreamGuard<'_> {
+        self.slow_touched.store(true, Ordering::Relaxed);
+        let mut guard = crate::runtime_policy::lock_parking_lot_preserving_errno(&self.stream);
+        absorb_read_window(&mut guard);
+        StreamGuard {
+            guard,
+            flags_word: self.flags_word.load(Ordering::Relaxed),
+        }
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    fn try_lock(&self) -> Option<StreamGuard<'_>> {
+        self.stream.try_lock().map(|mut guard| {
+            self.slow_touched.store(true, Ordering::Relaxed);
+            absorb_read_window(&mut guard);
+            StreamGuard {
+                guard,
+                flags_word: self.flags_word.load(Ordering::Relaxed),
+            }
+        })
+    }
+}
+
+struct StreamGuard<'a> {
+    guard: parking_lot::MutexGuard<'a, StdioStream>,
+    flags_word: usize,
+}
+
+impl std::ops::Deref for StreamGuard<'_> {
+    type Target = StdioStream;
+    #[inline]
+    fn deref(&self) -> &StdioStream {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for StreamGuard<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut StdioStream {
+        &mut self.guard
+    }
+}
+
+impl Drop for StreamGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let handle = resolve_flags_word(self.flags_word);
+        if handle != 0 {
+            mirror_stream_flags(handle, &self.guard);
+        }
+    }
+}
+
+/// A cell's `flags_word` is the handle address, or for stdin/stdout/stderr
+/// `fd + 1`, resolved here to the std handle without the registry lock (0
+/// until the std slot addresses are published).
+#[inline]
+fn resolve_flags_word(flags_word: usize) -> usize {
+    if (1..=3).contains(&flags_word) {
+        io_internal_abi::visible_stdio_handle_addr_lockfree(flags_word - 1)
+    } else {
+        flags_word
+    }
+}
+
+/// Mirror after a mutation made through the single-threaded raw cache, which
+/// bypasses the cell guard. Only the raw paths that can change EOF/ERR call
+/// this (fgets, getdelim, wide line reads, ungetc, clearerr); the `try_*_fast`
+/// helpers only succeed when the operation fits the existing buffer, and the
+/// cache is populated only from the locked slow path, so their first use is
+/// always mirrored.
+#[inline]
+fn mirror_raw_cached(_stream: *mut c_void, p: *mut StdioStream) {
+    // SAFETY: `p` is the cache hit for `stream` (ST-gated, gen-valid).
+    let s = unsafe { &*p };
+    let handle = read_window_handle(s);
+    if handle != 0 {
+        mirror_stream_flags(handle, s);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// glibc read window (`_IO_read_ptr` .. `_IO_read_end`)
+// ---------------------------------------------------------------------------
+//
+// glibc's <stdio.h> inlines getc_unlocked as `ptr < end ? *ptr++ : __uflow(fp)`,
+// and gnulib's freadahead/freadptr/freadseek read and advance `_IO_read_ptr`
+// themselves. fl kept the window empty, so every inlined getc was a call into
+// __uflow (~9x glibc per byte) and those gnulib modules saw no buffer at all
+// (bd-ygc3li). The window now exposes `StdioStream::read_window`, with one
+// invariant:
+//
+// - Every fl operation first ABSORBS whatever the program consumed in place
+//   (the stream lock does it on acquire; the single-threaded raw cache does it
+//   on lookup, and also clears the window because its fast operation is about
+//   to change the buffer without republishing).
+// - The window is republished when the stream lock is released
+//   (`mirror_stream_flags`) and after `__uflow`, so it only ever describes
+//   bytes fl has not handed out.
+// - A stream leaving the registry (fclose, freopen) retires it: the handle can
+//   outlive the stream (the std FILEs), and must not point at a freed buffer.
+
+/// The header address a stream's window is published at, if any.
+#[inline]
+fn read_window_handle(stream: &StdioStream) -> usize {
+    match stream.c_handle() {
+        0 => 0,
+        token => resolve_flags_word(token),
+    }
+}
+
+/// The header's read-window word at `offset`.
+///
+/// # Safety
+/// `handle` must be a registered handle (a live `_IO_FILE`-layout object).
+#[inline]
+unsafe fn read_window_word(handle: usize, offset: usize) -> &'static AtomicUsize {
+    // SAFETY: the handle outlives its registry entry and the field is an
+    // aligned pointer-sized word; other threads may read it (unlocked macros).
+    unsafe { AtomicUsize::from_ptr((handle + offset) as *mut usize) }
+}
+
+/// Fold the bytes the program consumed through the published window into the
+/// stream (`_IO_read_ptr` advanced past where fl published it).
+#[inline]
+fn absorb_read_window(stream: &mut StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle == 0 {
+        return;
+    }
+    // At most one window is published at a time; absorb whichever moved.
+    absorb_write_window(stream, handle);
+    // SAFETY: `handle` is this stream's registered header.
+    let ptr = unsafe { read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET) }
+        .load(Ordering::Relaxed);
+    if ptr == 0 {
+        return;
+    }
+    let Some(window) = stream.read_window() else {
+        return;
+    };
+    let start = window.as_ptr() as usize;
+    if ptr <= start {
+        return;
+    }
+    let end = start + window.len();
+    // SAFETY: as above.
+    let published_end = unsafe { read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET) }
+        .load(Ordering::Relaxed);
+    // Only a window that still describes this buffer counts.
+    if published_end == end && ptr <= end {
+        stream.consume_window(ptr - start);
+    }
+}
+
+/// Fold the bytes the program stored in place through the published write
+/// window (`_IO_write_ptr` advanced past where fl published it) into the
+/// stream's staged output.
+#[inline]
+fn absorb_write_window(stream: &mut StdioStream, handle: usize) {
+    // SAFETY: `handle` is this stream's registered header.
+    let ptr = unsafe { read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET) }
+        .load(Ordering::Relaxed);
+    if ptr == 0 {
+        return;
+    }
+    let Some((base, used, capacity)) = stream.write_window() else {
+        return;
+    };
+    if ptr <= base + used {
+        return;
+    }
+    // SAFETY: as above.
+    let (published_base, published_end) = unsafe {
+        (
+            read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET).load(Ordering::Relaxed),
+            read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).load(Ordering::Relaxed),
+        )
+    };
+    // Only a window that still describes this buffer counts. `_IO_buf_end`,
+    // not `_IO_write_end`: a line-buffered window publishes the latter at the
+    // staged end, and {fmt} fills up to the former.
+    if published_base == base && published_end == base + capacity && ptr <= base + capacity {
+        stream.commit_write_window(ptr - base);
+    }
+}
+
+/// Publish a write window `(base, staged, capacity)` (or an empty one) at
+/// `handle`, together with the buffer bounds {fmt} sizes its writes by. A
+/// line-buffered window ends `_IO_write_end` at the staged bytes, as glibc
+/// does, so every inline `putc` reaches `__overflow` and its newline flush.
+#[inline]
+fn store_write_window(handle: usize, window: Option<(usize, usize, usize)>, line: bool) {
+    let Some((base, used, cap)) = window else {
+        // SAFETY: `handle` is a registered header.
+        unsafe {
+            if read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+                .load(Ordering::Relaxed)
+                != 0
+            {
+                read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+                    .store(0, Ordering::Relaxed);
+            }
+        }
+        return;
+    };
+    let ptr = base + used;
+    let end = base + cap;
+    let write_end = if line { ptr } else { end };
+    // SAFETY: `handle` is a registered header.
+    unsafe {
+        if read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET).load(Ordering::Relaxed)
+            != base
+            || read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).load(Ordering::Relaxed)
+                != end
+        {
+            read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
+                .store(base, Ordering::Relaxed);
+            read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
+                .store(base, Ordering::Relaxed);
+            read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET)
+                .store(end, Ordering::Relaxed);
+        }
+        if read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET).load(Ordering::Relaxed)
+            != write_end
+        {
+            read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
+                .store(write_end, Ordering::Relaxed);
+        }
+        read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+            .store(ptr, Ordering::Relaxed);
+    }
+}
+
+/// Publish `window` (or an empty one) at `handle`.
+#[inline]
+fn store_read_window(handle: usize, window: Option<&[u8]>) {
+    let Some(w) = window else {
+        // SAFETY: `handle` is a registered header.
+        unsafe {
+            if read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET).load(Ordering::Relaxed)
+                != 0
+            {
+                read_window_word(handle, io_internal_abi::IO_READ_BASE_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET)
+                    .store(0, Ordering::Relaxed);
+                read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET)
+                    .store(0, Ordering::Relaxed);
+            }
+        }
+        return;
+    };
+    let start = w.as_ptr() as usize;
+    let end = start + w.len();
+    // SAFETY: `handle` is a registered header.
+    unsafe {
+        read_window_word(handle, io_internal_abi::IO_READ_BASE_OFFSET)
+            .store(start, Ordering::Relaxed);
+        if read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET).load(Ordering::Relaxed)
+            != end
+        {
+            read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET)
+                .store(end, Ordering::Relaxed);
+        }
+        read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET)
+            .store(start, Ordering::Relaxed);
+    }
+}
+
+/// Publish the stream's window: its read window when it has buffered input,
+/// otherwise its write window (the inline `putc_unlocked` then stores into
+/// fl's buffer directly, and gnulib's `__fpending` arithmetic sees the staged
+/// bytes), never both.
+#[inline]
+fn publish_read_window(stream: &StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle != 0 {
+        let read = stream.read_window();
+        store_read_window(handle, read);
+        let line = matches!(stream.buf_mode(), BufMode::Line);
+        store_write_window(
+            handle,
+            if read.is_none() {
+                stream.write_window()
+            } else {
+                None
+            },
+            line,
+        );
+    }
+}
+
+/// Absorb, then empty both windows: the caller is about to change the
+/// stream's buffer without republishing (single-threaded raw-cache fast paths).
+#[inline]
+fn absorb_and_clear_read_window(stream: &mut StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle == 0 {
+        return;
+    }
+    // SAFETY: `handle` is this stream's registered header.
+    let (read_ptr, write_ptr) = unsafe {
+        (
+            read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET).load(Ordering::Relaxed),
+            read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET).load(Ordering::Relaxed),
+        )
+    };
+    if read_ptr == 0 && write_ptr == 0 {
+        return;
+    }
+    absorb_read_window(stream);
+    store_read_window(handle, None);
+    store_write_window(handle, None, false);
+}
+
+/// The stream is leaving the registry: absorb (the caller holds its lock, so
+/// that already happened), empty the window and stop publishing.
+fn retire_read_window(stream: &mut StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle != 0 {
+        store_read_window(handle, None);
+        store_write_window(handle, None, false);
+    }
+    stream.set_c_handle(0);
+}
+
+/// `__uflow`/`__underflow` refilled the stream: publish the new window so the
+/// next inlined getc reads from it directly.
+pub(crate) fn republish_read_window(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        cell.slow_touched.store(true, Ordering::Relaxed);
+        // The bare stream lock: a StreamGuard would re-mirror EOF/ERR from
+        // the core stream on release, clobbering the flags of streams whose
+        // state lives elsewhere (fmemopen's fast cursor sets EOF itself).
+        let mut s = crate::runtime_policy::lock_parking_lot_preserving_errno(&cell.stream);
+        absorb_read_window(&mut s);
+        publish_read_window(&s);
+    }
+}
+
+#[inline]
+fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
+    publish_read_window(stream);
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN, LINE_BUF, UNBUFFERED, USER_LOCK};
+    // SAFETY: `handle` is the address of a registered NativeFile, whose first
+    // field is the 4-byte-aligned `_flags` int; it outlives the registry
+    // entry holding this cell. Other threads may read it (unlocked macros),
+    // hence the atomic view.
+    let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    let current = word.load(Ordering::Relaxed);
+    let mut next = current & !(EOF_SEEN | ERR_SEEN | LINE_BUF | UNBUFFERED | USER_LOCK);
+    if stream.is_eof() {
+        next |= EOF_SEEN;
+    }
+    if stream.is_error() {
+        next |= ERR_SEEN;
+    }
+    // The buffering mode, which setvbuf can change after open (gnulib's
+    // fbufmode reads these bits). _IO_UNBUFFERED is also what {fmt} checks
+    // before writing through _IO_write_ptr, so it stays set on memory-backed
+    // streams, which never publish a write window.
+    if matches!(stream.buf_mode(), BufMode::Line) {
+        next |= LINE_BUF;
+    }
+    if !stream.reports_buffered() {
+        next |= UNBUFFERED;
+    }
+    if stream.locking_bycaller() {
+        next |= USER_LOCK;
+    }
+    if next != current {
+        word.store(next, Ordering::Relaxed);
+    }
+    // `_mode` (orientation), read by fwide-aware callers and gnulib.
+    // SAFETY: same object; `_mode` is an aligned int inside `_IO_FILE`.
+    let mode = unsafe {
+        std::sync::atomic::AtomicI32::from_ptr(
+            (handle + io_internal_abi::IO_FILE_MODE_OFFSET) as *mut i32,
+        )
+    };
+    let orientation = stream.effective_orientation().signum();
+    if mode.load(Ordering::Relaxed) != orientation {
+        mode.store(orientation, Ordering::Relaxed);
+    }
+}
+
+/// glibc `_flags` for a newly opened stream (matches e.g. 0xfbad2488 for
+/// `fopen(path, "r")`).
+fn initial_glibc_flags(open_flags: &OpenFlags, has_fd: bool, buf_mode: BufMode) -> i32 {
+    use io_internal_abi::glibc_flag_bits as b;
+    // glibc sets _IO_IS_FILEBUF on every stream it creates, including
+    // fmemopen/fopencookie ones, so `has_fd` does not change it.
+    let _ = has_fd;
+    let mut flags = b::LINKED | b::TIED_PUT_GET | b::IS_FILEBUF;
+    if !open_flags.readable {
+        flags |= b::NO_READS;
+    }
+    if !open_flags.writable {
+        flags |= b::NO_WRITES;
+    }
+    if open_flags.append {
+        flags |= b::IS_APPENDING;
+    }
+    match buf_mode {
+        BufMode::None => flags |= b::UNBUFFERED,
+        BufMode::Line => flags |= b::LINE_BUF,
+        BufMode::Full => {}
+    }
+    flags
+}
+
+/// Allocate a glibc-layout `FILE *` for a new registry stream.
+/// A synthetic id is never a valid fallback: libc macros dereference FILE.
+fn alloc_stream_handle(
+    fd: c_int,
+    open_flags: &OpenFlags,
+    buf_mode: BufMode,
+) -> Option<(usize, usize)> {
+    let glibc_flags = initial_glibc_flags(open_flags, fd >= 0, buf_mode);
+    io_internal_abi::register_stdio_handle(fd, native_stream_open_flags(*open_flags), glibc_flags)
+        .map(|ptr| (ptr as usize, ptr as usize))
+}
+
+struct StreamRegistry {
+    streams: StreamMap<StreamCell>,
+    static_slots: Box<[Option<(usize, StreamCell)>; io_internal_abi::STREAM_REGISTRY_CAPACITY]>,
+    std_initialized: u8,
+}
+
+impl StreamRegistry {
+    fn new() -> Self {
+        Self {
+            streams: StreamMap::with_capacity_and_hasher(8, StreamIdBuildHasher::default()),
+            static_slots: Box::new([const { None }; io_internal_abi::STREAM_REGISTRY_CAPACITY]),
+            std_initialized: 0,
+        }
+    }
+
+    #[inline]
+    fn contains_stream(&mut self, id: usize) -> bool {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            if slot == io_internal_abi::parked_static_slot() {
+                return false;
+            }
+            return self.static_slots[slot]
+                .as_ref()
+                .is_some_and(|(stored_id, _)| *stored_id == id);
+        }
+        self.ensure_std_stream(id);
+        self.streams.contains_key(&id)
+    }
+
+    #[inline]
+    fn get_stream(&mut self, id: usize) -> Option<StreamCell> {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            if slot == io_internal_abi::parked_static_slot() {
+                return None;
+            }
+            return self.static_slots[slot]
+                .as_ref()
+                .and_then(|(stored_id, cell)| (*stored_id == id).then(|| Arc::clone(cell)));
+        }
+        self.ensure_std_stream(id);
+        self.streams.get(&id).cloned()
+    }
+
+    #[inline]
+    fn get_stream_ref(&self, id: usize) -> Option<StreamCell> {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            if slot == io_internal_abi::parked_static_slot() {
+                return None;
+            }
+            return self.static_slots[slot]
+                .as_ref()
+                .and_then(|(stored_id, cell)| (*stored_id == id).then(|| Arc::clone(cell)));
+        }
+        self.streams.get(&id).cloned()
+    }
+
+    #[inline]
+    fn insert_cell(&mut self, id: usize, cell: StreamCell) -> u64 {
+        self.mark_std_stream_initialized(id);
+        let new_gen = REGISTRY_GEN.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            self.static_slots[slot] = Some((id, cell));
+        } else {
+            self.streams.insert(id, cell);
+        }
+        new_gen
+    }
+
+    #[inline]
+    fn mark_std_stream_initialized(&mut self, id: usize) {
+        if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&id) {
+            self.std_initialized |= 1u8 << (id - STDIN_SENTINEL);
+        }
+    }
+
+    /// Lazily register one of the three standard streams (`stdin`, `stdout`,
+    /// `stderr`) on its first lookup so opening an unrelated file (e.g.
+    /// `libselinux`'s constructor opening `/proc/filesystems`) or writing only
+    /// to `stdout` does not issue `fstat`/`ioctl`/`lseek` syscalls for unused
+    /// standard descriptors. Once initialized, the bit stays set so an explicit
+    /// `fclose(stdout)` is not undone by a subsequent lookup.
+    #[inline]
+    fn ensure_std_stream(&mut self, id: usize) {
+        if !(STDIN_SENTINEL..=STDERR_SENTINEL).contains(&id) {
+            return;
+        }
+        let bit = 1u8 << (id - STDIN_SENTINEL);
+        if (self.std_initialized & bit) != 0 {
+            return;
+        }
+        self.std_initialized |= bit;
+        // Each standard stream mirrors its EOF/ERR state into the glibc-layout
+        // handle the `stdin`/`stdout`/`stderr` symbols point at: glibc's inline
+        // ferror_unlocked/feof_unlocked (which gnulib's close_stdin uses via
+        // unlocked-io.h) read `_flags` directly. Without a handle the bits
+        // never moved, so `fread` from a closed stdin left ferror_unlocked 0
+        // and close_stdin reported success (gnulib test-closein, test-yesno).
+        // The handle address is resolved lock-free at mirror time (see
+        // `resolve_flags_word`): looking it up here took the native registry
+        // lock, and this lazy init can run with that lock held (dash hung).
+        let std_handle = |fd: c_int| fd as usize + 1;
+        let cell = match id {
+            STDIN_SENTINEL => {
+                let stdin_flags = OpenFlags {
+                    readable: true,
+                    ..Default::default()
+                };
+                new_stream_cell_with_handle(
+                    std_buffered_stream(libc::STDIN_FILENO, stdin_flags),
+                    std_handle(libc::STDIN_FILENO),
+                )
+            }
+            STDOUT_SENTINEL => {
+                let stdout_flags = OpenFlags {
+                    writable: true,
+                    ..Default::default()
+                };
+                new_stream_cell_with_handle(
+                    std_buffered_stream(libc::STDOUT_FILENO, stdout_flags),
+                    std_handle(libc::STDOUT_FILENO),
+                )
+            }
+            STDERR_SENTINEL => {
+                let stderr_flags = OpenFlags {
+                    writable: true,
+                    ..Default::default()
+                };
+                // A standard stream starts where its inherited descriptor is:
+                // ftell and fseek(SEEK_CUR) build on this offset.
+                let mut stream = StdioStream::new(libc::STDERR_FILENO, stderr_flags);
+                if let Ok(cur) = raw_syscall::sys_lseek(stream.fd(), 0, libc::SEEK_CUR) {
+                    stream.set_offset(cur);
+                }
+                new_stream_cell_with_handle(stream, std_handle(libc::STDERR_FILENO))
+            }
+            _ => unreachable!(),
+        };
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        self.streams.insert(id, cell);
+    }
+
+    /// Insert a runtime stream, bumping the registry generation. ALL runtime
+    /// `streams.insert` MUST route through here so the write cache's stored
+    /// `*mut StdioStream` is invalidated whenever a HashMap insert may rehash/move
+    /// values.
+    #[inline]
+    fn insert_stream(&mut self, id: usize, stream: StdioStream) {
+        let _ = self.insert_cell(id, new_stream_cell(stream));
+    }
+
+    /// Insert a stream whose `FILE *` is the glibc-layout handle at `handle`
+    /// (0 = none); see [`StreamCellInner`].
+    #[inline]
+    fn insert_stream_with_handle(&mut self, id: usize, stream: StdioStream, handle: usize) {
+        let resolved = resolve_flags_word(handle);
+        if resolved != 0 {
+            mirror_stream_flags(resolved, &stream);
+        }
+        let _ = self.insert_cell(id, new_stream_cell_with_handle(stream, handle));
+    }
+
+    /// Remove a stream, bumping the registry generation (the removed stream may still
+    /// be referenced by raw-pointer caches keyed on the gen; the bump invalidates them
+    /// before the Arc can drop).
+    #[inline]
+    fn remove_stream(&mut self, id: usize) -> Option<StreamCell> {
+        if let Some(slot) = dynamic_static_slot_for_id(id) {
+            if slot == io_internal_abi::parked_static_slot() {
+                return None;
+            }
+            if self.static_slots[slot]
+                .as_ref()
+                .is_some_and(|(stored_id, _)| *stored_id == id)
+            {
+                REGISTRY_GEN.fetch_add(1, Ordering::Release);
+                return self.static_slots[slot].take().map(|(_, cell)| cell);
+            }
+            return None;
+        }
+        self.ensure_std_stream(id);
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        self.streams.remove(&id)
+    }
+}
+
+/// Clone stream `id`'s cell under a SHORT registry map lock. Callers lock the returned
+/// cell for the actual operation, so ops on different streams run concurrently. `None`
+/// iff the id is unknown (unregistered/foreign) — same contract as `streams.get_mut`.
+fn stream_cell(id: usize) -> Option<StreamCell> {
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.get_stream(id)
+}
+
+thread_local! {
+    /// MT-safe pointer-keyed cell cache for the hot fd-stream ops: `(FILE*, gen) →
+    /// Arc<Mutex<StdioStream>>`. A gen-valid hit skips `canonical_stream_id` + the
+    /// registry map lock entirely — the ONE global acquisition per byte that still
+    /// convoys 8-thread fd fgetc at 44x even after the per-FILE split (bd-h0n1mf smoke).
+    /// Unlike the ST-gated `*mut` write cache this is safe under threads: the Arc keeps
+    /// the cell alive and every use LOCKS the stream. REGISTRY_GEN guards FILE* reuse
+    /// after fclose (any insert/remove bumps gen ⇒ cache drops; stream-state mutation
+    /// like fseek/ungetc needs no invalidation — the lock always reads current state).
+    /// 3-way (most-recent-first): a loop interleaving up to THREE streams resolves all lock-free.
+    /// The copy `for { c=fgetc(in); fputc(c,out); }` (2 streams) and the tee/broadcast
+    /// `for { c=fgetc(in); fputc(c,out1); fputc(c,out2); }` (3 streams: in + 2 outs — the `tee`
+    /// command, dual logging, 3-way merge) otherwise thrash a narrower cache (each op evicts an
+    /// earlier stream ⇒ misses the map lock EVERY call: measured copy 55x@8t, tee 33x@8t vs glibc,
+    /// vs ~2.7x single-stream). Lookup early-returns on the first hit, so single-stream (slot 0)
+    /// and copy (slots 0-1) pay nothing for the extra width; only genuine 3-stream fan-out reaches
+    /// slot 2. (The ST `WRITE_CACHE` is 2-way; the MT path is the one that matters for threaded
+    /// programs — see the copy A/B, where even the "1t" arm uses it since abi-bench is threaded.)
+    static STREAM_CELL_CACHE: RefCell<[Option<(usize, u64, StreamCell)>; 3]> =
+        const { RefCell::new([None, None, None]) };
+}
+
+fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return None;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    // C++ static destructors can flush streams after Rust TLS destructors.
+    // A destroyed cache is a miss; the global stream registry is still live.
+    let cached = STREAM_CELL_CACHE.try_with(|c| {
+        let cache = c.borrow();
+        for slot in cache.iter() {
+            if let Some((cp, cg, cell)) = slot
+                && *cp == key
+                && *cg == cur_gen
+            {
+                return Some(Arc::clone(cell));
+            }
+        }
+        None
+    });
+    cached.unwrap_or_default()
+}
+
+thread_local! {
+    static WIDE_IO_ACTIVE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static WIDE_STREAM_CACHE: std::cell::Cell<(usize, u64, *mut StdioStream)> =
+        const { std::cell::Cell::new((usize::MAX, 0, std::ptr::null_mut())) };
+}
+
+struct WideIoGuard {
+    native_slot: bool,
+}
+
+impl Drop for WideIoGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if self.native_slot {
+            crate::malloc_abi::leave_native_wide_io_depth();
+        } else {
+            WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn with_wide_io_active<R>(f: impl FnOnce() -> R) -> R {
+    let native_slot = crate::malloc_abi::native_thread_backend_active();
+    if native_slot {
+        crate::malloc_abi::enter_native_wide_io_depth();
+    } else {
+        WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_add(1)));
+    }
+    let _guard = WideIoGuard { native_slot };
+    f()
+}
+
+#[inline]
+pub(crate) fn wide_io_active() -> bool {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return crate::malloc_abi::native_wide_io_active();
+    }
+    WIDE_IO_ACTIVE.with(|c| c.get() != 0)
+}
+
+#[inline]
+fn wide_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    WIDE_STREAM_CACHE.with(|c| {
+        let (cid, cgen, p) = c.get();
+        if cid == key && !p.is_null() && cgen == cur_gen {
+            absorb_and_clear_read_window(unsafe { &mut *p });
+            Some(p)
+        } else {
+            None
+        }
+    })
+}
+
+#[inline]
+fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let generation = REGISTRY_GEN.load(Ordering::Acquire);
+    WIDE_STREAM_CACHE.with(|c| {
+        c.set((stream as usize, generation, ptr));
+    });
+}
+
+fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
+    if crate::malloc_abi::native_thread_backend_active() || wide_io_active() {
+        return;
+    }
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    let _ = STREAM_CELL_CACHE.try_with(|c| {
+        // Insert-at-front (most-recent-first), shifting the previous entries down one slot (the
+        // oldest, slot 2, is dropped). `store` only runs on a full cache miss (lookup checks ALL
+        // slots and returns before storing), so `stream` is not already resident — no duplicate
+        // slot. Mirrors `write_cache_store`.
+        let mut cache = c.borrow_mut();
+        cache[2] = cache[1].take();
+        cache[1] = cache[0].take();
+        cache[0] = Some((stream as usize, cur_gen, Arc::clone(cell)));
+    });
+}
+
+/// MT-safe fd-stream `fgetc` fast path: gen-valid cell-cache hit ⇒ lock ONLY this
+/// stream and consume a buffered byte. Cached cells are only ever stored from the
+/// fgetc slow path's non-cookie non-mem fd branch, so the hit path's semantics equal
+/// the slow path's buffered-read step (decide/observe skipped exactly like the
+/// established ST fast paths). Empty buffer / any miss ⇒ `None` ⇒ slow path refills.
+fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return None;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    let cached = STREAM_CELL_CACHE.try_with(|c| {
+        let cache = c.borrow();
+        for slot in cache.iter() {
+            if let Some((cp, cg, cell)) = slot
+                && *cp == key
+                && *cg == cur_gen
+            {
+                let mut s = cell.lock();
+                return s.fast_getc().map(|b| b as c_int);
+            }
+        }
+        None
+    });
+    cached.unwrap_or_default()
+}
+
+/// MT-safe fd-stream write fast path (fputs/fwrite/fputc): gen-valid cell-cache hit ⇒
+/// lock ONLY this stream (without cloning its `Arc`, avoiding cross-thread atomic refcount
+/// contention) and append `bytes` inline IFF it is a Full-buffered fd stream with room or a
+/// Line-buffered fd stream with room and no `'\n'` (`fast_write_line_or_full`). `true` on
+/// inline success; `false` on any miss (not cached / would flush / mem / cookie) ⇒ caller
+/// falls through to the full per-stream-locked path.
+fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return false;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    let written = STREAM_CELL_CACHE.try_with(|c| {
+        let cache = c.borrow();
+        for slot in cache.iter() {
+            if let Some((cp, cg, cell)) = slot
+                && *cp == key
+                && *cg == cur_gen
+            {
+                return cell.lock().fast_write_line_or_full(bytes);
+            }
+        }
+        false
+    });
+    written.unwrap_or_default()
+}
+
+/// MT-safe fd-stream `fgets` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and
+/// run the shared `fgets_fill_stream` (bulk read + fd refill under this stream's lock).
+/// `Some((written, had_error))` when handled; `None` on a miss (not cached / mem) ⇒ caller
+/// falls through. Cached cells are non-cookie non-mem fd (both store sites), so the fill is
+/// byte-identical to the slow path over the same stream.
+fn try_fgets_fast_cell(
+    stream: *mut c_void,
+    dst: &mut [u8],
+    caller: usize,
+) -> Option<(usize, bool)> {
+    let cell = stream_cell_cache_lookup(stream)?;
+    let mut s = cell.lock();
+    if s.is_mem_backed() {
+        return None;
+    }
+    // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
+    Some(unsafe { fgets_fill_stream(&mut s, dst, caller) })
+}
+
+/// MT-safe fd-stream `fread` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and
+/// bulk-read up to `dst.len()` bytes via the shared `fread_fill_stream`. `Some(bytes_read)`
+/// when handled; `None` on a miss (not cached / mem) ⇒ caller falls through. Byte-identical to
+/// the slow path (same fill fn).
+fn try_fread_fast_cell(stream: *mut c_void, dst: &mut [u8], caller: usize) -> Option<usize> {
+    let cell = stream_cell_cache_lookup(stream)?;
+    let mut s = cell.lock();
+    if s.is_mem_backed() {
+        return None;
+    }
+    // SAFETY: the cell lock gives unique access to this stream for the read's duration.
+    Some(unsafe { fread_fill_stream(&mut s, dst, caller) })
+}
+
+/// Monotonic generation bumped on every runtime registry insert/remove (via
+/// `insert_stream`/`remove_stream`). The single-threaded write fast-path caches a
+/// `*mut StdioStream` together with the gen at which it was resolved; a mismatch on a
+/// later call means the HashMap may have moved that value, so the cache is dropped and
+/// the slow (locked) path re-resolves. Lock-free read for the hot path.
+static REGISTRY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    /// Per-thread last-written stream cache: (canonical id, registry gen, raw stream).
+    /// Lets repeated single-char writes to the same stream skip the membrane + registry
+    /// lock + HashMap lookup. Only consulted while `__libc_single_threaded` (so the
+    /// `&mut` reborrow of `ptr` is the unique reference — no other thread exists), and
+    /// only used when `gen == REGISTRY_GEN` (value not moved since it was cached).
+    /// 2-way (most-recent-first) so a loop interleaving writes to TWO streams (stdout +
+    /// a log file, app + access log — measured 1.58x thrash on the old single entry) keeps
+    /// BOTH resolved lock-free instead of missing every alternating call.
+    ///
+    /// Per-thread on purpose (measured 2026-10-06: a process global saved the
+    /// `__tls_get_addr`, putc 7.0 -> 4.9 ns, but was NOT kept): fl's
+    /// `__libc_single_threaded` is cleared only by fl's own pthread_create, so in
+    /// a process whose threads come from elsewhere (fl's own test binaries, whose
+    /// Rust threads use glibc's pthread_create; raw clone) a global cache would
+    /// be shared and torn across threads, where this one stays per thread.
+    static WRITE_CACHE: std::cell::Cell<[(usize, usize, u64, *mut StdioStream); 2]> =
+        const { std::cell::Cell::new([(usize::MAX, usize::MAX, 0, std::ptr::null_mut()); 2]) };
+}
+
+/// Returns the cached `*mut StdioStream` for `id` iff single-threaded and the cache is
+/// gen-valid (value not moved since caching). The caller dereferences it without the
+/// registry lock — sound only because single-threaded ⇒ no concurrent access.
+#[inline]
+fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    WRITE_CACHE.with(|c| {
+        for (_, cid, cgen, p) in c.get() {
+            if cid == id && !p.is_null() && cgen == cur_gen {
+                // SAFETY: ST-gated, gen-valid cache hit (see the callers).
+                absorb_and_clear_read_window(unsafe { &mut *p });
+                return Some(p);
+            }
+        }
+        None
+    })
+}
+
+/// Pointer-keyed sibling of `write_cache_lookup`: resolve a raw `FILE*` to its cached
+/// `StdioStream*` WITHOUT calling `canonical_stream_id`. Matches either the raw `FILE*`
+/// address (`cstream`, which for `stdin`/`stdout`/`stderr` is the `NativeFile` slot address
+/// while `cid` is the `0x1000_000x` sentinel) or the canonical id (`cid`).
+#[inline]
+fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    WRITE_CACHE.with(|c| {
+        for (cstream, cid, cgen, p) in c.get() {
+            if (cstream == key || cid == key) && !p.is_null() && cgen == cur_gen {
+                // SAFETY: ST-gated, gen-valid cache hit (see the callers).
+                absorb_and_clear_read_window(unsafe { &mut *p });
+                return Some(p);
+            }
+        }
+        None
+    })
+}
+
+/// Records the resolved `*mut StdioStream` for `(stream, id)` (called on the slow path
+/// under the registry lock, capturing the gen so a later insert/remove invalidates it).
+#[inline]
+fn write_cache_store(stream: *mut c_void, id: usize, ptr: *mut StdioStream) {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0
+        || wide_io_active()
+        || unsafe { (*ptr).effective_orientation() } >= 0
+    {
+        return;
+    }
+    let generation = REGISTRY_GEN.load(Ordering::Acquire);
+    // Insert-at-front (most-recent-first), shifting the previous head to slot 1. `store`
+    // only runs on a full cache miss (a lookup hit returns before storing), so `id` is not
+    // already resident — no duplicate slot. 2-way holds two hot streams (interleave-safe).
+    WRITE_CACHE.with(|c| {
+        let old = c.get();
+        c.set([(stream as usize, id, generation, ptr), old[0]]);
+    });
+}
+
+/// Lock-free single-threaded fast path for `fputc`/`putc`/`putchar`/`_IO_putc`:
+/// appends directly into the stream's published `_IO_write_ptr .. _IO_write_end`
+/// window (mirroring glibc's inline `_IO_putc_unlocked`).
+///
+/// Soundness:
+/// - `__libc_single_threaded != 0` guarantees no concurrent thread can race on the
+///   stream or its published window.
+/// - `is_native_slot_ptr_lockfree(stream)` verifies with a single range-and-stride
+///   check that `stream` is the exact address of one of our static `NativeFile`
+///   slots in `NATIVE_STREAM_REGISTRY`.
+/// - A non-empty write window (`_IO_write_ptr < _IO_write_end`) is published only
+///   for a live, byte-oriented, `BufMode::Full` writable fd stream whose storage
+///   is already allocated; line-buffered streams publish `_IO_write_end == _IO_write_ptr`,
+///   wide-oriented / memory-backed / cookie / closed streams publish `(0, 0)`, and
+///   every other stream operation absorbs (`commit_write_window`) or clears the
+///   window before mutating or flushing the buffer.
+#[inline]
+fn try_fputc_window(stream: *mut c_void, byte: u8) -> Option<c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        || !(io_internal_abi::is_native_slot_ptr_lockfree(stream)
+            || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream))
+    {
+        return None;
+    }
+    let handle = stream as usize;
+    // SAFETY: `handle` is a valid `NativeFile` slot in `NATIVE_STREAM_REGISTRY`, and
+    // single-threaded execution guarantees exclusive access to its published window.
+    unsafe {
+        let write_ptr_slot = (handle + io_internal_abi::IO_WRITE_PTR_OFFSET) as *mut usize;
+        let write_end_slot = (handle + io_internal_abi::IO_WRITE_END_OFFSET) as *const usize;
+        let ptr = *write_ptr_slot;
+        let end = *write_end_slot;
+        if ptr < end {
+            *(ptr as *mut u8) = byte;
+            *write_ptr_slot = ptr + 1;
+            return Some(byte as c_int);
+        }
+    }
+    None
+}
+
+/// Single-threaded fast path for single-byte writes: if `id` resolves through the
+/// gen-valid thread-local cache to a Full-buffered fd stream with room, append the byte
+/// inline — skipping the membrane (`decide`/`observe`/`entrypoint_scope`), the registry
+/// lock, and the HashMap lookup. Returns `Some(byte)` on success, `None` to fall back to
+/// the full path. The cache only ever holds non-cookie, non-mem fd streams (stored solely
+/// on the regular slow path), so `fast_putc`'s semantics are exactly `buffer_write`'s
+/// no-flush branch. SOUND: `write_cache_lookup` already gated on `__libc_single_threaded`
+/// (unique `&mut`) and gen-validity (value not moved).
+#[allow(dead_code)]
+#[inline]
+fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
+    let p = write_cache_lookup(id)?;
+    // SAFETY: single-threaded ⇒ no other thread; gen-valid ⇒ the value has not moved
+    // since it was cached; the reborrow is the unique reference for this call only.
+    if unsafe { (*p).fast_putc(byte) } {
+        Some(byte as c_int)
+    } else {
+        None
+    }
+}
+
+/// Pointer-keyed sibling of `try_fputc_fast`: resolves via `write_cache_lookup_by_stream`
+/// so the fast path skips `canonical_stream_id`'s `native_stdio_fd_for_ptr` lock (measured
+/// ~6ns/call saved, ~21% of fd fputc). Republishes the write window so subsequent `fputc`
+/// calls hit `try_fputc_window` directly without touching TLS.
+#[inline]
+fn try_fputc_fast_by_stream(stream: *mut c_void, byte: u8) -> Option<c_int> {
+    let p = write_cache_lookup_by_stream(stream)?;
+    // SAFETY: as `try_fputc_fast`.
+    if unsafe { (*p).fast_putc(byte) } {
+        publish_read_window(unsafe { &*p });
+        Some(byte as c_int)
+    } else {
+        None
+    }
+}
+
+/// Bulk sibling of `try_fputc_fast` for `fputs`/`fwrite`: if `id` resolves through the
+/// gen-valid single-threaded cache to a Full-buffered fd stream with room for all of
+/// `bytes`, append them inline (skipping membrane + lock + lookup) and return `true`.
+#[inline]
+fn try_fwrite_fast(id: usize, bytes: &[u8]) -> bool {
+    match write_cache_lookup(id) {
+        // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        Some(p) => unsafe { (*p).fast_write(bytes) },
+        None => false,
+    }
+}
+
+/// Pointer-keyed sibling of `try_fwrite_fast`: resolves via `write_cache_lookup_by_stream`
+/// so the fast path skips `canonical_stream_id`'s `native_stdio_fd_for_ptr` lock. Same gates.
+#[inline]
+fn try_fwrite_fast_by_stream(stream: *mut c_void, bytes: &[u8]) -> bool {
+    match write_cache_lookup_by_stream(stream) {
+        // SAFETY: as `try_fwrite_fast`.
+        Some(p) => unsafe { (*p).fast_write(bytes) },
+        None => false,
+    }
+}
+
+/// Lock-free single-threaded fast path for `fgetc`/`getc`/`getchar`/`_IO_getc`:
+/// consumes directly from the stream's published `_IO_read_ptr .. _IO_read_end`
+/// window (mirroring glibc's inline `_IO_getc_unlocked`).
+#[inline]
+fn try_fgetc_window(stream: *mut c_void) -> Option<c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        || !(io_internal_abi::is_native_slot_ptr_lockfree(stream)
+            || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream))
+    {
+        return None;
+    }
+    let handle = stream as usize;
+    // SAFETY: `handle` is a valid `NativeFile` slot in `NATIVE_STREAM_REGISTRY`, and
+    // single-threaded execution guarantees exclusive access to its published window.
+    unsafe {
+        let read_ptr_slot = (handle + io_internal_abi::IO_READ_PTR_OFFSET) as *mut usize;
+        let read_end_slot = (handle + io_internal_abi::IO_READ_END_OFFSET) as *const usize;
+        let ptr = *read_ptr_slot;
+        let end = *read_end_slot;
+        if ptr < end {
+            let b = *(ptr as *const u8);
+            *read_ptr_slot = ptr + 1;
+            return Some(b as c_int);
+        }
+    }
+    None
+}
+
+/// Read sibling of `try_fputc_fast` for `fgetc`/`getc`: if `id` resolves through the
+/// gen-valid single-threaded cache to a clean readable fd stream with a byte already
+/// buffered, return it inline (skipping membrane + lock + lookup). `None` ⇒ full path
+/// (refill / ungetc / mem / transition). The cache is populated for read streams on the
+/// fgetc slow path below, mirroring the write side.
+#[allow(dead_code)]
+#[inline]
+fn try_fgetc_fast(id: usize) -> Option<c_int> {
+    let p = write_cache_lookup(id)?;
+    // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+    unsafe { (*p).fast_getc() }.map(|b| b as c_int)
+}
+
+/// Pointer-keyed sibling of `try_fgetc_fast`: skips `canonical_stream_id`'s native lock on a
+/// hit (the read analog of the write fast-path win). Republishes the read window so
+/// subsequent `fgetc` or `getc_unlocked` calls hit `try_fgetc_window` directly.
+#[inline]
+fn try_fgetc_fast_by_stream(stream: *mut c_void) -> Option<c_int> {
+    let p = write_cache_lookup_by_stream(stream)?;
+    // SAFETY: as `try_fgetc_fast`.
+    if let Some(b) = unsafe { (*p).fast_getc() } {
+        publish_read_window(unsafe { &*p });
+        Some(b as c_int)
+    } else {
+        None
+    }
+}
+
+/// Bulk read sibling of `try_fgetc_fast` for `fread`: fills `dst` inline iff all of it is
+/// already buffered for the cached single-threaded fd stream (skip membrane + lock +
+/// lookup). `false` ⇒ full path (refill / partial / mem).
+#[allow(dead_code)]
+#[inline]
+fn try_fread_fast(id: usize, dst: &mut [u8]) -> bool {
+    match write_cache_lookup(id) {
+        // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        Some(p) => unsafe { (*p).fast_read(dst) },
+        None => false,
+    }
+}
+
+/// Pointer-keyed sibling of `try_fread_fast`: skips `canonical_stream_id`'s native lock on a hit.
+#[inline]
+fn try_fread_fast_by_stream(stream: *mut c_void, dst: &mut [u8]) -> bool {
+    match write_cache_lookup_by_stream(stream) {
+        // SAFETY: as `try_fread_fast`.
+        Some(p) => unsafe { (*p).fast_read(dst) },
+        None => false,
+    }
+}
+
+fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
+    let parked = io_internal_abi::parked_static_slot();
+    let mut ids: Vec<usize> = reg
+        .streams
+        .keys()
+        .copied()
+        .chain(
+            reg.static_slots
+                .iter()
+                .enumerate()
+                .filter(|&(slot, _)| !(parked >= 3 && slot == parked))
+                .filter_map(|(_, entry)| entry.as_ref().map(|(id, _)| *id)),
+        )
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// The stdio registries held across `fork` (bd-rc0923-epic-eeuy4f.5), as glibc
+/// holds its stream-list lock: a stream operation in another thread at the
+/// instant of the clone otherwise leaves a registry locked forever in the
+/// child, whose next fopen/fclose blocks. Dropping the guard (in the parent and
+/// in the child) unlocks them; none of these mutexes records an owner thread.
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+struct HostStreamState {
+    io_started: bool,
+}
+
+static HOST_STREAMS_PTR: std::sync::atomic::AtomicPtr<
+    Mutex<ArtifactHashMap<usize, HostStreamState>>,
+> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[allow(dead_code)]
+fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamState>> {
+    use std::sync::atomic::Ordering;
+    static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let p = HOST_STREAMS_PTR.load(Ordering::Acquire);
+    if !p.is_null() {
+        return unsafe { &*p };
+    }
+    if INIT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
+        let reg = Box::new(Mutex::new(artifact_hash_map()));
+        HOST_STREAMS_PTR.store(Box::into_raw(reg), Ordering::Release);
+        return unsafe { &*HOST_STREAMS_PTR.load(Ordering::Acquire) };
+    }
+    loop {
+        let p = HOST_STREAMS_PTR.load(Ordering::Acquire);
+        if !p.is_null() {
+            return unsafe { &*p };
+        }
+        std::hint::spin_loop();
+    }
+}
+
+pub(crate) struct StdioForkGuard {
+    _std_locks: crate::io_internal_abi::StdStreamLocksForkGuard,
+    _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
+    _streams: Option<parking_lot::MutexGuard<'static, StreamRegistry>>,
+    _cookies: Option<std::sync::MutexGuard<'static, Option<StreamMap<CookieStreamInfo>>>>,
+    _static_aux: Vec<std::sync::MutexGuard<'static, StaticSlotAux>>,
+    _foreign: Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>>,
+    _host_streams: Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, HostStreamState>>>,
+}
+
+impl StdioForkGuard {
+    /// Parent side of `fork`: unlock normally.
+    pub(crate) fn release_in_parent(self) {
+        drop(self);
+    }
+
+    /// Child side of `fork`. The std mutexes unlock normally. The
+    /// parking_lot stream-registry mutex must not be unlocked: its slow path
+    /// hands the lock to a waiter recorded in parking_lot's table, and in the
+    /// child every such waiter is a parent thread that does not exist, so the
+    /// mutex would stay locked forever. Move the registry out and publish it
+    /// behind a fresh mutex; the old one is leaked and never touched again.
+    pub(crate) fn release_in_child(self) {
+        let StdioForkGuard {
+            mut _std_locks,
+            _native,
+            _streams,
+            _cookies,
+            _static_aux,
+            _foreign,
+            _host_streams,
+        } = self;
+        unsafe { _std_locks.adopt_in_fork_child() };
+        // SAFETY: the child is single-threaded and the old mutex (with the
+        // value inside it) is never used again, so reading the value out is a
+        // move, not a copy.
+        if let Some(_streams) = _streams {
+            let streams = unsafe { std::ptr::read(&*_streams as *const StreamRegistry) };
+            std::mem::forget(_streams);
+            let fresh = Box::into_raw(Box::new(FastRegistryMutex::new(streams)));
+            REGISTRY_PTR.store(fresh, std::sync::atomic::Ordering::Release);
+        }
+
+        if let Some(_host_streams) = _host_streams {
+            let host_streams = unsafe {
+                std::ptr::read(&*_host_streams as *const ArtifactHashMap<usize, HostStreamState>)
+            };
+            std::mem::forget(_host_streams);
+            let fresh_host = Box::into_raw(Box::new(Mutex::new(host_streams)));
+            HOST_STREAMS_PTR.store(fresh_host, std::sync::atomic::Ordering::Release);
+        }
+
+        drop(_native);
+        drop(_cookies);
+        drop(_static_aux);
+        drop(_foreign);
+    }
+}
+
+fn try_lock_static_slot_aux_for_fork(
+    single_threaded: bool,
+) -> Result<Vec<std::sync::MutexGuard<'static, StaticSlotAux>>, ()> {
+    if single_threaded {
+        return Ok(Vec::new());
+    }
+    let mut guards = Vec::with_capacity(io_internal_abi::STREAM_REGISTRY_CAPACITY - 3);
+    for aux in STATIC_SLOT_AUX
+        .iter()
+        .take(io_internal_abi::STREAM_REGISTRY_CAPACITY)
+        .skip(3)
+    {
+        let guard = match aux.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Err(()),
+        };
+        guards.push(guard);
+    }
+    Ok(guards)
+}
+
+/// Acquire every stdio registry lock. Other code may take these in any order,
+/// so they are taken all-or-nothing with try-locks and the attempt backs off
+/// instead of blocking while holding one.
+pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
+    if io_internal_abi::parked_static_slot() != 0 {
+        evict_parked_st_fmemopen_slot();
+    }
+    loop {
+        let single_threaded =
+            crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
+        if let Some(native) = crate::io_internal_abi::try_lock_native_stream_registry() {
+            let streams = if single_threaded && REGISTRY_PTR.load(Ordering::Acquire).is_null() {
+                Ok(None)
+            } else {
+                registry().try_lock().map(Some)
+            };
+            if let Ok(streams) = streams {
+                let cookies = if single_threaded && !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire)
+                {
+                    Ok(None)
+                } else {
+                    match cookie_registry().try_lock() {
+                        Ok(guard) => Ok(Some(guard)),
+                        Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
+                        Err(std::sync::TryLockError::WouldBlock) => Err(()),
+                    }
+                };
+                let host_streams =
+                    if single_threaded && HOST_STREAMS_PTR.load(Ordering::Acquire).is_null() {
+                        Ok(None)
+                    } else {
+                        match host_stream_registry().try_lock() {
+                            Ok(guard) => Ok(Some(guard)),
+                            Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
+                            Err(std::sync::TryLockError::WouldBlock) => Err(()),
+                        }
+                    };
+                if let Ok(cookies) = cookies
+                    && let Ok(static_aux) = try_lock_static_slot_aux_for_fork(single_threaded)
+                    && let Ok(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
+                    && let Ok(host_streams) = host_streams
+                    && let Ok(std_locks) =
+                        crate::io_internal_abi::try_lock_std_stream_locks(single_threaded)
+                {
+                    return StdioForkGuard {
+                        _std_locks: std_locks,
+                        _native: native,
+                        _streams: streams,
+                        _cookies: cookies,
+                        _static_aux: static_aux,
+                        _foreign: foreign,
+                        _host_streams: host_streams,
+                    };
+                }
+            }
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// The stream registry. A pointer so a forked child can replace the mutex
+/// (see `StdioForkGuard::release_in_child`).
+static REGISTRY_PTR: std::sync::atomic::AtomicPtr<FastRegistryMutex<StreamRegistry>> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
+    ensure_host_libio_exit_safe();
+
+    use std::sync::atomic::Ordering;
+    static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let p = REGISTRY_PTR.load(Ordering::Acquire);
+    if !p.is_null() {
+        return unsafe { &*p };
+    }
+    // First call — initialize without futex.
+    if INIT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
+        let reg = Box::new(FastRegistryMutex::new(StreamRegistry::new()));
+        REGISTRY_PTR.store(Box::into_raw(reg), Ordering::Release);
+        return unsafe { &*REGISTRY_PTR.load(Ordering::Acquire) };
+    }
+    // Another thread is initializing — spin wait (no futex).
+    loop {
+        let p = REGISTRY_PTR.load(Ordering::Acquire);
+        if !p.is_null() {
+            return unsafe { &*p };
+        }
+        std::hint::spin_loop();
+    }
+}
+
+fn registry_contains_stream(id: usize) -> bool {
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.contains_stream(id)
+}
+
+/// Whether a call carrying `stream` (the caller's pointer) and `id` (its
+/// canonical stream id) may be delegated to HOST stdio.
+///
+/// Registry membership alone is NOT a sufficient test, which is what bd-xmlbtg
+/// is about. `stdin`/`stdout`/`stderr` canonicalise to the SENTINEL ids
+/// `0x1000_0001..=0x1000_0003`, and those are fl's own handles, not addresses.
+/// An internal caller that reconstructs a pointer as `id as *mut c_void` — the
+/// shape `fcloseall` used — therefore produces a `stream` that IS the sentinel
+/// value. Handing that to the host makes glibc dereference `0x1000_0002` and
+/// abort the process with "Fatal error: glibc detected an invalid stdio handle"
+/// (bd-0ftdgt), or segfault, depending on timing.
+///
+/// The distinction that keeps the legitimate path working: when a caller passes
+/// a REAL host `FILE *` that happens to map to a standard fd,
+/// `native_stdio_fd_for_ptr` still canonicalises it to a sentinel id, but the
+/// pointer is a genuine address, so `stream as usize != id` and delegation
+/// proceeds exactly as before. Only a synthesized sentinel pointer is refused.
+/// Test hook (bd-xmlbtg): the host-delegation decision for `stream`.
+///
+/// Exposed because the only way to observe the bug behaviourally is to let a
+/// sentinel reach glibc, which aborts the process instead of failing a test.
+#[doc(hidden)]
+#[must_use]
+pub fn stdio_may_delegate_to_host_for_tests(stream: *mut c_void) -> bool {
+    may_delegate_to_host(stream, canonical_stream_id(stream))
+}
+
+/// Test hook (bd-xmlbtg): fl's `stdout` sentinel AS A POINTER — i.e. exactly
+/// the synthesized handle an internal `id as *mut c_void` produces.
+#[doc(hidden)]
+#[must_use]
+pub fn stdio_stdout_sentinel_ptr_for_tests() -> *mut c_void {
+    STDOUT_SENTINEL as *mut c_void
+}
+
+#[inline]
+/// True when `id` is a handle fl itself minted, rather than a real host
+/// `FILE *`.
+///
+/// fl hands out synthetic ids: `0x1000_0001..=0x1000_0003` for the standard
+/// streams and `0x1000_0010` upward from `alloc_stream_id`. `NEXT_STREAM_ID`
+/// only ever increases, so anything at or above the sentinel base and below the
+/// current watermark is an id fl issued at some point -- whether or not the
+/// registry still holds it. Real `FILE *` values live in libc's data segment or
+/// on the heap, far above this window.
+fn is_fl_issued_stream_id(id: usize) -> bool {
+    if id < STDIN_SENTINEL {
+        return false;
+    }
+    // Glibc-layout FILE handles from fl's handle table (bd-rc0923-epic-eeuy4f.1)
+    // live far above the legacy id window; open or closed, they are ours.
+    if io_internal_abi::is_native_handle_slot_address(id as *mut c_void)
+        || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(id as *mut c_void)
+    {
+        return true;
+    }
+    let watermark = NEXT_STREAM_ID.load(std::sync::atomic::Ordering::Acquire);
+    id < watermark
+}
+
+/// True when `stream` may be handed to host glibc as a real `FILE *`.
+///
+/// The complement of `is_fl_issued_stream_id` on the raw pointer value. A
+/// genuine host `FILE *` lives in libc's data segment or on the heap, far above
+/// fl's id window, so this is false only for handles fl minted itself.
+fn stream_is_host_owned(stream: *mut c_void) -> bool {
+    !is_fl_issued_stream_id(stream as usize)
+}
+
+pub(crate) fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
+    // Fast lock-free exit: any static native slot (`0..256`) or visible
+    // `_IO_2_1_{stdin,stdout,stderr}_` handle is ALWAYS owned by FrankenLibC
+    // (open or closed), so never acquire `registry().lock()` just to return `false`.
+    if !stream.is_null()
+        && (io_internal_abi::is_native_slot_ptr_lockfree(stream)
+            || io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream))
+    {
+        return false;
+    }
+    // Never hand one of fl's own ids to the host, registered or not.
+    //
+    // The sentinel-only form of this guard left every ORDINARY fl id exposed to
+    // exactly the failure bd-0ftdgt documents for the standard streams. Once a
+    // stream has been removed from the registry -- a concurrent `fclose`, a
+    // double close, or `fcloseall` racing a sibling thread's close -- the
+    // `!registry_contains_stream(id)` fallback below concludes "not mine, must
+    // be a host handle" and passes the synthetic id straight to glibc, which
+    // dereferences it.
+    //
+    // Measured (bd-u2daxd), caught under gdb on the conformance suite at
+    // --test-threads 16:
+    //     #0  _IO_new_fclose (fp=0x10000044) at ./libio/iofclose.c:48
+    //     #1  frankenlibc_abi::stdio_abi::fclose (stream=0x10000044)
+    //     #2  frankenlibc_abi::stdio_abi::fcloseall ()
+    // `0x1000_0044` is an `alloc_stream_id` value, not an address. With this
+    // guard the same call returns EOF/EBADF through the registry path, which is
+    // what a close of an already-closed stream is supposed to do.
+    if stream as usize == id && is_fl_issued_stream_id(id) {
+        return false;
+    }
+    if registry_contains_stream(id) {
+        return false;
+    }
+    // A closed fl `FILE` handle is still ours: its vtable points at fl
+    // trampolines, so host glibc must never interpret it. That includes the
+    // stdin/stdout/stderr slots: after fclose(stdout), GNU error() still calls
+    // fflush(stdout), and host glibc aborted with "invalid stdio handle"
+    // (coreutils close_stdout on a write error: `false --version > /dev/full`).
+    let addr = stream as usize;
+    if addr != 0
+        && (io_internal_abi::is_visible_stdio_handle_ptr_lockfree(stream)
+            || (0..3).any(|fd| io_internal_abi::native_stdio_slot_addr_lockfree(fd) == addr))
+    {
+        return false;
+    }
+    !io_internal_abi::is_native_handle_slot_address(stream)
+}
+
+#[allow(dead_code)]
+fn register_host_stream(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        return;
+    }
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
+    guard
+        .entry(id)
+        .or_insert(HostStreamState { io_started: false });
+}
+
+#[allow(dead_code)]
+pub(crate) fn mark_host_io_started(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        return;
+    }
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
+    guard
+        .entry(id)
+        .and_modify(|state| state.io_started = true)
+        .or_insert(HostStreamState { io_started: true });
+}
+
+#[allow(dead_code)]
+fn host_stream_io_started(id: usize) -> bool {
+    let guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
+    guard
+        .get(&id)
+        .map(|state| state.io_started)
+        .unwrap_or(false)
+}
+
+#[allow(dead_code)]
+fn unregister_host_stream(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    let mut guard = crate::runtime_policy::lock_std_mutex_preserving_errno(host_stream_registry());
+    guard.remove(&id);
+}
+
+#[inline]
+#[allow(clippy::needless_return)]
+fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
+    if stream.is_null() {
+        return None;
+    }
+    let addr = stream as usize;
+
+    // Check the 3 sentinel ADDRESSES first (cheap integer compares), then match
+    // against FrankenLibC's visible `_IO_2_1_{stdin,stdout,stderr}_` objects
+    // (including `R_X86_64_COPY` `.bss` copies) and reserved `NativeFile` slots.
+    match addr {
+        STDIN_SENTINEL => return Some(STDIN_SENTINEL),
+        STDOUT_SENTINEL => return Some(STDOUT_SENTINEL),
+        STDERR_SENTINEL => return Some(STDERR_SENTINEL),
+        _ => {}
+    }
+    match io_internal_abi::native_stdio_fd_for_ptr(stream) {
+        Some(libc::STDIN_FILENO) => Some(STDIN_SENTINEL),
+        Some(libc::STDOUT_FILENO) => Some(STDOUT_SENTINEL),
+        Some(libc::STDERR_FILENO) => Some(STDERR_SENTINEL),
+        _ => None,
+    }
+}
+
+#[inline]
+fn canonical_stream_id(stream: *mut c_void) -> usize {
+    standard_stream_id(stream).unwrap_or(stream as usize)
+}
+
+/// Bench hook: cost of `canonical_stream_id` (the per-call FILE*->id mapping, which for a
+/// non-std stream takes the `native_stdio_fd_for_ptr` lock). Not part of the ABI.
+#[doc(hidden)]
+pub fn bench_canonical_stream_id_cost(stream: *mut c_void) -> usize {
+    canonical_stream_id(stream)
+}
+
+/// Bench hook: OLD fputs fast-path lookup (canonical_stream_id + by-id cache) + fast_write.
+/// # Safety: `s` NUL-terminated; `stream` a cached writable stream.
+#[doc(hidden)]
+pub unsafe fn bench_fputs_oldpath(s: *const c_char, stream: *mut c_void) -> bool {
+    let id = canonical_stream_id(stream);
+    if let Some(p) = write_cache_lookup(id) {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        return unsafe { (*p).fast_write(bytes) };
+    }
+    false
+}
+
+/// Bench hook: NEW fputs fast-path lookup (pointer-keyed, skips canonical_stream_id) + fast_write.
+/// # Safety: `s` NUL-terminated; `stream` a cached writable stream.
+#[doc(hidden)]
+pub unsafe fn bench_fputs_newpath(s: *const c_char, stream: *mut c_void) -> bool {
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        return unsafe { (*p).fast_write(bytes) };
+    }
+    false
+}
+
+/// Bench hook: OLD feof path (canonical_stream_id + registry lock + get + is_eof).
+#[doc(hidden)]
+pub fn bench_feof_oldpath(stream: *mut c_void) -> c_int {
+    // NOTE(bd-h0n1mf): "old path" now means map-probe + per-stream lock, not the
+    // whole-registry hold — the pre-refactor arm no longer exists in this binary.
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        let s = &mut *s;
+        let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+        if s.is_eof() { 1 } else { 0 }
+    } else {
+        0
+    }
+}
+
+/// Bench hook: NEW feof fast path (pointer-keyed, lock-free is_eof).
+#[doc(hidden)]
+pub fn bench_feof_newpath(stream: *mut c_void) -> c_int {
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        return if unsafe { (*p).is_eof() } { 1 } else { 0 };
+    }
+    0
+}
+
+/// Bench hook: OLD fgets path (canonical_stream_id + registry lock + fill). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_fgets_oldpath(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
+    let id = canonical_stream_id(stream);
+    let Some(cell) = stream_cell(id) else {
+        return std::ptr::null_mut();
+    };
+    let mut s = cell.lock();
+    let s = &mut *s;
+    let max = (size - 1) as usize;
+    if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
+    }
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+    let (written, had_error) = unsafe { fgets_fill_stream(s, dst, 0) };
+    if (written == 0 && max > 0) || had_error {
+        return std::ptr::null_mut();
+    }
+    unsafe { *buf.add(written) = 0 };
+    buf
+}
+
+/// Bench hook: NEW fgets pointer-keyed fast path. Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_fgets_newpath(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let max = (size - 1) as usize;
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst, 0) };
+        mirror_raw_cached(stream, p);
+        if (written == 0 && max > 0) || had_error {
+            return std::ptr::null_mut();
+        }
+        unsafe { *buf.add(written) = 0 };
+        return buf;
+    }
+    std::ptr::null_mut()
+}
+
+/// Snapshot of a stream's state for the `stdio_ext.h` introspection helpers
+/// (`__freadable`/`__fwritable`/`__flbf`/`__fbufsize`/`__fpending`).
+pub(crate) struct StreamExtInfo {
+    pub readable: bool,
+    pub writable: bool,
+    pub line_buffered: bool,
+    pub buf_size: usize,
+    pub pending: usize,
+    /// glibc `__freading`: read-only OR the last operation was a read.
+    pub reading: bool,
+    /// glibc `__fwriting`: write-only OR the last operation was a write.
+    pub writing: bool,
+}
+
+/// Resolve a `FILE*` to its `stdio_ext` introspection state, or `None` if fl
+/// does not own the stream (caller falls back to a permissive default).
+pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
+    let id = canonical_stream_id(stream);
+    stream_cell(id).map(|cell| {
+        let s = cell.lock();
+        let readable = s.is_readable();
+        let writable = s.is_writable();
+        StreamExtInfo {
+            readable,
+            writable,
+            line_buffered: matches!(s.buf_mode(), BufMode::Line),
+            buf_size: s.buffer_capacity(),
+            pending: s.pending_flush().len(),
+            // glibc: read-only stream, or last op was a read.
+            reading: readable && (!writable || s.last_was_read()),
+            // glibc: write-only stream, or last op was a write.
+            writing: writable && (!readable || s.last_was_write()),
+        }
+    })
+}
+
+/// `fwide`: apply the orientation `mode` to a stream (sticky once set) and
+/// return the resulting orientation (>0 wide, <0 byte, 0 unset). Returns `None`
+/// if fl does not own the stream.
+pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option<c_int> {
+    let id = canonical_stream_id(stream);
+    stream_cell(id).map(|cell| {
+        let mut s = cell.lock();
+        let prev = s.effective_orientation();
+        if mode > 0 && prev == 0 {
+            sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+        }
+        let next = s.set_orientation(mode);
+        if next > 0 && s.wide_codec().is_none() {
+            s.bind_wide_codec(crate::locale_abi::active_multibyte_codec());
+        }
+        if prev <= 0 && next > 0 {
+            REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        }
+        next
+    })
+}
+
+/// Orient `stream` for a wide I/O operation (C99 7.24.2 / POSIX):
+/// - If already byte-oriented (`< 0`), sets the stream error indicator, sets `errno = EBADF`,
+///   and returns `false`.
+/// - Otherwise fixes the stream to wide orientation (`> 0`) and returns `true`.
+#[inline]
+pub(crate) fn orient_stream_wide(stream: *mut c_void) -> bool {
+    if stream.is_null() {
+        return false;
+    }
+    if wide_cache_lookup_by_stream(stream).is_some() {
+        return true;
+    }
+    let id = canonical_stream_id(stream);
+    let Some(cell) = stream_cell(id) else {
+        return true;
+    };
+    let mut s = cell.lock();
+    let prev = s.effective_orientation();
+    if prev < 0 {
+        s.set_error();
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    }
+    if prev == 0 {
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+    }
+    let next = s.set_orientation(1);
+    if s.wide_codec().is_none() {
+        s.bind_wide_codec(crate::locale_abi::active_multibyte_codec());
+    }
+    if prev <= 0 && next > 0 {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+    }
+    if next > 0 && !s.is_mem_backed() && !is_cookie_stream(id) {
+        wide_cache_store(stream, &mut *s as *mut StdioStream);
+    }
+    next > 0
+}
+
+/// Run one wide-memory output operation under its stream-cell lock and its
+/// recursive FILE lock unless BYCALLER mode disables automatic locking.
+/// The cell excludes seeks and flushes between chunks. The writer must not call an ABI
+/// entrypoint or user callback: those can acquire the nonrecursive cell again.
+pub(crate) fn with_wide_memstream_write(
+    stream: *mut c_void,
+    write: impl FnOnce(&mut StdioStream) -> bool,
+) -> bool {
+    // SAFETY: the caller supplies the live wide stream for this operation.
+    // No registry or cell lock is held while waiting for the recursive lock.
+    let _file_lock = unsafe { StdioLockGuard::acquire(stream) };
+    with_wide_memstream_write_unlocked(stream, write)
+}
+
+pub(crate) fn with_wide_memstream_write_unlocked(
+    stream: *mut c_void,
+    write: impl FnOnce(&mut StdioStream) -> bool,
+) -> bool {
+    let Some(cell) = stream_cell(canonical_stream_id(stream)) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    };
+    let mut destination = cell.lock();
+    if destination.mem_wide_data().is_none() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    }
+    write(&mut destination)
+}
+
+/// Store one chunk while the enclosing wide-memory operation holds its locks.
+/// Ordinary wide files still use their bound codec and descriptor buffering.
+pub(crate) fn write_wide_memstream_chunk(destination: &mut StdioStream, data: &[u32]) -> bool {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        destination.c_handle(),
+        data.len().saturating_mul(std::mem::size_of::<u32>()),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        return false;
+    }
+    let result = destination.mem_write_wide(data);
+    let success = result == Some(data.len());
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !success);
+    if !success {
+        unsafe {
+            set_abi_errno(if result.is_none() {
+                errno::EBADF
+            } else {
+                errno::ENOMEM
+            })
+        };
+    }
+    success
+}
+
+/// Orient `stream` for `ungetwc`: fixes an unoriented stream to wide (`> 0`),
+/// and returns `false` (without setting `ferror`) if the stream is already
+/// byte-oriented (`< 0`).
+#[inline]
+pub(crate) fn orient_stream_ungetwc(stream: *mut c_void) -> bool {
+    if stream.is_null() {
+        return false;
+    }
+    if wide_cache_lookup_by_stream(stream).is_some() {
+        return true;
+    }
+    let id = canonical_stream_id(stream);
+    let Some(cell) = stream_cell(id) else {
+        return true;
+    };
+    let mut s = cell.lock();
+    let prev = s.effective_orientation();
+    if prev < 0 {
+        return false;
+    }
+    if prev == 0 {
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+    }
+    let next = s.set_orientation(1);
+    if s.wide_codec().is_none() {
+        s.bind_wide_codec(crate::locale_abi::active_multibyte_codec());
+    }
+    if prev <= 0 && next > 0 {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+    }
+    if next > 0 && !s.is_mem_backed() && !is_cookie_stream(id) {
+        wide_cache_store(stream, &mut *s as *mut StdioStream);
+    }
+    next > 0
+}
+
+/// Immutable conversion state of a native wide stream. The cache uses the
+/// same lifetime/generation and single-thread proof as the wide read fast path.
+#[inline]
+pub(crate) fn stream_wide_read_context(
+    stream: *mut c_void,
+) -> (crate::locale_abi::MultibyteCodec, bool) {
+    if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        let stream = unsafe { &*pointer };
+        return (
+            stream
+                .wide_codec()
+                .unwrap_or_else(crate::locale_abi::active_multibyte_codec),
+            stream.is_eof(),
+        );
+    }
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let stream = cell.lock();
+        return (
+            stream
+                .wide_codec()
+                .unwrap_or_else(crate::locale_abi::active_multibyte_codec),
+            stream.is_eof(),
+        );
+    }
+    (crate::locale_abi::active_multibyte_codec(), false)
+}
+
+#[inline]
+pub(crate) fn stream_wide_codec(stream: *mut c_void) -> crate::locale_abi::MultibyteCodec {
+    stream_wide_read_context(stream).0
+}
+
+/// Restore external bytes consumed by one wide read, including characters
+/// straddling an fd refill and streams without an ordinary byte buffer.
+pub(crate) fn restore_wide_read(
+    stream: *mut c_void,
+    bytes: &[u8],
+    preserve_eof: bool,
+    encoding_error: bool,
+) -> bool {
+    let restore = |stream: &mut StdioStream| {
+        stream.unread_bytes(bytes, preserve_eof);
+        if encoding_error {
+            stream.set_error();
+        }
+    };
+    if let Some(pointer) = wide_cache_lookup_by_stream(stream) {
+        // SAFETY: the generation-valid single-thread cache owns this access.
+        restore(unsafe { &mut *pointer });
+        mirror_raw_cached(stream, pointer);
+        return true;
+    }
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let mut stream = cell.lock();
+        sync_and_unregister_fast_fixed_mem_read(id, &mut stream);
+        restore(&mut stream);
+        return true;
+    }
+    false
+}
+
+/// Orient stream `id` for a narrow/byte I/O operation when not inside an
+/// internal wide-I/O delegation (`!wide_io_active()`).
+#[inline]
+fn orient_stream_byte_by_id(id: usize) -> bool {
+    if wide_io_active() {
+        return true;
+    }
+    let Some(cell) = stream_cell(id) else {
+        return true;
+    };
+    let mut s = cell.lock();
+    if s.effective_orientation() > 0 {
+        s.set_error();
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    }
+    let _ = s.set_orientation(-1);
+    true
+}
+
+/// Query/set a stream's locking mode, returning its previous mode.
+/// Native state owns the mode; a foreign FILE delegates to its provider.
+///
+/// # Safety
+/// A non-null foreign pointer must name a live FILE. Mode changes require
+/// the caller to exclude concurrent use, as with GNU __fsetlocking.
+pub(crate) unsafe fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Option<c_int> {
+    if stream.is_null() {
+        return None;
+    }
+    let id = canonical_stream_id(stream);
+    if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&(stream as usize)) {
+        // Publish the standard handle before its cell mirrors USER_LOCK.
+        // This also covers a synthetic sentinel used before stdio chain init.
+        let _ = io_internal_abi::native_stdio_stream_ptr((id - STDIN_SENTINEL) as c_int);
+    }
+    if let Some(cell) = stream_cell(id) {
+        return Some(cell.lock().set_locking(typ));
+    }
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id) {
+        static HOST_FSETLOCKING: OnceLock<usize> = OnceLock::new();
+        let symbol = unsafe { host_stdio_symbol(&HOST_FSETLOCKING, "__fsetlocking") }?;
+        // SAFETY: the cached symbol is the host's function with this ABI.
+        let call: unsafe extern "C" fn(*mut c_void, c_int) -> c_int =
+            unsafe { std::mem::transmute(symbol) };
+        // SAFETY: ownership excludes all native handles, including closed
+        // slots and synthetic ids; the caller supplies a live foreign FILE.
+        return Some(unsafe { call(stream, typ) });
+    }
+    None
+}
+
+/// `__fpurge`: discard the stream's buffered (unread/unflushed) data. Returns
+/// true if fl owns the stream and purged it.
+pub(crate) fn stream_purge(stream: *mut c_void) -> bool {
+    let id = canonical_stream_id(stream);
+    match stream_cell(id) {
+        Some(cell) => {
+            let mut s = cell.lock();
+            sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+            s.purge();
+            true
+        }
+        None => false,
+    }
+}
+
+#[inline]
+#[cfg_attr(feature = "standalone", allow(unused_variables))]
+fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {
+    // In standalone mode, no host stdio streams to configure.
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(fd) = (match standard_stream_id(stream) {
+            Some(STDIN_SENTINEL) => Some(libc::STDIN_FILENO),
+            Some(STDOUT_SENTINEL) => Some(libc::STDOUT_FILENO),
+            Some(STDERR_SENTINEL) => Some(libc::STDERR_FILENO),
+            _ => None,
+        }) else {
+            return;
+        };
+        // SAFETY: buf (if non-null) comes from the caller with `size` bytes of storage.
+        let _ = unsafe {
+            io_internal_abi::configure_native_stdio_stream(
+                fd,
+                native_file_buf_mode(mode),
+                buf.cast(),
+                size,
+            )
+        };
+    }
+}
+
+#[inline]
+unsafe fn host_stdio_symbol(slot: &OnceLock<usize>, symbol: &'static str) -> Option<usize> {
+    crate::host_resolve::resolve_host_symbol_cached(slot, symbol)
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn sync_host_errno(default_errno: c_int) {
+    unsafe { set_abi_errno(crate::host_resolve::host_errno(default_errno)) };
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fwrite_fn() -> Option<HostFwriteFn> {
+    unsafe { host_stdio_symbol(&HOST_FWRITE_FN, "fwrite") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+// Locked entrypoints already hold StdioLockGuard. Their shared implementations
+// must use the host's unlocked operations so an explicitly unlocked call never
+// waits for a foreign FILE lock held by another thread.
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fwrite_unlocked_fn() -> Option<HostFwriteFn> {
+    unsafe { host_stdio_symbol(&HOST_FWRITE_UNLOCKED_FN, "fwrite_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fputs_unlocked_fn() -> Option<HostFputsFn> {
+    unsafe { host_stdio_symbol(&HOST_FPUTS_UNLOCKED_FN, "fputs_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fputc_unlocked_fn() -> Option<HostFputcFn> {
+    unsafe { host_stdio_symbol(&HOST_FPUTC_UNLOCKED_FN, "fputc_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fclose_fn() -> Option<HostFcloseFn> {
+    unsafe { host_stdio_symbol(&HOST_FCLOSE_FN, "fclose") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fileno_fn() -> Option<HostFilenoFn> {
+    unsafe { host_stdio_symbol(&HOST_FILENO_FN, "fileno") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_feof_unlocked_fn() -> Option<HostFeofFn> {
+    unsafe { host_stdio_symbol(&HOST_FEOF_UNLOCKED_FN, "feof_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_ferror_unlocked_fn() -> Option<HostFerrorFn> {
+    unsafe { host_stdio_symbol(&HOST_FERROR_UNLOCKED_FN, "ferror_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_clearerr_unlocked_fn() -> Option<HostClearerrFn> {
+    unsafe { host_stdio_symbol(&HOST_CLEARERR_UNLOCKED_FN, "clearerr_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fgetc_unlocked_fn() -> Option<HostFgetcFn> {
+    unsafe { host_stdio_symbol(&HOST_FGETC_UNLOCKED_FN, "fgetc_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fgets_unlocked_fn() -> Option<HostFgetsFn> {
+    unsafe { host_stdio_symbol(&HOST_FGETS_UNLOCKED_FN, "fgets_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fread_unlocked_fn() -> Option<HostFreadFn> {
+    unsafe { host_stdio_symbol(&HOST_FREAD_UNLOCKED_FN, "fread_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_ungetc_fn() -> Option<HostUngetcFn> {
+    unsafe { host_stdio_symbol(&HOST_UNGETC_FN, "ungetc") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fseek_fn() -> Option<HostFseekFn> {
+    unsafe { host_stdio_symbol(&HOST_FSEEK_FN, "fseek") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_ftell_fn() -> Option<HostFtellFn> {
+    unsafe { host_stdio_symbol(&HOST_FTELL_FN, "ftell") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fflush_fn() -> Option<HostFflushFn> {
+    unsafe { host_stdio_symbol(&HOST_FFLUSH_FN, "fflush") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fflush_unlocked_fn() -> Option<HostFflushFn> {
+    unsafe { host_stdio_symbol(&HOST_FFLUSH_UNLOCKED_FN, "fflush_unlocked") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_getdelim_fn() -> Option<HostGetdelimFn> {
+    unsafe { host_stdio_symbol(&HOST_GETDELIM_FN, "getdelim") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_getline_fn() -> Option<HostGetlineFn> {
+    unsafe { host_stdio_symbol(&HOST_GETLINE_FN, "getline") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_setvbuf_fn() -> Option<HostSetvbufFn> {
+    unsafe { host_stdio_symbol(&HOST_SETVBUF_FN, "setvbuf") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_vfscanf_fn(dialect: ScanfDialect) -> Option<HostVfscanfFn> {
+    let (slot, name) = match dialect {
+        ScanfDialect::Legacy => (&HOST_VFSCANF_FN, "vfscanf"),
+        ScanfDialect::C99 => (&HOST_ISOC99_VFSCANF_FN, "__isoc99_vfscanf"),
+        ScanfDialect::C23 => (&HOST_ISOC23_VFSCANF_FN, "__isoc23_vfscanf"),
+    };
+    unsafe { host_stdio_symbol(slot, name) }.map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+/// Preserve the selected wide scanf dialect when the host owns the FILE.
+/// Native streams stay on the local wide engine; a foreign FILE must not be
+/// interpreted as a missing native stream and reported as empty input.
+#[cfg(not(feature = "standalone"))]
+pub(crate) unsafe fn try_host_vfwscanf(
+    stream: *mut c_void,
+    format: *const libc::wchar_t,
+    ap: *mut c_void,
+    dialect: ScanfDialect,
+) -> Option<c_int> {
+    if !may_delegate_to_host(stream, canonical_stream_id(stream)) {
+        return None;
+    }
+    let (slot, name) = match dialect {
+        ScanfDialect::Legacy => (&HOST_VFWSCANF_FN, "vfwscanf"),
+        ScanfDialect::C99 => (&HOST_ISOC99_VFWSCANF_FN, "__isoc99_vfwscanf"),
+        ScanfDialect::C23 => (&HOST_ISOC23_VFWSCANF_FN, "__isoc23_vfwscanf"),
+    };
+    let address = unsafe { host_stdio_symbol(slot, name) }?;
+    let host: HostVfwscanfFn = unsafe { std::mem::transmute(address) };
+    let result = unsafe { host(stream, format, ap) };
+    mark_host_io_started(stream);
+    if result < 0 {
+        unsafe { sync_host_errno(0) };
+    }
+    Some(result)
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fgetpos_fn() -> Option<HostFgetposFn> {
+    unsafe { host_stdio_symbol(&HOST_FGETPOS_FN, "fgetpos") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_fsetpos_fn() -> Option<HostFsetposFn> {
+    unsafe { host_stdio_symbol(&HOST_FSETPOS_FN, "fsetpos") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_freopen_fn() -> Option<HostFreopenFn> {
+    unsafe { host_stdio_symbol(&HOST_FREOPEN_FN, "freopen") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_flockfile_fn() -> Option<HostFlockfileFn> {
+    unsafe { host_stdio_symbol(&HOST_FLOCKFILE_FN, "flockfile") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_funlockfile_fn() -> Option<HostFunlockfileFn> {
+    unsafe { host_stdio_symbol(&HOST_FUNLOCKFILE_FN, "funlockfile") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+#[allow(dead_code)]
+unsafe fn host_ftrylockfile_fn() -> Option<HostFtrylockfileFn> {
+    unsafe { host_stdio_symbol(&HOST_FTRYLOCKFILE_FN, "ftrylockfile") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+fn alloc_stream_id() -> usize {
+    NEXT_STREAM_ID.fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+}
+
+fn native_stream_open_flags(open_flags: OpenFlags) -> u32 {
+    let mut flags = 0u32;
+    if open_flags.readable {
+        flags |= io_internal_abi::file_flags::READ;
+    }
+    if open_flags.writable {
+        flags |= io_internal_abi::file_flags::WRITE;
+    }
+    if open_flags.append {
+        flags |= io_internal_abi::file_flags::APPEND;
+    }
+    flags
+}
+
+fn maybe_unregister_dynamic_native_stream(stream: *mut c_void) {
+    if let Some(slot) = io_internal_abi::occupied_static_native_slot_lockfree(stream) {
+        io_internal_abi::unregister_dynamic_static_slot(slot);
+        return;
+    }
+    if let Some(slot) = io_internal_abi::verify_native_file(stream)
+        && slot >= 3
+    {
+        if slot < io_internal_abi::STREAM_REGISTRY_CAPACITY {
+            io_internal_abi::unregister_dynamic_static_slot(slot);
+        } else {
+            let mut native_reg = io_internal_abi::native_stream_registry();
+            let _ = native_reg.unregister(slot);
+        }
+    }
+}
+
+/// `fileno` is what glibc reports in `_fileno` for this kind of memory stream:
+/// -2 for fmemopen, -1 for open_memstream/open_wmemstream.
+pub(crate) fn register_memory_stream_with_native_handle(
+    stream: StdioStream,
+    backing: io_internal_abi::NativeFileBacking,
+    open_flags: OpenFlags,
+    fileno: c_int,
+) -> *mut c_void {
+    let Some(native_ptr) = io_internal_abi::register_memory_handle(
+        backing,
+        native_stream_open_flags(open_flags),
+        fileno,
+        initial_glibc_flags(&open_flags, false, BufMode::Full),
+    ) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.insert_stream_with_handle(native_ptr as usize, stream, native_ptr as usize);
+    native_ptr
+}
+
+#[allow(dead_code)]
+pub(crate) fn register_stream(stream: StdioStream) -> usize {
+    let id = alloc_stream_id();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.insert_stream(id, stream);
+    id
+}
+
+pub(crate) fn stream_id_from_handle(stream: *mut c_void) -> usize {
+    canonical_stream_id(stream)
+}
+
+#[inline]
+fn stream_exists(id: usize) -> bool {
+    registry_contains_stream(id)
+}
+
+// Callers either hold the public FILE lock for the complete operation or
+// deliberately implement an unlocked entrypoint. The host sink must preserve
+// that choice on the strict/bootstrap path as well as the membrane path.
+unsafe fn write_bytes_without_runtime_policy(
+    id: usize,
+    _stream: *mut c_void,
+    bytes: &[u8],
+    caller: usize,
+) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        };
+        let mut stream_obj = cell.lock();
+        if !wide_io_active() {
+            if stream_obj.effective_orientation() > 0 {
+                stream_obj.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                return 0;
+            }
+            let _ = stream_obj.set_orientation(-1);
+        }
+        return unsafe { cookie_buffer_write(id, &mut stream_obj, bytes) };
+    }
+
+    // RESOLVED (bd-h0n1mf, was PERF bd-hqo6b6): the write path now resolves the per-stream
+    // short map probe and holds ONLY this stream's lock across buffering + the blocking
+    // sys_write_fd flush — concurrent writes to different streams no longer serialize.
+    let cached_cell = stream_cell_cache_lookup(_stream);
+    let cell_was_cached = cached_cell.is_some();
+    let Some(cell) = cached_cell.or_else(|| stream_cell(id)) else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fwrite) = unsafe { host_fwrite_unlocked_fn() }
+        {
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), _stream) };
+            if written == 0 {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(_stream);
+            }
+            return written.min(bytes.len());
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return 0;
+    };
+    let mut stream_guard = cell.lock();
+    let stream_obj = &mut *stream_guard;
+    if !wide_io_active() {
+        if stream_obj.effective_orientation() > 0 {
+            stream_obj.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let _ = stream_obj.set_orientation(-1);
+    }
+
+    if stream_obj.is_mem_backed() {
+        if !stream_obj.is_writable() {
+            stream_obj.set_error();
+            // SAFETY: only the calling thread's errno is modified.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let written = stream_obj.mem_write(bytes);
+        if written < bytes.len() {
+            stream_obj.set_error();
+        }
+        return written;
+    }
+
+    // Cache this non-cookie, non-mem fd stream so subsequent single-threaded single-byte
+    // writes hit the inline fast path (try_fputc_fast). This is the COMMON deployed path
+    // (heals disabled), so the cache must be populated here, not only on the membrane path.
+    write_cache_store(_stream, id, stream_obj as *mut StdioStream);
+    // Also populate the MT-safe cell cache so THREADED writers skip the map lock per call
+    // (try_write_fast_cell). Mirrors the fgetc slow path.
+    if !cell_was_cached {
+        stream_cell_cache_store(_stream, &cell);
+    }
+
+    let write_result = match stream_obj.buffer_write(bytes) {
+        Some(result) => result,
+        None => {
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+    };
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
+        let fd = stream_obj.fd();
+        let caller = stream_io_caller(stream_obj, caller);
+        let mut written = 0usize;
+        let mut success = true;
+        while written < write_result.flush_data.len() {
+            let rc = unsafe {
+                stream_write_fd(
+                    caller,
+                    fd,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
+                )
+            };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                    success = false;
+                    break;
+                }
+                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+            }
+            if rc == 0 {
+                success = false;
+                break;
+            }
+            written += rc as usize;
+        }
+
+        if success {
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
+        } else {
+            stream_obj.set_error();
+            stream_obj.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                stream_obj.set_offset(stream_obj.offset().saturating_add(flushed_new as i64));
+            }
+            return flushed_new;
+        }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        stream_obj.set_offset(stream_obj.offset().saturating_add(total_written as i64));
+    }
+    total_written
+}
+
+/// Flush a stream's pending write data to its fd. Returns true on success.
+unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
+    unsafe { flush_stream_for_caller(stream, 0) }
+}
+
+unsafe fn flush_stream_for_caller(stream: &mut StdioStream, caller: usize) -> bool {
+    let caller = stream_io_caller(stream, caller);
+    let len = stream.pending_flush().len();
+    if len == 0 {
+        return true;
+    }
+    let fd = stream.fd();
+    let mut written = 0usize;
+    while written < len {
+        let pending = stream.pending_flush();
+        let ptr = pending[written..].as_ptr();
+        let chunk_len = pending.len() - written;
+        let rc = unsafe { stream_write_fd(caller, fd, ptr.cast(), chunk_len) };
+        if rc <= 0 {
+            stream.set_error();
+            // A failed flush discards the pending span, including any prefix
+            // already written. Retaining it would replay that prefix on the
+            // next fflush/fclose. Buffered bytes already advanced offset, so
+            // remove the unwritten suffix and use the actual fd position when
+            // seekable (especially O_APPEND). Raw lseek preserves write errno.
+            stream.mark_flushed();
+            let unwritten = (len - written).min(i64::MAX as usize) as i64;
+            let position = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+                .unwrap_or_else(|_| stream.offset().saturating_sub(unwritten));
+            stream.set_offset(position);
+            return false;
+        }
+        written += rc as usize;
+    }
+    stream.mark_flushed();
+    // O_APPEND put the bytes at end of file wherever the stream's position
+    // was; take the kernel's position so ftell and later reads agree ("a+").
+    if stream.is_appending()
+        && fd >= 0
+        && let Ok(pos) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+    {
+        stream.set_offset(pos);
+    }
+    true
+}
+
+/// `fflush(stream)` / `fclose` on a stream holding read-ahead: move the fd to
+/// the stream's position and drop the buffered input, as glibc's
+/// `_IO_file_sync` does (POSIX 2008 fflush on a seekable input stream). A
+/// program that reads a line with stdio and then execs a child, or reads the
+/// fd directly, must see the fd right after that line -- fl left it after the
+/// whole read-ahead. Non-seekable fds are left alone (lseek fails); EOF stays.
+fn sync_input_position(stream: &mut StdioStream) {
+    let fd = stream.fd();
+    if fd < 0 || stream.is_mem_backed() || stream.readable_buffered() == 0 {
+        return;
+    }
+    // Back up over the unread bytes relative to where the descriptor is, as
+    // glibc does (lseek(fd, read_ptr - read_end, SEEK_CUR)). An absolute seek
+    // to the logical offset was wrong whenever that offset had not started
+    // from the descriptor's real position — stdin inherited at offset N
+    // starts at 0 — so close_stdin left a shared fd mid-line (gnulib
+    // test-yesno).
+    let unread = stream.readable_buffered() as i64;
+    if let Ok(pos) = raw_syscall::sys_lseek(fd, -unread, libc::SEEK_CUR) {
+        let eof = stream.is_eof();
+        let _ = stream.prepare_seek();
+        stream.set_offset(pos);
+        if eof {
+            stream.set_eof();
+        }
+    }
+}
+
+thread_local! {
+    /// Reusable refill bounce buffer — refill_stream fires on EVERY buffered read refill
+    /// (fgetc/fread/fgets/getline), and a fresh `vec![0u8; <=8192]` per refill is a per-refill
+    /// fl-malloc on the read hot path. A thread-local Vec retains capacity across refills;
+    /// a drop guard restores it on every return path.
+    static REFILL_TMP: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+struct RefillTmpGuard(Vec<u8>);
+impl Drop for RefillTmpGuard {
+    fn drop(&mut self) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
+        let _ = REFILL_TMP.try_with(|c| c.set(std::mem::take(&mut self.0)));
+    }
+}
+
+/// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
+unsafe fn refill_stream(stream: &mut StdioStream, caller: usize) -> isize {
+    let caller = stream_io_caller(stream, caller);
+    let capacity = stream.buffer_capacity();
+    if capacity == 0 {
+        return 0; // Cannot buffer anything.
+    }
+    let want = capacity.min(8192);
+    // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
+    // Vec. `sys_read_fd` overwrites the first `want` bytes, so no pre-zeroing is required for
+    // correctness; `resize(want, 0)` only grows (a no-op once warmed to the common size).
+    let mut guard = RefillTmpGuard(if crate::malloc_abi::native_thread_backend_active() {
+        Vec::new()
+    } else {
+        REFILL_TMP.try_with(|c| c.take()).unwrap_or_default()
+    });
+    let tmp = &mut guard.0;
+    if tmp.len() < want {
+        tmp.resize(want, 0);
+    }
+    let fd = stream.fd();
+    loop {
+        // The owned bounce buffer and the caller's StreamGuard remain outside
+        // the raw-syscall cancellation window and unwind normally on a cancel.
+        let rc = unsafe { stream_read_fd(caller, fd, tmp.as_mut_ptr().cast(), want) };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Buffer => {
+                stream.fill_read_buffer(&tmp[..rc as usize]);
+                return rc;
+            }
+            StreamPolicyAction::Yield => {
+                if rc == 0 {
+                    stream.set_eof();
+                }
+                return 0;
+            }
+            StreamPolicyAction::Escalate => {
+                stream.set_error();
+                return -1;
+            }
+            StreamPolicyAction::Flush => {
+                if rc > 0 {
+                    stream.fill_read_buffer(&tmp[..rc as usize]);
+                    return rc;
+                }
+                return 0;
+            }
+        }
+    }
+}
+
+/// GNU fopen's `c` mode (also implicit in setmntent) suppresses cancellation
+/// only for this stream's descriptor I/O, without changing the thread's state.
+#[inline]
+fn stream_io_caller(stream: &StdioStream, caller: usize) -> usize {
+    if stream.cancellation_enabled() {
+        caller
+    } else {
+        0
+    }
+}
+
+/// Read for a public stdio entry, retaining that entry's cancellation admission
+/// through shared stream helpers. Internal and benchmark callers pass zero.
+/// Buffer-only reads never reach this function and do not acquire a new
+/// cancellation point. The stream lock is always owned by an outer Drop guard.
+unsafe fn stream_read_fd(caller: usize, fd: c_int, buf: *mut c_void, count: usize) -> isize {
+    // SAFETY: callers keep `buf` writable for `count` bytes and pass their
+    // captured public-entry caller (or zero). Only the read syscall is exposed
+    // to asynchronous cancellation; stream state updates happen after it.
+    unsafe {
+        crate::pthread_abi::cancellation_point_syscall_for_caller(
+            caller,
+            libc::SYS_read,
+            [fd as usize, buf as usize, count, 0, 0, 0],
+        )
+    }
+}
+
+/// Preserve the public entry's cancellation admission through output helpers.
+/// Only the raw write is exposed to asynchronous cancellation: stream locks,
+/// formatted output and flush buffers remain owned by outer unwind guards.
+unsafe fn stream_write_fd(caller: usize, fd: c_int, buf: *const c_void, count: usize) -> isize {
+    // SAFETY: the caller keeps the byte span alive across the syscall and
+    // supplies the captured external caller, or zero for internal I/O.
+    unsafe {
+        crate::pthread_abi::cancellation_point_syscall_for_caller(
+            caller,
+            libc::SYS_write,
+            [fd as usize, buf as usize, count, 0, 0, 0],
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// stdin / stdout / stderr accessors
+// ---------------------------------------------------------------------------
+
+/// Global `stdin` pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
+pub static mut stdin: *mut c_void = STDIN_SENTINEL as *mut c_void;
+
+/// Global `stdout` pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
+pub static mut stdout: *mut c_void = STDOUT_SENTINEL as *mut c_void;
+
+/// Global `stderr` pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
+pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
+
+// ELF data symbols remain interposable even with -Bsymbolic-functions. A
+// locally dlopened copy must initialize its own cells, not the host's cells
+// or an executable's COPY relocations. Keep the aliases beside the storage
+// definitions so they are emitted in the same assembler/codegen unit.
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_stdin_storage",
+    ".hidden __frankenlibc_stdin_storage",
+    ".set __frankenlibc_stdin_storage, stdin",
+    ".globl __frankenlibc_stdout_storage",
+    ".hidden __frankenlibc_stdout_storage",
+    ".set __frankenlibc_stdout_storage, stdout",
+    ".globl __frankenlibc_stderr_storage",
+    ".hidden __frankenlibc_stderr_storage",
+    ".set __frankenlibc_stderr_storage, stderr",
+);
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "__frankenlibc_stdin_storage"]
+    static mut OWNED_STDIN: *mut c_void;
+    #[link_name = "__frankenlibc_stdout_storage"]
+    static mut OWNED_STDOUT: *mut c_void;
+    #[link_name = "__frankenlibc_stderr_storage"]
+    static mut OWNED_STDERR: *mut c_void;
+}
+
+#[inline]
+fn owned_stdio_cell(fd: c_int) -> *mut *mut c_void {
+    #[cfg(debug_assertions)]
+    let cells = [
+        core::ptr::addr_of_mut!(stdin),
+        core::ptr::addr_of_mut!(stdout),
+        core::ptr::addr_of_mut!(stderr),
+    ];
+    #[cfg(not(debug_assertions))]
+    let cells = [
+        core::ptr::addr_of_mut!(OWNED_STDIN),
+        core::ptr::addr_of_mut!(OWNED_STDOUT),
+        core::ptr::addr_of_mut!(OWNED_STDERR),
+    ];
+    cells[fd as usize]
+}
+
+/// True only when the native stdio functions own process-wide lookup. A
+/// different address for the visible stdout DATA cell is not sufficient:
+/// ordinary host executables also have COPY relocations for that cell.
+#[inline]
+#[allow(clippy::needless_return)]
+pub(crate) fn stdio_symbols_are_interposed() -> bool {
+    #[cfg(feature = "standalone")]
+    {
+        return true;
+    }
+    #[cfg(all(not(feature = "standalone"), debug_assertions))]
+    {
+        // Debug rlibs do not export the libc symbol names.
+        return false;
+    }
+    #[cfg(all(not(feature = "standalone"), not(debug_assertions)))]
+    {
+        // No TLS or allocation is needed here, including before runtime_ready.
+        // The constructor must publish real COPY-cell FILE pointers immediately.
+        static OWNERSHIP: AtomicUsize = AtomicUsize::new(0);
+        match OWNERSHIP.load(Ordering::Acquire) {
+            1 => return true,
+            2 => return false,
+            _ => {}
+        }
+        type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+        type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        let interposed =
+            crate::host_resolve::resolve_host_symbol_raw("dlsym").is_some_and(|address| {
+                // SAFETY: the raw resolver identifies the host's dlsym. Function
+                // addresses in this DSO bind locally under -Bsymbolic-functions.
+                // Query the main executable's global scope (`dlopen(NULL, RTLD_LAZY)`)
+                // rather than `RTLD_DEFAULT` (`NULL`): under `dlopen(..., RTLD_LOCAL | RTLD_DEEPBIND)`,
+                // `dlsym(RTLD_DEFAULT, ...)` inspects the caller's DEEPBIND searchlist
+                // and would falsely report global interposition, nulling host `_IO_list_all`.
+                let lookup: DlsymFn = unsafe { core::mem::transmute(address) };
+                let main_scope = crate::host_resolve::resolve_host_symbol_raw("dlopen")
+                    .map(|open_addr| {
+                        let host_dlopen: DlopenFn = unsafe { core::mem::transmute(open_addr) };
+                        unsafe { host_dlopen(std::ptr::null(), libc::RTLD_LAZY) }
+                    })
+                    .unwrap_or(std::ptr::null_mut());
+                unsafe {
+                    lookup(main_scope, c"fopen".as_ptr()) == fopen as *const () as *mut c_void
+                        || lookup(main_scope, c"printf".as_ptr())
+                            == printf as *const () as *mut c_void
+                }
+            });
+        OWNERSHIP.store(if interposed { 1 } else { 2 }, Ordering::Release);
+        interposed
+    }
+}
+
+// `_IO_2_1_{stdin,stdout,stderr}_` 224-byte `_IO_FILE_plus` objects are defined
+// and exported in `io_internal_abi` (`GLIBC_2.2.5`).
+
+static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
+#[cfg_attr(feature = "standalone", allow(dead_code))]
+static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
+#[cfg(not(debug_assertions))]
+#[cfg_attr(feature = "standalone", allow(dead_code))]
+static HOST_STDIO_COPY_RELOCATIONS_SYNCED: AtomicBool = AtomicBool::new(false);
+
+fn ensure_host_libio_exit_safe() {
+    // In standalone mode, no host libio to patch.
+    #[cfg(not(feature = "standalone"))]
+    {
+        if HOST_LIBIO_EXIT_PATCHED.load(Ordering::Acquire) {
+            return;
+        }
+        if !runtime_policy::is_runtime_ready() {
+            return;
+        }
+        if HOST_LIBIO_EXIT_PATCHED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            unsafe { io_internal_abi::bootstrap_host_libio_exports() };
+        }
+    }
+}
+
+/// Internal stream id for stdin-backed scanf helpers.
+#[allow(dead_code)]
+#[inline]
+pub(crate) const fn stdin_stream_id() -> usize {
+    STDIN_SENTINEL
+}
+
+#[inline]
+pub(crate) fn active_stdout_stream() -> *mut c_void {
+    active_standard_stream(libc::STDOUT_FILENO)
+}
+
+#[inline]
+pub(crate) fn active_stdin_stream() -> *mut c_void {
+    active_standard_stream(libc::STDIN_FILENO)
+}
+
+#[inline]
+pub(crate) fn active_stderr_stream() -> *mut c_void {
+    active_standard_stream(libc::STDERR_FILENO)
+}
+
+#[inline]
+fn active_standard_stream(fd: c_int) -> *mut c_void {
+    // In an interpose deployment, the program may reassign a COPY-relocated
+    // stdout/stdin/stderr cell after startup. Respect that visible cell. A
+    // locally loaded DSO instead uses its own public FILE objects throughout.
+    let stream = unsafe {
+        if stdio_symbols_are_interposed() {
+            match fd {
+                libc::STDIN_FILENO => stdin,
+                libc::STDOUT_FILENO => stdout,
+                _ => stderr,
+            }
+        } else {
+            owned_stdio_cell(fd).read()
+        }
+    };
+    if stream.is_null() {
+        io_internal_abi::visible_stdio_stream_ptr(fd)
+    } else {
+        stream
+    }
+}
+
+#[cfg(not(debug_assertions))]
+#[cfg_attr(feature = "standalone", allow(dead_code))]
+unsafe fn sync_copy_relocated_stdio_symbol(
+    symbol: &CStr,
+    owned_cell: *mut *mut c_void,
+    value: *mut c_void,
+) {
+    if !stdio_symbols_are_interposed() {
+        return;
+    }
+    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+
+    let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
+        return;
+    };
+    // SAFETY: raw resolver returns the host glibc dlsym with the expected ABI.
+    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };
+    // SAFETY: data-symbol dlsym returns the address of the writable symbol cell.
+    let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };
+    if resolved_cell.is_null() {
+        resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
+    }
+    let resolved_cell = resolved_cell.cast::<*mut c_void>();
+    if resolved_cell.is_null() || resolved_cell == owned_cell {
+        return;
+    }
+    // SAFETY: RTLD_DEFAULT resolved a writable copy-relocated symbol cell with
+    // the same `FILE *` layout as our exported globals.
+    unsafe { resolved_cell.write(value) };
+}
+
+/// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
+///
+/// In standalone mode, stdio globals are already set to sentinel values that map
+/// directly to the stream registry entries, so no host delegation is needed.
+#[allow(clippy::needless_return)]
+pub(crate) fn init_host_stdio_streams() {
+    if HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire) {
+        return;
+    }
+
+    #[cfg(feature = "standalone")]
+    {
+        let _ = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdin_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdout_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDOUT_FILENO);
+        let stderr_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDERR_FILENO);
+        if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
+            unsafe {
+                owned_stdio_cell(libc::STDIN_FILENO).write(stdin_ptr);
+                owned_stdio_cell(libc::STDOUT_FILENO).write(stdout_ptr);
+                owned_stdio_cell(libc::STDERR_FILENO).write(stderr_ptr);
+                stdin = stdin_ptr;
+                stdout = stdout_ptr;
+                stderr = stderr_ptr;
+            }
+        }
+        HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
+    }
+
+    #[cfg(not(feature = "standalone"))]
+    {
+        let interposed = stdio_symbols_are_interposed();
+        ensure_host_libio_exit_safe();
+
+        #[cfg(not(debug_assertions))]
+        let can_sync_copy_relocations = interposed
+            && runtime_policy::is_runtime_ready()
+            && !HOST_STDIO_COPY_RELOCATIONS_SYNCED.load(Ordering::Acquire);
+        let _ = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdin_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDIN_FILENO);
+        let stdout_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDOUT_FILENO);
+        let stderr_ptr = io_internal_abi::visible_stdio_stream_ptr(libc::STDERR_FILENO);
+        if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
+            unsafe {
+                owned_stdio_cell(libc::STDIN_FILENO).write(stdin_ptr);
+                owned_stdio_cell(libc::STDOUT_FILENO).write(stdout_ptr);
+                owned_stdio_cell(libc::STDERR_FILENO).write(stderr_ptr);
+                if interposed {
+                    // Preserve initial COPY relocation publication even when
+                    // this constructor runs before signal_runtime_ready().
+                    stdin = stdin_ptr;
+                    stdout = stdout_ptr;
+                    stderr = stderr_ptr;
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    if can_sync_copy_relocations {
+                        sync_copy_relocated_stdio_symbol(
+                            c"stdin",
+                            owned_stdio_cell(libc::STDIN_FILENO),
+                            stdin_ptr,
+                        );
+                        sync_copy_relocated_stdio_symbol(
+                            c"stdout",
+                            owned_stdio_cell(libc::STDOUT_FILENO),
+                            stdout_ptr,
+                        );
+                        sync_copy_relocated_stdio_symbol(
+                            c"stderr",
+                            owned_stdio_cell(libc::STDERR_FILENO),
+                            stderr_ptr,
+                        );
+                        HOST_STDIO_COPY_RELOCATIONS_SYNCED.store(true, Ordering::Release);
+                    }
+                }
+            }
+        }
+        HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
+    }
+}
+
+#[doc(hidden)]
+pub fn init_host_stdio_streams_for_tests() {
+    init_host_stdio_streams();
+}
+
+// ---------------------------------------------------------------------------
+// fopen / fclose
+// ---------------------------------------------------------------------------
+
+/// POSIX `fopen`.
+///
+/// Opens a file and returns an opaque stream handle managed by the ABI registry.
+/// Uses raw syscalls exclusively - no host delegation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe { fopen_with_mount_flags(pathname, mode, false) }
+}
+
+/// setmntent is a real FILE opener, with GNU's implicit close-on-exec and
+/// non-cancelling I/O flags. Apply these after parsing so arbitrary mode suffixes
+/// cannot push the implicit modifiers past fopen's six-character scan limit.
+pub(crate) unsafe fn fopen_mount(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe { fopen_with_mount_flags(pathname, mode, true) }
+}
+
+unsafe fn fopen_with_mount_flags(
+    pathname: *const c_char,
+    mode: *const c_char,
+    mount_flags: bool,
+) -> *mut c_void {
+    if pathname.is_null() || mode.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let (safety_mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, pathname as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
+
+    // Validate pathname string.
+    let (_path_len, path_terminated) = unsafe {
+        scan_c_str_len(
+            pathname,
+            if repair {
+                known_remaining(pathname as usize)
+            } else {
+                None
+            },
+        )
+    };
+    if !path_terminated && repair {
+        unsafe { set_abi_errno(errno::ENAMETOOLONG) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    // Validate mode string.
+    let (mode_len, mode_terminated) = unsafe {
+        scan_c_str_len(
+            mode,
+            if repair {
+                known_remaining(mode as usize)
+            } else {
+                None
+            },
+        )
+    };
+    if !mode_terminated {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
+    let Some(mut open_flags) = parse_mode(mode_bytes) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    };
+
+    if mount_flags {
+        open_flags.cloexec = true;
+        open_flags.no_cancel = true;
+    }
+
+    // Convert to libc open flags and open the file.
+    let oflags = flags_to_oflags(&open_flags);
+    let create_mode: libc::mode_t = 0o666;
+    let fd = match unsafe {
+        raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, oflags, create_mode)
+    } {
+        Ok(f) => f,
+        Err(e) => {
+            // ERRNO LAST (bd-7dq39e). `observe` is bookkeeping, and it takes a
+            // contended lock: a futex wait that finds the word already changed
+            // returns EAGAIN and leaves 11 in the HOST errno slot, on top of the
+            // value we just set. Measured under 304-way parallelism as
+            // `nonexistent file should set ENOENT: left: 11, right: 2` — errno
+            // written, then clobbered by our own accounting. Nothing may run
+            // between the errno write and the error return.
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    // Create stream via fdopen_native_impl_with_origin (freshly opened fd starts at offset 0).
+    let fp = fdopen_native_impl_with_origin(fd, &open_flags, true);
+    if fp.is_null() {
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        // Keep the allocation failure across descriptor cleanup and accounting.
+        let _ = raw_syscall::sys_close(fd);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        unsafe { set_abi_errno(saved_errno) };
+    } else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
+    }
+    fp
+}
+
+/// Internal: create a `StdioStream` for an already-open fd.
+///
+/// Returns an opaque stream pointer. The fd remains owned by the caller on
+/// failure; this function never closes it.
+fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
+    fdopen_native_impl_with_origin(fd, open_flags, false)
+}
+
+fn fdopen_native_impl_with_origin(
+    fd: c_int,
+    open_flags: &OpenFlags,
+    freshly_opened: bool,
+) -> *mut c_void {
+    const GLIBC_BUFSIZ: usize = 8192;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `st` is a writable, correctly sized stat buffer.
+    let fstat_ok = fd >= 0 && unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_ok();
+    let (buf_mode, buf_size, seekable) = if fd == libc::STDERR_FILENO {
+        let seekable = fstat_ok && {
+            let file_type = unsafe { st.assume_init() }.st_mode & libc::S_IFMT;
+            !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK | libc::S_IFCHR)
+        };
+        (BufMode::None, 0, seekable)
+    } else if fstat_ok {
+        // SAFETY: fstat succeeded and filled the buffer.
+        let st = unsafe { st.assume_init() };
+        let file_type = st.st_mode & libc::S_IFMT;
+        let is_tty = file_type == libc::S_IFCHR && raw_isatty(fd);
+        let mode = if is_tty { BufMode::Line } else { BufMode::Full };
+        let size = match usize::try_from(st.st_blksize) {
+            Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
+            _ => GLIBC_BUFSIZ,
+        };
+        let seekable = !matches!(file_type, libc::S_IFIFO | libc::S_IFSOCK | libc::S_IFCHR);
+        (mode, size, seekable)
+    } else {
+        let mode = if raw_isatty(fd) {
+            BufMode::Line
+        } else {
+            BufMode::Full
+        };
+        (mode, GLIBC_BUFSIZ, false)
+    };
+
+    // Create StdioStream and set initial offset for append mode.
+    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    if !matches!(buf_mode, BufMode::None) {
+        stream.set_buffering(buf_mode, buf_size);
+    }
+    // Like glibc, only a write-only append stream ("a") starts at the end:
+    // "a+" reads from the beginning while its writes still land at the end.
+    if open_flags.append
+        && !open_flags.readable
+        && seekable
+        && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END)
+    {
+        stream.set_offset(end_off);
+    } else if !freshly_opened
+        && seekable
+        && let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+    {
+        // Any other stream starts where the descriptor is: fdopen of an fd
+        // at offset 1 reads byte 1 and ftell reports 2 after one fgetc. The
+        // logical offset began at 0, so fclose/fflush synced the descriptor
+        // back to the wrong place (gnulib test-fclose; a shared fd re-read
+        // bytes already consumed).
+        stream.set_offset(cur);
+    }
+
+    // The FILE * handed back is a glibc-layout handle (bd-rc0923-epic-eeuy4f.1):
+    // callers and glibc's inline macros dereference it.
+    let Some((id, handle)) = alloc_stream_handle(fd, open_flags, buf_mode) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if reg.contains_stream(id) {
+        // A stale entry at a reused handle address would be a registry bug;
+        // refuse rather than alias two streams.
+        drop(reg);
+        maybe_unregister_dynamic_native_stream(id as *mut c_void);
+        unsafe { set_abi_errno(errno::EMFILE) };
+        return std::ptr::null_mut();
+    }
+    reg.insert_stream_with_handle(id, stream, handle);
+    id as *mut c_void
+}
+
+/// glibc's buffering for a stream on `fd`: stderr unbuffered, a terminal
+/// line-buffered, anything else fully buffered. The standard streams used to
+/// be line-buffered unconditionally, so `printf` into a pipe or file issued a
+/// write(2) per line and interleaved with raw writes and stderr differently
+/// from glibc (which also duplicates unflushed output across fork).
+/// A buffered stream on `fd`, with the buffer size glibc would give it.
+///
+/// glibc sizes a stream's buffer when it first allocates it
+/// (`_IO_file_doallocate`): BUFSIZ (8192), or the fd's `st_blksize` when that is
+/// smaller -- 4096 for files, pipes and /dev/null, 1024 for /proc files
+/// (measured with __fbufsize on glibc 2.43). fl used 8192 for everything, so
+/// output was flushed at different points: stdout and stderr sharing a pipe
+/// interleaved differently (ImageMagick's `compare --help` put its error line
+/// in another place), and a crash lost up to twice as much buffered output.
+fn fd_stream(fd: c_int, open_flags: OpenFlags, buf_mode: BufMode) -> StdioStream {
+    let mut stream = StdioStream::with_mode(fd, open_flags, buf_mode);
+    if !matches!(buf_mode, BufMode::None) {
+        stream.set_buffering(buf_mode, glibc_stream_bufsize(fd));
+    }
+    stream
+}
+
+fn glibc_stream_bufsize(fd: c_int) -> usize {
+    const GLIBC_BUFSIZ: usize = 8192;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `st` is a writable, correctly sized stat buffer.
+    if fd < 0 || unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_err() {
+        return GLIBC_BUFSIZ;
+    }
+    // SAFETY: fstat succeeded and filled the buffer (zeroed beforehand anyway).
+    let blksize = unsafe { st.assume_init() }.st_blksize;
+    match usize::try_from(blksize) {
+        Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
+        _ => GLIBC_BUFSIZ,
+    }
+}
+
+fn std_buffered_stream(fd: c_int, open_flags: OpenFlags) -> StdioStream {
+    const GLIBC_BUFSIZ: usize = 8192;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `st` is a writable, correctly sized stat buffer.
+    let fstat_ok = fd >= 0 && unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_ok();
+    let (buf_mode, buf_size, seekable) = if fstat_ok {
+        // SAFETY: fstat succeeded and filled the buffer.
+        let st = unsafe { st.assume_init() };
+        let file_type = st.st_mode & libc::S_IFMT;
+        let is_tty = file_type == libc::S_IFCHR && raw_isatty(fd);
+        let mode = if is_tty { BufMode::Line } else { BufMode::Full };
+        let size = match usize::try_from(st.st_blksize) {
+            Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
+            _ => GLIBC_BUFSIZ,
+        };
+        let seekable = matches!(file_type, libc::S_IFREG | libc::S_IFBLK);
+        (mode, size, seekable)
+    } else {
+        let mode = if raw_isatty(fd) {
+            BufMode::Line
+        } else {
+            BufMode::Full
+        };
+        (mode, GLIBC_BUFSIZ, false)
+    };
+    let mut stream = StdioStream::with_mode(fd, open_flags, buf_mode);
+    stream.set_buffering(buf_mode, buf_size);
+    if seekable && let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR) {
+        stream.set_offset(cur);
+    }
+    stream
+}
+
+#[allow(dead_code)]
+fn std_stream_buf_mode(fd: c_int) -> BufMode {
+    if fd == libc::STDERR_FILENO {
+        BufMode::None
+    } else if raw_isatty(fd) {
+        BufMode::Line
+    } else {
+        BufMode::Full
+    }
+}
+
+/// Raw isatty check using TIOCGWINSZ ioctl syscall.
+///
+/// Returns true if fd is a terminal, false otherwise.
+#[inline]
+fn raw_isatty(fd: c_int) -> bool {
+    let mut ws = std::mem::MaybeUninit::<libc::winsize>::zeroed();
+    let rc = unsafe {
+        frankenlibc_core::syscall::sys_ioctl(
+            fd,
+            libc::TIOCGWINSZ as usize,
+            ws.as_mut_ptr() as usize,
+        )
+    };
+    rc.is_ok()
+}
+
+/// POSIX `fclose`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
+    if !stream.is_null()
+        && let Some(rc) = try_fclose_fast_static_fmemopen(stream)
+    {
+        return rc;
+    }
+    unsafe { fclose_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+#[inline]
+fn try_fclose_fast_static_fmemopen(stream: *mut c_void) -> Option<c_int> {
+    crate::glibc_internal_abi::note_current_thread_activity();
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        || crate::malloc_abi::is_multi_threaded()
+    {
+        if io_internal_abi::parked_static_slot() != 0 {
+            evict_parked_st_fmemopen_slot();
+        }
+        return None;
+    }
+    let slot =
+        io_internal_abi::occupied_static_native_slot_lockfree(stream).filter(|&slot| slot >= 3)?;
+    if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 1 {
+        return None;
+    }
+    let id = stream as usize;
+    if !crate::malloc_abi::native_thread_backend_active() {
+        let tls = &TLS_FAST_MEM_READ;
+        if tls.parked.get().slot == 0
+            && io_internal_abi::parked_static_slot() == 0
+            && tls.borrowed.get() == 0
+        {
+            let cp = tls.stream.get();
+            let cg = tls.reg_gen.get();
+            let ptr = tls.cursor.get();
+            if cp == id && !ptr.is_null() && cg == REGISTRY_GEN.load(Ordering::Acquire) {
+                let cursor = unsafe { &*ptr };
+                let slow_addr = cursor.cell_slow_touched.load(Ordering::Relaxed);
+                if cursor.memory.st_busy.load(Ordering::Relaxed) == 0
+                    && slow_addr != 0
+                    && !unsafe { &*(slow_addr as *const AtomicBool) }.load(Ordering::Relaxed)
+                    && unsafe { (*cursor.memory.inner.get()).owned.is_none() }
+                    && io_internal_abi::static_slot_lock_is_unowned(slot)
+                {
+                    tls.stream.set(0);
+                    tls.reg_gen.set(0);
+                    tls.cursor.set(std::ptr::null());
+                    if TLS_REFCELL_MEM_CACHED.get() {
+                        clear_fast_fixed_mem_read_tls(id);
+                    }
+                    cursor.closed.store(true, Ordering::Release);
+                    STATIC_SLOT_COOKIE_KIND[slot].store(0, Ordering::Release);
+                    cursor.memory.st_busy.store(1, Ordering::Relaxed);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    let inner = unsafe { &mut *cursor.memory.inner.get() };
+                    inner.borrowed = 0;
+                    inner.cursor.reset(0, 0, false);
+                    cursor.eof.store(false, Ordering::Relaxed);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    cursor.memory.st_busy.store(0, Ordering::Relaxed);
+                    PARKED_GLOBAL_HANDLE.store(id, Ordering::Relaxed);
+                    PARKED_GLOBAL_CURSOR.store(ptr as usize, Ordering::Relaxed);
+                    unsafe {
+                        io_internal_abi::park_static_slot_st(slot, id as *mut c_void);
+                    }
+                    REGISTRY_GEN.fetch_add(1, Ordering::Release);
+                    tls.parked.set(ParkedStFmemopenSlot {
+                        slot,
+                        handle: id,
+                        cursor: ptr,
+                    });
+                    return Some(0);
+                }
+            }
+        }
+    }
+    let cell = {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let (_, cell_ref) = reg.static_slots[slot]
+            .as_ref()
+            .filter(|(stored_id, _)| *stored_id == id)?;
+        let mut s = cell_ref.stream.try_lock()?;
+        absorb_read_window(&mut s);
+        if s.is_error() || !s.pending_flush().is_empty() || s.read_window().is_some() {
+            return None;
+        }
+        retire_read_window(&mut s);
+        drop(s);
+        reg.remove_stream(id)?
+    };
+    STATIC_SLOT_COOKIE_KIND[slot].store(0, Ordering::Release);
+    let (cookie_info, fast_mem_read) = {
+        let mut aux = lock_static_slot_aux(slot);
+        if aux.id == id {
+            aux.id = 0;
+            (aux.cookie.take(), aux.fast_mem_read.take())
+        } else {
+            (None, None)
+        }
+    };
+    clear_fast_fixed_mem_read_tls(id);
+    if let Some(cursor) = fast_mem_read {
+        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+        cursor.closed.store(true, Ordering::Release);
+        drop(cookie_info);
+        recycle_fmemopen_objects(cell, cursor);
+    } else if let Some(info) = cookie_info
+        && let Some(memory) = info.fixed_memory
+    {
+        let buf = memory.lock_inner().cursor.take_input_buffer();
+        return_pooled_fixed_mem_input(buf);
+    }
+    io_internal_abi::unregister_dynamic_static_slot(slot);
+    Some(0)
+}
+
+pub(crate) unsafe fn fclose_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    if !stream.is_null()
+        && let Some(rc) = try_fclose_fast_static_fmemopen(stream)
+    {
+        return rc;
+    }
+    let id = canonical_stream_id(stream);
+    if id == 0 {
+        return libc::EOF;
+    }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_fclose) = unsafe { host_fclose_fn() }
+    {
+        let rc = unsafe { host_fclose(stream) };
+        if rc != 0 {
+            unsafe { sync_host_errno(errno::EBADF) };
+        } else {
+            unregister_host_stream(stream);
+        }
+        return rc;
+    }
+
+    // Keep the public FILE lock across flush/callback work, but release it
+    // before retiring the handle: unlock must never inspect a reused slot.
+    let file_lock = unsafe { StdioLockGuard::acquire(stream) };
+    let cell = {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(cell) = reg.get_stream(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return libc::EOF;
+        };
+        cell
+    };
+    // Keep the FILE registered until a cancellable flush finishes. A cleanup
+    // handler must still be able to use and close it if that flush unwinds.
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+
+    // Cookie-backed streams flush their ordinary stdio buffer before invoking
+    // the close callback.  `fclose` still performs the close on a flush error,
+    // but reports that error to the caller as glibc does.
+    if is_cookie_stream(id) {
+        let flushed = unsafe { flush_cookie_stream(id, s) };
+        retire_read_window(s);
+        unregister_fast_fixed_mem_read(id);
+        drop(s_guard);
+        registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_stream(id);
+        let rc = unsafe { cookie_stream_close(id) };
+        drop(file_lock);
+        maybe_unregister_dynamic_native_stream(stream);
+        return if flushed && rc == 0 { 0 } else { libc::EOF };
+    }
+
+    // Memory-backed streams: sync data, then clean up.
+    if s.is_mem_backed() {
+        retire_read_window(s);
+        let flush_ok = s.mem_flush();
+        sync_and_unregister_fast_fixed_mem_read(id, s);
+        let wide_ok = unsafe {
+            sync_memstream_to_caller(id, s, true);
+            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, true)
+        };
+        // Remove sync metadata for open_memstream.
+        let mut sync_guard = lock_mem_sync_registry();
+        if let Some(ref mut map) = *sync_guard {
+            map.remove(&id);
+        }
+        crate::wchar_abi::unregister_open_wmemstream(id);
+        drop(sync_guard);
+        drop(s_guard);
+        registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_stream(id);
+        drop(file_lock);
+        maybe_unregister_dynamic_native_stream(stream);
+        return if flush_ok && wide_ok { 0 } else { libc::EOF };
+    }
+
+    let fd = s.fd();
+    // Input: leave the fd at the stream's position (glibc _IO_file_close_it).
+    sync_input_position(s);
+    let flushed = unsafe { flush_stream_for_caller(s, caller) };
+    let mut close_error = if flushed {
+        None
+    } else {
+        Some(
+            std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(errno::EIO),
+        )
+    };
+    retire_read_window(s);
+    let _ = s.prepare_close();
+
+    // Close the fd — for stdin/stdout/stderr too, as glibc does: coreutils'
+    // close_stdout/close_stdin judge success by fclose's result, and an fd
+    // already closed behind stdio's back must report EBADF (gnulib
+    // test-closein, test-fclose). The raw close reports its errno only in
+    // the result.
+    let (child, closed) = if fd >= 0 {
+        close_stream_descriptor(id, fd)
+    } else {
+        (None, Ok(()))
+    };
+    if let Err(e) = closed {
+        close_error.get_or_insert(e);
+    }
+    // Neither the stream lock nor the process registry may remain held while
+    // waiting: another thread must be able to close another process stream.
+    drop(s_guard);
+    // Other lifecycle operations acquire registry then cell. Remove the entry
+    // only after releasing this cell, preserving that global lock order.
+    registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove_stream(id);
+    drop(file_lock);
+    maybe_unregister_dynamic_native_stream(stream);
+    let status = if let Some(pid) = child {
+        match wait_popen_child(pid) {
+            Ok(status) => status,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                return libc::EOF;
+            }
+        }
+    } else {
+        0
+    };
+    if let Some(e) = close_error {
+        unsafe { set_abi_errno(e) };
+        libc::EOF
+    } else {
+        status
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fflush
+// ---------------------------------------------------------------------------
+
+/// POSIX `fflush`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
+    unsafe { fflush_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fflush_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fflush_unlocked_for_caller(stream, caller) }
+}
+
+pub(crate) unsafe fn fflush_unlocked_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    // MT-safe cell-cache fast path (see feof): a threaded fflush-per-write (durability-logging)
+    // loop otherwise pays `canonical_stream_id` (×3) + decide + `stream_cell` PER CALL. A gen-valid
+    // hit is a non-cookie non-mem fd stream (primed by the loop's fputc/write), so the slow path's
+    // single-stream branch reduces to `flush_stream(s)` — byte-identical (decide/observe elided as
+    // the other cached fast paths elide them). fl fflush per-op 221ns→1370ns 1t→8t (6.2x) vs glibc.
+    if !stream.is_null()
+        && let Some(cell) = stream_cell_cache_lookup(stream)
+    {
+        let mut s = cell.lock();
+        if !s.is_mem_backed() {
+            let ok = unsafe { flush_stream_for_caller(&mut s, caller) };
+            sync_input_position(&mut s);
+            return if ok { 0 } else { libc::EOF };
+        }
+    }
+    if !stream.is_null() {
+        let _id = canonical_stream_id(stream);
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if may_delegate_to_host(stream, _id)
+            && let Some(host_fflush) = unsafe { host_fflush_unlocked_fn() }
+        {
+            let rc = unsafe { host_fflush(stream) };
+            if rc != 0 {
+                unsafe { sync_host_errno(errno::EBADF) };
+            }
+            return rc;
+        }
+    }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        canonical_stream_id(stream),
+        0,
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 4, true);
+        return libc::EOF;
+    }
+
+    // NULL stream: flush all open streams.
+    if stream.is_null() {
+        #[allow(unused_mut)]
+        let mut host_fail = false;
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if let Some(host_fflush) = unsafe { host_fflush_fn() } {
+            let rc = unsafe { host_fflush(std::ptr::null_mut()) };
+            if rc != 0 {
+                host_fail = true;
+                unsafe { sync_host_errno(errno::EBADF) };
+            }
+        }
+        // Fast path: if `REGISTRY_PTR` has never been initialized, no
+        // FrankenLibC `StdioStream` has ever been created or buffered, so avoid
+        // forcing `StreamRegistry::new()` (`fstat`/`ioctl`/`lseek`/allocations)
+        // during `fflush(NULL)` or `exit()`.
+        if REGISTRY_PTR.load(Ordering::Acquire).is_null() {
+            let failed = host_fail;
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, failed);
+            return if failed { libc::EOF } else { 0 };
+        }
+        // Snapshot cells under one short try-lock, then flush per stream. Streams
+        // opened AFTER the snapshot are not flushed — same semantics as the old
+        // whole-registry hold (they could not have been registered mid-hold either).
+        let snapshot: Vec<(usize, StreamCell)> = {
+            let Ok(reg) = registry().try_lock() else {
+                // Lock held by dead thread (fork) or reentrant. Fail safe.
+                return libc::EOF;
+            };
+            sorted_stream_ids(&reg)
+                .into_iter()
+                .filter_map(|id| reg.get_stream_ref(id).map(|c| (id, c)))
+                .collect()
+        };
+        let mut any_fail = false;
+        for (id, cell) in snapshot {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
+            let ok = if is_cookie_stream(id) {
+                let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+                unsafe { flush_cookie_stream(id, s) }
+            } else if s.is_mem_backed() {
+                let flush_ok = s.mem_flush();
+                let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+                let wide_ok = unsafe {
+                    sync_memstream_to_caller(id, s, false);
+                    crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
+                };
+                flush_ok && wide_ok
+            } else {
+                unsafe { flush_stream_for_caller(s, caller) }
+            };
+            if !ok {
+                any_fail = true;
+            }
+        }
+        let failed = any_fail || host_fail;
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, failed);
+        return if failed { libc::EOF } else { 0 };
+    }
+
+    let id = canonical_stream_id(stream);
+    if is_cookie_stream(id) {
+        let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
+            return libc::EOF;
+        };
+        let mut s = cell.lock();
+        let flushed = unsafe { flush_cookie_stream(id, &mut s) };
+        flush_fixed_mem_input(id, &mut s);
+        let adverse = !flushed;
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
+        return if adverse { libc::EOF } else { 0 };
+    }
+
+    if let Some(cell) = stream_cell(id) {
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
+        // Memory-backed streams: sync data to C caller's pointers (open_memstream).
+        if s.is_mem_backed() {
+            let flush_ok = s.mem_flush();
+            let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+            let wide_ok = unsafe {
+                sync_memstream_to_caller(id, s, false);
+                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s, false)
+            };
+            let ok = flush_ok && wide_ok;
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
+            return if ok { 0 } else { libc::EOF };
+        }
+        // Cache this non-cookie non-mem fd stream so subsequent fflush/read/write hit the MT fast
+        // path — a pure fflush loop otherwise never populates the cache. Mirrors fgets/fseek.
+        if s.effective_orientation() < 0 {
+            stream_cell_cache_store(stream, &cell);
+        }
+        let ok = unsafe { flush_stream_for_caller(s, caller) };
+        sync_input_position(s);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
+        if ok { 0 } else { libc::EOF }
+    } else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 4, true);
+        libc::EOF
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fgetc / fputc
+// ---------------------------------------------------------------------------
+
+/// POSIX `fgetc`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
+    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+/// Shared native reader for public entrypoints and their aliases. Keeping the
+/// original caller explicit prevents internal libc I/O from becoming a
+/// cancellation point just because it reuses this implementation.
+pub(crate) unsafe fn fgetc_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fgetc_unlocked_for_caller(stream, caller) }
+}
+
+pub(crate) unsafe fn fgetc_unlocked_for_caller(stream: *mut c_void, caller: usize) -> c_int {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        // Lock-free published read-window fast path: consumes directly from `_IO_read_ptr ..
+        // _IO_read_end` without TLS or mutex overhead when single-threaded.
+        if let Some(rc) = try_fgetc_window(stream) {
+            return rc;
+        }
+        // Single-threaded inline read fast path: a byte already buffered for a cached, clean
+        // readable fd stream — skips membrane + registry lock + HashMap lookup. Pointer-keyed
+        // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
+        // Any miss (empty buffer / ungetc / write-pending / mem / not cached) falls through.
+        if let Some(rc) = try_fgetc_fast_by_stream(stream) {
+            return rc;
+        }
+    } else if let Some(rc) = try_fgetc_fast_cell(stream) {
+        // MT-safe fd-stream cell-cache fast path (bd-h0n1mf): gen-valid hit ⇒ per-stream lock only.
+        return rc;
+    }
+    // Pointer-keyed fmemopen read fast path (the write cache above EXCLUDES mem streams, so
+    // fmemopen `fgetc` otherwise pays `canonical_stream_id`'s native lock per byte — the 1.4x
+    // per-op floor, ST and MT). The shared cursor serializes reads and refills.
+    if let Some(rc) = try_fgetc_fast_fixed_mem_by_stream(stream) {
+        return rc;
+    }
+
+    let id = canonical_stream_id(stream);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    if let Some(cursor) = fast_fixed_mem_read(id) {
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        // Cache by FILE* so subsequent reads skip `canonical_stream_id` + `decide` (above).
+        store_fgetc_mem_ptr_cache(stream, &cursor);
+        if let Some(byte) = cursor.read_byte() {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+            return byte as c_int;
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+
+        if let Some(cell) = stream_cell(id) {
+            let mut byte = [0u8; 1];
+            let mut s = cell.lock();
+            if s.buffered_read_into(&mut byte) == 1 {
+                drop(s);
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+                return byte[0] as c_int;
+            }
+            // EOF stays set until clearerr/ungetc; do not call the backend
+            // again. A previous error alone does not forbid a character retry.
+            if s.is_eof() {
+                drop(s);
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return libc::EOF;
+            }
+            if !s.is_readable() {
+                drop(s);
+                // SAFETY: only this thread's errno cell is modified.
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return libc::EOF;
+            }
+        }
+
+        let mut byte = [0u8; 1];
+        let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
+
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
+
+        if rc > 0 {
+            s.set_offset(s.offset().saturating_add(1));
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+            return byte[0] as c_int;
+        }
+        if rc == 0 {
+            s.set_eof();
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+
+        s.set_error();
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        #[cfg(not(feature = "standalone"))]
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fgetc) = unsafe { host_fgetc_unlocked_fn() }
+        {
+            let rc = unsafe { host_fgetc(stream) };
+            mark_host_io_started(stream);
+            if rc == libc::EOF {
+                unsafe { sync_host_errno(0) };
+            }
+            return rc;
+        }
+
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        let _ = s.set_orientation(-1);
+    }
+
+    if !s.is_readable() {
+        s.set_error();
+        // SAFETY: only the calling thread's errno cell is modified.
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    // Memory-backed streams: read directly from backing (no per-getc Vec).
+    if s.is_mem_backed() {
+        let mut b = [0u8; 1];
+        if s.mem_read_into(&mut b) == 0 {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+        return b[0] as c_int;
+    }
+
+    // Cache this non-cookie, non-mem fd stream so subsequent single-threaded fgetc calls
+    // hit the inline read fast path (try_fgetc_fast) — mirrors the write side. Also
+    // populate the MT-safe cell cache so THREADED callers skip the map lock per byte.
+    write_cache_store(stream, id, s as *mut StdioStream);
+    stream_cell_cache_store(stream, &cell);
+
+    // Try buffered read first (into a stack byte, no per-getc Vec).
+    let mut b = [0u8; 1];
+    if s.buffered_read_into(&mut b) > 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+        return b[0] as c_int;
+    }
+
+    // EOF remains sticky until cleared or repositioned. An earlier error does
+    // not prevent retrying a character read; retain ferror while trying again.
+    if s.is_eof() {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    if s.buffer_capacity() == 0 {
+        let mut b = [0u8; 1];
+        let fd = s.fd();
+        let rc =
+            unsafe { stream_read_fd(stream_io_caller(s, caller), fd, b.as_mut_ptr().cast(), 1) };
+        if rc > 0 {
+            s.set_offset(s.offset().saturating_add(1));
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+            return b[0] as c_int;
+        } else if rc == 0 {
+            s.set_eof();
+        } else {
+            s.set_error();
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return libc::EOF;
+    }
+
+    let rc = unsafe { refill_stream(s, caller) };
+    if rc <= 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return libc::EOF;
+    }
+
+    let data = s.buffered_read(1);
+    let result = if data.is_empty() {
+        libc::EOF
+    } else {
+        data[0] as c_int
+    };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, result == libc::EOF);
+    result
+}
+
+/// POSIX `fputc`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
+    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fputc_for_caller(c: c_int, stream: *mut c_void, caller: usize) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fputc_unlocked_for_caller(c, stream, caller) }
+}
+
+pub(crate) unsafe fn fputc_unlocked_for_caller(
+    c: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
+    let byte = c as u8;
+
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        // Lock-free published write-window fast path: appends directly into `_IO_write_ptr ..
+        // _IO_write_end` without TLS or mutex overhead when single-threaded.
+        if let Some(rc) = try_fputc_window(stream, byte) {
+            return rc;
+        }
+        // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
+        // for repeated writes to the same Full-buffered fd stream). Pointer-keyed so a hit
+        // also skips `canonical_stream_id`'s native lock; `id` is computed lazily on miss.
+        // It only fires for a stream already resolved+cached by a prior slow write, so
+        // bootstrap (empty cache) falls through safely.
+        if let Some(rc) = try_fputc_fast_by_stream(stream, byte) {
+            return rc;
+        }
+    } else if try_write_fast_cell(stream, &[byte]) {
+        // MT-safe cell-cache write fast path: gen-valid hit ⇒ append the byte under this stream's lock only.
+        return byte as c_int;
+    }
+
+    let id = canonical_stream_id(stream);
+
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let bytes = [byte];
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, &bytes, caller) };
+        return if written == 1 {
+            byte as c_int
+        } else {
+            libc::EOF
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("fputc");
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return libc::EOF;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        if unsafe { cookie_buffer_write(id, s, &[byte]) } == 1 {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+            return c;
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fputc) = unsafe { host_fputc_unlocked_fn() }
+        {
+            let rc = unsafe { host_fputc(c, stream) };
+            if rc == libc::EOF {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return rc;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        let _ = s.set_orientation(-1);
+    }
+
+    // Memory-backed streams: write directly to backing.
+    if s.is_mem_backed() {
+        let n = s.mem_write(&[byte]);
+        if n == 0 {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+        return c;
+    }
+
+    // Cache this resolved non-cookie, non-mem fd stream so subsequent single-threaded
+    // single-byte writes to it skip the membrane + lock + lookup (see try_fputc_fast).
+    write_cache_store(stream, id, s as *mut StdioStream);
+    stream_cell_cache_store(stream, &cell);
+
+    let single_byte = [byte];
+    let write_result = match s.buffer_write(&single_byte) {
+        Some(result) => result,
+        None => {
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
+            return libc::EOF;
+        }
+    };
+
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
+        let fd = s.fd();
+        let caller = stream_io_caller(s, caller);
+        let mut written = 0usize;
+        let mut success = true;
+        while written < write_result.flush_data.len() {
+            let rc = unsafe {
+                stream_write_fd(
+                    caller,
+                    fd,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
+                )
+            };
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                success = false;
+                break;
+            } else if rc == 0 {
+                success = false;
+                break;
+            }
+            written += rc as usize;
+        }
+        if success {
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
+        } else {
+            s.set_error();
+            s.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                s.set_offset(s.offset().saturating_add(flushed_new as i64));
+            }
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
+            return libc::EOF;
+        }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        s.set_offset(s.offset().saturating_add(total_written as i64));
+    }
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+    byte as c_int
+}
+
+// ---------------------------------------------------------------------------
+// fgets / fputs
+// ---------------------------------------------------------------------------
+
+/// POSIX `fgets`.
+/// Shared fgets fill loop: read from `s` into `dst` until '\n' (inclusive), `dst` full, EOF,
+/// or error. Returns `(bytes_written, had_error)`. Scans the stream buffer for '\n' via
+/// `read_into_slice` (bulk, no per-char Vec) and refills the fd as needed. Sound whether the
+/// caller holds the registry lock (slow path) OR has ST-unique access to a cached stream
+/// (pointer-keyed fast path). Pure stream mutation (no membrane/registry), so identical bytes.
+///
+/// # Safety
+/// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
+unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> (usize, bool) {
+    let caller = stream_io_caller(s, caller);
+    let max = dst.len();
+    let mut written = 0usize;
+    let mut had_error = false;
+    while written < max {
+        let (n, outcome) = s.read_into_slice(b'\n', &mut dst[written..]);
+        written += n;
+        match outcome {
+            ReadUntil::Found => break,
+            ReadUntil::Eof => {
+                if s.is_error() {
+                    had_error = true;
+                }
+                break;
+            }
+            ReadUntil::NeedRefill => {
+                if written >= max {
+                    break;
+                }
+                if s.is_eof() || s.is_error() {
+                    if s.is_error() {
+                        had_error = true;
+                    }
+                    break;
+                }
+                if s.buffer_capacity() == 0 {
+                    // Unbuffered fd stream: read a byte directly.
+                    let mut b = [0u8; 1];
+                    let fd = s.fd();
+                    let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
+                    if rc > 0 {
+                        s.set_offset(s.offset().saturating_add(1));
+                        dst[written] = b[0];
+                        written += 1;
+                        if b[0] == b'\n' {
+                            break;
+                        }
+                    } else {
+                        if rc == 0 {
+                            s.set_eof();
+                        } else {
+                            s.set_error();
+                            had_error = true;
+                        }
+                        break;
+                    }
+                } else if unsafe { refill_stream(s, caller) } <= 0 {
+                    if s.is_error() {
+                        had_error = true;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    (written, had_error)
+}
+
+/// GNU fgets preserves a partial line on a nonblocking read's EAGAIN while
+/// retaining the stream error indicator. Other read errors, including EINTR,
+/// return NULL even if bytes were copied before the failure.
+fn fgets_read_failed(written: usize, had_error: bool) -> bool {
+    if written == 0 {
+        return true;
+    }
+    // SAFETY: errno is thread-local and this only reads the calling thread's
+    // latest failed read. EWOULDBLOCK equals EAGAIN on supported Linux targets.
+    had_error && unsafe { *super::errno_abi::__errno_location() } != errno::EAGAIN
+}
+
+/// Shared fread read loop: fill `dst` from `s` via buffered reads + fd refill/direct reads
+/// until full, EOF, or error. Returns bytes read. Pure stream mutation (no registry/membrane),
+/// so identical bytes whether the caller holds the registry lock (slow path), a per-stream cell
+/// lock (MT cell cache), or has ST-unique access to a cached stream.
+///
+/// # Safety
+/// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
+unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8], caller: usize) -> usize {
+    let caller = stream_io_caller(s, caller);
+    let total = dst.len();
+    let mut read_total = 0usize;
+    while read_total < total {
+        let n = s.buffered_read_into(&mut dst[read_total..total]);
+        if n > 0 {
+            read_total += n;
+            continue;
+        }
+        if s.is_error() {
+            break;
+        }
+        // Small remaining request on a buffered stream: refill in one block (like glibc/fgetc)
+        // instead of a per-call direct fd read. Large requests (>= capacity) keep the direct
+        // read below (buffering would just add a copy).
+        let cap = s.buffer_capacity();
+        if cap > 0 && (total - read_total) < cap && !s.is_eof() {
+            let rc = unsafe { refill_stream(s, caller) };
+            if rc > 0 {
+                continue;
+            }
+            break;
+        }
+        // Direct fd read (avoids recursive memcpy interposition through buffered internals).
+        let fd = s.fd();
+        let to_read = total - read_total;
+        let rc =
+            unsafe { stream_read_fd(caller, fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {
+                let bytes_read = rc as usize;
+                read_total += bytes_read;
+                s.set_offset(s.offset().saturating_add(bytes_read as i64));
+                continue;
+            }
+            StreamPolicyAction::Yield => {
+                if rc == 0 {
+                    s.set_eof();
+                }
+                break;
+            }
+            StreamPolicyAction::Escalate => {
+                s.set_error();
+                break;
+            }
+        }
+    }
+    read_total
+}
+
+/// Cached-stream ASCII wide-line reader used by `fgetws`. A cache hit is the
+/// same ST/non-cookie/non-mem fd-stream proof used by `fgets`; the stream method
+/// only consumes when buffered bytes are all ASCII through newline or destination
+/// capacity, otherwise it leaves the stream untouched for `fgetwc`.
+pub(crate) unsafe fn read_cached_ascii_line_wide(
+    stream: *mut c_void,
+    dst: &mut [u32],
+    caller: usize,
+) -> Option<(usize, bool)> {
+    let p = wide_cache_lookup_by_stream(stream)?;
+    let result = unsafe { read_cached_ascii_line_wide_inner(p, dst, caller) };
+    mirror_raw_cached(stream, p);
+    result
+}
+
+unsafe fn read_cached_ascii_line_wide_inner(
+    p: *mut StdioStream,
+    dst: &mut [u32],
+    caller: usize,
+) -> Option<(usize, bool)> {
+    // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
+    let s = unsafe { &mut *p };
+    // An EOF indication forbids a fresh refill, including when another writer
+    // has appended a complete line since the previous read reached EOF.
+    if s.is_eof() {
+        return Some((0, false));
+    }
+    // The ordinary wide reader reports EBADF for write-only streams. The core
+    // ASCII probe can mark ferror, but it cannot publish the ABI errno value.
+    if !s.is_readable() {
+        return None;
+    }
+    if s.wide_codec()
+        .is_some_and(|codec| !codec.is_ascii_compatible())
+    {
+        return None;
+    }
+    match s.read_ascii_line_into_wide(dst) {
+        Some((n, ReadUntil::Found)) => Some((n, false)),
+        Some((n, ReadUntil::NeedRefill)) if n == dst.len() => Some((n, false)),
+        Some((0, ReadUntil::NeedRefill)) => {
+            if s.buffer_capacity() == 0 {
+                return None;
+            }
+            if unsafe { refill_stream(s, caller) } <= 0 {
+                return Some((0, s.is_error()));
+            }
+            match s.read_ascii_line_into_wide(dst) {
+                Some((n, ReadUntil::Found)) => Some((n, false)),
+                Some((n, ReadUntil::NeedRefill)) if n == dst.len() => Some((n, false)),
+                Some((0, ReadUntil::Eof)) => Some((0, s.is_error())),
+                _ => None,
+            }
+        }
+        Some((0, ReadUntil::Eof)) => Some((0, s.is_error())),
+        _ => None,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgets(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
+    unsafe {
+        fgets_for_caller(
+            buf,
+            size,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn fgets_for_caller(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> *mut c_char {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fgets_unlocked_for_caller(buf, size, stream, caller) }
+}
+
+pub(crate) unsafe fn fgets_unlocked_for_caller(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> *mut c_char {
+    if buf.is_null() || size <= 0 {
+        return std::ptr::null_mut();
+    }
+    if size == 1 {
+        unsafe { *buf = 0 };
+        return buf;
+    }
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so the is_mem_backed
+    // sync is skipped and read_into_slice runs directly — skipping canonical_stream_id's
+    // native lock + registry_contains_stream + registry().lock() + decide/observe per line
+    // (hot when reading lines from a fopen'd file). Byte-identical (same bulk fill loop).
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let max = (size - 1) as usize;
+        if max == 0 {
+            unsafe { *buf = 0 };
+            return buf;
+        }
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut; `buf` valid for `size` bytes.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst, caller) };
+        if fgets_read_failed(written, had_error) {
+            return std::ptr::null_mut();
+        }
+        unsafe { *buf.add(written) = 0 };
+        return buf;
+    }
+    // Pointer-keyed fmemopen line fast path (the fd cache above EXCLUDES mem streams, so
+    // fmemopen `fgets` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
+    // registry lock per LINE — and the old mem branch even unregistered the cursor, tearing
+    // down the fgetc/fread fast paths). Reads share the cursor lock. Miss ⇒ falls through
+    // and re-caches. size >= 2 is guaranteed here (size <= 0 and size == 1 returned above).
+    {
+        let max = (size - 1) as usize;
+        // SAFETY: caller contract — `buf` valid for `size` bytes; max == size-1.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+        if let Some(n) = try_fgets_fast_fixed_mem_by_stream(stream, dst) {
+            if n == 0 {
+                return std::ptr::null_mut();
+            }
+            unsafe { *buf.add(n) = 0 };
+            return buf;
+        }
+        // MT-safe cell-cache line fast path: the ST cache above is `__libc_single_threaded`-
+        // gated and the mem cursor only serves fmemopen — a THREADED fgets on an fd stream
+        // otherwise pays canonical_stream_id + the registry map lock per line. Gen-valid hit
+        // ⇒ fill under this stream's lock only. Byte-identical (same `fgets_fill_stream`).
+        if let Some((written, had_error)) = try_fgets_fast_cell(stream, dst, caller) {
+            if fgets_read_failed(written, had_error) {
+                return std::ptr::null_mut();
+            }
+            unsafe { *buf.add(written) = 0 };
+            return buf;
+        }
+    }
+    let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_fgets) = unsafe { host_fgets_unlocked_fn() }
+    {
+        let rc = unsafe { host_fgets(buf, size, stream) };
+        if rc.is_null() {
+            unsafe { sync_host_errno(0) };
+        } else {
+            mark_host_io_started(stream);
+        }
+        return rc;
+    }
+    let max = (size - 1) as usize; // Leave room for NUL.
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, max, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    if let Some(cursor) = fast_fixed_mem_read(id) {
+        if !orient_stream_byte_by_id(id) {
+            return std::ptr::null_mut();
+        }
+        if max == 0 {
+            // SAFETY: fgets with size 1 supplies its single NUL slot.
+            unsafe { *buf = 0 };
+            return buf;
+        }
+        store_fgetc_mem_ptr_cache(stream, &cursor);
+        // SAFETY: fgets requires size writable bytes; max leaves the NUL slot.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), max) };
+        let n = cursor.read_line(dst).unwrap_or(0);
+        if n == 0 {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: n <= max, so the terminator remains inside caller storage.
+        unsafe { *buf.add(n) = 0 };
+        return buf;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+
+        let mut written = 0usize;
+        let mut had_error = false;
+        let mut reached_eof = false;
+        while written < max {
+            let byte = unsafe { fgetc_unlocked_for_caller(stream, caller) };
+            if byte != libc::EOF {
+                unsafe { *buf.add(written) = byte as c_char };
+                written += 1;
+                if byte == b'\n' as c_int {
+                    break;
+                }
+                continue;
+            }
+            if let Some(cell) = stream_cell(id) {
+                let s = cell.lock();
+                reached_eof = s.is_eof();
+                had_error = s.is_error();
+            }
+            break;
+        }
+
+        if let Some(cell) = stream_cell(id) {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
+            if reached_eof {
+                s.set_eof();
+            }
+            if had_error {
+                s.set_error();
+            }
+        }
+
+        if fgets_read_failed(written, had_error) {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(10, max),
+                true,
+            );
+            return std::ptr::null_mut();
+        }
+
+        unsafe { *buf.add(written) = 0 };
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, written),
+            false,
+        );
+        return buf;
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+        let _ = s.set_orientation(-1);
+    }
+
+    if max == 0 {
+        unsafe { *buf = 0 };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+        return buf;
+    }
+    if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
+    } else {
+        // Cache this non-cookie, non-mem fd stream so subsequent fgets/fgetc/fread hit the
+        // pointer-keyed fast path — a pure `fgets` loop (read a file line by line) otherwise
+        // never populates the cache and pays the per-line locks forever. Mirrors fgetc/fread.
+        write_cache_store(stream, id, s as *mut StdioStream);
+        // MT-safe cell cache: a threaded fgets loop warms this once then skips the map lock.
+        stream_cell_cache_store(stream, &cell);
+    }
+
+    // Fill the destination under the SINGLE registry lock + policy decision
+    // taken above, scanning the stream buffer for '\n' with read_into_slice
+    // instead of calling buffered_read(1) — which allocates a 1-byte Vec — once
+    // per character. read_into_slice writes straight into the C buffer (zero
+    // heap traffic); the ABI layer owns descriptor refill since the membrane
+    // policy and sys_read_fd live here.
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+    let (written, had_error) = unsafe { fgets_fill_stream(s, dst, caller) };
+
+    if fgets_read_failed(written, had_error) {
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, max),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    // NUL-terminate.
+    unsafe { *buf.add(written) = 0 };
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(10, written),
+        false,
+    );
+    buf
+}
+
+/// POSIX `fputs`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
+    unsafe { fputs_for_caller(s, stream, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn fputs_for_caller(
+    s: *const c_char,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fputs_unlocked_for_caller(s, stream, caller) }
+}
+
+pub(crate) unsafe fn fputs_unlocked_for_caller(
+    s: *const c_char,
+    stream: *mut c_void,
+    caller: usize,
+) -> c_int {
+    if s.is_null() {
+        return libc::EOF;
+    }
+
+    // Single-threaded inline fast path: scan once, append to the cached Full-buffered fd
+    // stream if it all fits (skipping membrane + registry lock + HashMap lookup). Keyed by
+    // the raw FILE* pointer so a repeated-write loop skips `canonical_stream_id` and its
+    // `native_stdio_fd_for_ptr` lock entirely (the dominant ST fast-path cost for non-std
+    // fopen'd streams). On any miss (not cached / not Full / would flush) fall through to
+    // the existing paths, computing `id` lazily below.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        if unsafe { (*p).fast_write(bytes) } {
+            return 0;
+        }
+    }
+    // MT-safe cell-cache write fast path: the ST cache above is `__libc_single_threaded`-
+    // gated, so a THREADED fputs otherwise pays canonical_stream_id + the registry map lock
+    // per call (measured 5.5x@1t → 13.3x@8t vs glibc on fd streams). Gen-valid hit ⇒ append
+    // under this stream's lock only.
+    {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        if try_write_fast_cell(stream, bytes) {
+            return 0;
+        }
+    }
+
+    let id = canonical_stream_id(stream);
+
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+        return if written == bytes.len() && orient_stream_byte_by_id(id) {
+            0
+        } else {
+            libc::EOF
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("fputs");
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        id,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return libc::EOF;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let (len, terminated) = unsafe { scan_c_str_len(s, bound) };
+    if !terminated && repair {
+        global_healing_policy().record(
+            "stdio",
+            "fputs",
+            &HealingAction::TruncateWithNull {
+                requested: bound.unwrap_or(len).saturating_add(1),
+                truncated: len,
+            },
+            RepairLogContext::new(0, Some(s as usize)),
+        );
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return libc::EOF;
+        }
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return libc::EOF;
+        };
+        let mut stream_obj = cell.lock();
+        if !wide_io_active() {
+            if stream_obj.effective_orientation() > 0 {
+                stream_obj.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return libc::EOF;
+            }
+            let _ = stream_obj.set_orientation(-1);
+        }
+        let adverse = unsafe { cookie_buffer_write(id, &mut stream_obj, bytes) } < bytes.len();
+
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, len),
+            adverse,
+        );
+        return if adverse { libc::EOF } else { 0 };
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fputs) = unsafe { host_fputs_unlocked_fn() }
+        {
+            let rc = unsafe { host_fputs(s, stream) };
+            if rc == libc::EOF {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return if rc == libc::EOF { libc::EOF } else { 0 };
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return libc::EOF;
+    };
+    let mut stream_guard = cell.lock();
+    let stream_obj = &mut *stream_guard;
+    if !wide_io_active() {
+        if stream_obj.effective_orientation() > 0 {
+            stream_obj.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return libc::EOF;
+        }
+        let _ = stream_obj.set_orientation(-1);
+    }
+
+    if stream_obj.is_mem_backed() {
+        let written = stream_obj.mem_write(bytes);
+        let adverse = written < bytes.len();
+        if adverse {
+            stream_obj.set_error();
+        }
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, len),
+            adverse,
+        );
+        return if adverse { libc::EOF } else { 0 };
+    }
+
+    let write_result = match stream_obj.buffer_write(bytes) {
+        Some(result) => result,
+        None => {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(10, len),
+                true,
+            );
+            // A write to a read-only FILE is EBADF in both modes. The core
+            // already sets the stream error flag; publish errno after policy
+            // bookkeeping, just as the strict fast path does.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return libc::EOF;
+        }
+    };
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
+        let fd = stream_obj.fd();
+        let caller = stream_io_caller(stream_obj, caller);
+        let mut written = 0usize;
+        let mut success = true;
+        while written < write_result.flush_data.len() {
+            let rc = unsafe {
+                stream_write_fd(
+                    caller,
+                    fd,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
+                )
+            };
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                success = false;
+                break;
+            } else if rc == 0 {
+                success = false;
+                break;
+            }
+            written += rc as usize;
+        }
+        if success {
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
+        } else {
+            stream_obj.set_error();
+            stream_obj.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                stream_obj.set_offset(stream_obj.offset().saturating_add(flushed_new as i64));
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(10, len),
+                true,
+            );
+            return libc::EOF;
+        }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        stream_obj.set_offset(stream_obj.offset().saturating_add(total_written as i64));
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(10, len),
+        false,
+    );
+    0
+}
+
+// ---------------------------------------------------------------------------
+// fread / fwrite
+// ---------------------------------------------------------------------------
+
+#[inline(always)]
+fn valid_strict_raw_span(ptr: *mut c_void, total: usize) -> bool {
+    !ptr.is_null()
+        && total > 0
+        && total <= isize::MAX as usize
+        && (ptr as usize).checked_add(total).is_some()
+        && (runtime_policy::explicit_strict_passthrough_resolved()
+            || !runtime_policy::mode().heals_enabled())
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn finish_evicted_st_fread_hit(
+    ptr_cursor: *const FastFixedMemRead,
+    clear_eof: bool,
+    ret: usize,
+) -> usize {
+    if clear_eof {
+        unsafe { (*ptr_cursor).set_eof(false) };
+    }
+    unsafe { Arc::decrement_strong_count(ptr_cursor) };
+    ret
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn finish_clear_eof_st_fread_hit(ptr_cursor: *const FastFixedMemRead, ret: usize) -> usize {
+    unsafe { (*ptr_cursor).set_eof(false) };
+    ret
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn fread_for_caller_after_evict(
+    ptr_cursor: *const FastFixedMemRead,
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
+    unsafe {
+        Arc::decrement_strong_count(ptr_cursor);
+        fread_for_caller(ptr, size, nmemb, stream, caller)
+    }
+}
+
+/// POSIX `fread`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fread(
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+) -> usize {
+    if runtime_policy::explicit_strict_passthrough_resolved()
+        && !crate::malloc_abi::is_multi_threaded()
+        && crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && !ptr.is_null()
+        && let Some(total) = size.checked_mul(nmemb)
+        && (1..128).contains(&total)
+        && (ptr as usize).checked_add(total).is_some()
+    {
+        let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+        let tls = unsafe { &*tls_cell };
+        let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+        let ptr_cursor = tls.cursor.get();
+        if tls.stream.get() == stream as usize
+            && tls.reg_gen.get() == cur_gen
+            && !ptr_cursor.is_null()
+            && tls.borrowed.get() == 0
+        {
+            let cursor = unsafe { &*ptr_cursor };
+            if !cursor.closed.load(Ordering::Relaxed)
+                && cursor.memory.owner_tls.load(Ordering::Relaxed) == tls_cell as usize
+                && cursor.memory.st_busy.load(Ordering::Relaxed) == 0
+            {
+                tls.borrowed.set(1);
+                cursor.memory.st_busy.store(1, Ordering::Relaxed);
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                let buffered_hit = unsafe {
+                    (&mut *cursor.memory.inner.get())
+                        .cursor
+                        .try_take_buffered(total)
+                };
+                if let Some(src) = buffered_hit {
+                    // SAFETY: `ptr` and `src` are valid disjoint spans of `total < 128` bytes.
+                    unsafe {
+                        crate::string_abi::raw_copy_under_128(ptr.cast::<u8>(), src.as_ptr(), total)
+                    };
+                    let clear_eof = cursor.eof.load(Ordering::Relaxed);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    cursor.memory.st_busy.store(0, Ordering::Relaxed);
+                    let b = tls.borrowed.get();
+                    tls.borrowed.set(0);
+                    if b == 2 {
+                        return unsafe {
+                            finish_evicted_st_fread_hit(ptr_cursor, clear_eof, nmemb)
+                        };
+                    }
+                    if clear_eof {
+                        return unsafe { finish_clear_eof_st_fread_hit(ptr_cursor, nmemb) };
+                    }
+                    return nmemb;
+                }
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                cursor.memory.st_busy.store(0, Ordering::Relaxed);
+                let b = tls.borrowed.get();
+                tls.borrowed.set(0);
+                if b == 2 {
+                    return unsafe {
+                        fread_for_caller_after_evict(
+                            ptr_cursor,
+                            ptr,
+                            size,
+                            nmemb,
+                            stream,
+                            core::intrinsics::return_address() as usize,
+                        )
+                    };
+                }
+            }
+        }
+    }
+    unsafe {
+        fread_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+#[inline]
+fn fread_elements_from_bytes(bytes_read: usize, size: usize, nmemb: usize, total: usize) -> usize {
+    if bytes_read == total {
+        nmemb
+    } else if size == 1 {
+        bytes_read
+    } else {
+        bytes_read / size
+    }
+}
+
+#[inline(never)]
+pub(crate) unsafe fn fread_for_caller(
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
+    // Single-threaded non-callback fast path: when no other thread exists in
+    // the process (`__libc_single_threaded != 0`), synchronous in-memory buffer
+    // reads (`TLS_FAST_MEM_READ` read-only fmemopen hit or `WRITE_CACHE` fd hit)
+    // invoke no user callbacks, syscalls, or `pthread_create` and therefore
+    // cannot contend on or alter the recursive `FILE` lock state.
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && let Some(total) = size.checked_mul(nmemb)
+        && valid_strict_raw_span(ptr, total)
+    {
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+        if let Some(n) = try_fread_fast_fixed_mem_st(stream, dst) {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+        if try_fread_fast_by_stream(stream, dst) {
+            return nmemb;
+        }
+        if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+    }
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fread_unlocked_for_caller(ptr, size, nmemb, stream, caller) }
+}
+
+pub(crate) unsafe fn fread_unlocked_for_caller(
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
+    let Some(total) = size.checked_mul(nmemb) else {
+        unsafe { set_abi_errno(errno::EOVERFLOW) };
+        return 0;
+    };
+    if ptr.is_null() || total == 0 {
+        return 0;
+    }
+
+    // Single-threaded inline fast path: fill the whole request from the cached fd stream's
+    // buffer if it's all there (skip membrane + lock + lookup + host check). Pointer-keyed
+    // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
+    if valid_strict_raw_span(ptr, total) {
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+        if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+            && let Some(n) = try_fread_fast_fixed_mem_st(stream, dst)
+        {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+        if try_fread_fast_by_stream(stream, dst) {
+            return nmemb;
+        }
+        // Pointer-keyed fmemopen bulk-read fast path (the fd cache above EXCLUDES mem streams,
+        // so fmemopen `fread` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
+        // `fast_fixed_mem_reads` map lock per call — the per-op floor, ST and MT). Reads share
+        // the cursor lock. Miss ⇒ falls through and re-caches. Mirrors `fgetc`.
+        if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+        // MT-safe cell-cache bulk-read fast path: the ST cache above is
+        // `__libc_single_threaded`-gated and the mem cursor only serves fmemopen — a THREADED
+        // fread on an fd stream otherwise pays canonical_stream_id + the registry map lock per
+        // call. Gen-valid hit ⇒ read under this stream's lock only.
+        if let Some(n) = try_fread_fast_cell(stream, dst, caller) {
+            return fread_elements_from_bytes(n, size, nmemb, total);
+        }
+    }
+
+    let id = canonical_stream_id(stream);
+
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_fread) = unsafe { host_fread_unlocked_fn() }
+    {
+        let rc = unsafe { host_fread(ptr, size, nmemb, stream) };
+        mark_host_io_started(stream);
+        if rc == 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
+    let (safety_mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, id, total, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            true,
+        );
+        return 0;
+    }
+    let mut total = total;
+    if repair_enabled(safety_mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(ptr as usize)
+        && total > bound
+    {
+        let clamped = (bound / size) * size;
+        global_healing_policy().record(
+            "stdio",
+            "fread",
+            &HealingAction::ClampSize {
+                requested: total,
+                clamped,
+            },
+            RepairLogContext::new(0, Some(ptr as usize)),
+        );
+        if clamped == 0 {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return 0;
+        }
+        total = clamped;
+    }
+    let max_addr_span = usize::MAX - (ptr as usize);
+    total = total.min(isize::MAX as usize).min(max_addr_span);
+    if total == 0 {
+        return 0;
+    }
+    let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+
+    // Read-only fmemopen uses the shared refill-aware cursor. Cache it by FILE*
+    // so subsequent reads skip registry lookups; generic cookie reads use the
+    // same position and backing. Pushback operations retire this direct path.
+    if let Some(cursor) = fast_fixed_mem_read(id) {
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return 0;
+        }
+        store_fgetc_mem_ptr_cache(stream, &cursor);
+        let n = cursor.read_bytes(dst).unwrap_or(0);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            n < total,
+        );
+        return n.checked_div(size).unwrap_or(0);
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        if !orient_stream_byte_by_id(id) {
+            return 0;
+        }
+
+        let buffered = stream_cell(id)
+            .map(|cell| cell.lock().buffered_read_into(dst))
+            .unwrap_or(0);
+        let mut read_total = buffered;
+        let mut reached_eof = false;
+        let mut had_error = false;
+
+        while read_total < total {
+            let rc = unsafe {
+                cookie_stream_read(
+                    id,
+                    dst[read_total..].as_mut_ptr(),
+                    total.saturating_sub(read_total),
+                )
+            };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+                // Cookie errors are observable callback results, not syscalls to retry.
+                StreamPolicyAction::Retry | StreamPolicyAction::Escalate => {
+                    had_error = true;
+                    break;
+                }
+                StreamPolicyAction::Yield => {
+                    reached_eof = rc == 0;
+                    break;
+                }
+                StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {}
+            }
+            if rc > 0 {
+                let advanced = (rc as usize).min(total - read_total);
+                if advanced == 0 {
+                    had_error = true;
+                    break;
+                }
+                read_total += advanced;
+                continue;
+            }
+            break;
+        }
+
+        if let Some(cell) = stream_cell(id) {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
+            let delta = (read_total - buffered).min(i64::MAX as usize) as i64;
+            s.set_offset(s.offset().saturating_add(delta));
+            if reached_eof {
+                s.set_eof();
+            }
+            if had_error {
+                s.set_error();
+            }
+        }
+
+        return read_total.checked_div(size).unwrap_or(0);
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return 0;
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let _ = s.set_orientation(-1);
+    }
+
+    // Memory-backed streams: read directly from the backing.
+    if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
+        // Read straight into the caller's buffer — no throwaway Vec per fread.
+        let n = s.mem_read_into(&mut dst[..total]);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            n < total,
+        );
+        return n.checked_div(size).unwrap_or(0);
+    }
+
+    // Cache this non-cookie, non-mem fd stream so subsequent single-threaded reads hit the
+    // inline fast path (try_fread_fast / try_fgetc_fast).
+    write_cache_store(stream, id, s as *mut StdioStream);
+    // MT-safe cell cache: a threaded fread loop warms this once then skips the map lock.
+    stream_cell_cache_store(stream, &cell);
+
+    let read_total = unsafe { fread_fill_stream(s, &mut dst[..total], caller) };
+    read_total.checked_div(size).unwrap_or(0)
+}
+
+/// POSIX `fwrite`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fwrite(
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+) -> usize {
+    unsafe {
+        fwrite_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn fwrite_for_caller(
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { fwrite_unlocked_for_caller(ptr, size, nmemb, stream, caller) }
+}
+
+pub(crate) unsafe fn fwrite_unlocked_for_caller(
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> usize {
+    let Some(total) = size.checked_mul(nmemb) else {
+        unsafe { set_abi_errno(errno::EOVERFLOW) };
+        return 0;
+    };
+    if ptr.is_null() || total == 0 {
+        return 0;
+    }
+
+    let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
+
+    // Single-threaded inline fast path: append to the cached Full-buffered fd stream if it
+    // all fits (skip membrane + lock + lookup). Pointer-keyed so a hit also skips
+    // `canonical_stream_id`'s native lock; `id` computed lazily on miss.
+    if try_fwrite_fast_by_stream(stream, src) {
+        return nmemb;
+    }
+    // MT-safe cell-cache write fast path (see fputs): threaded fwrite otherwise pays the
+    // registry map lock per call. Gen-valid hit ⇒ append under this stream's lock only.
+    if try_write_fast_cell(stream, src) {
+        return nmemb;
+    }
+
+    let id = canonical_stream_id(stream);
+
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, src, caller) };
+        return written.checked_div(size).unwrap_or(0);
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("fwrite");
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, total, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return 0;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return 0;
+        }
+        let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return 0;
+        };
+        let mut s = cell.lock();
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return 0;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        let written_total = unsafe { cookie_buffer_write(id, &mut s, src) };
+        let adverse = written_total < total;
+        let complete_items = written_total.checked_div(size).unwrap_or(0);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            adverse,
+        );
+        return complete_items;
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fwrite) = unsafe { host_fwrite_unlocked_fn() }
+        {
+            let rc = unsafe { host_fwrite(ptr, size, nmemb, stream) };
+            if rc == 0 {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return rc;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return 0;
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return 0;
+        }
+        let _ = s.set_orientation(-1);
+    }
+
+    // Memory-backed streams: write directly to the backing.
+    if s.is_mem_backed() {
+        if !s.is_writable() {
+            s.set_error();
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            // SAFETY: publish the write-access error after policy bookkeeping.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let written = s.mem_write(src);
+        let complete_items = written.checked_div(size).unwrap_or(0);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            written < total,
+        );
+        return complete_items;
+    }
+
+    let write_result = match s.buffer_write(src) {
+        Some(result) => result,
+        None => {
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return 0;
+        }
+    };
+
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
+        let fd = s.fd();
+        let caller = stream_io_caller(s, caller);
+        let mut written = 0usize;
+        let mut success = true;
+        while written < write_result.flush_data.len() {
+            let rc = unsafe {
+                stream_write_fd(
+                    caller,
+                    fd,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
+                )
+            };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                    success = false;
+                    break;
+                }
+                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+            }
+            if rc == 0 {
+                success = false;
+                break;
+            }
+            written += rc as usize;
+        }
+        if success {
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
+        } else {
+            s.set_error();
+            s.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                s.set_offset(s.offset().saturating_add(flushed_new as i64));
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return flushed_new.checked_div(size).unwrap_or(0);
+        }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        s.set_offset(s.offset().saturating_add(total_written as i64));
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total),
+        false,
+    );
+    total_written.checked_div(size).unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// fseek / ftell / rewind
+// ---------------------------------------------------------------------------
+
+/// Failure of [`fd_seek_locked`]. `WriteFailed` means the pending-write flush failed and the
+/// syscall's errno is already set (caller must NOT overwrite it, matching the original inline
+/// path); `Errno(e)` means the caller should `set_abi_errno(e)`.
+enum SeekErr {
+    Errno(i32),
+    WriteFailed,
+}
+
+/// Non-cookie non-mem fd-stream seek core, shared by `fseek`'s slow path and its MT cell-cache
+/// fast path. Flush output first, but retain buffered input and EOF until `lseek` succeeds.
+/// A failed write uses the same partial-progress and no-replay rules as `fflush`.
+/// No `decide`/`observe` — the callers own membrane accounting. `s` must be a non-cookie
+/// non-mem fd stream (both call sites guarantee this).
+unsafe fn fd_seek_locked(
+    s: &mut StdioStream,
+    offset: c_long,
+    whence: c_int,
+) -> Result<(), SeekErr> {
+    // SAFETY: `s` is uniquely held under the stream lock. The helper preserves
+    // write errno and reconciles the offset if only part of the output reaches
+    // the fd; it does not discard read-ahead or clear EOF.
+    if !unsafe { flush_stream(s) } {
+        return Err(SeekErr::WriteFailed);
+    }
+
+    let (target_off, target_whence) = if whence == libc::SEEK_CUR {
+        match s.offset().checked_add(offset) {
+            Some(off) => (off, libc::SEEK_SET),
+            None => return Err(SeekErr::Errno(errno::EOVERFLOW)),
+        }
+    } else {
+        (offset, whence)
+    };
+
+    let new_off = match raw_syscall::sys_lseek(s.fd(), target_off, target_whence) {
+        Ok(off) => off,
+        Err(e) => return Err(SeekErr::Errno(e)),
+    };
+
+    // Only a successful reposition discards buffered input/pushback and
+    // clears EOF. In particular, probing a pipe's seekability must not lose
+    // bytes that have already been read from its descriptor.
+    let _ = s.prepare_seek();
+    s.set_offset(new_off);
+    Ok(())
+}
+
+/// POSIX `fseek`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whence: c_int) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    // Reject an invalid origin before flushing or touching any stream state.
+    // This applies to cached fd streams, cookies and memory streams alike.
+    if !matches!(whence, libc::SEEK_SET | libc::SEEK_CUR | libc::SEEK_END) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // MT-safe cell-cache fast path (see feof; the cache doc explicitly blesses fseek — the lock
+    // reads current state so mutation needs no invalidation). A gen-valid hit is a non-cookie
+    // non-mem fd stream, so fd_seek_locked under this stream's lock is byte-identical to the slow
+    // path's non-cookie fd branch (decide/observe elided as the other fast paths elide them —
+    // decide()==Allow in strict for a normal fd stream). A threaded seek loop otherwise pays the
+    // registry map lock(s) per call: fl fseek 160ns→1340ns/op from 1t→8t (8.4x) vs glibc flat.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        if !s.is_mem_backed() {
+            return match unsafe { fd_seek_locked(&mut s, offset, whence) } {
+                Ok(()) => 0,
+                Err(SeekErr::WriteFailed) => -1,
+                Err(SeekErr::Errno(e)) => {
+                    unsafe { set_abi_errno(e) };
+                    -1
+                }
+            };
+        }
+    }
+    let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_fseek) = unsafe { host_fseek_fn() }
+    {
+        let rc = unsafe { host_fseek(stream, offset, whence) };
+        if rc != 0 {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        }
+        return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return -1;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        }
+
+        let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        };
+
+        // Pending writes MUST reach the cookie before the seek (bd-f8gdsy).
+        // Cookie writes are buffered by `cookie_buffer_write`, so without this
+        // the caller's write callback has not run yet: a write / seek / read
+        // round trip seeks a cookie that is still empty and the read returns 0.
+        // It looked correct at the end only because `fclose` flushes, so the
+        // final contents matched while every intermediate read saw nothing.
+        // glibc flushes a stream's output before repositioning it, and C
+        // requires exactly this seek between a write and a read.
+        {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
+            let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+            if !unsafe { flush_cookie_stream(id, s) } {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return -1;
+            }
+        }
+
+        let mut cookie_off = offset;
+        let mut cookie_whence = whence;
+        if whence == libc::SEEK_CUR {
+            let mut s = cell.lock();
+            let _ = sync_fast_fixed_mem_read_to_stream(id, &mut s);
+            if fixed_mem_cookie(id).is_some() {
+                // The fixed-memory cursor owns its own read-ahead window;
+                // its synchronized logical position already excludes it.
+                let Some(target) = s.offset().checked_add(offset) else {
+                    unsafe { set_abi_errno(errno::EINVAL) };
+                    return -1;
+                };
+                cookie_off = target;
+                cookie_whence = libc::SEEK_SET;
+            } else {
+                // A generic cookie's cursor is ahead of the stream by any
+                // bytes returned to stdio's input buffer (ungetc/scanf).
+                // SEEK_CUR is relative to the logical stream position,
+                // not to the callback's last read position.
+                let unread = i64::try_from(s.readable_buffered()).ok();
+                let Some(target) = unread.and_then(|n| offset.checked_sub(n)) else {
+                    unsafe { set_abi_errno(errno::EOVERFLOW) };
+                    return -1;
+                };
+                cookie_off = target;
+            }
+        }
+        let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, cookie_whence) };
+
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
+
+        if rc != 0 {
+            // A positioning failure alone is not an input/output error.
+            // Leave the buffered input, EOF and callback's errno unchanged.
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        }
+
+        let _ = s.prepare_seek();
+        s.set_offset(cookie_off);
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            cursor.set_eof(false);
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+        return 0;
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return -1;
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+
+    // Memory-backed streams: seek within the backing buffer.
+    if s.is_mem_backed() {
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            let Some(new_pos) = cursor.seek(offset, whence) else {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return -1;
+            };
+            let _ = s.mem_seek(new_pos as i64, libc::SEEK_SET);
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+            return 0;
+        }
+        let flush_ok = s.mem_flush();
+        unsafe {
+            sync_memstream_to_caller(id, s, false);
+        }
+        // open_wmemstream publishes bufp/sizeloc only on fflush or fclose;
+        // seeking changes its wchar cursor without publishing a new buffer.
+        if !flush_ok {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        }
+        let new_pos = s.mem_seek(offset, whence);
+        if new_pos < 0 {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+        return 0;
+    }
+
+    // Cache this non-cookie non-mem fd stream so subsequent fseek/read hit the MT fast path — a
+    // pure seek loop (random-access I/O) otherwise never populates the cache and pays the map
+    // lock(s) per call forever. Mirrors fgets/getdelim.
+    if s.effective_orientation() < 0 {
+        stream_cell_cache_store(stream, &cell);
+    }
+    // SAFETY: `s` uniquely borrowed under the stream lock; non-cookie non-mem fd (checked above).
+    match unsafe { fd_seek_locked(s, offset, whence) } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
+            0
+        }
+        Err(SeekErr::WriteFailed) => {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            -1
+        }
+        Err(SeekErr::Errno(e)) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            -1
+        }
+    }
+}
+
+/// POSIX `ftell`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    // ST fast path: a cache hit is a non-mem fd stream whose offset is tracked inline;
+    // sync_fast_fixed_mem_read_to_stream is a no-op and decide()==Allow in strict, so
+    // returning `offset()` directly is byte-identical (matches the existing cache-hit
+    // fast paths that skip decide). Skips the 3 per-call locks.
+    if let Some(p) = write_cache_lookup_by_stream(stream)
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
+        && !unsafe { (*p).is_appending() }
+        && unsafe { (*p).seekability() } == 1
+    {
+        // SAFETY: as above.
+        return unsafe { (*p).offset() } as c_long;
+    }
+    // MT-safe cell-cache fast path (see feof): the ST cache above is `__libc_single_threaded`-
+    // gated, so a threaded position-tracking loop otherwise pays the registry map lock per call.
+    // Cached cells are non-mem fd (sync is a no-op) and decide()==Allow in strict, so returning
+    // `offset()` under this stream's lock is byte-identical to the slow path (same reasoning the
+    // ST fast path uses to skip decide/observe).
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let s = cell.lock();
+        if !s.is_appending() && s.seekability() == 1 {
+            return s.offset() as c_long;
+        }
+    }
+    let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_ftell) = unsafe { host_ftell_fn() }
+    {
+        let rc = unsafe { host_ftell(stream) };
+        if rc < 0 {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        }
+        return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return -1;
+    }
+
+    if is_cookie_stream(id) && fixed_mem_cookie(id).is_none() {
+        let Some(cell) = stream_cell(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        };
+        let (pending, unread, appending) = {
+            let s = cell.lock();
+            (
+                s.pending_flush().len(),
+                s.readable_buffered(),
+                s.is_appending(),
+            )
+        };
+        // Query the backend outside registry/stream locks: a user seek
+        // callback may inspect the stream or unwind through this boundary.
+        // Position queries do not flush output or discard buffered input.
+        let whence = if appending && pending != 0 {
+            libc::SEEK_END
+        } else {
+            libc::SEEK_CUR
+        };
+        let Some(position) = (unsafe { cookie_stream_position(id, whence) }) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        };
+        return match buffered_stream_position(position, pending, unread) {
+            Ok(position) => {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+                position as c_long
+            }
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                -1
+            }
+        };
+    }
+
+    let Some(cell) = stream_cell(id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return -1;
+    };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+
+    let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+    // A pipe, socket or terminal has no position: glibc's ftell fails with
+    // ESPIPE there (its lseek does); fl returned its byte counter. Probed once.
+    if s.fd() >= 0 && !s.is_mem_backed() {
+        if s.seekability() == 0 {
+            match raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_CUR) {
+                Ok(_) => s.set_seekability(1),
+                Err(e) if e == libc::ESPIPE => s.set_seekability(2),
+                // Like glibc, whose ftell on a stream with no cached offset is
+                // an lseek: a descriptor closed behind stdio's back reports
+                // EBADF (gnulib test-ftello4); nothing is cached.
+                Err(e) => {
+                    unsafe { set_abi_errno(e) };
+                    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                    return -1;
+                }
+            }
+        }
+        if s.seekability() == 2 {
+            unsafe { set_abi_errno(errno::ESPIPE) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        }
+    }
+    // GNU position queries account for pending append output without writing
+    // it. Seeking the descriptor to EOF discovers where O_APPEND will place
+    // those bytes, while the buffer remains pending for fflush/fclose.
+    if s.is_appending() && s.fd() >= 0 && !s.pending_flush().is_empty() {
+        let position = raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_END)
+            .and_then(|end| buffered_stream_position(end, s.pending_flush().len(), 0));
+        match position {
+            Ok(position) => s.set_offset(position),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    }
+    let off = s.offset();
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+    off as c_long
+}
+
+/// Reconcile a backend cursor with bytes still owned by stdio. Checked
+/// arithmetic prevents a large cookie offset from wrapping into a plausible
+/// position. This changes no buffering or input/output status.
+fn buffered_stream_position(backend: i64, pending: usize, unread: usize) -> Result<i64, c_int> {
+    let pending = i64::try_from(pending).map_err(|_| errno::EOVERFLOW)?;
+    let unread = i64::try_from(unread).map_err(|_| errno::EOVERFLOW)?;
+    let position = backend
+        .checked_add(pending)
+        .and_then(|position| position.checked_sub(unread))
+        // GNU position queries reject an impossible reconciled cursor with
+        // EINVAL, even if its backend offset alone was representable.
+        .ok_or(errno::EINVAL)?;
+    if position < 0 {
+        Err(errno::EINVAL)
+    } else {
+        Ok(position)
+    }
+}
+
+/// POSIX `fseeko` — fseek with off_t offset (identical on LP64).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fseeko(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+    unsafe { fseek(stream, offset as c_long, whence) }
+}
+
+/// POSIX `ftello` — ftell with off_t return (identical on LP64).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn ftello(stream: *mut c_void) -> i64 {
+    unsafe { ftell(stream) as i64 }
+}
+
+/// POSIX `rewind`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn rewind(stream: *mut c_void) {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    // rewind is fseek(stream, 0, SEEK_SET) + clearerr.
+    unsafe { fseek(stream, 0, libc::SEEK_SET) };
+
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        s.clear_err();
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            cursor.eof.store(false, Ordering::Release);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// feof / ferror / clearerr / ungetc / fileno
+// ---------------------------------------------------------------------------
+
+/// POSIX `feof`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn feof(stream: *mut c_void) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { feof_without_lock(stream) }
+}
+
+unsafe fn feof_without_lock(stream: *mut c_void) -> c_int {
+    // Single-threaded inline fast path: the pointer-keyed write cache only ever holds
+    // non-cookie, non-mem fd streams, so `sync_fast_fixed_mem_read_to_stream` is a no-op
+    // for a cached stream (fast_fixed_mem_read(id) == None) — reading `is_eof()` directly
+    // is byte-identical to the slow path, skipping canonical_stream_id's native lock +
+    // registry_contains_stream + registry().lock() (3 locks/call, hot in `while(!feof)`).
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated (unique access) + gen-valid ⇒ pointer live, shared read only.
+        return if unsafe { (*p).is_eof() } { 1 } else { 0 };
+    }
+    // MT-safe cell-cache fast path: the ST cache above is `__libc_single_threaded`-gated, so a
+    // THREADED `while(!feof)` loop otherwise pays the registry map lock PER CALL. The cell cache
+    // holds non-cookie non-mem fd streams only (so the mem-sync is a no-op), so reading
+    // `is_eof()` under this stream's lock is byte-identical to the slow path.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        return if cell.lock().is_eof() { 1 } else { 0 };
+    }
+    let id = canonical_stream_id(stream);
+    if id == 0 {
+        return 0;
+    }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_feof) = unsafe { host_feof_unlocked_fn() }
+    {
+        return unsafe { host_feof(stream) };
+    }
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        let _ = sync_fast_fixed_mem_read_to_stream(id, &mut s);
+        if s.is_eof() { 1 } else { 0 }
+    } else {
+        0
+    }
+}
+
+/// POSIX `ferror`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn ferror(stream: *mut c_void) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { ferror_without_lock(stream) }
+}
+
+unsafe fn ferror_without_lock(stream: *mut c_void) -> c_int {
+    // Single-threaded inline fast path (see feof): cached => non-mem fd stream => read
+    // `is_error()` directly, skipping the 3 per-call locks. Byte-identical.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, unique for this call.
+        if unsafe { (*p).is_error() } {
+            return 1;
+        }
+        if header_err_seen(stream) {
+            unsafe { (*p).set_error() };
+            return 1;
+        }
+        return 0;
+    }
+    // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per call.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        if !s.is_error() && header_err_seen(stream) {
+            s.set_error();
+        }
+        return if s.is_error() { 1 } else { 0 };
+    }
+    let id = canonical_stream_id(stream);
+    if id == 0 {
+        return 0;
+    }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_ferror) = unsafe { host_ferror_unlocked_fn() }
+    {
+        return unsafe { host_ferror(stream) };
+    }
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        if !s.is_error() && header_err_seen(stream) {
+            s.set_error();
+        }
+        if s.is_error() { 1 } else { 0 }
+    } else {
+        0
+    }
+}
+
+/// The handle's glibc `_IO_ERR_SEEN` bit was set from outside fl — gnulib's
+/// `fseterr` does `fp->_flags |= _IO_ERR_SEEN` on glibc. fl mirrors its own
+/// state into `_flags` but never read it back, so ferror stayed 0 (gnulib
+/// test-fseterr). Callers adopt it into the stream state so it persists
+/// until clearerr, as in glibc.
+#[inline]
+fn resolve_header_flags_addr(stream: *mut c_void) -> usize {
+    let handle = stream as usize;
+    if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&handle) {
+        return io_internal_abi::visible_stdio_handle_addr_lockfree(handle - STDIN_SENTINEL);
+    }
+    if handle == 0 || (STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+        return 0;
+    }
+    handle
+}
+
+#[inline]
+fn header_err_seen(stream: *mut c_void) -> bool {
+    use io_internal_abi::glibc_flag_bits::ERR_SEEN;
+    let handle = resolve_header_flags_addr(stream);
+    if handle == 0 {
+        return false;
+    }
+    // SAFETY: resolved handle is a live glibc-layout handle whose first
+    // field is the aligned `_flags` int (see mirror_stream_flags).
+    let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    word.load(Ordering::Relaxed) & ERR_SEEN != 0
+}
+
+/// Mark a live, explicitly locked FILE after a higher-level reader consumes
+/// an unretryable record. Keep native stream state and the ABI flag in sync.
+///
+/// # Safety
+/// The caller must keep a valid FILE alive and hold its explicit stream lock.
+pub(crate) unsafe fn set_stream_error(stream: *mut c_void) {
+    use io_internal_abi::glibc_flag_bits::ERR_SEEN;
+
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        cell.lock().set_error();
+    }
+    let handle = resolve_header_flags_addr(stream);
+    if handle != 0 {
+        // SAFETY: resolved handle has the aligned glibc-compatible flags word.
+        let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+        word.fetch_or(ERR_SEEN, Ordering::Relaxed);
+    }
+}
+
+/// Clear `_IO_EOF_SEEN | _IO_ERR_SEEN` in a live handle's `_flags` (clearerr).
+#[inline]
+fn clear_header_eof_err(stream: *mut c_void) {
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
+    let handle = resolve_header_flags_addr(stream);
+    if handle == 0 {
+        return;
+    }
+    // SAFETY: as in header_err_seen.
+    let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    word.fetch_and(!(EOF_SEEN | ERR_SEEN), Ordering::Relaxed);
+}
+
+/// POSIX `clearerr`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clearerr(stream: *mut c_void) {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { clearerr_without_lock(stream) }
+}
+
+unsafe fn clearerr_without_lock(stream: *mut c_void) {
+    // Clear the caller-visible header bits too: not every path below mirrors
+    // the stream state back (the standard streams' does not), and a bit set
+    // there by gnulib's fseterr would otherwise be re-adopted by ferror.
+    clear_header_eof_err(stream);
+    // ST fast path: a cache hit is a non-mem fd stream (fast_fixed_mem_read(id)==None), so
+    // the slow path reduces to `s.clear_err()` — do it directly, skipping the 3 per-call
+    // locks. Byte-identical. Mutating, but ST-gated ⇒ unique access.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
+        unsafe { (*p).clear_err() };
+        mirror_raw_cached(stream, p);
+        return;
+    }
+    // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per
+    // call. Cached cells are non-mem fd (the slow path's `fast_fixed_mem_read` cursor reset is a
+    // no-op), so `clear_err()` under this stream's lock is byte-identical.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        cell.lock().clear_err();
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if id == 0 {
+        return;
+    }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id) {
+        if let Some(host_clearerr) = unsafe { host_clearerr_unlocked_fn() } {
+            unsafe { host_clearerr(stream) };
+        }
+        return;
+    }
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        s.clear_err();
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            cursor.eof.store(false, Ordering::Release);
+        }
+    }
+}
+
+/// POSIX `ungetc`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    unsafe { ungetc_without_lock(c, stream) }
+}
+
+pub(crate) unsafe fn ungetc_without_lock(c: c_int, stream: *mut c_void) -> c_int {
+    if c == libc::EOF {
+        return libc::EOF;
+    }
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so the slow path's
+    // sync_and_unregister_fast_fixed_mem_read is a no-op (fast_fixed_mem_read(id)==None) —
+    // reduce to s.ungetc() directly, skipping 4 per-call locks (native + registry_contains +
+    // registry + fast_fixed_mem_reads). Byte-identical; mutating but ST-gated ⇒ unique &mut.
+    // The common ungetc-after-fgetc parser pattern leaves the stream cached, so this hits.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
+        let pushed = unsafe { (*p).ungetc(c as u8) };
+        mirror_raw_cached(stream, p);
+        return if pushed { c } else { libc::EOF };
+    }
+    // MT-safe cell-cache fast path (see feof): a threaded ungetc-after-fgetc parser loop otherwise
+    // pays the map lock per call (the ST cache above is `__libc_single_threaded`-gated). A gen-valid
+    // hit is a non-cookie non-mem fd stream, so the slow path's sync_and_unregister_fast_fixed_mem_read
+    // is a no-op — `s.ungetc()` under this stream's lock is byte-identical.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        return if s.ungetc(c as u8) { c } else { libc::EOF };
+    }
+    let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_ungetc) = unsafe { host_ungetc_fn() }
+    {
+        let rc = unsafe { host_ungetc(c, stream) };
+        if rc == libc::EOF {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        } else {
+            mark_host_io_started(stream);
+        }
+        return rc;
+    }
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        if !wide_io_active() && s.effective_orientation() > 0 {
+            return libc::EOF;
+        }
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+        if s.ungetc(c as u8) {
+            if !wide_io_active() {
+                let _ = s.set_orientation(-1);
+            }
+            c
+        } else {
+            libc::EOF
+        }
+    } else {
+        libc::EOF
+    }
+}
+
+/// POSIX `fileno`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fileno(stream: *mut c_void) -> c_int {
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so `is_mem_backed()`
+    // is false and the slow path returns `s.fd()` — read it directly, skipping the 3
+    // per-call locks (native + registry_contains + registry). Byte-identical. (feof A/B:
+    // 3-lock elision = ~16ns/call.)
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
+        return unsafe { (*p).fd() };
+    }
+    // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per
+    // call. Cached cells are non-mem fd (is_mem_backed()==false), so the slow path returns
+    // `s.fd()` — read it under this stream's lock. Byte-identical.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        return cell.lock().fd();
+    }
+    let id = canonical_stream_id(stream);
+    if id == 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_fileno) = unsafe { host_fileno_fn() }
+    {
+        let rc = unsafe { host_fileno(stream) };
+        if rc < 0 {
+            unsafe { sync_host_errno(errno::EBADF) };
+        }
+        return rc;
+    }
+    if let Some(cell) = stream_cell(id) {
+        let s = cell.lock();
+        if s.fd() < 0 {
+            unsafe { set_abi_errno(errno::EBADF) };
+            -1
+        } else {
+            s.fd()
+        }
+    } else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        -1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setvbuf / setbuf
+// ---------------------------------------------------------------------------
+
+/// POSIX `setvbuf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn setvbuf(
+    stream: *mut c_void,
+    _buf: *mut c_char,
+    mode: c_int,
+    size: usize,
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    let Some(buf_mode) = BufMode::from_posix(mode) else {
+        return -1;
+    };
+
+    // glibc IGNORES `size` entirely when `buf` is NULL and gives the stream its
+    // own default buffer, so `setvbuf(f, NULL, _IOFBF, 0)` — "buffer this fully,
+    // you pick the size" — must not be read as "use a zero-length buffer".
+    // fl used to pass the caller's size straight through, and
+    // `Buffer::set_mode` clamps with `size.max(1)`, so that call produced a
+    // ONE-BYTE buffer and an effectively unbuffered stream: every write became
+    // its own write(2) (bd-kzceks).
+    //
+    // MEASURED on host glibc 2.42, `__fbufsize` after `setvbuf(f, NULL, mode, n)`
+    // for n in {0, 64, 4096, 65536}: 4096 every time for _IOFBF, and 4096 after
+    // the first write for _IOLBF. A caller-supplied buffer still honours the
+    // caller's size, which is what glibc does with it.
+    //
+    // That 4096 is not a constant: it is glibc's usual allocation size,
+    // BUFSIZ or the fd's smaller st_blksize (`fd_stream`), which is 4096 on
+    // the files and pipes that measurement used and 1024 on /proc files.
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        let requested_size = if matches!(buf_mode, BufMode::None) {
+            0
+        } else if _buf.is_null() {
+            glibc_stream_bufsize(s.fd())
+        } else {
+            size
+        };
+        // Note: we ignore the caller's buffer pointer; we always use internal allocation.
+        //
+        // glibc also accepts setvbuf on a stream already in use (iosetvbuf.c):
+        // with no caller buffer, _IOFBF/_IOLBF only flip the mode; otherwise
+        // `_IO_SETBUF` syncs the stream (flushes staged output, seeks back
+        // over unread input) and replaces the buffer. Refusing left programs
+        // that unbuffer stdout mid-run fully buffered, their output reordered
+        // against stderr.
+        let accepted = s.set_buffering(buf_mode, requested_size)
+            || (!s.is_mem_backed() && {
+                let keep = _buf.is_null() && !matches!(buf_mode, BufMode::None);
+                let synced = keep || {
+                    if is_cookie_stream(id) {
+                        let flushed = unsafe { flush_cookie_stream(id, &mut s) };
+                        flush_fixed_mem_input(id, &mut s);
+                        flushed
+                    } else {
+                        let flushed = unsafe { flush_stream(&mut s) };
+                        sync_input_position(&mut s);
+                        flushed
+                    }
+                };
+                synced && s.rebuffer(buf_mode, requested_size, keep)
+            });
+        if accepted {
+            if let Some(memory) = fixed_mem_cookie(id) {
+                // Direct read-only cursor reads do not mark StdioStream's
+                // buffer as used. An explicit replacement/unbuffering must
+                // still synchronize their position and drop prefetched input.
+                if !_buf.is_null() || matches!(buf_mode, BufMode::None) {
+                    flush_fixed_mem_input(id, &mut s);
+                }
+                let prefetch = if matches!(buf_mode, BufMode::None) {
+                    1
+                } else {
+                    requested_size.max(1)
+                };
+                memory.read_capacity.store(prefetch, Ordering::Release);
+            }
+            sync_native_stdio_buffering(stream, buf_mode, _buf, requested_size);
+            0
+        } else {
+            -1
+        }
+    } else {
+        #[cfg(not(feature = "standalone"))]
+        if host_stream_io_started(id) {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if !is_fl_issued_stream_id(id)
+            && let Some(host_fn) = unsafe { host_setvbuf_fn() }
+        {
+            let rc = unsafe { host_fn(stream, _buf, mode, size) };
+            if rc != 0 {
+                unsafe { sync_host_errno(errno::EBADF) };
+            }
+            return rc;
+        }
+        -1
+    }
+}
+
+/// POSIX `setbuf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn setbuf(stream: *mut c_void, buf: *mut c_char) {
+    if buf.is_null() {
+        unsafe {
+            setvbuf(stream, std::ptr::null_mut(), 2 /* _IONBF */, 0)
+        };
+    } else {
+        unsafe {
+            setvbuf(stream, buf, 0 /* _IOFBF */, 8192)
+        };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// putchar / puts / getchar (preserved from bootstrap)
+// ---------------------------------------------------------------------------
+
+/// POSIX `putchar`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn putchar(c: c_int) -> c_int {
+    // POSIX: putchar(c) is equivalent to fputc(c, stdout).
+    unsafe {
+        fputc_for_caller(
+            c,
+            active_stdout_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+/// POSIX `puts`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
+    unsafe { puts_for_caller(s, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn puts_for_caller(s: *const c_char, caller: usize) -> c_int {
+    // The string and its trailing newline are one stdio operation. In
+    // particular, another puts/fprintf must not split them across lines.
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdout_stream()) };
+    if s.is_null() {
+        return libc::EOF;
+    }
+
+    // Single-threaded inline fast path: append body + '\n' to the cached Full-buffered
+    // stdout in one shot (skip membrane + the TWO write_bytes locks). Miss → full path.
+    {
+        let stdout_id = canonical_stream_id(active_stdout_stream());
+        if let Some(p) = write_cache_lookup(stdout_id) {
+            let (len, _) = unsafe { scan_c_str_len(s, None) };
+            let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+            // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+            if unsafe { (*p).fast_puts(bytes) } {
+                return 0;
+            }
+        }
+    }
+
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let stdout_ptr = active_stdout_stream();
+        let stdout_id = canonical_stream_id(stdout_ptr);
+        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+        let body_written =
+            unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, bytes, caller) };
+        let newline_written = body_written == bytes.len()
+            && unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, b"\n", caller) }
+                == 1;
+        return if body_written == bytes.len() && newline_written {
+            0
+        } else {
+            libc::EOF
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("puts");
+    let (mode, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return libc::EOF;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let (len, terminated) = unsafe { scan_c_str_len(s, None) };
+    if !terminated && repair {
+        global_healing_policy().record(
+            "stdio",
+            "puts",
+            &HealingAction::TruncateWithNull {
+                requested: len.saturating_add(1),
+                truncated: len,
+            },
+            RepairLogContext::new(0, Some(s as usize)),
+        );
+    }
+
+    // POSIX: puts writes s followed by a newline to stdout.
+    // Use the buffered stream to maintain coherence with fprintf(stdout, ...).
+    let stdout_ptr = active_stdout_stream();
+    let rc_body = unsafe { fputs_for_caller(s, stdout_ptr, caller) };
+    if rc_body == libc::EOF {
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, len.saturating_add(1)),
+            true,
+        );
+        return libc::EOF;
+    }
+    let rc_nl = unsafe { fputc_for_caller(b'\n' as c_int, stdout_ptr, caller) };
+    let adverse = rc_nl == libc::EOF || (!terminated && repair);
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(10, len.saturating_add(1)),
+        adverse,
+    );
+
+    if rc_nl == libc::EOF { libc::EOF } else { 0 }
+}
+
+/// POSIX `getchar`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getchar() -> c_int {
+    unsafe {
+        fgetc_for_caller(
+            active_stdin_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// perror
+// ---------------------------------------------------------------------------
+
+/// POSIX `perror`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn perror(s: *const c_char) {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return;
+    }
+
+    // Get current errno and map to message via the SHARED renderer (the
+    // complete, glibc-exact strerrordesc_np table, including "Unknown error <N>"
+    // for unknown codes). The previous inline table covered only ~22 common
+    // errnos and rendered everything else — EAGAIN, the high/socket errnos, and
+    // truly unknown codes — as a numberless "Unknown error".
+    let err = unsafe { *super::errno_abi::__errno_location() };
+    let (rendered, _) = crate::string_abi::rendered_strerror_message(err);
+    let msg: &[u8] = rendered.as_bytes();
+
+    if !s.is_null() {
+        let prefix = unsafe { bounded_c_str_bytes(s) }.unwrap_or(&[]);
+        if !prefix.is_empty() {
+            let _ =
+                unsafe { sys_write_fd(libc::STDERR_FILENO, prefix.as_ptr().cast(), prefix.len()) };
+            let _ = unsafe { sys_write_fd(libc::STDERR_FILENO, b": ".as_ptr().cast(), 2) };
+        }
+    }
+
+    let _ = unsafe { sys_write_fd(libc::STDERR_FILENO, msg.as_ptr().cast(), msg.len()) };
+    let _ = unsafe { sys_write_fd(libc::STDERR_FILENO, b"\n".as_ptr().cast(), 1) };
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
+}
+
+// ---------------------------------------------------------------------------
+// printf / fprintf / sprintf / snprintf
+// ---------------------------------------------------------------------------
+
+use frankenlibc_core::stdio::{
+    FormatSegment, LengthMod, Precision, ValueArgKind, Width,
+    count_printf_args_of as core_count_printf_args_of, format_str, parse_format_string,
+    positional_printf_arg_plan as core_positional_printf_arg_plan,
+};
+
+/// Inline argument capacity; larger printf calls spill to checked heap storage.
+pub(crate) const MAX_VA_ARGS: usize = 32;
+
+/// Own every argument until rendering finishes, without allocating for the
+/// usual small, sequential format. A fixed extraction ceiling silently turns
+/// valid later arguments into zero (and loses later `%n` stores).
+pub(crate) struct PrintfArgumentBuffer {
+    inline: [u64; MAX_VA_ARGS],
+    heap: Vec<u64>,
+    count: usize,
+    positional: Option<Vec<ValueArgKind>>,
+}
+
+impl PrintfArgumentBuffer {
+    pub(crate) fn new(segments: &FormatSegments<'_>) -> Result<Self, c_int> {
+        let mut positional_count = 0usize;
+        if segments.any_positional() {
+            for segment in segments {
+                let FormatSegment::Spec(spec) = segment else {
+                    continue;
+                };
+                // The parser saturates an oversized decimal index at usize::MAX.
+                // Reject it before asking either the argument buffer or its
+                // positional plan to allocate. GNU argument positions are ints.
+                for position in [
+                    spec.value_position,
+                    spec.width.position(),
+                    spec.precision.position(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if position > c_int::MAX as usize {
+                        return Err(errno::EOVERFLOW);
+                    }
+                }
+                for (position, _) in [
+                    spec.positional_width_arg_kind(),
+                    spec.positional_precision_arg_kind(),
+                    spec.positional_value_arg_kind(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    positional_count = positional_count.max(position);
+                }
+            }
+        }
+        // With no consuming positional directive the core count follows its
+        // sequential path and never allocates a positional plan.
+        let count = if positional_count != 0 {
+            positional_count
+        } else {
+            core_count_printf_args_of(segments)
+        };
+        if count
+            .checked_mul(std::mem::size_of::<u64>())
+            .is_none_or(|bytes| bytes > isize::MAX as usize)
+        {
+            return Err(errno::EOVERFLOW);
+        }
+        let mut buffer = Self {
+            inline: [0; MAX_VA_ARGS],
+            heap: Vec::new(),
+            count,
+            positional: None,
+        };
+        if count > MAX_VA_ARGS {
+            buffer
+                .heap
+                .try_reserve_exact(count)
+                .map_err(|_| errno::ENOMEM)?;
+            buffer.heap.resize(count, 0);
+        }
+        if positional_count != 0 {
+            let mut plan = Vec::new();
+            plan.try_reserve_exact(count).map_err(|_| errno::ENOMEM)?;
+            plan.resize(count, ValueArgKind::Gp);
+            // The existing planner gives the first declaration of a slot
+            // precedence. Assigning in reverse preserves that rule without a
+            // second allocation for an Option-valued intermediate plan.
+            for segment in segments.iter().rev() {
+                let FormatSegment::Spec(spec) = segment else {
+                    continue;
+                };
+                for (position, kind) in [
+                    spec.positional_value_arg_kind(),
+                    spec.positional_precision_arg_kind(),
+                    spec.positional_width_arg_kind(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if position != 0 {
+                        plan[position - 1] = kind;
+                    }
+                }
+            }
+            buffer.positional = Some(plan);
+        }
+        Ok(buffer)
+    }
+
+    pub(crate) fn parts_mut(&mut self) -> (&mut [u64], Option<&[ValueArgKind]>) {
+        let values = if self.count <= MAX_VA_ARGS {
+            &mut self.inline[..self.count]
+        } else {
+            self.heap.as_mut_slice()
+        };
+        (values, self.positional.as_deref())
+    }
+
+    /// # Safety
+    /// `ap` is a live C va_list whose arguments agree with `segments`, the same
+    /// parsed format used to construct this buffer. Long-double argument slots
+    /// remain live until the caller finishes rendering from the buffer.
+    pub(crate) unsafe fn extract(
+        &mut self,
+        segments: &[FormatSegment<'_>],
+        ap: *mut c_void,
+    ) -> usize {
+        let count = self.count;
+        let (values, plan) = self.parts_mut();
+        // SAFETY: the caller supplies the matching va_list; the checked buffer
+        // and its positional plan both contain exactly count initialized slots.
+        unsafe { vprintf_extract_args_with_plan(segments, ap, values, count, plan) }
+    }
+}
+
+impl std::ops::Deref for PrintfArgumentBuffer {
+    type Target = [u64];
+
+    fn deref(&self) -> &Self::Target {
+        if self.count <= MAX_VA_ARGS {
+            &self.inline[..self.count]
+        } else {
+            self.heap.as_slice()
+        }
+    }
+}
+
+// GNU printf extensions are an opt-in path. A process which never registers
+// anything only loads this flag once at the public formatting boundary; its
+// existing parser, register readers and direct-format fast paths are unchanged.
+// Render, arginfo and type-reader callbacks may throw foreign exceptions. All
+// public/forwarding frames that reach this engine use C-unwind so the buffer
+// owner and stream-lock guards are dropped before the caller catches them.
+static PRINTF_EXTENSIONS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PRINTF_EXTENSIONS: Mutex<Option<PrintfExtensions>> = Mutex::new(None);
+
+#[derive(Clone, Copy)]
+struct PrintfConversion {
+    render: usize,
+    arginfo: usize,
+    sized: bool,
+}
+
+#[derive(Clone)]
+struct PrintfExtensions {
+    conversions: [Option<PrintfConversion>; 256],
+    modifiers: Vec<(Vec<u8>, u16)>,
+    types: Vec<usize>,
+}
+
+impl PrintfExtensions {
+    fn new() -> Self {
+        Self {
+            conversions: [None; 256],
+            modifiers: Vec::new(),
+            types: Vec::new(),
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn printf_extensions_active() -> bool {
+    PRINTF_EXTENSIONS_ACTIVE.load(Ordering::Acquire)
+}
+
+#[inline]
+fn lock_printf_extensions() -> std::sync::MutexGuard<'static, Option<PrintfExtensions>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&PRINTF_EXTENSIONS)
+}
+
+fn printf_extensions_snapshot() -> PrintfExtensions {
+    // Never retain this guard across user code. Each call owns a coherent
+    // snapshot, so a callback can register/replace a conversion or recursively
+    // format without deadlocking or changing this call's argument layout.
+    // As with the GNU API, the registrant must keep callback code loaded while
+    // calls using it can still be in flight; unregistering is not dlclose.
+    lock_printf_extensions()
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(PrintfExtensions::new)
+}
+
+pub(crate) fn register_printf_conversion(
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
+    sized: bool,
+) -> c_int {
+    if !(0..=255).contains(&spec) {
+        // SAFETY: errno is local to the calling thread.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut guard = lock_printf_extensions();
+    let extensions = guard.get_or_insert_with(PrintfExtensions::new);
+    extensions.conversions[spec as usize] =
+        (!render.is_null() || !arginfo.is_null()).then_some(PrintfConversion {
+            render: render as usize,
+            arginfo: arginfo as usize,
+            sized,
+        });
+    PRINTF_EXTENSIONS_ACTIVE.store(true, Ordering::Release);
+    0
+}
+
+pub(crate) unsafe fn register_printf_modifier_impl(modifier: *const libc::wchar_t) -> c_int {
+    if modifier.is_null() {
+        // SAFETY: errno is local to the calling thread.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut bytes = Vec::new();
+    let mut i = 0;
+    loop {
+        // SAFETY: registration requires a terminated wchar_t string.
+        let ch = unsafe { *modifier.add(i) };
+        if ch == 0 {
+            break;
+        }
+        if !(1..=255).contains(&ch) {
+            // GNU modifier characters must fit in an unsigned char.
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        if bytes.try_reserve(1).is_err() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        }
+        bytes.push(ch as u8);
+        i += 1;
+    }
+    if bytes.is_empty() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut guard = lock_printf_extensions();
+    let extensions = guard.get_or_insert_with(PrintfExtensions::new);
+    if extensions.modifiers.len() == 16 {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+        return -1;
+    }
+    if extensions.modifiers.try_reserve(1).is_err() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return -1;
+    }
+    let bit = 1u16 << extensions.modifiers.len();
+    // Re-registering the same spelling allocates a new bit, as GNU does; the
+    // newest matching spelling takes precedence during parsing.
+    extensions.modifiers.push((bytes, bit));
+    PRINTF_EXTENSIONS_ACTIVE.store(true, Ordering::Release);
+    c_int::from(bit)
+}
+
+pub(crate) fn register_printf_type_impl(reader: *mut c_void) -> c_int {
+    if reader.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut guard = lock_printf_extensions();
+    let extensions = guard.get_or_insert_with(PrintfExtensions::new);
+    // GNU <printf.h> reserves PA_FLAG_MASK = 0xff00 for length/pointer flags,
+    // leaving 248 custom type slots (PA_LAST = 8 through 255 inclusive).
+    if extensions.types.len() >= 256 - 8 {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+        return -1;
+    }
+    let kind = (extensions.types.len() + 8) as c_int;
+    if extensions.types.try_reserve(1).is_err() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return -1;
+    }
+    extensions.types.push(reader as usize);
+    PRINTF_EXTENSIONS_ACTIVE.store(true, Ordering::Release);
+    kind
+}
+
+use crate::glibc_internal_abi::PrintfInfo;
+use frankenlibc_core::stdio::printf::{FormatFlags, FormatSegments, FormatSpec};
+
+#[derive(Clone, Copy)]
+struct PrintfArgType {
+    kind: c_int,
+    size: usize,
+}
+
+struct ExtensionSpec {
+    info: PrintfInfo,
+    native: FormatSpec,
+    width_arg: Option<usize>,
+    precision_arg: Option<usize>,
+    first_arg: usize,
+    arg_count: usize,
+    conversion: Option<PrintfConversion>,
+    raw_start: usize,
+    raw_end: usize,
+}
+
+enum ExtensionSegment<'a> {
+    Literal(&'a [u8]),
+    Spec(ExtensionSpec),
+    Error(c_int),
+}
+
+struct ExtensionPlan<'a> {
+    segments: Vec<ExtensionSegment<'a>>,
+    types: Vec<Option<PrintfArgType>>,
+    count: usize,
+    parse_count: usize,
+}
+
+fn extension_decimal(bytes: &[u8], pos: &mut usize) -> Result<usize, c_int> {
+    let mut value = 0usize;
+    while let Some(ch) = bytes.get(*pos).filter(|ch| ch.is_ascii_digit()) {
+        value = value
+            .checked_mul(10)
+            .and_then(|v| v.checked_add((ch - b'0') as usize))
+            .filter(|v| *v <= c_int::MAX as usize)
+            .ok_or(errno::EOVERFLOW)?;
+        *pos += 1;
+    }
+    Ok(value)
+}
+
+fn extension_position(bytes: &[u8], pos: &mut usize) -> Result<Option<usize>, c_int> {
+    let start = *pos;
+    let mut end = start;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    if end == start || bytes.get(end) != Some(&b'$') {
+        return Ok(None);
+    }
+    let value = extension_decimal(bytes, pos)?;
+    *pos += 1;
+    value.checked_sub(1).map(Some).ok_or(errno::EINVAL)
+}
+
+fn extension_record_type(
+    plan: &mut ExtensionPlan<'_>,
+    index: usize,
+    kind: Option<PrintfArgType>,
+    capacity: usize,
+) -> Result<(), c_int> {
+    let required = index.checked_add(1).ok_or(errno::EOVERFLOW)?;
+    plan.count = plan.count.max(required);
+    if index < capacity {
+        if required > plan.types.len() {
+            plan.types
+                .try_reserve(required - plan.types.len())
+                .map_err(|_| errno::ENOMEM)?;
+            plan.types.resize(required, None);
+        }
+        if kind.is_some() {
+            plan.types[index] = kind;
+        }
+    }
+    Ok(())
+}
+
+fn extension_native_type(conversion: u8, length: LengthMod) -> Option<PrintfArgType> {
+    // Preserve GNU's public PA_* classification, which follows the spelling:
+    // %ls/%lc still report PA_STRING/PA_CHAR; only %S/%C report the wide codes.
+    // These pairs have the same register class when arguments are extracted.
+    let kind = match conversion {
+        b'd' | b'i' | b'u' | b'o' | b'x' | b'X' | b'b' | b'B' => match length {
+            LengthMod::Hh => 1,
+            LengthMod::H => 0x400,
+            LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 0x200,
+            _ => 0,
+        },
+        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+            7 | if matches!(length, LengthMod::BigL | LengthMod::Ll) {
+                0x100
+            } else {
+                0
+            }
+        }
+        b's' => 3,
+        b'S' => 4,
+        b'c' => 1,
+        b'C' => 2,
+        b'p' => 5,
+        b'n' => 0x800,
+        _ => return None,
+    };
+    Some(PrintfArgType { kind, size: 0 })
+}
+
+unsafe fn extension_arginfo(
+    conversion: PrintfConversion,
+    info: &PrintfInfo,
+    n: usize,
+    types: *mut c_int,
+    sizes: *mut c_int,
+) -> c_int {
+    if conversion.sized {
+        type ArgInfo =
+            unsafe extern "C-unwind" fn(*const PrintfInfo, usize, *mut c_int, *mut c_int) -> c_int;
+        // SAFETY: the registration API supplies this exact GNU callback ABI.
+        let callback: ArgInfo = unsafe { std::mem::transmute(conversion.arginfo) };
+        unsafe { callback(info, n, types, sizes) }
+    } else {
+        type ArgInfo = unsafe extern "C-unwind" fn(*const PrintfInfo, usize, *mut c_int) -> c_int;
+        // SAFETY: register_printf_function supplies the legacy three-argument ABI.
+        let callback: ArgInfo = unsafe { std::mem::transmute(conversion.arginfo) };
+        unsafe { callback(info, n, types) }
+    }
+}
+
+unsafe fn extension_plan<'a>(
+    bytes: &'a [u8],
+    wide: bool,
+    extensions: &PrintfExtensions,
+    capacity: usize,
+) -> Result<ExtensionPlan<'a>, c_int> {
+    let mut plan = ExtensionPlan {
+        segments: Vec::new(),
+        types: Vec::new(),
+        count: 0,
+        parse_count: 0,
+    };
+    let mut pos = 0;
+    let mut next = 0usize;
+    let mut max_ref_arg = 0usize;
+    while pos < bytes.len() {
+        let start = pos;
+        while pos < bytes.len() && bytes[pos] != b'%' {
+            pos += 1;
+        }
+        if start != pos {
+            plan.segments
+                .push(ExtensionSegment::Literal(&bytes[start..pos]));
+        }
+        if pos == bytes.len() {
+            break;
+        }
+        let raw_start = pos;
+        pos += 1;
+        let value_position = extension_position(bytes, &mut pos)?;
+        if let Some(index) = value_position {
+            max_ref_arg = max_ref_arg.max(index.checked_add(1).ok_or(errno::EOVERFLOW)?);
+            extension_record_type(&mut plan, index, None, capacity)?;
+        }
+        let mut flags = FormatFlags::default();
+        let mut i18n = false;
+        while let Some(ch) = bytes.get(pos) {
+            match ch {
+                b'-' => flags.left_justify = true,
+                b'+' => flags.force_sign = true,
+                b' ' => flags.space_sign = true,
+                b'#' => flags.alt_form = true,
+                b'0' => flags.zero_pad = true,
+                b'\'' => flags.group = true,
+                b'I' => i18n = true,
+                _ => break,
+            }
+            pos += 1;
+        }
+        if flags.left_justify {
+            flags.zero_pad = false;
+        }
+        let mut width_arg = None;
+        let mut precision_arg = None;
+        let mut width = 0;
+        let mut precision = -1;
+        for is_precision in [false, true] {
+            if is_precision {
+                if bytes.get(pos) != Some(&b'.') {
+                    break;
+                }
+                pos += 1;
+            }
+            let value = if bytes.get(pos) == Some(&b'*') {
+                pos += 1;
+                let star_position = extension_position(bytes, &mut pos)?;
+                let index = if let Some(index) = star_position {
+                    max_ref_arg = max_ref_arg.max(index.checked_add(1).ok_or(errno::EOVERFLOW)?);
+                    index
+                } else {
+                    let index = next;
+                    next = next.checked_add(1).ok_or(errno::EOVERFLOW)?;
+                    index
+                };
+                extension_record_type(
+                    &mut plan,
+                    index,
+                    Some(PrintfArgType { kind: 0, size: 0 }),
+                    capacity,
+                )?;
+                if is_precision {
+                    precision_arg = Some(index);
+                } else {
+                    width_arg = Some(index);
+                }
+                // GNU arginfo sees unresolved stars as the default width or
+                // precision; the renderer receives the actual argument later.
+                if is_precision { -1 } else { 0 }
+            } else {
+                match extension_decimal(bytes, &mut pos) {
+                    Ok(value) => value as c_int,
+                    Err(error) => {
+                        // This field fails when reached, after previous output
+                        // and %n effects. Its value and later fields are unused.
+                        plan.segments.push(ExtensionSegment::Error(error));
+                        return Ok(plan);
+                    }
+                }
+            };
+            if is_precision {
+                precision = value;
+            } else {
+                width = value;
+            }
+        }
+        let mut user = 0;
+        let mut modifier_len = 0;
+        for (modifier, bit) in extensions.modifiers.iter().rev() {
+            let encoded;
+            let spelling = if wide {
+                encoded = modifier.iter().map(|&c| char::from(c)).collect::<String>();
+                encoded.as_bytes()
+            } else {
+                modifier.as_slice()
+            };
+            if spelling.len() > modifier_len && bytes[pos..].starts_with(spelling) {
+                modifier_len = spelling.len();
+                user = *bit;
+            }
+        }
+        let mut length = LengthMod::None;
+        let mut length_flags = 0;
+        if modifier_len != 0 {
+            pos += modifier_len;
+        } else {
+            match bytes.get(pos) {
+                Some(b'h') => {
+                    pos += 1;
+                    if bytes.get(pos) == Some(&b'h') {
+                        pos += 1;
+                        length = LengthMod::Hh;
+                        length_flags = 1 << 9;
+                    } else {
+                        length = LengthMod::H;
+                        length_flags = 1 << 1;
+                    }
+                }
+                Some(b'l') => {
+                    pos += 1;
+                    length = LengthMod::L;
+                    length_flags = 1 << 2;
+                    if bytes.get(pos) == Some(&b'l') {
+                        pos += 1;
+                        length = LengthMod::Ll;
+                        length_flags |= 1;
+                    }
+                }
+                Some(b'L' | b'q') => {
+                    pos += 1;
+                    length = LengthMod::BigL;
+                    length_flags = 1;
+                }
+                Some(b'j' | b'z' | b't') => {
+                    length = match bytes[pos] {
+                        b'j' => LengthMod::J,
+                        b'z' => LengthMod::Z,
+                        _ => LengthMod::T,
+                    };
+                    pos += 1;
+                    length_flags = 1 << 2;
+                }
+                Some(b'w') => {
+                    pos += 1;
+                    let fast = bytes.get(pos) == Some(&b'f');
+                    pos += usize::from(fast);
+                    (length, length_flags) = match (fast, extension_decimal(bytes, &mut pos)?) {
+                        (_, 8) => (LengthMod::Hh, 1 << 9),
+                        (false, 16) => (LengthMod::H, 1 << 1),
+                        (false, 32) => (LengthMod::None, 0),
+                        (_, 64) | (true, 16 | 32) => (LengthMod::L, 1 << 2),
+                        _ => return Err(errno::EINVAL),
+                    };
+                }
+                _ => {}
+            }
+        }
+        let (specifier, encoded_len) = if wide {
+            let ch = std::str::from_utf8(&bytes[pos..])
+                .map_err(|_| errno::EILSEQ)?
+                .chars()
+                .next()
+                .ok_or(errno::EINVAL)?;
+            (u32::from(ch), ch.len_utf8())
+        } else {
+            (u32::from(*bytes.get(pos).ok_or(errno::EINVAL)?), 1)
+        };
+        pos += encoded_len;
+        let conversion_byte = u8::try_from(specifier).unwrap_or(0);
+        flags.i18n = i18n;
+        let info = PrintfInfo {
+            precision,
+            width,
+            spec: specifier as libc::wchar_t,
+            flags: length_flags
+                | (u16::from(flags.alt_form) << 3)
+                | (u16::from(flags.space_sign) << 4)
+                | (u16::from(flags.left_justify) << 5)
+                | (u16::from(flags.force_sign) << 6)
+                | (u16::from(flags.group) << 7)
+                | (u16::from(wide) << 10)
+                | (u16::from(i18n) << 11),
+            user,
+            pad: if flags.zero_pad { b'0' } else { b' ' } as libc::wchar_t,
+        };
+        let (native_conversion, native_length) = match (conversion_byte, length) {
+            (b'S', _) => (b's', LengthMod::L),
+            (b'C', _) => (b'c', LengthMod::L),
+            (c @ (b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A'), LengthMod::Ll) => {
+                (c, LengthMod::BigL)
+            }
+            (c @ (b's' | b'c'), LengthMod::BigL) => (c, LengthMod::L),
+            pair => pair,
+        };
+        let native = FormatSpec::new(
+            flags,
+            Width::Fixed(width.max(0) as usize),
+            if precision >= 0 {
+                Precision::Fixed(precision as usize)
+            } else {
+                Precision::None
+            },
+            native_length,
+            native_conversion,
+            None,
+        );
+        let first_arg = value_position.unwrap_or(next);
+        let mut conversion = extensions
+            .conversions
+            .get(specifier as usize)
+            .copied()
+            .flatten();
+        let mut kinds = Vec::new();
+        let mut arg_count = 0usize;
+        if let Some(callback) = conversion.filter(|c| c.arginfo != 0) {
+            let mut kind = 0;
+            let mut size = 0;
+            // SAFETY: local one-element outputs and an immutable info snapshot.
+            let n = unsafe { extension_arginfo(callback, &info, 1, &mut kind, &mut size) };
+            if n < 0 {
+                conversion = None;
+            } else if n == 1 {
+                arg_count = 1;
+                kinds.push(PrintfArgType {
+                    kind,
+                    size: size.max(0) as usize,
+                });
+            } else if n > 1 {
+                let n = n as usize;
+                arg_count = n;
+                // Match GNU parse_printf_format: when none of this directive's
+                // argument slots fall within the caller's requested type array
+                // (e.g. count-only queries with capacity == 0), do not invoke
+                // the multi-argument arginfo callback a second time.
+                if first_arg < capacity {
+                    let mut types = Vec::new();
+                    let mut sizes = Vec::new();
+                    types.try_reserve(n).map_err(|_| errno::ENOMEM)?;
+                    sizes.try_reserve(n).map_err(|_| errno::ENOMEM)?;
+                    types.resize(n, 0);
+                    sizes.resize(n, 0);
+                    // SAFETY: both arrays have precisely the declared capacity.
+                    let actual = unsafe {
+                        extension_arginfo(
+                            callback,
+                            &info,
+                            n,
+                            types.as_mut_ptr(),
+                            sizes.as_mut_ptr(),
+                        )
+                    };
+                    if actual != n as c_int {
+                        return Err(errno::EINVAL);
+                    }
+                    kinds.extend(
+                        types
+                            .into_iter()
+                            .zip(sizes)
+                            .map(|(kind, size)| PrintfArgType {
+                                kind,
+                                size: size.max(0) as usize,
+                            }),
+                    );
+                }
+            }
+        } else if let Some(kind) = extension_native_type(conversion_byte, length) {
+            arg_count = 1;
+            kinds.push(kind);
+        }
+        if conversion.is_none()
+            && arg_count == 0
+            && let Some(kind) = extension_native_type(conversion_byte, length)
+        {
+            arg_count = 1;
+            kinds.push(kind);
+        }
+        if !kinds.is_empty() {
+            for (offset, kind) in kinds.iter().copied().enumerate() {
+                extension_record_type(
+                    &mut plan,
+                    first_arg.checked_add(offset).ok_or(errno::EOVERFLOW)?,
+                    Some(kind),
+                    capacity,
+                )?;
+            }
+        } else if arg_count != 0 {
+            extension_record_type(
+                &mut plan,
+                first_arg
+                    .checked_add(arg_count - 1)
+                    .ok_or(errno::EOVERFLOW)?,
+                None,
+                capacity,
+            )?;
+        }
+        if value_position.is_none() {
+            next = next.checked_add(arg_count).ok_or(errno::EOVERFLOW)?;
+        }
+        plan.segments.push(ExtensionSegment::Spec(ExtensionSpec {
+            info,
+            native,
+            width_arg,
+            precision_arg,
+            first_arg,
+            arg_count,
+            conversion,
+            raw_start,
+            raw_end: pos,
+        }));
+    }
+    plan.parse_count = next.max(max_ref_arg);
+    Ok(plan)
+}
+
+pub(crate) unsafe fn parse_printf_extensions(bytes: &[u8], n: usize, types: *mut c_int) -> usize {
+    let extensions = printf_extensions_snapshot();
+    // SAFETY: registered arginfo callbacks have the GNU ABI; no registry lock
+    // is held during this parse or any callback it invokes.
+    match unsafe {
+        extension_plan(
+            bytes,
+            false,
+            &extensions,
+            if types.is_null() { 0 } else { n },
+        )
+    } {
+        Ok(plan) => {
+            // The public type-query API keeps its all-or-error contract;
+            // deferred output errors must not publish a partial type array.
+            if let Some(error) = plan.segments.iter().find_map(|segment| {
+                if let ExtensionSegment::Error(error) = segment {
+                    Some(*error)
+                } else {
+                    None
+                }
+            }) {
+                // SAFETY: errno is the current thread's writable error slot.
+                unsafe { set_abi_errno(error) };
+                return 0;
+            }
+            for (index, kind) in plan.types.iter().enumerate() {
+                if let Some(kind) = kind {
+                    // SAFETY: plan.types is capped at the caller's n slots.
+                    unsafe { *types.add(index) = kind.kind };
+                }
+            }
+            plan.parse_count
+        }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
+        }
+    }
+}
+
+struct ExtensionArgument {
+    bits: u64,
+    storage: Vec<u128>,
+    extended: bool,
+}
+
+impl ExtensionArgument {
+    fn callback_pointer(&self) -> *const c_void {
+        if self.extended {
+            self.storage.as_ptr().cast()
+        } else {
+            std::ptr::from_ref(&self.bits).cast()
+        }
+    }
+
+    fn native_bits(&self) -> u64 {
+        if self.extended {
+            self.storage.as_ptr() as u64
+        } else {
+            self.bits
+        }
+    }
+}
+
+unsafe fn extension_read_argument(
+    kind: PrintfArgType,
+    ap: *mut c_void,
+    extensions: &PrintfExtensions,
+) -> Result<ExtensionArgument, c_int> {
+    if kind.kind < 0 || (kind.kind & !0xffff) != 0 {
+        return Err(errno::EINVAL);
+    }
+    let mut arg = ExtensionArgument {
+        bits: 0,
+        storage: Vec::new(),
+        extended: false,
+    };
+    let base = kind.kind & 0xff;
+    if kind.kind & 0x800 != 0 {
+        // SAFETY: PA_FLAG_PTR is a pointer regardless of its base type.
+        arg.bits = unsafe { va_read_one_gp(ap) };
+    } else if base >= 8 {
+        let reader = extensions
+            .types
+            .get((base - 8) as usize)
+            .copied()
+            .ok_or(errno::EINVAL)?;
+        if kind.size == 0 {
+            return Err(errno::EINVAL);
+        }
+        let words = kind.size.div_ceil(std::mem::size_of::<u128>());
+        arg.storage
+            .try_reserve_exact(words)
+            .map_err(|_| errno::ENOMEM)?;
+        arg.storage.resize(words, 0);
+        type ReadArgument = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void);
+        // SAFETY: register_printf_type takes a printf_va_arg_function. On
+        // both supported LP64 ABIs ap addresses the actual va_list object,
+        // not a pointer variable holding its address.
+        let callback: ReadArgument = unsafe { std::mem::transmute(reader) };
+        unsafe { callback(arg.storage.as_mut_ptr().cast(), ap) };
+        // GNU's argument union holds a POINTER to custom storage, and the
+        // renderer's args array points to that pointer slot (one extra level).
+        arg.bits = arg.storage.as_ptr() as u64;
+    } else if matches!(base, 6 | 7) && (kind.kind & 0x100 != 0) {
+        let spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::BigL,
+            b'f',
+            None,
+        );
+        let segments = [FormatSegment::Spec(spec)];
+        let mut slots = [0; MAX_VA_ARGS];
+        // SAFETY: the existing architecture-specific walker consumes one
+        // correctly aligned long-double argument from this live va_list.
+        unsafe { vprintf_extract_args(&segments, ap, &mut slots, 1) };
+        if slots[0] == 0 {
+            return Err(errno::EINVAL);
+        }
+        arg.storage
+            .try_reserve_exact(1)
+            .map_err(|_| errno::ENOMEM)?;
+        arg.storage.push(0);
+        // x87 long double has ten initialized payload bytes in a sixteen-byte
+        // ABI slot. Do not read its indeterminate padding as a Rust integer.
+        // AArch64 binary128 uses the complete sixteen-byte payload.
+        let payload_size = if cfg!(target_arch = "x86_64") { 10 } else { 16 };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                slots[0] as *const u8,
+                arg.storage.as_mut_ptr().cast::<u8>(),
+                payload_size,
+            );
+        }
+        arg.extended = true;
+    } else if matches!(base, 6 | 7) {
+        // C default argument promotions pass both PA_FLOAT and PA_DOUBLE in
+        // a double slot; GNU callbacks receive that promoted double object
+        // even when PA_FLAG_LONG (%lf) is combined with PA_DOUBLE.
+        let value = unsafe { va_read_one_fp(ap) };
+        arg.bits = value.to_bits();
+    } else {
+        // Integer/char/string/pointer base types (0..=5), with any PA_FLAG_SHORT,
+        // PA_FLAG_LONG, or PA_FLAG_LONG_LONG modifier bits.
+        arg.bits = unsafe { va_read_one_gp(ap) };
+        if base == 0 && (kind.kind & 0x400 != 0) && (kind.kind & 0x300 == 0) {
+            arg.bits = (arg.bits as i16 as i64) as u64;
+        }
+    }
+    Ok(arg)
+}
+
+unsafe fn extension_write(
+    stream: *mut c_void,
+    bytes: &[u8],
+    wide: bool,
+    caller: usize,
+) -> Result<usize, c_int> {
+    if wide {
+        // Validate the complete internal transport before publishing any of
+        // this chunk. GNU wide values can require five or six UTF-8 bytes.
+        let count = crate::wchar_abi::narrow_to_wide_count(bytes).ok_or(errno::EILSEQ)?;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let (wc, length) =
+                frankenlibc_core::string::wchar::mbtowc(&bytes[offset..]).ok_or(errno::EILSEQ)?;
+            // SAFETY: stream is live and wide-oriented for this operation.
+            if unsafe { crate::wchar_abi::fputwc_for_caller(wc, stream, caller) } == u32::MAX {
+                return Err(unsafe { *super::errno_abi::__errno_location() });
+            }
+            offset += length;
+        }
+        Ok(count)
+    } else {
+        // SAFETY: bytes stays live through the synchronous FILE write.
+        if unsafe { fwrite_for_caller(bytes.as_ptr().cast(), 1, bytes.len(), stream, caller) }
+            != bytes.len()
+        {
+            Err(unsafe { *super::errno_abi::__errno_location() })
+        } else {
+            Ok(bytes.len())
+        }
+    }
+}
+
+/// Buffer native wide output until success, flushing before a user callback.
+/// GNU discards pending output on a public wide memory stream when a native
+/// multibyte conversion fails. Bounded swprintf sinks instead publish their
+/// prefix immediately, so capacity and reached count stores remain observable.
+struct ExtensionOutput {
+    stream: *mut c_void,
+    wide: bool,
+    caller: usize,
+    pending: Option<Vec<u8>>,
+}
+
+impl ExtensionOutput {
+    unsafe fn write(&mut self, bytes: &[u8]) -> Result<usize, c_int> {
+        if let Some(pending) = self.pending.as_mut() {
+            let count = crate::wchar_abi::narrow_to_wide_count(bytes).ok_or(errno::EILSEQ)?;
+            pending
+                .try_reserve(bytes.len())
+                .map_err(|_| errno::ENOMEM)?;
+            pending.extend_from_slice(bytes);
+            Ok(count)
+        } else {
+            // SAFETY: the owner retains the live FILE and original caller.
+            unsafe { extension_write(self.stream, bytes, self.wide, self.caller) }
+        }
+    }
+
+    unsafe fn flush(&mut self) -> Result<(), c_int> {
+        if let Some(pending) = self.pending.as_mut() {
+            // SAFETY: pending owns these bytes and the FILE stays live.
+            unsafe { extension_write(self.stream, pending, self.wide, self.caller) }?;
+            pending.clear();
+        }
+        Ok(())
+    }
+}
+
+unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize) {
+    let size = match spec.length {
+        LengthMod::Hh => 1,
+        LengthMod::H => 2,
+        LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+        _ => 4,
+    };
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, pointer, size, true, pointer == 0, 0);
+    if pointer == 0 || matches!(decision.action, MembraneAction::Deny) {
+        return;
+    }
+    if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
+        && known_remaining(pointer).is_some_and(|remaining| remaining < size)
+    {
+        global_healing_policy().record(
+            "stdio",
+            "printf",
+            &HealingAction::ReturnSafeDefault,
+            RepairLogContext::new(0, Some(pointer)),
+        );
+        return;
+    }
+    // SAFETY: %n's caller supplies the declared integer object; the same
+    // membrane admission and tracked-extent check as the ordinary renderer
+    // precede this write. The count includes all prior custom output.
+    unsafe {
+        match spec.length {
+            LengthMod::Hh => *(pointer as *mut i8) = count as i8,
+            LengthMod::H => *(pointer as *mut i16) = count as i16,
+            LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => {
+                *(pointer as *mut i64) = count as i64
+            }
+            _ => *(pointer as *mut c_int) = count as c_int,
+        }
+    }
+}
+
+/// Read GNU's caller-locking bit without taking another registry or cell
+/// lock on the ordinary FILE-pointer path. Synthetic ids are not addresses.
+///
+/// # Safety
+/// The caller must keep a valid FILE alive for the enclosing operation.
+#[inline]
+unsafe fn stream_uses_caller_locking(stream: *mut c_void) -> bool {
+    let addr = stream as usize;
+    if addr == 0 {
+        return false;
+    }
+    let handle = if (STDIN_SENTINEL..=STDERR_SENTINEL).contains(&addr) {
+        let handle = io_internal_abi::visible_stdio_handle_addr_lockfree(addr - STDIN_SENTINEL);
+        if handle == 0 {
+            // __fsetlocking publishes the standard handle before changing
+            // its mode, so an unpublished handle still uses INTERNAL.
+            return false;
+        }
+        handle
+    } else if addr >= STDIN_SENTINEL && addr < NEXT_STREAM_ID.load(Ordering::Acquire) {
+        // Legacy streams have no public FILE mutex; flockfile is already a
+        // no-op for them. Never dereference their synthetic ids.
+        return false;
+    } else {
+        addr
+    };
+    #[cfg(feature = "standalone")]
+    if !(io_internal_abi::native_stdio_slot_addr_lockfree(0) != 0
+        && io_internal_abi::is_native_slot_ptr_lockfree(handle as *const c_void))
+        && !io_internal_abi::is_visible_stdio_handle_ptr_lockfree(handle as *const c_void)
+        && !io_internal_abi::is_native_handle_slot_address(handle as *mut c_void)
+    {
+        // Standalone rejects foreign handles without interpreting their
+        // storage. Require a published slab before its address shortcut;
+        // its initial base is a deliberately noncanonical sentinel.
+        return false;
+    }
+    // SAFETY: native and GNU FILEs both begin with an aligned _flags int.
+    // Mode changes must be synchronized by the caller; native flags are
+    // mirrored atomically by StreamGuard.
+    let flags = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    flags.load(Ordering::Relaxed) & io_internal_abi::glibc_flag_bits::USER_LOCK != 0
+}
+
+/// The POSIX stream lock is distinct from the mutex protecting StdioStream's
+/// Rust state. Hold it for a complete locked operation, including callbacks
+/// and multiple buffer flushes. Unlocked entrypoints and BYCALLER mode skip
+/// this guard; their internal Rust-state synchronization is unchanged.
+pub(crate) struct StdioLockGuard(*mut c_void);
+
+impl StdioLockGuard {
+    /// The caller keeps this FILE alive until the returned guard is dropped.
+    /// Closing paths must drop it before retiring the native FILE handle.
+    pub(crate) unsafe fn acquire(stream: *mut c_void) -> Self {
+        // BYCALLER suppresses only implicit locking. Explicit flockfile and
+        // ftrylockfile continue to acquire the recursive public FILE lock.
+        if stream.is_null() || unsafe { stream_uses_caller_locking(stream) } {
+            return Self(std::ptr::null_mut());
+        }
+        // flockfile resolves the provider and releases the registry lock
+        // before it waits. Reentrant calls by this thread share the same lock.
+        unsafe { flockfile(stream) };
+        Self(stream)
+    }
+}
+
+impl Drop for StdioLockGuard {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: an active guard follows exactly one flockfile call.
+            unsafe { funlockfile(self.0) };
+        }
+    }
+}
+
+fn extension_invalid_native_pointer(
+    spec: &FormatSpec,
+    args: &[ExtensionArgument],
+    index: usize,
+) -> Option<usize> {
+    let pointer = args.get(index)?.bits as usize;
+    let valid = if spec.stores_count() {
+        let size = match spec.length {
+            LengthMod::Hh => 1,
+            LengthMod::H => 2,
+            LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+            _ => 4,
+        };
+        is_valid_printf_writeback_ptr(pointer, size)
+    } else if spec.value_arg_is_string() {
+        is_valid_printf_string_ptr(pointer, spec.length == LengthMod::L)
+    } else {
+        true
+    };
+    (!valid).then_some(pointer)
+}
+
+fn extension_unknown_conversion(spec: &FormatSpec, info: &PrintfInfo, wide: bool) -> Vec<u8> {
+    // Keep both argument walkers on the same GNU spelling, including a
+    // negative star width's zero flag and INT_MIN's unsigned-long value.
+    let mut output = Vec::new();
+    let mut normalized = *spec;
+    normalized.flags.space_sign &= !normalized.flags.force_sign;
+    normalized.render_unknown_conversion(&mut output);
+    if wide && u8::try_from(info.spec).is_err() {
+        // The shared core renders byte conversions. A genuinely wide unknown
+        // specifier replaces that last byte with its original UTF-8 spelling.
+        output.pop();
+        if let Some(ch) = char::from_u32(info.spec as u32) {
+            let mut encoded = [0; 4];
+            output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        }
+    }
+    output
+}
+
+unsafe fn extension_format_stream(
+    stream: *mut c_void,
+    bytes: &[u8],
+    ap: *mut c_void,
+    wide: bool,
+    entry_errno: c_int,
+    caller: usize,
+) -> Result<c_int, c_int> {
+    let extensions = printf_extensions_snapshot();
+    // SAFETY: the parser calls registered arginfo functions with owned outputs.
+    let plan = unsafe { extension_plan(bytes, wide, &extensions, usize::MAX) }?;
+    if ap.is_null() && plan.count != 0 {
+        return Err(errno::EINVAL);
+    }
+    let mut args = Vec::new();
+    args.try_reserve_exact(plan.count)
+        .map_err(|_| errno::ENOMEM)?;
+    for index in 0..plan.count {
+        let kind = plan
+            .types
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(PrintfArgType { kind: 0, size: 0 });
+        // SAFETY: the complete arginfo/native plan determines each va_arg class.
+        args.push(unsafe { extension_read_argument(kind, ap, &extensions) }?);
+    }
+    // Registration also routes ordinary conversions through this engine.
+    // Preserve the existing hardened literal-upgrade check before any output;
+    // the per-conversion FormatSegments below intentionally have no raw format.
+    if !runtime_policy::strict_passthrough_active()
+        && let Some(pointer) = plan.segments.iter().find_map(|segment| {
+            let ExtensionSegment::Spec(spec) = segment else {
+                return None;
+            };
+            if spec
+                .conversion
+                .is_some_and(|conversion| conversion.render != 0)
+            {
+                return None;
+            }
+            extension_invalid_native_pointer(&spec.native, &args, spec.first_arg)
+        })
+    {
+        global_healing_policy().record(
+            "stdio",
+            "printf",
+            &HealingAction::UpgradeToSafeVariant,
+            RepairLogContext::new(0, Some(pointer)),
+        );
+        // SAFETY: the literal format is live and contains no interpreted args.
+        return c_int::try_from(unsafe { extension_write(stream, bytes, wide, caller) }?)
+            .map_err(|_| errno::EOVERFLOW);
+    }
+    let mut output = ExtensionOutput {
+        stream,
+        wide,
+        caller,
+        pending: (wide
+            && crate::wchar_abi::reserve_wide_output(stream, 0)
+                .is_some_and(|(_, bounded)| !bounded))
+        .then(Vec::new),
+    };
+    let mut count = 0usize;
+    for segment in plan.segments {
+        let emitted = match segment {
+            ExtensionSegment::Error(error) => return Err(error),
+            ExtensionSegment::Literal(literal) => {
+                // SAFETY: the formatter owns the live, oriented FILE lock.
+                unsafe { output.write(literal) }?
+            }
+            ExtensionSegment::Spec(mut spec) => {
+                let unregistered = spec.native.is_unknown_conversion()
+                    && !spec.conversion.is_some_and(|c| c.render != 0);
+                if let Some(index) = spec.width_arg {
+                    let width = args[index].bits as c_int;
+                    if width < 0 {
+                        spec.info.width = if unregistered {
+                            width.wrapping_neg()
+                        } else {
+                            width.checked_abs().ok_or(errno::EOVERFLOW)?
+                        };
+                        spec.info.flags |= 1 << 5;
+                        spec.native.flags.left_justify = true;
+                        if !unregistered {
+                            spec.info.pad = b' ' as libc::wchar_t;
+                            spec.native.flags.zero_pad = false;
+                        }
+                    } else {
+                        spec.info.width = width;
+                    }
+                }
+                if let Some(index) = spec.precision_arg {
+                    spec.info.precision = (args[index].bits as c_int).max(-1);
+                }
+                spec.native.width = Width::Fixed(spec.info.width as isize as usize);
+                spec.native.precision = if spec.info.precision >= 0 {
+                    Precision::Fixed(spec.info.precision as usize)
+                } else {
+                    Precision::None
+                };
+                let custom_result =
+                    if let Some(conversion) = spec.conversion.filter(|c| c.render != 0) {
+                        // The callback receives the real FILE with all preceding
+                        // native output visible, including recursive formatting.
+                        // SAFETY: the formatter still owns the live FILE lock.
+                        unsafe { output.flush() }?;
+                        let pointers: Vec<*const c_void> = args
+                            [spec.first_arg..spec.first_arg + spec.arg_count]
+                            .iter()
+                            .map(ExtensionArgument::callback_pointer)
+                            .collect();
+                        type Render = unsafe extern "C-unwind" fn(
+                            *mut c_void,
+                            *const PrintfInfo,
+                            *const *const c_void,
+                        ) -> c_int;
+                        // SAFETY: the callback has the registered GNU printf_function
+                        // ABI. All decoded storage and the snapshot outlive this call.
+                        let callback: Render = unsafe { std::mem::transmute(conversion.render) };
+                        Some(unsafe { callback(stream, &spec.info, pointers.as_ptr()) })
+                    } else {
+                        None
+                    };
+                match custom_result {
+                    Some(value) if value >= 0 => value as usize,
+                    Some(value) if value != -2 => {
+                        return Err(unsafe { *super::errno_abi::__errno_location() });
+                    }
+                    _ => {
+                        if !runtime_policy::strict_passthrough_active()
+                            && let Some(pointer) = extension_invalid_native_pointer(
+                                &spec.native,
+                                &args,
+                                spec.first_arg,
+                            )
+                        {
+                            // A callback can decline after the preflight. Its
+                            // native fallback still uses the existing checks.
+                            global_healing_policy().record(
+                                "stdio",
+                                "printf",
+                                &HealingAction::UpgradeToSafeVariant,
+                                RepairLogContext::new(0, Some(pointer)),
+                            );
+                            // SAFETY: the FILE and original format remain live.
+                            unsafe { output.write(&bytes[spec.raw_start..spec.raw_end]) }?
+                        } else if spec.native.stores_count() {
+                            if let Some(arg) = args.get(spec.first_arg) {
+                                unsafe {
+                                    extension_store_count(&spec.native, arg.bits as usize, count)
+                                };
+                            }
+                            0
+                        } else if !spec.native.consumes_value_arg()
+                            && !spec.native.is_literal_percent()
+                            && !spec.native.is_errno_message()
+                        {
+                            // GNU prints the resolved flags, width and precision
+                            // for unknown conversions, omitting length modifiers.
+                            let spelling =
+                                extension_unknown_conversion(&spec.native, &spec.info, wide);
+                            // SAFETY: spelling and the locked FILE remain live.
+                            unsafe { output.write(&spelling) }?
+                        } else if spec.native.is_errno_message() {
+                            // Every %m in one call uses errno from function entry,
+                            // even if a registered callback changes it mid-format.
+                            let (message, _) =
+                                crate::string_abi::rendered_strerror_message(entry_errno);
+                            let mut rendered = Vec::new();
+                            format_str(message.as_bytes(), &spec.native, &mut rendered);
+                            // SAFETY: rendered and the locked FILE remain live.
+                            unsafe { output.write(&rendered) }?
+                        } else {
+                            let mut segments = FormatSegments::new();
+                            segments.push(FormatSegment::Spec(spec.native));
+                            let raw = args
+                                .get(spec.first_arg)
+                                .map_or(0, ExtensionArgument::native_bits);
+                            // SAFETY: one resolved native conversion consumes at
+                            // most one already-decoded argument. Position/asterisk
+                            // consumption was handled by the outer plan.
+                            let rendered = unsafe {
+                                render_segments(
+                                    "printf",
+                                    &segments,
+                                    &raw,
+                                    usize::from(spec.native.consumes_value_arg()),
+                                    wide,
+                                )
+                            };
+                            if let Some(error) = take_render_failure() {
+                                return Err(error);
+                            }
+                            // SAFETY: rendered and the locked FILE remain live.
+                            unsafe { output.write(&rendered) }?
+                        }
+                    }
+                }
+            }
+        };
+        count = count
+            .checked_add(emitted)
+            .filter(|n| *n <= c_int::MAX as usize)
+            .ok_or(errno::EOVERFLOW)?;
+    }
+    // SAFETY: the FILE lock outlives this final write and pending owns its bytes.
+    unsafe { output.flush() }?;
+    Ok(count as c_int)
+}
+
+pub(crate) unsafe fn registered_printf_stream(
+    stream: *mut c_void,
+    bytes: &[u8],
+    ap: *mut c_void,
+    wide: bool,
+) -> c_int {
+    unsafe { registered_printf_stream_for_caller(stream, bytes, ap, wide, 0) }
+}
+
+pub(crate) unsafe fn registered_printf_stream_for_caller(
+    stream: *mut c_void,
+    bytes: &[u8],
+    ap: *mut c_void,
+    wide: bool,
+    caller: usize,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let _trace_scope = runtime_policy::entrypoint_scope("printf");
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        canonical_stream_id(stream),
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        return -1;
+    }
+    if if wide {
+        !orient_stream_wide(stream)
+    } else {
+        !orient_stream_byte_by_id(canonical_stream_id(stream))
+    } {
+        return -1;
+    }
+    // The FILE lock is recursive, so user callbacks can call fprintf on the
+    // same stream. It is distinct from the registry lock, which is never held.
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    match unsafe { extension_format_stream(stream, bytes, ap, wide, entry_errno, caller) } {
+        Ok(count) => count,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
+    }
+}
+
+struct ExtensionBufferState {
+    data: *mut c_char,
+    len: usize,
+}
+
+struct ExtensionBuffer {
+    state: Box<ExtensionBufferState>,
+    stream: *mut c_void,
+    result: c_int,
+}
+
+impl ExtensionBuffer {
+    unsafe fn format(
+        bytes: &[u8],
+        ap: *mut c_void,
+        wide: bool,
+        entry_errno: c_int,
+        wide_capacity: Option<usize>,
+    ) -> Option<Self> {
+        let mut buffer = Self {
+            state: Box::new(ExtensionBufferState {
+                data: std::ptr::null_mut(),
+                len: 0,
+            }),
+            stream: std::ptr::null_mut(),
+            result: -1,
+        };
+        // Box keeps the caller-output addresses stable even if the owner moves.
+        buffer.stream = if wide {
+            unsafe {
+                crate::wchar_abi::open_wmemstream(
+                    std::ptr::from_mut(&mut buffer.state.data).cast(),
+                    &mut buffer.state.len,
+                )
+            }
+        } else {
+            unsafe { open_memstream(&mut buffer.state.data, &mut buffer.state.len) }
+        };
+        if buffer.stream.is_null() {
+            return None;
+        }
+        if let Some(capacity) = wide_capacity
+            && !crate::wchar_abi::limit_open_wmemstream(buffer.stream, capacity)
+        {
+            // SAFETY: fail closed if the newly created wide stream lost its
+            // registry entry; the buffer owner still closes and frees it.
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return None;
+        }
+        // Memstream construction is an implementation detail, not the entry
+        // point used by %m or by a registered callback inspecting errno.
+        unsafe { set_abi_errno(entry_errno) };
+        buffer.result = unsafe { registered_printf_stream(buffer.stream, bytes, ap, wide) };
+        let saved_errno = unsafe { *super::errno_abi::__errno_location() };
+        let close_result = unsafe { fclose(buffer.stream) };
+        buffer.stream = std::ptr::null_mut();
+        if buffer.result < 0 || close_result == 0 {
+            unsafe { set_abi_errno(saved_errno) };
+        } else if close_result < 0 {
+            buffer.result = -1;
+        }
+        Some(buffer)
+    }
+}
+
+impl Drop for ExtensionBuffer {
+    fn drop(&mut self) {
+        // The guard also owns streams during callback unwinding. Closing
+        // publishes the final buffer before it is freed, with no dangling
+        // pointer-to-stack registrations in the native memstream registry.
+        unsafe {
+            if !self.stream.is_null() {
+                fclose(self.stream);
+            }
+            free(self.state.data.cast());
+        }
+    }
+}
+
+unsafe fn registered_snprintf(
+    dst: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if size != 0 && dst.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // usize::MAX is the internal sprintf sentinel: its ordinary entrypoint
+    // admits an unbounded destination with len=0, then clamps known extents.
+    let admitted_size = if size == usize::MAX { 0 } else { size };
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        dst as usize,
+        admitted_size,
+        true,
+        dst.is_null() && size != 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    let Some(buffer) =
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
+    else {
+        return -1;
+    };
+    let mut capacity = size;
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(remaining) = known_remaining(dst as usize)
+        && remaining < capacity
+    {
+        capacity = remaining;
+        global_healing_policy().record(
+            "stdio",
+            "snprintf",
+            &HealingAction::ClampSize {
+                requested: size,
+                clamped: capacity,
+            },
+            RepairLogContext::new(0, Some(dst as usize)),
+        );
+    }
+    if capacity != 0 {
+        let len = buffer.state.len.min(capacity - 1);
+        // SAFETY: copy and terminator remain within the admitted capacity.
+        unsafe {
+            if len != 0 {
+                std::ptr::copy_nonoverlapping(buffer.state.data, dst, len);
+            }
+            *dst.add(len) = 0;
+        }
+    }
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, buffer.state.len),
+        buffer.result < 0 || capacity < size,
+    );
+    buffer.result
+}
+
+unsafe fn registered_asprintf(
+    dst: *mut *mut c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if dst.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { *dst = std::ptr::null_mut() };
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, dst as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    let Some(mut buffer) =
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
+    else {
+        return -1;
+    };
+    if buffer.result >= 0 {
+        // Transfer ownership of the native malloc allocation to the caller.
+        unsafe { *dst = buffer.state.data };
+        buffer.state.data = std::ptr::null_mut();
+    }
+    buffer.result
+}
+
+unsafe fn registered_dprintf(
+    fd: c_int,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    let Some(buffer) =
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno, None) })
+    else {
+        return -1;
+    };
+    let bytes = if buffer.state.len == 0 {
+        &[]
+    } else {
+        // SAFETY: fclose published these initialized output bytes. The empty
+        // failure case above does not construct a slice from a null pointer.
+        unsafe { std::slice::from_raw_parts(buffer.state.data.cast::<u8>(), buffer.state.len) }
+    };
+    if write_all_fd_for_caller(fd, bytes, caller) {
+        buffer.result
+    } else {
+        -1
+    }
+}
+
+pub(crate) unsafe fn registered_swprintf(
+    dst: *mut libc::wchar_t,
+    size: usize,
+    bytes: &[u8],
+    ap: *mut c_void,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if size != 0 && dst.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let capacity = if runtime_policy::strict_passthrough_active() {
+        size
+    } else {
+        known_remaining(dst as usize)
+            .map_or(size, |n| size.min(n / std::mem::size_of::<libc::wchar_t>()))
+    };
+    if capacity == 0 {
+        return -1;
+    }
+    let Some(buffer) =
+        (unsafe { ExtensionBuffer::format(bytes, ap, true, entry_errno, Some(capacity)) })
+    else {
+        return -1;
+    };
+    let len = buffer.state.len.min(capacity - 1);
+    // SAFETY: the wide memstream publishes len initialized wchar_t values;
+    // the destination copy and terminator fit the admitted nonzero capacity.
+    unsafe {
+        if len != 0 {
+            std::ptr::copy_nonoverlapping(buffer.state.data.cast::<libc::wchar_t>(), dst, len);
+        }
+        *dst.add(len) = 0;
+    }
+    if buffer.state.len >= capacity {
+        // An actual failed write already set E2BIG. Filling the buffer exactly
+        // still runs later %n directives and leaves errno unchanged, even
+        // though the final terminator makes the public result negative.
+        -1
+    } else {
+        buffer.result
+    }
+}
+
+/// Extract variadic arguments from `$args` into `$buf`, guided by `$segments`.
+/// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
+/// Extract variadic arguments, choosing a reader that can see them all.
+///
+/// A `long double` argument is class X87 on x86-64 SysV, which is passed in
+/// MEMORY — a sixteen-byte slot in the overflow area, never a register. Rust's
+/// `next_arg` dispatches on the Rust type and no Rust type classifies as X87,
+/// so `%Lf` cannot be read through it at all; a sixteen-byte struct classifies
+/// as INTEGER and would consume two GP registers, which is a third wrong answer
+/// rather than a fix.
+///
+/// Reading it as a double was not merely a wrong number. The caller's sixteen
+/// stack bytes went unconsumed, so every FOLLOWING conversion read the wrong
+/// argument — one `%Lf` corrupted the rest of the format string.
+///
+/// So a format carrying one is extracted by the hand-written va_list walker,
+/// which reads the stack slot correctly. Every other format keeps the register
+/// path unchanged, because it is perf-tuned (bd-ntb9fq).
+macro_rules! extract_va_args {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        if $segments.has_long_double() {
+            // On x86-64 `VaListImpl` IS the `__va_list_tag` the ABI describes,
+            // so a pointer to it is what C would pass as a `va_list`.
+            //
+            // `$args` is ALREADY `&mut VaListImpl` at every call site, so this
+            // must not take another reference: `&mut $args` yields a pointer to
+            // the REFERENCE, and the walker then reads a pointer where it
+            // expects gp_offset. That produced "0.000000" for 1.0L — the x87
+            // significand reinterpreted — which looks like a formatting bug and
+            // is not one. `from_mut` also avoids naming the unstable type.
+            let _ap = core::ptr::from_mut($args).cast::<core::ffi::c_void>();
+            // SAFETY: `_ap` addresses this frame's va_list for the call.
+            unsafe { ($buf).extract($segments, _ap) }
+        } else {
+            extract_va_args_registers!($segments, $args, $buf, $extract_count)
+        }
+    }};
+}
+
+macro_rules! extract_va_args_registers {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        let mut _idx = 0usize;
+        // Reuse the checked plan prepared with the argument storage. Ordinary
+        // sequential formats still need neither a plan allocation nor a walk
+        // to discover that no positional arguments exist.
+        let (_values, _plan) = ($buf).parts_mut();
+        if let Some(_plan) = _plan {
+            for _kind in _plan.iter().take($extract_count) {
+                match _kind {
+                    ValueArgKind::Gp => {
+                        if _idx < $extract_count {
+                            _values[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _idx += 1;
+                        }
+                    }
+                    ValueArgKind::Fp => {
+                        if _idx < $extract_count {
+                            _values[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                    }
+                    // UNREACHABLE by construction: a format containing a
+                    // `%Lf` sets `has_long_double`, and the dispatcher above
+                    // sends those to the va_list walker, which is the only
+                    // reader that can see an X87 stack slot. `next_arg` has no
+                    // X87 case to offer, so this arm stores the NULL that an
+                    // X87 slot means "no argument" with, rather than inventing an
+                    // address the renderer would dereference: the slot for an X87
+                    // spec carries the argument ADDRESS, not its value, and only
+                    // `vprintf_read_x87` can produce one;
+                    // `positional_x87_implies_has_long_double` in core pins the
+                    // routing invariant so it cannot drift into being live.
+                    ValueArgKind::X87 => {
+                        debug_assert!(
+                            false,
+                            "X87 reached the register extractor: has_long_double \
+                             disagreed with the argument plan"
+                        );
+                        // Still CONSUMES the register slot the pre-address
+                        // version did, so a broken invariant moves the cursor
+                        // exactly as before and only the stored value changes.
+                        let _ = unsafe { $args.next_arg::<f64>() };
+                        if _idx < $extract_count {
+                            _values[_idx] = 0;
+                            _idx += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            for seg in $segments {
+                if let FormatSegment::Spec(spec) = seg {
+                    // C11 7.21.6.1 para 5: both the '*' width and '*'
+                    // precision arguments have type `int`. Read them
+                    // as c_int and sign-extend so render_printf's
+                    // `as i64` recovers negative values correctly.
+                    if spec.width.uses_arg() && _idx < $extract_count {
+                        let raw = unsafe { $args.next_arg::<core::ffi::c_int>() };
+                        _values[_idx] = (raw as i64) as u64;
+                        _idx += 1;
+                    }
+                    if spec.precision.uses_arg() && _idx < $extract_count {
+                        let raw = unsafe { $args.next_arg::<core::ffi::c_int>() };
+                        _values[_idx] = (raw as i64) as u64;
+                        _idx += 1;
+                    }
+                    // ONE classification, not two. `value_arg_is_float()` and
+                    // `value_arg_is_gp()` are both `matches!(self.value_arg_kind(), ..)`,
+                    // so an else-if chain over them computed the SAME
+                    // conversion-plus-length classification twice for every spec that
+                    // is not a float. Counted on the deployed `snprintf("%d %s %.3f")`
+                    // against live glibc: 30 Ir across two `value_arg_is_gp` calls and
+                    // 27 across three `value_arg_is_float` calls, all from this loop.
+                    // Matching on the kind once is byte-identical -- the guards
+                    // reproduce the chain's behaviour when the buffer is already full,
+                    // where the original fell through to a test that could not match.
+                    match spec.value_arg_kind() {
+                        Some(ValueArgKind::Fp) if _idx < $extract_count => {
+                            _values[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                        // Split out of the `Fp` arm above rather than merged
+                        // with it: the two classes now store DIFFERENT THINGS
+                        // — `Fp` a value, `X87` the argument's address — so
+                        // sharing an arm would hand the renderer eight bytes of
+                        // SSE save area to dereference. Splitting costs nothing:
+                        // it is one more arm of the same single match, not a
+                        // second classification (the merge that bought 57 Ir is
+                        // `value_arg_kind()` being called once, and it still is).
+                        // Unreachable for the same reason as the positional arm
+                        // above.
+                        Some(ValueArgKind::X87) if _idx < $extract_count => {
+                            debug_assert!(
+                                false,
+                                "X87 reached the register extractor: has_long_double \
+                                 disagreed with the spec"
+                            );
+                            // Still CONSUMES the register slot the pre-address
+                            // version did, so a broken invariant moves the cursor
+                            // exactly as before and only the stored value changes.
+                            let _ = unsafe { $args.next_arg::<f64>() };
+                            _values[_idx] = 0;
+                            _idx += 1;
+                        }
+                        Some(ValueArgKind::Gp) if _idx < $extract_count => {
+                            _values[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _idx += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        _idx
+    }};
+}
+
+/// Convert a printf-produced output length into the printf-family return value.
+///
+/// POSIX/C11 snprintf (and the related sprintf/vsprintf/vsnprintf family) require
+/// the return type `int`. If the number of bytes that *would* be written exceeds
+/// `INT_MAX`, POSIX says the call shall fail with `EOVERFLOW` and return -1
+/// (C11 7.21.6.5 p2, POSIX.1-2024). Silently casting via `as c_int` truncates —
+/// callers that use the return to size buffers would then under-allocate
+/// (bd-5t6zo).
+///
+/// A render that had to fail (a conversion whose memory could not be
+/// reserved: ENOMEM, as glibc; a directive glibc rejects: EINVAL) fails the
+/// call with that errno, not a success count for truncated or literal output.
+#[inline]
+fn printf_result_to_c_int(total_len: usize) -> c_int {
+    let failure = frankenlibc_core::stdio::printf::take_render_failure();
+    if failure != 0 {
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
+    match c_int::try_from(total_len) {
+        Ok(n) => n,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::EOVERFLOW) };
+            -1
+        }
+    }
+}
+
+/// Internal: render a parsed format string with a raw argument pointer array.
+///
+/// `args` is a pointer to a contiguous array of `u64` values that were pushed
+/// by the caller (the variadic ABI promotes smaller types to at least register width).
+/// We interpret each value according to the format spec's conversion and length modifier.
+///
+/// Returns the formatted byte vector.
+/// Thread-local reuse pool for the printf output buffer. Every copy-out printf
+/// (snprintf/sprintf/fprintf/printf/dprintf + v*) builds its result in a fresh
+/// `Vec` then discards it after copying to the destination — one alloc+free per
+/// call. The pool keeps a single reusable buffer so the steady-state per-call
+/// allocation is eliminated. Correctness is independent of pooling: the buffer
+/// is cleared on take (no stale bytes), [`ScratchVec`]'s `Drop` returns it only
+/// after all borrows end (borrow-checker enforced), and a missed return merely
+/// falls back to a fresh allocation.
+mod printf_out_pool {
+    use std::cell::Cell;
+    thread_local! {
+        static POOL: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
+    }
+    pub(super) fn take() -> Vec<u8> {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return Vec::with_capacity(256);
+        }
+        // Process callbacks can format after the calling thread's TLS
+        // destructors drained this optional cache. Reuse is not required for
+        // rendering: an unavailable slot needs the same fresh-buffer fallback
+        // as a reentrant call whose pooled buffer is already checked out.
+        POOL.try_with(|p| p.take()).ok().flatten().map_or_else(
+            || Vec::with_capacity(256),
+            |mut v| {
+                v.clear();
+                v
+            },
+        )
+    }
+    pub(super) fn give(v: Vec<u8>) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
+        // If TLS has been destroyed, the uncalled closure drops v normally.
+        // Never recreate thread-local state while returning a scratch buffer.
+        let _ = POOL.try_with(|p| {
+            // Single slot: keep whichever buffer has the larger capacity.
+            let keep = match p.take() {
+                Some(existing) if existing.capacity() >= v.capacity() => existing,
+                _ => v,
+            };
+            p.set(Some(keep));
+        });
+    }
+}
+
+/// A printf output buffer borrowed from [`printf_out_pool`]. Derefs to the inner
+/// `Vec<u8>` so existing callers that only read it (`.len()`, `.as_ptr()`,
+/// `&buf[..]`) are unaffected; on `Drop` the allocation returns to the pool for
+/// the next call. Callers that need to take ownership (e.g. `asprintf`) use
+/// [`ScratchVec::into_vec`], which removes the buffer from the pooling path.
+pub(crate) struct ScratchVec(Option<Vec<u8>>);
+
+impl ScratchVec {
+    fn new(v: Vec<u8>) -> Self {
+        ScratchVec(Some(v))
+    }
+    /// Take ownership of the underlying `Vec`, opting this buffer out of the
+    /// pool (its `Drop` will then be a no-op).
+    pub(crate) fn into_vec(mut self) -> Vec<u8> {
+        self.0.take().unwrap_or_default()
+    }
+}
+
+impl std::ops::Deref for ScratchVec {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> {
+        self.0.as_ref().expect("ScratchVec accessed after into_vec")
+    }
+}
+
+impl Drop for ScratchVec {
+    fn drop(&mut self) {
+        if let Some(v) = self.0.take() {
+            printf_out_pool::give(v);
+        }
+    }
+}
+
+///
+/// Narrow entry point: `%ls` precision/width are BYTE counts (C99 §7.19.6.1).
+///
+/// For callers with no printf-style result (err/warn, syslog, argp,
+/// setproctitle): a render failure is dropped here, since leaving it armed would
+/// fail the next fast-path printf on this thread, which never renders.
+pub(crate) unsafe fn render_printf(
+    symbol: &'static str,
+    fmt: &[u8],
+    args: *const u64,
+    max_args: usize,
+) -> Vec<u8> {
+    let out = unsafe { render_printf_impl(symbol, fmt, args, max_args, false) };
+    let _ = take_render_failure();
+    out
+}
+
+/// The errno a render just done on this thread must fail its call with, if
+/// any, clearing it. `printf_result_to_c_int` consumes it for the narrow
+/// family; every other caller of the renderer must take it too (the wide
+/// family fails with it), or it would fail the next unrelated printf on the
+/// thread whose fast path never renders.
+pub(crate) fn take_render_failure() -> Option<c_int> {
+    let errno = frankenlibc_core::stdio::printf::take_render_failure();
+    (errno != 0).then_some(errno)
+}
+
+/// Wide entry point for the `wprintf`/`swprintf` family. The returned bytes are
+/// UTF-8 that the caller decodes back to `wchar_t`; for wide-stream output the
+/// `%ls` precision and field width count WIDE CHARACTERS (C standard wide
+/// printf), not bytes, so the multibyte truncation/padding is computed in
+/// wide-character units here.
+pub(crate) unsafe fn render_wprintf(
+    symbol: &'static str,
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    max_args: usize,
+) -> ScratchVec {
+    // Callers (wprintf/swprintf family) already parsed the format for argument
+    // counting/extraction; render the pre-parsed segments rather than re-parsing.
+    // Return the pooled `ScratchVec` (not `.into_vec()`) so the output buffer
+    // returns to the TLS pool on drop — every wide-printf caller below only reads
+    // it by reference, so keeping it pooled saves a 256-byte alloc/free per call
+    // (the narrow snprintf path already pools; this brings the wide family to parity).
+    unsafe { render_segments(symbol, segments, args, max_args, true) }
+}
+
+unsafe fn render_printf_impl(
+    symbol: &'static str,
+    fmt: &[u8],
+    args: *const u64,
+    max_args: usize,
+    wide_output: bool,
+) -> Vec<u8> {
+    // Parse once here; render_segments does the work, so printf-family callers
+    // that already parsed the format (snprintf et al. parse it for arg counting)
+    // can call render_segments directly and skip this redundant second parse.
+    let segments = parse_format_string(fmt);
+    unsafe { render_segments(symbol, &segments, args, max_args, wide_output).into_vec() }
+}
+
+/// Append `src`, keeping a SHORT append out of the interposed `memcpy`.
+///
+/// `Vec::extend_from_slice` lowers to `copy_nonoverlapping`, which in this
+/// crate resolves to fl's OWN exported `memcpy` -- a full ABI entry with its
+/// membrane prologue, for a handful of bytes. Counted on the deployed
+/// `snprintf("%d %s %.3f")`: EIGHT `memcpy` calls per format, 525 Ir inclusive,
+/// to move a twelve-byte result. Three of those come from `render_segments`
+/// appending literals and `%s` bodies.
+///
+/// Short appends are therefore done with overlapping power-of-two moves that
+/// stay in this frame. Sixteen is the cut: two overlapping `u64` accesses cover
+/// every length in `[8, 16]` exactly, and anything longer is where a real
+/// `memcpy` starts earning its entry cost. Deliberately `u64` and not `u128` --
+/// a 16-byte unaligned access is exactly the shape LLVM likes to turn back into
+/// `@llvm.memcpy`, which would re-enter the symbol this is avoiding.
+#[inline(always)]
+fn push_bytes(v: &mut Vec<u8>, src: &[u8]) {
+    let n = src.len();
+    if n == 0 {
+        return;
+    }
+    // Literal and bare-string output must report allocation failure through
+    // the same errno latch as conversion fields, rather than aborting.
+    if v.try_reserve(n).is_err() {
+        frankenlibc_core::stdio::printf::note_render_failure(errno::ENOMEM);
+        return;
+    }
+    if n > 16 {
+        v.extend_from_slice(src);
+        return;
+    }
+    let len = v.len();
+    // SAFETY: successful `try_reserve(n)` guarantees `n` writable bytes at `len`.
+    // `src` is a live slice of `n` bytes and cannot alias the vector's spare capacity.
+    // Every branch writes exactly the bytes in `[0, n)`, with overlap where the
+    // two accesses meet, before `set_len` publishes them.
+    unsafe {
+        let d = v.as_mut_ptr().add(len);
+        let p = src.as_ptr();
+        if n >= 8 {
+            let a = core::ptr::read_unaligned(p.cast::<u64>());
+            let b = core::ptr::read_unaligned(p.add(n - 8).cast::<u64>());
+            core::ptr::write_unaligned(d.cast::<u64>(), a);
+            core::ptr::write_unaligned(d.add(n - 8).cast::<u64>(), b);
+        } else if n >= 4 {
+            let a = core::ptr::read_unaligned(p.cast::<u32>());
+            let b = core::ptr::read_unaligned(p.add(n - 4).cast::<u32>());
+            core::ptr::write_unaligned(d.cast::<u32>(), a);
+            core::ptr::write_unaligned(d.add(n - 4).cast::<u32>(), b);
+        } else if n >= 2 {
+            let a = core::ptr::read_unaligned(p.cast::<u16>());
+            let b = core::ptr::read_unaligned(p.add(n - 2).cast::<u16>());
+            core::ptr::write_unaligned(d.cast::<u16>(), a);
+            core::ptr::write_unaligned(d.add(n - 2).cast::<u16>(), b);
+        } else {
+            *d = *p;
+        }
+        v.set_len(len + n);
+    }
+}
+
+#[inline]
+fn is_valid_printf_string_ptr(ptr_val: usize, wide: bool) -> bool {
+    if ptr_val == 0 {
+        return true;
+    }
+    if !(0x1000..(1usize << 47)).contains(&ptr_val) {
+        return false;
+    }
+    if wide && (ptr_val & 3 != 0) {
+        return false;
+    }
+    if known_remaining(ptr_val).is_some()
+        || is_in_read_only_mapping(ptr_val, ptr_val.saturating_add(1))
+    {
+        return true;
+    }
+    let page = (ptr_val & !0xfffusize) as *mut u8;
+    unsafe { raw_syscall::sys_msync(page, 4096, libc::MS_ASYNC).is_ok() }
+}
+
+#[inline]
+fn is_valid_printf_writeback_ptr(ptr_val: usize, align_size: usize) -> bool {
+    if !(0x1000..(1usize << 47)).contains(&ptr_val) {
+        return false;
+    }
+    if align_size > 1 && (ptr_val & (align_size - 1) != 0) {
+        return false;
+    }
+    if is_in_read_only_mapping(ptr_val, ptr_val.saturating_add(1)) {
+        return false;
+    }
+    if known_remaining(ptr_val).is_some() {
+        return true;
+    }
+    let page = (ptr_val & !0xfffusize) as *mut u8;
+    unsafe { raw_syscall::sys_msync(page, 4096, libc::MS_ASYNC).is_ok() }
+}
+
+fn should_upgrade_format_to_literal(
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    max_args: usize,
+) -> Option<usize> {
+    if segments.raw().is_empty() {
+        return None;
+    }
+    let uses_positional = segments.any_positional();
+    let mut arg_idx = 0usize;
+    let read_arg = |position: Option<usize>, next_idx: &mut usize| -> Option<u64> {
+        let idx = if let Some(position) = position {
+            position.checked_sub(1)?
+        } else {
+            let current = *next_idx;
+            *next_idx = (*next_idx).saturating_add(1);
+            current
+        };
+        (idx < max_args).then(|| unsafe { *args.add(idx) })
+    };
+
+    for seg in segments.iter() {
+        let FormatSegment::Spec(spec) = seg else {
+            continue;
+        };
+        if spec.width.uses_arg() {
+            let pos = if uses_positional {
+                spec.width.position()
+            } else {
+                None
+            };
+            let _ = read_arg(pos, &mut arg_idx);
+        }
+        if spec.precision.uses_arg() {
+            let pos = if uses_positional {
+                spec.precision.position()
+            } else {
+                None
+            };
+            let _ = read_arg(pos, &mut arg_idx);
+        }
+        if !spec.consumes_value_arg() {
+            continue;
+        }
+        let pos = if uses_positional {
+            spec.value_position
+        } else {
+            None
+        };
+        let Some(raw_val) = read_arg(pos, &mut arg_idx) else {
+            continue;
+        };
+        if spec.stores_count() {
+            let align_size = match spec.length {
+                LengthMod::Hh => 1,
+                LengthMod::H => 2,
+                LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+                _ => 4,
+            };
+            let ptr_val = raw_val as usize;
+            if !is_valid_printf_writeback_ptr(ptr_val, align_size) {
+                return Some(ptr_val);
+            }
+        } else if spec.value_arg_is_string() {
+            let ptr_val = raw_val as usize;
+            let wide = matches!(spec.length, LengthMod::L);
+            if !is_valid_printf_string_ptr(ptr_val, wide) {
+                return Some(ptr_val);
+            }
+        }
+    }
+    None
+}
+
+/// Render already-parsed `segments` into a fresh buffer. Split out from
+/// [`render_printf_impl`] so the printf-family entry points can reuse the
+/// `FormatSegments` they parsed for argument counting instead of re-parsing the
+/// format string a second time on every call.
+pub(crate) unsafe fn render_segments(
+    symbol: &'static str,
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    max_args: usize,
+    wide_output: bool,
+) -> ScratchVec {
+    // A failure left by a render whose caller never converted a result
+    // (err/warn) must not fail this call.
+    let _ = frankenlibc_core::stdio::printf::take_render_failure();
+    let mut buf = printf_out_pool::take();
+    // glibc rejects the whole call, printing nothing.
+    if segments.invalid_directive() {
+        frankenlibc_core::stdio::printf::note_render_failure(errno::EINVAL);
+        return ScratchVec::new(buf);
+    }
+    if !runtime_policy::strict_passthrough_active()
+        && let Some(bad_ptr) = should_upgrade_format_to_literal(segments, args, max_args)
+    {
+        global_healing_policy().record(
+            "stdio",
+            symbol,
+            &HealingAction::UpgradeToSafeVariant,
+            RepairLogContext::new(0, Some(bad_ptr)),
+        );
+        push_bytes(&mut buf, segments.raw());
+        return ScratchVec::new(buf);
+    }
+    // Field read, not a walk: `FormatSegments` records this during parsing, so
+    // the common non-positional format no longer re-derives it on every render
+    // (bd-ntb9fq).
+    let uses_positional = segments.any_positional();
+    let mut arg_idx = 0usize;
+
+    let read_arg = |position: Option<usize>, next_idx: &mut usize| -> Option<u64> {
+        let idx = if let Some(position) = position {
+            position.checked_sub(1)?
+        } else {
+            let current = *next_idx;
+            *next_idx = (*next_idx).saturating_add(1);
+            current
+        };
+        (idx < max_args).then(|| unsafe { *args.add(idx) })
+    };
+
+    for seg in segments.iter() {
+        // Check before every segment: literal output and fast conversions
+        // can fail too, and their continue paths skip the general field code.
+        // Retain the error for the outer result, without reaching later %n.
+        if let Some(error) = take_render_failure() {
+            frankenlibc_core::stdio::printf::note_render_failure(error);
+            break;
+        }
+        match seg {
+            FormatSegment::Literal(lit) => push_bytes(&mut buf, lit),
+            FormatSegment::Percent => push_bytes(&mut buf, b"%"),
+            FormatSegment::Spec(spec) => {
+                // FAST PATH: plain narrow `%s` — no width, no precision, no
+                // flags, no length modifier, non-positional.
+                //
+                // The conversion byte is tested FIRST so a non-`%s` segment
+                // pays one load and one compare before falling through. An
+                // earlier ordering put the two loop-invariant bools first and
+                // measured `http_log` ("%s %s %d %lu", the only fused shape whose
+                // conversions are mostly NOT %s) 5.9% slower, so the cost to
+                // segments that cannot use this path is the thing to minimise.
+                //
+                // WHY THIS SHAPE. The conversion-count ladder (bd-ntb9fq)
+                // regressed the fused penalty as fl 59.83 ns fixed + 62.35
+                // ns/conversion against glibc 7.27 + 18.92, so roughly three
+                // quarters of the gap at the shipped shapes is PER-CONVERSION.
+                // A probe-style lever removes fixed cost only and cannot close
+                // it; this attacks the per-conversion term on the conversion the
+                // fused shapes are mostly made of.
+                //
+                // BYTE-IDENTICAL BY CONSTRUCTION. With `Width::None`,
+                // `Precision::None` and no `left_justify`, `format_str` reduces
+                // to exactly `buf.extend_from_slice(s)`: `max_len` becomes
+                // `s.len()`, `pad_total` becomes 0 and both `pad` calls are
+                // no-ops. The NULL spelling is the same reduction — with
+                // `Precision::None` the general path selects `b"(null)"` and
+                // renders it through that same no-op-padding `format_str`. Out
+                // of arguments emits nothing here and nothing there.
+                if spec.conversion == b's'
+                    && matches!(spec.length, LengthMod::None)
+                    && matches!(spec.width, Width::None)
+                    && matches!(spec.precision, Precision::None)
+                    && !wide_output
+                    && !uses_positional
+                    && !spec.flags.left_justify
+                    && !spec.flags.force_sign
+                    && !spec.flags.space_sign
+                    && !spec.flags.alt_form
+                    && !spec.flags.zero_pad
+                    && !spec.flags.group
+                {
+                    if let Some(raw_ptr) = read_arg(None, &mut arg_idx) {
+                        if raw_ptr == 0 {
+                            push_bytes(&mut buf, b"(null)");
+                        } else {
+                            // SAFETY: the caller's `%s` argument is a
+                            // NUL-terminated C string, read through the same
+                            // bounded helper the general path uses.
+                            let s_bytes = unsafe { c_str_bytes(raw_ptr as usize as *const c_char) };
+                            push_bytes(&mut buf, s_bytes);
+                        }
+                    }
+                    continue;
+                }
+
+                // FAST PATH: a bare integer conversion — `%d %i %u %x %X %o`
+                // with no flags, no width and no precision, narrow output,
+                // non-positional. Any length modifier is fine, because the spec
+                // is handed to the same renderer either way.
+                //
+                // WHY. `http_log` ("%s %s %d %lu") gained the least from the
+                // plain-`%s` fast path — 3.5% against 6-11% for the `%s`-heavy
+                // shapes — precisely because its integer conversions still walk
+                // the resolve-and-dispatch chain. The ladder puts ~75% of the
+                // fused gap in per-conversion work (bd-ntb9fq), so this is the
+                // same lever pointed at the other half of the real shapes.
+                //
+                // BYTE-IDENTICAL BY CONSTRUCTION, and this one is exact rather
+                // than argued: when neither width nor precision takes an
+                // argument, `resolved_spec` below is a plain bit-copy of
+                // `*spec`, so calling `render_value_arg` on `spec` runs the SAME
+                // renderer on the SAME value. What is skipped is the copy and
+                // the predicate chain in front of it — `is_literal_percent`,
+                // `is_errno_message`, `stores_count`, and the string and char
+                // arms — none of which a bare integer can reach.
+                //
+                // The conversion set is explicit rather than derived from
+                // `is_bare_integer` alone: that predicate checks only flags,
+                // width and precision, so `%s` with no flags satisfies it too.
+                // Listing the integer conversions is what keeps `%s`, `%c`,
+                // `%n`, `%m` and the float set on the general path.
+                if !wide_output
+                    && !uses_positional
+                    && matches!(spec.conversion, b'd' | b'i' | b'u' | b'x' | b'X' | b'o')
+                    && spec.is_bare_integer()
+                {
+                    if let Some(raw) = read_arg(None, &mut arg_idx) {
+                        let _ = spec.render_value_arg(raw, &mut buf);
+                    }
+                    continue;
+                }
+
+                // Resolve width from args if needed.
+                let mut resolved_spec = *spec;
+                if spec.width.uses_arg() {
+                    let width_position = if uses_positional {
+                        spec.width.position()
+                    } else {
+                        None
+                    };
+                    if let Some(raw_width) = read_arg(width_position, &mut arg_idx) {
+                        let w = (raw_width as core::ffi::c_int) as i64;
+                        if w < 0 {
+                            resolved_spec.flags.left_justify = true;
+                            resolved_spec.width = Width::Fixed(if spec.is_unknown_conversion() {
+                                // GNU's unknown-directive spelling promotes the
+                                // int-width's wrapping negation to unsigned long.
+                                // INT_MIN therefore retains its sign-extended
+                                // bits; no field padding/allocation uses this.
+                                (w as c_int).wrapping_neg() as isize as usize
+                            } else {
+                                (-w) as usize
+                            });
+                        } else {
+                            resolved_spec.width = Width::Fixed(w as usize);
+                        }
+                    } else {
+                        resolved_spec.width = Width::None;
+                    }
+                }
+                if spec.precision.uses_arg() {
+                    let precision_position = if uses_positional {
+                        spec.precision.position()
+                    } else {
+                        None
+                    };
+                    if let Some(raw_precision) = read_arg(precision_position, &mut arg_idx) {
+                        let p = (raw_precision as core::ffi::c_int) as i64;
+                        resolved_spec.precision = if p < 0 {
+                            Precision::None
+                        } else {
+                            Precision::Fixed(p as usize)
+                        };
+                    } else {
+                        resolved_spec.precision = Precision::None;
+                    }
+                }
+
+                let value_position = if uses_positional {
+                    spec.value_position
+                } else {
+                    None
+                };
+
+                // GNU rejects literal width/precision beyond INT_MAX before
+                // rendering this field, even if that conversion ignores it.
+                // Preserve earlier output/count stores and stop before later
+                // directives. Dynamic fields retain their conversion-specific
+                // handling, including GNU's unknown-conversion INT_MIN spelling.
+                let field_overflow = matches!(spec.width, Width::Fixed(width) if width > c_int::MAX as usize)
+                    || matches!(spec.precision, Precision::Fixed(precision) if precision > c_int::MAX as usize);
+                if field_overflow {
+                    frankenlibc_core::stdio::printf::note_render_failure(errno::EOVERFLOW);
+                    break;
+                }
+
+                if resolved_spec.is_literal_percent() {
+                    push_bytes(&mut buf, b"%");
+                } else if resolved_spec.is_unknown_conversion() {
+                    resolved_spec.render_unknown_conversion(&mut buf);
+                } else if resolved_spec.is_errno_message() {
+                    // %m == strerror(errno). Use the shared renderer directly:
+                    // it yields glibc's "Unknown error <N>" for unknown codes
+                    // (the previous strerror_r path returned EINVAL for those
+                    // and fell back to a numberless, width/precision-ignoring
+                    // "Unknown error").
+                    let e = unsafe { *crate::errno_abi::__errno_location() };
+                    let (msg, _) = crate::string_abi::rendered_strerror_message(e);
+                    format_str(msg.as_bytes(), &resolved_spec, &mut buf);
+                } else if resolved_spec.stores_count() {
+                    // %n: store count of units written so far. For narrow
+                    // printf that is bytes; for wide printf (swprintf/wprintf/…)
+                    // the C standard counts WIDE CHARACTERS, not the UTF-8 bytes
+                    // of fl's internal accumulator — so count Unicode scalar
+                    // values (every non-continuation byte begins one).
+                    // Respects length modifier: %hhn→i8, %hn→i16,
+                    // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
+                    if let Some(raw_ptr) = read_arg(value_position, &mut arg_idx) {
+                        let ptr_val = raw_ptr as usize;
+                        if ptr_val != 0 {
+                            let count = if wide_output {
+                                buf.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
+                            } else {
+                                buf.len()
+                            };
+                            let size = match resolved_spec.length {
+                                LengthMod::Hh => 1,
+                                LengthMod::H => 2,
+                                LengthMod::L
+                                | LengthMod::Ll
+                                | LengthMod::J
+                                | LengthMod::Z
+                                | LengthMod::T => 8,
+                                _ => 4,
+                            };
+                            let (mode, decision) = crate::runtime_policy::decide(
+                                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                                ptr_val,
+                                size,
+                                true,
+                                false,
+                                0,
+                            );
+
+                            let mut should_write = !matches!(
+                                decision.action,
+                                frankenlibc_membrane::runtime_math::MembraneAction::Deny
+                            );
+                            if mode.heals_enabled()
+                                || matches!(
+                                    decision.action,
+                                    frankenlibc_membrane::runtime_math::MembraneAction::Repair(_)
+                                )
+                            {
+                                // Only escalate to "skip the write" when we
+                                // have POSITIVE evidence the allocation is
+                                // too small. Absence of allocator tracking
+                                // (`known_remaining` returns None for stack
+                                // locals and external mallocs) is NOT
+                                // evidence of danger — the membrane's
+                                // decide() already ran; if its verdict was
+                                // non-Deny we trust the caller's pointer.
+                                // (bd-xx2j1: POSIX %n must write to the
+                                // count slot even for untracked pointers.)
+                                if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val)
+                                    && rem < size
+                                {
+                                    should_write = false;
+                                    frankenlibc_membrane::heal::global_healing_policy().record(
+                                        "stdio",
+                                        symbol,
+                                        &frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault,
+                                        RepairLogContext::new(0, Some(ptr_val)),
+                                    );
+                                }
+                                // No `else` branch: untracked allocations
+                                // are not evidence of danger. (bd-xx2j1)
+                            }
+
+                            if should_write {
+                                unsafe {
+                                    match resolved_spec.length {
+                                        LengthMod::Hh => {
+                                            *(ptr_val as *mut i8) = count as i8;
+                                        }
+                                        LengthMod::H => {
+                                            *(ptr_val as *mut i16) = count as i16;
+                                        }
+                                        LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                                            *(ptr_val as *mut i64) = count as i64;
+                                        }
+                                        LengthMod::Z | LengthMod::T => {
+                                            *(ptr_val as *mut isize) = count as isize;
+                                        }
+                                        _ => {
+                                            *(ptr_val as *mut i32) = count as i32;
+                                        }
+                                    }
+                                }
+                            }
+                            crate::runtime_policy::observe(
+                                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                                decision.profile,
+                                10,
+                                !should_write,
+                            );
+                        }
+                    }
+                } else if resolved_spec.value_arg_is_string() {
+                    if let Some(raw) = read_arg(value_position, &mut arg_idx) {
+                        let ptr = raw as usize as *const u8;
+                        if ptr.is_null() {
+                            // glibc substitutes "(null)" for a NULL `%s`/`%ls`
+                            // arg, but ONLY when the precision is unspecified or
+                            // at least 6 (the length of "(null)"); a smaller
+                            // precision yields the empty string rather than a
+                            // truncated "(nu". (fl previously truncated it.)
+                            let null_str: &[u8] = match resolved_spec.precision {
+                                Precision::Fixed(p) if p < b"(null)".len() => b"",
+                                _ => b"(null)",
+                            };
+                            format_str(null_str, &resolved_spec, &mut buf);
+                        } else if matches!(resolved_spec.length, LengthMod::L) {
+                            // `%ls`: the argument is a `wchar_t*`, NOT a `char*`.
+                            // Reading it narrow yields garbage (a 4-byte wchar is
+                            // seen as one byte + a NUL).
+                            let mut width_spec = resolved_spec;
+                            width_spec.precision = Precision::None;
+                            if wide_output {
+                                // Wide printf (wprintf/swprintf): precision and
+                                // field width count WIDE CHARACTERS. Truncate by
+                                // wide-char count before encoding, then inflate the
+                                // byte width by the multibyte overhead so the byte
+                                // padding `format_str` applies lands on wide-column
+                                // boundaries after the caller decodes back to wide.
+                                let limit = match resolved_spec.precision {
+                                    Precision::Fixed(n) => Some(n),
+                                    _ => None,
+                                };
+                                let (utf8, wide_count) =
+                                    unsafe { wide_cstr_to_utf8(ptr as *const u32, limit) };
+                                if let Width::Fixed(w) = width_spec.width {
+                                    let extra = utf8.len().saturating_sub(wide_count);
+                                    width_spec.width = Width::Fixed(w + extra);
+                                }
+                                format_str(&utf8, &width_spec, &mut buf);
+                            } else {
+                                // Narrow printf: precision and field width are BYTE
+                                // counts on the multibyte output (C99 §7.19.6.1).
+                                // Bound conversion itself: the array need not
+                                // continue beyond the precision, and a character
+                                // that cannot fit is never partially emitted.
+                                let byte_limit = match resolved_spec.precision {
+                                    Precision::Fixed(n) => Some(n),
+                                    _ => None,
+                                };
+                                // SAFETY: the conversion stops before reading
+                                // beyond the precision-bounded wide array.
+                                let multibyte = match unsafe {
+                                    wide_cstr_to_multibyte(ptr as *const u32, byte_limit)
+                                } {
+                                    Ok(bytes) => bytes,
+                                    Err(error) => {
+                                        if error == errno::EILSEQ
+                                            && byte_limit.is_none()
+                                            && !width_spec.flags.left_justify
+                                            && let Width::Fixed(width) = width_spec.width
+                                            && width != 0
+                                        {
+                                            // GNU emits width+1 spaces before this
+                                            // unbounded right-aligned encoding error.
+                                            // Bounded and left-aligned failures do not.
+                                            let Some(width) = width.checked_add(1) else {
+                                                frankenlibc_core::stdio::printf::note_render_failure(
+                                                    errno::EOVERFLOW,
+                                                );
+                                                break;
+                                            };
+                                            let mut padding = width_spec;
+                                            padding.width = Width::Fixed(width);
+                                            format_str(b"", &padding, &mut buf);
+                                        }
+                                        // An allocation failure while rendering the
+                                        // padding still takes precedence over EILSEQ.
+                                        let padding_error =
+                                            frankenlibc_core::stdio::printf::take_render_failure();
+                                        let error = if padding_error == 0 {
+                                            error
+                                        } else {
+                                            padding_error
+                                        };
+                                        frankenlibc_core::stdio::printf::note_render_failure(error);
+                                        break;
+                                    }
+                                };
+                                format_str(&multibyte, &width_spec, &mut buf);
+                            }
+                        } else if wide_output {
+                            // Wide printf narrow `%s`: the `char*` multibyte content
+                            // is converted to wide characters, and precision/width
+                            // count WIDE CHARACTERS, not bytes (C99). Take the first
+                            // `precision` wide chars (never splitting a multibyte
+                            // char) and inflate the byte width by the multibyte
+                            // overhead so `format_str`'s byte padding lands on
+                            // wide-column boundaries after the caller decodes back.
+                            let limit = match resolved_spec.precision {
+                                Precision::Fixed(n) => Some(n),
+                                _ => None,
+                            };
+                            // SAFETY: decode only the characters needed by the
+                            // precision; no NUL or lookahead is needed afterward.
+                            let Some((byte_count, wide_count)) =
+                                (unsafe { crate::wchar_abi::printf_multibyte_prefix(ptr, limit) })
+                            else {
+                                frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
+                                break;
+                            };
+                            // SAFETY: the decoder read exactly these bytes, and
+                            // the surrounding branch established a nonnull ptr.
+                            let bytes = unsafe { std::slice::from_raw_parts(ptr, byte_count) };
+                            let Some(utf8) = crate::wchar_abi::printf_multibyte_utf8(bytes) else {
+                                frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
+                                break;
+                            };
+                            let mut width_spec = resolved_spec;
+                            width_spec.precision = Precision::None;
+                            if let Width::Fixed(w) = width_spec.width {
+                                let extra = utf8.len().saturating_sub(wide_count);
+                                width_spec.width = Width::Fixed(w + extra);
+                            }
+                            format_str(&utf8, &width_spec, &mut buf);
+                        } else {
+                            let s_bytes = if let Precision::Fixed(precision) =
+                                resolved_spec.precision
+                            {
+                                let bound = if runtime_policy::strict_passthrough_active() {
+                                    precision
+                                } else {
+                                    known_remaining(ptr as usize)
+                                        .map_or(precision, |n| precision.min(n))
+                                };
+                                // SAFETY: printf permits a nonterminated array
+                                // when precision bounds the read. This scanner
+                                // stops at NUL or that bound, including zero.
+                                let (len, _) = unsafe {
+                                    crate::string_abi::scan_c_string_nul_or_bound(ptr.cast(), bound)
+                                };
+                                // SAFETY: only bytes read by the bounded scan
+                                // enter this slice; ptr is nonnull in this arm.
+                                unsafe { std::slice::from_raw_parts(ptr, len) }
+                            } else {
+                                // SAFETY: without precision the caller supplies
+                                // a NUL-terminated string, as before.
+                                unsafe { c_str_bytes(ptr.cast()) }
+                            };
+                            format_str(s_bytes, &resolved_spec, &mut buf);
+                        }
+                    }
+                } else if resolved_spec.conversion == b'c'
+                    && matches!(resolved_spec.length, LengthMod::L)
+                {
+                    // `%lc` / `%C`: wide output uses internal UTF-8; narrow
+                    // output must encode the wint_t in the active LC_CTYPE.
+                    if let Some(raw) = read_arg(value_position, &mut arg_idx) {
+                        let mut encoded = [0; 6];
+                        let length = if !wide_output {
+                            let codec = crate::locale_abi::active_multibyte_codec();
+                            let Some(length) = codec.encode(raw as u32, &mut encoded) else {
+                                frankenlibc_core::stdio::printf::note_render_failure(errno::EILSEQ);
+                                break;
+                            };
+                            length
+                        } else {
+                            frankenlibc_core::string::wchar::wctomb(raw as u32, &mut encoded)
+                                .unwrap_or(0)
+                        };
+                        // Precision is ignored for %c. Narrow printf: width is a
+                        // BYTE field — the multibyte char's byte length counts
+                        // toward it (no inflation). Wide printf: width counts WIDE
+                        // characters (one here), so inflate the byte width by the
+                        // multibyte overhead to keep padding on the wide boundary.
+                        let mut width_spec = resolved_spec;
+                        width_spec.precision = Precision::None;
+                        if wide_output && let Width::Fixed(w) = width_spec.width {
+                            let extra = length.saturating_sub(1);
+                            width_spec.width = Width::Fixed(w + extra);
+                        }
+                        format_str(&encoded[..length], &width_spec, &mut buf);
+                    }
+                } else if let Some(raw) = read_arg(value_position, &mut arg_idx) {
+                    // The CHEAP half of the predicate first, and it is what
+                    // every real format answers on. `value_arg_is_x87()`
+                    // resolves the conversion's route — the work
+                    // `render_value_arg` below is about to do again — while
+                    // `length == BigL` is a plain enum comparison, and the class
+                    // is X87 only when the length is `L` (`value_arg_kind`), so
+                    // the conjunction is exactly `value_arg_is_x87()` with the
+                    // route computed only for the `%L…` specs that can reach it.
+                    // The same lesson as the `has_long_double` field: this
+                    // family's per-call walks are measured in whole percents of
+                    // self time (bd-ntb9fq), so a predicate on this path pays
+                    // for itself in enum compares or not at all.
+                    if resolved_spec.length == LengthMod::BigL && resolved_spec.value_arg_is_x87() {
+                        // `%Lf`. The slot holds the ADDRESS of the caller's
+                        // sixteen-byte x87 argument, not a value — a `u64`
+                        // cannot carry 80 bits, and rounding to `f64` here is
+                        // what used to print pi's seventeenth digit onward
+                        // wrong and turn a finite `1e400` into `inf`
+                        // (bd-longdouble-varargs-43usjw). Only
+                        // `vprintf_read_x87` writes such a slot, and
+                        // `has_long_double()` routes every format carrying one
+                        // to it; the register extractors' unreachable X87 arms
+                        // store a null, which lands on the fallback below.
+                        let mut ld = [0u8; 10];
+                        // `vprintf_read_x87` only ever returns a non-null,
+                        // 16-byte-aligned address, because that is what the ABI
+                        // guarantees about the slot. Testing it costs one AND on
+                        // a path taken only by `%Lf`, and it is what keeps a
+                        // drift in the routing invariant — three of the four
+                        // register extractors key their float arm on the
+                        // CONVERSION alone and cannot see `L` — from
+                        // dereferencing eight bytes of SSE save area.
+                        if raw != 0 && raw % 16 == 0 {
+                            // SAFETY: the address came from the caller's own
+                            // overflow area, whose frame outlives this call, and
+                            // ten of the slot's sixteen bytes are the value.
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    raw as *const u8,
+                                    ld.as_mut_ptr(),
+                                    10,
+                                )
+                            };
+                        }
+                        let _ = resolved_spec.render_long_double_arg(&ld, &mut buf);
+                    } else {
+                        let _ = resolved_spec.render_value_arg(raw, &mut buf);
+                    }
+                }
+            }
+        }
+    }
+    ScratchVec::new(buf)
+}
+
+/// Returns the bytes a printf-family call must emit, taking the bare-"%s" fast
+/// path when possible: for an exact, non-NULL `%s` the caller's NUL-terminated
+/// string is returned directly (no render, no intermediate buffer); otherwise
+/// the format is rendered into `*hold` (kept alive by the caller) and that
+/// buffer is returned. Output is identical to rendering "%s" (which just copies
+/// the string); a NULL argument falls through to render so glibc's "(null)" is
+/// still produced.
+///
+/// # Safety
+/// `args` must point to at least `extract_count` extracted argument slots, and a
+/// bare-`%s` argument must be a valid NUL-terminated string per the C contract.
+unsafe fn bare_s_or_render<'a>(
+    symbol: &'static str,
+    fmt_bytes: &'a [u8],
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    extract_count: usize,
+    hold: &'a mut Option<ScratchVec>,
+) -> &'a [u8] {
+    if let Some(DirectPrintfPayload::String(bytes)) =
+        unsafe { direct_printf_string_payload(fmt_bytes, args, extract_count) }
+    {
+        return bytes;
+    }
+    // No '%' anywhere: no conversions and no `%%` escapes, so the format string
+    // is emitted verbatim (ubiquitous fixed-message / banner output). Return it
+    // directly, skipping the parse-into-segments and the render buffer.
+    if !fmt_bytes.contains(&b'%') {
+        return fmt_bytes;
+    }
+    *hold = Some(unsafe { render_segments(symbol, segments, args, extract_count, false) });
+    hold.as_deref().unwrap()
+}
+
+#[derive(Clone, Copy)]
+enum DirectPrintfPayload<'a> {
+    String(&'a [u8]),
+    StringNewline(&'a [u8]),
+}
+
+/// The deliberately narrow grammar accepted by the fused strict `snprintf`
+/// path. Flags, widths, precisions, positional arguments, and conversions
+/// without an immediate byte-level equivalence remain on the full renderer.
+#[derive(Clone, Copy)]
+enum StrictDirectSnprintfSpec {
+    Percent,
+    Char,
+    String,
+    Signed32,
+    Unsigned32,
+    Hex32(bool),
+    Octal32,
+    SignedLong,
+    UnsignedLong,
+    HexLong(bool),
+    OctalLong,
+    Pointer,
+}
+
+/// Parse bytes after one `%`; the count excludes that percent byte.
+#[inline]
+fn strict_direct_snprintf_spec(bytes: &[u8]) -> Option<(StrictDirectSnprintfSpec, usize)> {
+    let first = *bytes.first()?;
+    if first == b'%' {
+        return Some((StrictDirectSnprintfSpec::Percent, 1));
+    }
+    let (long, conversion, consumed) = if first == b'l' || first == b'z' {
+        (true, *bytes.get(1)?, 2usize)
+    } else {
+        (false, first, 1usize)
+    };
+    let spec = match (long, conversion) {
+        (false, b'c') => StrictDirectSnprintfSpec::Char,
+        (false, b's') => StrictDirectSnprintfSpec::String,
+        (false, b'd' | b'i') => StrictDirectSnprintfSpec::Signed32,
+        (false, b'u') => StrictDirectSnprintfSpec::Unsigned32,
+        (false, b'x') => StrictDirectSnprintfSpec::Hex32(false),
+        (false, b'X') => StrictDirectSnprintfSpec::Hex32(true),
+        (false, b'o') => StrictDirectSnprintfSpec::Octal32,
+        (true, b'd' | b'i') => StrictDirectSnprintfSpec::SignedLong,
+        (true, b'u') => StrictDirectSnprintfSpec::UnsignedLong,
+        (true, b'x') => StrictDirectSnprintfSpec::HexLong(false),
+        (true, b'X') => StrictDirectSnprintfSpec::HexLong(true),
+        (true, b'o') => StrictDirectSnprintfSpec::OctalLong,
+        (false, b'p') => StrictDirectSnprintfSpec::Pointer,
+        _ => return None,
+    };
+    Some((spec, consumed))
+}
+
+/// Check eligibility before touching the va_list, so declined formats can take
+/// the general renderer unchanged.
+unsafe fn is_strict_direct_snprintf_format(format: *const c_char) -> bool {
+    // SAFETY: printf requires a NUL-terminated format. The ABI's scanner avoids
+    // the membrane object-size lookup on this strict passthrough path.
+    let (len, _) = unsafe { super::string_abi::scan_c_string(format, None) };
+    let bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), len) };
+    let mut at = 0usize;
+    let mut conversions = 0usize;
+    while at < bytes.len() {
+        if bytes[at] != b'%' {
+            at += 1;
+            continue;
+        }
+        let Some((_, consumed)) = strict_direct_snprintf_spec(&bytes[at + 1..]) else {
+            return false;
+        };
+        conversions += 1;
+        at += 1 + consumed;
+    }
+    conversions != 0
+}
+
+struct StrictDirectSnprintfWriter {
+    dst: *mut c_char,
+    size: usize,
+    written: usize,
+    total: usize,
+}
+
+impl StrictDirectSnprintfWriter {
+    const fn new(dst: *mut c_char, size: usize) -> Self {
+        Self {
+            dst,
+            size,
+            written: 0,
+            total: 0,
+        }
+    }
+
+    /// Append while preserving snprintf's would-have-written length.
+    unsafe fn push(&mut self, bytes: &[u8]) {
+        self.total = self.total.saturating_add(bytes.len());
+        if self.size == 0 || self.dst.is_null() || self.written >= self.size - 1 {
+            return;
+        }
+        let copied = bytes.len().min(self.size - 1 - self.written);
+        if copied != 0 {
+            // SAFETY: `written + copied <= size - 1`; both source and caller
+            // supplied destination ranges are live for the copied bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    self.dst.cast::<u8>().add(self.written),
+                    copied,
+                )
+            };
+            self.written += copied;
+        }
+    }
+
+    unsafe fn finish(self) -> c_int {
+        if self.size != 0 && !self.dst.is_null() {
+            // SAFETY: `push` maintains `written < size`.
+            unsafe { *self.dst.add(self.written) = 0 };
+        }
+        printf_result_to_c_int(self.total)
+    }
+}
+
+struct StrictDirectStreamWriter {
+    inline: [u8; 512],
+    heap: Vec<u8>,
+    len: usize,
+}
+
+impl StrictDirectStreamWriter {
+    const fn new() -> Self {
+        Self {
+            inline: [0u8; 512],
+            heap: Vec::new(),
+            len: 0,
+        }
+    }
+
+    #[allow(unused_unsafe)]
+    unsafe fn push(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.heap.is_empty() {
+            if let Some(end) = self.len.checked_add(bytes.len())
+                && end <= self.inline.len()
+            {
+                self.inline[self.len..end].copy_from_slice(bytes);
+                self.len = end;
+                return;
+            }
+            self.heap
+                .reserve(self.len.saturating_add(bytes.len()).max(1024));
+            self.heap.extend_from_slice(&self.inline[..self.len]);
+        }
+        self.heap.extend_from_slice(bytes);
+        self.len = self.heap.len();
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        if self.heap.is_empty() {
+            &self.inline[..self.len]
+        } else {
+            self.heap.as_slice()
+        }
+    }
+
+    unsafe fn finish_to_stream(self, id: usize, stream: *mut c_void, caller: usize) -> c_int {
+        let bytes = self.as_slice();
+        let len = bytes.len();
+        if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+            return printf_result_to_c_int(len);
+        }
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+        if written == len {
+            printf_result_to_c_int(len)
+        } else {
+            -1
+        }
+    }
+}
+
+#[inline]
+fn strict_direct_unsigned_digits(
+    mut value: u64,
+    base: u64,
+    upper: bool,
+    rendered: &mut [u8; 22],
+) -> usize {
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value % base) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else if upper {
+            b'A' + digit - 10
+        } else {
+            b'a' + digit - 10
+        };
+        value /= base;
+        if value == 0 {
+            return start;
+        }
+    }
+}
+
+// `VaListImpl` is unstable to name directly. Keeping the emitter as a macro
+// lets the ABI entrypoint pass its compiler-provided va_list without exposing
+// that implementation type to a helper signature.
+macro_rules! strict_direct_render_fused {
+    ($writer:ident, $format:expr, $args:expr) => {{
+        let (len, _) = unsafe { super::string_abi::scan_c_string($format, None) };
+        let bytes = unsafe { std::slice::from_raw_parts($format.cast::<u8>(), len) };
+        let mut at = 0usize;
+        let mut literal_start = 0usize;
+        while at < bytes.len() {
+            if bytes[at] != b'%' {
+                at += 1;
+                continue;
+            }
+            unsafe { $writer.push(&bytes[literal_start..at]) };
+            let (spec, consumed) = strict_direct_snprintf_spec(&bytes[at + 1..])
+                .expect("fused snprintf called only after eligibility validation");
+            at += 1 + consumed;
+            match spec {
+                StrictDirectSnprintfSpec::Percent => unsafe { $writer.push(b"%") },
+                StrictDirectSnprintfSpec::Char => {
+                    let rendered = [unsafe { $args.next_arg::<c_int>() } as u8];
+                    unsafe { $writer.push(&rendered) };
+                }
+                StrictDirectSnprintfSpec::String => {
+                    let arg = unsafe { $args.next_arg::<*const c_char>() };
+                    let rendered = if arg.is_null() {
+                        b"(null)".as_slice()
+                    } else {
+                        let (arg_len, _) = unsafe { super::string_abi::scan_c_string(arg, None) };
+                        unsafe { std::slice::from_raw_parts(arg.cast::<u8>(), arg_len) }
+                    };
+                    unsafe { $writer.push(rendered) };
+                }
+                StrictDirectSnprintfSpec::Signed32 | StrictDirectSnprintfSpec::SignedLong => {
+                    let value = match spec {
+                        StrictDirectSnprintfSpec::Signed32 => unsafe {
+                            $args.next_arg::<c_int>() as i64
+                        },
+                        StrictDirectSnprintfSpec::SignedLong => unsafe { $args.next_arg::<i64>() },
+                        _ => unreachable!(),
+                    };
+                    let mut rendered = [0u8; 22];
+                    let mut start = strict_direct_unsigned_digits(
+                        value.unsigned_abs(),
+                        10,
+                        false,
+                        &mut rendered,
+                    );
+                    if value < 0 {
+                        start -= 1;
+                        rendered[start] = b'-';
+                    }
+                    unsafe { $writer.push(&rendered[start..]) };
+                }
+                StrictDirectSnprintfSpec::Unsigned32
+                | StrictDirectSnprintfSpec::UnsignedLong
+                | StrictDirectSnprintfSpec::Hex32(_)
+                | StrictDirectSnprintfSpec::HexLong(_)
+                | StrictDirectSnprintfSpec::Octal32
+                | StrictDirectSnprintfSpec::OctalLong => {
+                    let value = match spec {
+                        StrictDirectSnprintfSpec::Unsigned32
+                        | StrictDirectSnprintfSpec::Hex32(_)
+                        | StrictDirectSnprintfSpec::Octal32 => unsafe {
+                            $args.next_arg::<c_uint>() as u64
+                        },
+                        _ => unsafe { $args.next_arg::<u64>() },
+                    };
+                    let (base, upper) = match spec {
+                        StrictDirectSnprintfSpec::Hex32(upper)
+                        | StrictDirectSnprintfSpec::HexLong(upper) => (16, upper),
+                        StrictDirectSnprintfSpec::Octal32 | StrictDirectSnprintfSpec::OctalLong => {
+                            (8, false)
+                        }
+                        _ => (10, false),
+                    };
+                    let mut rendered = [0u8; 22];
+                    let start = strict_direct_unsigned_digits(value, base, upper, &mut rendered);
+                    unsafe { $writer.push(&rendered[start..]) };
+                }
+                StrictDirectSnprintfSpec::Pointer => {
+                    let arg = unsafe { $args.next_arg::<*mut c_void>() };
+                    let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
+                    let (start, used) = if arg.is_null() {
+                        rendered[..5].copy_from_slice(b"(nil)");
+                        (0usize, 5usize)
+                    } else {
+                        let mut value = arg as usize;
+                        let mut start = rendered.len();
+                        loop {
+                            start -= 1;
+                            let digit = (value & 0xf) as u8;
+                            rendered[start] = if digit < 10 {
+                                b'0' + digit
+                            } else {
+                                b'a' + digit - 10
+                            };
+                            value >>= 4;
+                            if value == 0 {
+                                break;
+                            }
+                        }
+                        start -= 2;
+                        rendered[start..start + 2].copy_from_slice(b"0x");
+                        (start, rendered.len() - start)
+                    };
+                    unsafe { $writer.push(&rendered[start..start + used]) };
+                }
+            }
+            literal_start = at;
+        }
+        unsafe { $writer.push(&bytes[literal_start..]) };
+    }};
+}
+
+macro_rules! strict_direct_snprintf_fused {
+    ($str_buf:expr, $size:expr, $format:expr, $args:expr) => {{
+        let mut writer = StrictDirectSnprintfWriter::new($str_buf, $size);
+        strict_direct_render_fused!(writer, $format, $args);
+        unsafe { writer.finish() }
+    }};
+}
+
+macro_rules! strict_direct_stream_fused {
+    ($id:expr, $stream:expr, $format:expr, $args:expr, $caller:expr) => {{
+        let mut writer = StrictDirectStreamWriter::new();
+        strict_direct_render_fused!(writer, $format, $args);
+        unsafe { writer.finish_to_stream($id, $stream, $caller) }
+    }};
+}
+
+#[inline]
+unsafe fn exact_direct_s_format(format: *const c_char) -> Option<bool> {
+    let f = format.cast::<u8>();
+    if unsafe { *f } != b'%' || unsafe { *f.add(1) } != b's' {
+        return None;
+    }
+    match unsafe { *f.add(2) } {
+        0 => Some(false),
+        b'\n' if unsafe { *f.add(3) } == 0 => Some(true),
+        _ => None,
+    }
+}
+
+#[inline]
+unsafe fn exact_direct_c_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    unsafe { *f == b'%' && *f.add(1) == b'c' && *f.add(2) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_u_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'u' && *f.add(2) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_d_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'd' && *f.add(2) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_x_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'x' && *f.add(2) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_ld_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; if byte 1 is `l` then byte 2 (and 3) are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'd' && *f.add(3) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_lu_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`.
+    unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'u' && *f.add(3) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_zu_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`. `%zu` (size_t) == u64 decimal on LP64.
+    unsafe { *f == b'%' && *f.add(1) == b'z' && *f.add(2) == b'u' && *f.add(3) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_zd_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`. `%zd` (ssize_t) == i64 decimal on LP64.
+    unsafe { *f == b'%' && *f.add(1) == b'z' && *f.add(2) == b'd' && *f.add(3) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_lx_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`. `%lx` == u64 lowercase hex on LP64.
+    unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'x' && *f.add(3) == 0 }
+}
+
+/// The largest `%.Nf` precision the direct fixed fast path accepts.
+///
+/// 99 is every two-digit precision, so there is no cliff anywhere inside the
+/// two-digit range — which is the whole point of raising it. The old limit was
+/// 9, and it was a limit of the PARSER (it read one digit) rather than of
+/// `render_direct_fixed`, which is total at any precision. Measured cost of the
+/// cliff before this was lifted, `fprintf_float` on thinkstation1: `%.9f` ran
+/// 74.224 ns against glibc's 126.500 (0.583x, a win) and `%.10f` ran 171.922
+/// against 130.906 (**1.275x, a loss**) — one extra digit, 2.3x the time, purely
+/// because the probe declined and the call fell to the general path.
+const MAX_DIRECT_FIXED_PRECISION: usize = 99;
+
+/// Byte capacity for the direct fixed renderer, derived from the precision cap.
+///
+/// The binding case is the `{abs:.precision$}` fallback, which is the branch
+/// that takes an arbitrary magnitude: `-` + the 309 integer digits of `f64::MAX` +
+/// `.` + `MAX_DIRECT_FIXED_PRECISION` fractional digits = 410 bytes. 416 is
+/// that with a little margin.
+///
+/// THIS IS NOT COSMETIC AND IT IS WHY THE PRECISION CAP AND THE BUFFER SHARE A
+/// DERIVATION. The buffer was 352, which is EXACTLY 1 + 309 + 1 + 41 — it had
+/// zero margin beyond precision 41. Two of the three write paths in
+/// `render_direct_fixed` index the buffer directly and would panic across an
+/// `extern "C"` boundary, and the third (`write!`) silently truncates on
+/// overflow because its `Err` is discarded. So raising the parser's cap without
+/// raising this would have turned a slow path into a wrong one.
+const DIRECT_FIXED_BUF: usize = 416;
+
+const _: () = assert!(
+    DIRECT_FIXED_BUF >= 1 + 309 + 1 + MAX_DIRECT_FIXED_PRECISION,
+    "DIRECT_FIXED_BUF must hold sign + f64::MAX's 309 integer digits + '.' + \
+     MAX_DIRECT_FIXED_PRECISION fractional digits"
+);
+
+/// Match exact `"%f"` (precision 6, C's default) or `"%.Nf"` for `N` in
+/// `1..=MAX_DIRECT_FIXED_PRECISION`, written with no leading zero. Returns the
+/// precision. `None` for anything carrying a width, a flag, a length modifier,
+/// `%e`/`%g`/`%a`, `%.0f`, or a precision written as `%.0N`.
+///
+/// This probe is why `bd-4vwb9q` exists. Every other conversion in the
+/// `exact_direct_*` chain returns before `runtime_policy::entrypoint_scope`;
+/// the float conversions had no probe at all, so they fell through ~11 failed
+/// byte-compares and then paid the whole parse + membrane + segment pipeline.
+/// Fitting the published `snprintf_float` medians against precision separates
+/// that cost cleanly:
+///
+///   fl    = 180.94 ns fixed + 4.104 ns/digit
+///   glibc =  93.44 ns fixed + 6.245 ns/digit
+///
+/// fl's per-digit cost already BEATS glibc's; the entire 1.56-1.78x loss is the
+/// 87.5 ns fixed term. That is what this probe removes.
+#[inline]
+unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
+    // The direct renderer writes ".": under an LC_NUMERIC whose radix differs
+    // (de_DE's ','), the general path localizes it.
+    if !frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+        return None;
+    }
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so scanning to the first NUL is in bounds.
+    unsafe {
+        if *f != b'%' {
+            return None;
+        }
+        if *f.add(1) == b'f' && *f.add(2) == 0 {
+            return Some(6);
+        }
+        if *f.add(1) == b'.' {
+            let digit = *f.add(2);
+            if digit.is_ascii_digit() {
+                let first = usize::from(digit - b'0');
+                if *f.add(3) == b'f' && *f.add(4) == 0 {
+                    // Precision 0 is excluded deliberately: the general path
+                    // pre-rounds there and emits no radix point, a different
+                    // shape from the branch below.
+                    if first >= 1 {
+                        return Some(first);
+                    }
+                    return None;
+                }
+                // TWO-DIGIT precisions. Reached ONLY after the single-digit test
+                // above has already failed, so this costs nothing on `%.2f` and
+                // nothing at all on formats that do not begin `%.<digit>`.
+                let second = *f.add(3);
+                if second.is_ascii_digit() && *f.add(4) == b'f' && *f.add(5) == 0 {
+                    let precision = first * 10 + usize::from(second - b'0');
+                    // `%.00f`..`%.09f` are NOT folded into the single-digit case:
+                    // a leading zero is a different format string, and treating
+                    // them as equal would be an assumption rather than a
+                    // measurement. They fall to the general path, as before.
+                    if first >= 1 && precision <= MAX_DIRECT_FIXED_PRECISION {
+                        return Some(precision);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Render `%.<precision>f` of `value` exactly as the general path renders a bare
+/// fixed conversion with no width and no flags. Returns the byte length written
+/// into `out`.
+///
+/// TOTAL by construction, which it has to be: the dispatch below consumes the
+/// variadic argument before calling this, so there is no way to decline and fall
+/// through afterwards. The three branches mirror the general path one for one:
+/// non-finite takes the early return's `sign + "inf"/"nan"`, the exact scaled
+/// case takes `rounded_scaled_fixed` + the same digit placement, and anything
+/// `rounded_scaled_fixed` rejects (magnitudes where mantissa * 5^precision
+/// overflows the shift) takes the same `{:.prec$}` fallback the general path
+/// ends with.
+///
+/// Sized by `DIRECT_FIXED_BUF`, which is derived from the largest precision
+/// `exact_direct_f_format` accepts — see that constant. The two must move
+/// together, which is why the bound has a name instead of a literal.
+fn render_direct_fixed(value: f64, precision: usize, out: &mut [u8; DIRECT_FIXED_BUF]) -> usize {
+    use core::fmt::Write as _;
+    use frankenlibc_core::float128::{FmtSpec, RoundingMode, format_binary64};
+
+    if value.is_finite() && RoundingMode::current() != RoundingMode::Nearest {
+        let bytes = format_binary64(
+            value,
+            &FmtSpec {
+                conv: b'f',
+                precision: Some(precision),
+                width: 0,
+                left: false,
+                plus: false,
+                space: false,
+                alt: false,
+                zero: false,
+            },
+        );
+        out[..bytes.len()].copy_from_slice(&bytes);
+        return bytes.len();
+    }
+
+    struct SliceWriter<'a> {
+        buf: &'a mut [u8; DIRECT_FIXED_BUF],
+        len: usize,
+    }
+    impl core::fmt::Write for SliceWriter<'_> {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let bytes = s.as_bytes();
+            let end = self.len + bytes.len();
+            if end > self.buf.len() {
+                return Err(core::fmt::Error);
+            }
+            self.buf[self.len..end].copy_from_slice(bytes);
+            self.len = end;
+            Ok(())
+        }
+    }
+
+    let mut w = SliceWriter { buf: out, len: 0 };
+    if value.is_sign_negative() {
+        let _ = w.write_str("-");
+    }
+    if value.is_nan() {
+        let _ = w.write_str("nan");
+        return w.len;
+    }
+    if value.is_infinite() {
+        let _ = w.write_str("inf");
+        return w.len;
+    }
+
+    let abs = value.abs();
+    if let Some(scaled) = frankenlibc_core::stdio::printf::rounded_scaled_fixed(abs, precision) {
+        let mut tmp = [0u8; 40];
+        let ds = frankenlibc_core::stdio::printf::decimal_digits_u128(scaled, &mut tmp);
+        // Same placement as `push_fixed_scaled_digits_vec`.
+        if ds.len() > precision {
+            let point = ds.len() - precision;
+            let start = w.len;
+            w.buf[start..start + point].copy_from_slice(&ds[..point]);
+            w.buf[start + point] = b'.';
+            w.buf[start + point + 1..start + 1 + ds.len()].copy_from_slice(&ds[point..]);
+            w.len = start + 1 + ds.len();
+        } else {
+            let start = w.len;
+            w.buf[start] = b'0';
+            w.buf[start + 1] = b'.';
+            let zeros = precision - ds.len();
+            for i in 0..zeros {
+                w.buf[start + 2 + i] = b'0';
+            }
+            w.buf[start + 2 + zeros..start + 2 + zeros + ds.len()].copy_from_slice(ds);
+            w.len = start + 2 + zeros + ds.len();
+        }
+        return w.len;
+    }
+
+    let _ = write!(w, "{abs:.precision$}");
+    w.len
+}
+
+/// `snprintf` for an exact `%f` / `%.Nf`: renders into a stack buffer and applies
+/// snprintf's full-length / truncation contract with no format parsing, no heap
+/// render buffer, and no membrane entry.
+unsafe fn strict_direct_snprintf_f(
+    str_buf: *mut c_char,
+    size: usize,
+    value: f64,
+    precision: usize,
+) -> c_int {
+    let mut rendered = [0u8; DIRECT_FIXED_BUF];
+    let len = render_direct_fixed(value, precision, &mut rendered);
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` is writable by snprintf's caller,
+            // and the local source holds exactly `len` initialized bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf.cast::<u8>(), copy_len)
+            };
+        }
+        // SAFETY: `copy_len <= size - 1`, so this terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    // snprintf returns the length it WOULD have written, not the truncated one.
+    len as c_int
+}
+
+/// Match exact `"%d"` (→ `Some(false)`) or `"%d\n"` (→ `Some(true)`) for the printf/fprintf
+/// stream fast path. `None` otherwise. `"%d\n"` (printf a signed int + newline) is the single
+/// most common formatted-output pattern.
+#[inline]
+unsafe fn exact_direct_d_stream_format(format: *const c_char) -> Option<bool> {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; reads stop at the first non-matching / NUL byte.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'd' {
+            return None;
+        }
+        match *f.add(2) {
+            0 => Some(false),
+            b'\n' if *f.add(3) == 0 => Some(true),
+            _ => None,
+        }
+    }
+}
+
+/// Render a signed `%d` (optionally with a trailing newline) into `buf` (needs 12 bytes:
+/// 11 for "-2147483648" + 1 for '\n'). Returns the byte length. `i32::MIN` via `unsigned_abs`.
+#[inline]
+fn render_d_into_buf(arg: c_int, newline: bool, buf: &mut [u8; 12]) -> usize {
+    let mut digits = [0u8; 11];
+    let neg = arg < 0;
+    let mut value = (arg as i64).unsigned_abs();
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        digits[start] = b'-';
+    }
+    let dlen = digits.len() - start;
+    buf[..dlen].copy_from_slice(&digits[start..]);
+    if newline {
+        buf[dlen] = b'\n';
+        dlen + 1
+    } else {
+        dlen
+    }
+}
+
+/// Match exact `%u`/`%u\n`/`%x`/`%x\n` for the printf/fprintf stream fast path. Returns
+/// `Some((is_hex, newline))`; `None` otherwise. Both take a promoted `unsigned int`.
+#[inline]
+unsafe fn exact_direct_ux_stream_format(format: *const c_char) -> Option<(bool, bool)> {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; reads stop at the first non-matching / NUL byte.
+    unsafe {
+        if *f != b'%' {
+            return None;
+        }
+        let is_hex = match *f.add(1) {
+            b'u' => false,
+            b'x' => true,
+            _ => return None,
+        };
+        match *f.add(2) {
+            0 => Some((is_hex, false)),
+            b'\n' if *f.add(3) == 0 => Some((is_hex, true)),
+            _ => None,
+        }
+    }
+}
+
+/// Render an unsigned `%u` (decimal) or `%x` (lowercase hex), optional trailing newline, into
+/// `buf` (needs 11 bytes: 10 decimal digits + '\n'). Returns the byte length.
+#[inline]
+fn render_ux_into_buf(arg: c_uint, hex: bool, newline: bool, buf: &mut [u8; 11]) -> usize {
+    let mut digits = [0u8; 10];
+    let mut value = arg;
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        if hex {
+            let d = (value & 0xf) as u8;
+            digits[start] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            value >>= 4;
+        } else {
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+        if value == 0 {
+            break;
+        }
+    }
+    let dlen = digits.len() - start;
+    buf[..dlen].copy_from_slice(&digits[start..]);
+    if newline {
+        buf[dlen] = b'\n';
+        dlen + 1
+    } else {
+        dlen
+    }
+}
+
+/// Strict stream `%u`/`%x` (± newline) fast path — the unsigned/hex sibling of
+/// `strict_direct_stream_d`. Same extract-once-always-write discipline.
+unsafe fn strict_direct_stream_ux(
+    id: usize,
+    stream: *mut c_void,
+    arg: c_uint,
+    hex: bool,
+    newline: bool,
+    caller: usize,
+) -> c_int {
+    let mut buf = [0u8; 11];
+    let len = render_ux_into_buf(arg, hex, newline, &mut buf);
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// Match exact 64-bit `%ld`/`%lu`/`%lx` (± `\n`) for the printf/fprintf stream fast path.
+/// Returns `Some((conv, newline))` where `conv` is `b'd'` / `b'u'` / `b'x'`; `None` otherwise.
+/// All three consume one 64-bit `long`/`unsigned long` on LP64.
+#[inline]
+unsafe fn exact_direct_l_stream_format(format: *const c_char) -> Option<(u8, bool)> {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; reads stop at the first non-matching / NUL byte.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'l' {
+            return None;
+        }
+        let conv = match *f.add(2) {
+            b'd' => b'd',
+            b'u' => b'u',
+            b'x' => b'x',
+            _ => return None,
+        };
+        match *f.add(3) {
+            0 => Some((conv, false)),
+            b'\n' if *f.add(4) == 0 => Some((conv, true)),
+            _ => None,
+        }
+    }
+}
+
+/// Strict stream 64-bit `%ld`/`%lu`/`%lx` (± newline) fast path. The one variadic arg is read
+/// as raw `u64` bits (register-identical for signed/unsigned `long`); `conv` selects the render:
+/// `b'd'` = signed decimal (bits as i64, `unsigned_abs` handles `i64::MIN`), `b'u'` = unsigned
+/// decimal, `b'x'` = lowercase hex. Same extract-once-always-write discipline as the 32-bit path.
+unsafe fn strict_direct_stream_long(
+    id: usize,
+    stream: *mut c_void,
+    conv: u8,
+    bits: u64,
+    newline: bool,
+    caller: usize,
+) -> c_int {
+    let mut buf = [0u8; 21]; // 20 for "-9223372036854775808" + '\n'
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    let neg = conv == b'd' && (bits as i64) < 0;
+    let mut value = if conv == b'd' {
+        (bits as i64).unsigned_abs()
+    } else {
+        bits
+    };
+    loop {
+        start -= 1;
+        if conv == b'x' {
+            let d = (value & 0xf) as u8;
+            digits[start] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            value >>= 4;
+        } else {
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        digits[start] = b'-';
+    }
+    let dlen = digits.len() - start;
+    buf[..dlen].copy_from_slice(&digits[start..]);
+    let len = if newline {
+        buf[dlen] = b'\n';
+        dlen + 1
+    } else {
+        dlen
+    };
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// Strict stream `%d`/`%d\n` fast path for fprintf/printf: renders the int into a small buffer,
+/// then writes via the fast write caches (ST `try_fwrite_fast`, MT `try_write_fast_cell`) or the
+/// shared `write_bytes_without_runtime_policy` fallback — ALWAYS completes the write (the caller
+/// has already consumed the one variadic arg, so it must never fall through to re-extract).
+/// Returns the fprintf char count (bytes written) or -1 on a short write. Byte-identical to the
+/// render engine's plain `%d`(+`\n`).
+unsafe fn strict_direct_stream_d(
+    id: usize,
+    stream: *mut c_void,
+    arg: c_int,
+    newline: bool,
+    caller: usize,
+) -> c_int {
+    let mut buf = [0u8; 12];
+    let len = render_d_into_buf(arg, newline, &mut buf);
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// `fprintf`/`printf` for an exact `%f` / `%.Nf`: render into a stack buffer and
+/// write it through the same stream primitives the shipped `%d`/`%u`/`%lx`
+/// stream fast paths use, skipping parse + extract + render_segments.
+///
+/// Modelled on `strict_direct_stream_d` deliberately, including its write
+/// ladder: `try_fwrite_fast` for a cached full-buffered stream, then
+/// `try_write_fast_cell`, then the general
+/// `write_bytes_without_runtime_policy`. Reusing that ladder rather than
+/// inventing one is what keeps the stream's buffer accounting correct -- the
+/// failure mode a float fast path would otherwise introduce is producing the
+/// right BYTES while corrupting the FILE, which
+/// `conformance_diff_fprintf_fixed_fastpath` checks by comparing the flushed
+/// file contents AND asserting the return equals the bytes delivered.
+///
+/// Sized by `DIRECT_FIXED_BUF`, as every direct fixed render path is.
+unsafe fn strict_direct_stream_f(
+    id: usize,
+    stream: *mut c_void,
+    value: f64,
+    precision: usize,
+    caller: usize,
+) -> c_int {
+    let mut buf = [0u8; DIRECT_FIXED_BUF];
+    let len = render_direct_fixed(value, precision, &mut buf);
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    // SAFETY: `id`/`stream` name the caller's stream; `bytes` is initialised.
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes, caller) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+#[inline]
+unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'p' && *f.add(2) == 0 }
+}
+
+#[repr(C)]
+struct RoMappingCollector {
+    ranges: [(usize, usize); MAX_READ_ONLY_MAPPINGS],
+    len: usize,
+}
+
+#[cfg(not(test))]
+unsafe extern "C-unwind" fn collect_ro_mappings_phdr_cb(
+    info: *mut libc::dl_phdr_info,
+    _size: usize,
+    data: *mut c_void,
+) -> c_int {
+    if info.is_null() || data.is_null() {
+        return 0;
+    }
+    // SAFETY: `data` points to our stack-owned `RoMappingCollector` for the
+    // synchronous duration of `dl_iterate_phdr`.
+    let collector = unsafe { &mut *data.cast::<RoMappingCollector>() };
+    // SAFETY: `info` is valid for the duration of the callback.
+    let info = unsafe { &*info };
+    let base = info.dlpi_addr as usize;
+    let phnum = usize::from(info.dlpi_phnum).min(64);
+    if info.dlpi_phdr.is_null() || phnum == 0 {
+        return 0;
+    }
+    for idx in 0..phnum {
+        if collector.len >= MAX_READ_ONLY_MAPPINGS {
+            break;
+        }
+        // SAFETY: `dlpi_phdr` has `dlpi_phnum` entries.
+        let phdr = unsafe { *info.dlpi_phdr.add(idx) };
+        let memsz = phdr.p_memsz as usize;
+        if memsz == 0 {
+            continue;
+        }
+        if phdr.p_type == libc::PT_LOAD
+            && (phdr.p_flags & libc::PF_R != 0)
+            && (phdr.p_flags & libc::PF_W == 0)
+        {
+            let vaddr = base.wrapping_add(phdr.p_vaddr as usize);
+            let start = vaddr & !0xfffusize;
+            let end = vaddr.saturating_add(memsz).saturating_add(0xfff) & !0xfffusize;
+            if end > start {
+                collector.ranges[collector.len] = (start, end);
+                collector.len += 1;
+            }
+        } else if phdr.p_type == libc::PT_GNU_RELRO {
+            let vaddr = base.wrapping_add(phdr.p_vaddr as usize);
+            let start = vaddr & !0xfffusize;
+            let end = vaddr.saturating_add(memsz) & !0xfffusize;
+            if end > start {
+                collector.ranges[collector.len] = (start, end);
+                collector.len += 1;
+            }
+        }
+    }
+    0
+}
+
+fn parse_proc_maps_ro_line(line: &[u8]) -> Option<(usize, usize)> {
+    let mut i = 0;
+    while i < line.len() && line[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let mut start = 0usize;
+    let mut start_digits = 0usize;
+    while i < line.len() {
+        let d = match line[i] {
+            b'0'..=b'9' => (line[i] - b'0') as usize,
+            b'a'..=b'f' => (line[i] - b'a' + 10) as usize,
+            b'A'..=b'F' => (line[i] - b'A' + 10) as usize,
+            b'-' => {
+                i += 1;
+                break;
+            }
+            _ => return None,
+        };
+        start = start.checked_mul(16)?.checked_add(d)?;
+        start_digits += 1;
+        i += 1;
+    }
+    if start_digits == 0 {
+        return None;
+    }
+    let mut end = 0usize;
+    let mut end_digits = 0usize;
+    while i < line.len() {
+        let d = match line[i] {
+            b'0'..=b'9' => (line[i] - b'0') as usize,
+            b'a'..=b'f' => (line[i] - b'a' + 10) as usize,
+            b'A'..=b'F' => (line[i] - b'A' + 10) as usize,
+            b' ' | b'\t' => {
+                i += 1;
+                break;
+            }
+            _ => return None,
+        };
+        end = end.checked_mul(16)?.checked_add(d)?;
+        end_digits += 1;
+        i += 1;
+    }
+    if end_digits == 0 || end <= start {
+        return None;
+    }
+    while i < line.len() && (line[i] == b' ' || line[i] == b'\t') {
+        i += 1;
+    }
+    if i + 1 < line.len() && line[i] == b'r' && line[i + 1] != b'w' {
+        Some((start, end))
+    } else {
+        None
+    }
+}
+
+fn populate_ro_mappings_from_proc_maps(collector: &mut RoMappingCollector) {
+    let Ok(fd) = (unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/maps".as_ptr().cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
+    }) else {
+        return;
+    };
+    let fd = fd as c_int;
+    let mut buf = [0u8; 4096];
+    let mut line = [0u8; 512];
+    let mut line_len = 0usize;
+    while let Ok(n) = unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) } {
+        if n == 0 {
+            break;
+        }
+        for &b in &buf[..n] {
+            if b == b'\n' {
+                if collector.len < MAX_READ_ONLY_MAPPINGS
+                    && let Some(range) = parse_proc_maps_ro_line(&line[..line_len])
+                {
+                    collector.ranges[collector.len] = range;
+                    collector.len += 1;
+                }
+                line_len = 0;
+            } else if line_len < line.len() {
+                line[line_len] = b;
+                line_len += 1;
+            }
+        }
+        if collector.len >= MAX_READ_ONLY_MAPPINGS {
+            break;
+        }
+    }
+    if line_len > 0
+        && collector.len < MAX_READ_ONLY_MAPPINGS
+        && let Some(range) = parse_proc_maps_ro_line(&line[..line_len])
+    {
+        collector.ranges[collector.len] = range;
+        collector.len += 1;
+    }
+    let _ = raw_syscall::sys_close(fd);
+}
+
+#[cold]
+fn ensure_read_only_mappings_populated() -> bool {
+    match READ_ONLY_MAPPING_STATE.load(Ordering::Acquire) {
+        RO_MAP_READY => return true,
+        RO_MAP_INIT => return false,
+        _ => {}
+    }
+    if READ_ONLY_MAPPING_STATE
+        .compare_exchange(
+            RO_MAP_UNINIT,
+            RO_MAP_INIT,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_err()
+    {
+        return READ_ONLY_MAPPING_STATE.load(Ordering::Acquire) == RO_MAP_READY;
+    }
+
+    let mut collector = RoMappingCollector {
+        ranges: [(0, 0); MAX_READ_ONLY_MAPPINGS],
+        len: 0,
+    };
+    #[cfg(not(test))]
+    unsafe {
+        crate::dlfcn_abi::dl_iterate_phdr(
+            Some(collect_ro_mappings_phdr_cb),
+            (&mut collector as *mut RoMappingCollector).cast::<c_void>(),
+        );
+    }
+    if collector.len == 0 {
+        populate_ro_mappings_from_proc_maps(&mut collector);
+    }
+    if collector.len == 0 {
+        READ_ONLY_MAPPING_STATE.store(RO_MAP_UNINIT, Ordering::Release);
+        return false;
+    }
+    for (idx, &(start, end)) in collector.ranges[..collector.len].iter().enumerate() {
+        READ_ONLY_MAPPING_SLOTS[idx]
+            .start
+            .store(start, Ordering::Relaxed);
+        READ_ONLY_MAPPING_SLOTS[idx]
+            .end
+            .store(end, Ordering::Relaxed);
+    }
+    READ_ONLY_MAPPING_LEN.store(collector.len, Ordering::Release);
+    READ_ONLY_MAPPING_STATE.store(RO_MAP_READY, Ordering::Release);
+    true
+}
+
+#[inline]
+fn is_in_read_only_mapping(start_addr: usize, end_addr: usize) -> bool {
+    if READ_ONLY_MAPPING_STATE.load(Ordering::Acquire) != RO_MAP_READY
+        && !ensure_read_only_mappings_populated()
+    {
+        return false;
+    }
+    let count = READ_ONLY_MAPPING_LEN
+        .load(Ordering::Acquire)
+        .min(MAX_READ_ONLY_MAPPINGS);
+    for slot in &READ_ONLY_MAPPING_SLOTS[..count] {
+        let start = slot.start.load(Ordering::Relaxed);
+        let stop = slot.end.load(Ordering::Relaxed);
+        if start_addr >= start && end_addr <= stop {
+            return true;
+        }
+    }
+    false
+}
+
+#[doc(hidden)]
+pub fn ensure_read_only_mappings_cached() {
+    let _ = ensure_read_only_mappings_populated();
+}
+
+#[inline]
+fn literal_format_cache_entry(format: *const c_char) -> &'static LiteralFormatCacheEntry {
+    let idx = ((format as usize) >> 4) & (LITERAL_FORMAT_CACHE_SIZE - 1);
+    &LITERAL_FORMAT_CACHE[idx]
+}
+
+#[inline]
+fn lookup_literal_format_len(format: *const c_char) -> Option<usize> {
+    let ptr = format as usize;
+    let entry = literal_format_cache_entry(format);
+    if entry.key.load(Ordering::Acquire) != ptr {
+        return None;
+    }
+    let len = entry.len.load(Ordering::Acquire);
+    if entry.key.load(Ordering::Acquire) == ptr {
+        Some(len)
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn cache_literal_format_len(format: *const c_char, len: usize) {
+    let ptr = format as usize;
+    let Some(end) = ptr.checked_add(len.saturating_add(1)) else {
+        return;
+    };
+    if !is_in_read_only_mapping(ptr, end) {
+        return;
+    }
+
+    let entry = literal_format_cache_entry(format);
+    entry.key.store(0, Ordering::Release);
+    entry.len.store(len, Ordering::Release);
+    entry.key.store(ptr, Ordering::Release);
+}
+
+#[inline]
+unsafe fn strict_literal_format_len(format: *const c_char) -> Option<usize> {
+    if let Some(len) = lookup_literal_format_len(format) {
+        return Some(len);
+    }
+
+    let f = format.cast::<u8>();
+    let mut len = 0usize;
+    loop {
+        match unsafe { *f.add(len) } {
+            0 => {
+                cache_literal_format_len(format, len);
+                return Some(len);
+            }
+            b'%' => return None,
+            _ => len = len.saturating_add(1),
+        }
+    }
+}
+
+/// Return the zero-copy payload for exact non-NULL `%s` and `%s\n` formats.
+///
+/// The newline form is intentionally represented as two slices instead of
+/// materializing `string + "\n"`; callers decide whether their destination can
+/// preserve the old single-buffer failure semantics before using it.
+unsafe fn direct_printf_string_payload<'a>(
+    fmt_bytes: &[u8],
+    args: *const u64,
+    extract_count: usize,
+) -> Option<DirectPrintfPayload<'a>> {
+    if extract_count < 1 || !(fmt_bytes == b"%s" || fmt_bytes == b"%s\n") {
+        return None;
+    }
+    let p = unsafe { *args } as *const u8;
+    if p.is_null() {
+        return None;
+    }
+    if !runtime_policy::strict_passthrough_active()
+        && !is_valid_printf_string_ptr(p as usize, false)
+    {
+        return None;
+    }
+    let len = unsafe { c_str_bytes(p as *const c_char) }.len();
+    // SAFETY: the %s contract guarantees a NUL-terminated string that remains
+    // valid for the duration of the printf-family call.
+    let bytes = unsafe { std::slice::from_raw_parts(p, len) };
+    if fmt_bytes == b"%s\n" {
+        Some(DirectPrintfPayload::StringNewline(bytes))
+    } else {
+        Some(DirectPrintfPayload::String(bytes))
+    }
+}
+
+unsafe fn copy_direct_printf_payload(
+    dst: *mut c_char,
+    src: &[u8],
+    append_newline: bool,
+    copy_len: usize,
+) {
+    let string_copy = copy_len.min(src.len());
+    if string_copy > 0 {
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), dst.cast::<u8>(), string_copy) };
+    }
+    if append_newline && copy_len > src.len() {
+        unsafe { *dst.add(src.len()) = b'\n' as c_char };
+    }
+    unsafe { *dst.add(copy_len) = 0 };
+}
+
+unsafe fn direct_snprintf_s(
+    str_buf: *mut c_char,
+    size: usize,
+    arg: *const c_char,
+    append_newline: bool,
+    mode: SafetyLevel,
+    decision: RuntimeDecision,
+) -> c_int {
+    let mut upgraded_adverse = false;
+    let src = if arg.is_null() {
+        b"(null)"
+    } else if mode.heals_enabled() && !is_valid_printf_string_ptr(arg as usize, false) {
+        upgraded_adverse = true;
+        global_healing_policy().record(
+            "stdio",
+            "snprintf",
+            &HealingAction::UpgradeToSafeVariant,
+            RepairLogContext::new(0, Some(arg as usize)),
+        );
+        b"%s"
+    } else {
+        unsafe { c_str_bytes(arg) }
+    };
+    let total_len = src.len().saturating_add(usize::from(append_newline));
+    let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
+    let mut adverse = upgraded_adverse;
+    let mut has_room = size > 0 && !str_buf.is_null();
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let safe_size = size.min(bound);
+        if safe_size == 0 {
+            has_room = false;
+            if size > 0 {
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::ClampSize {
+                        requested: size,
+                        clamped: 0,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        } else {
+            let max_payload = safe_size.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                        truncated: copy_len,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        }
+    }
+
+    if has_room {
+        unsafe { copy_direct_printf_payload(str_buf, src, append_newline, copy_len) };
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+unsafe fn strict_direct_snprintf_s(
+    str_buf: *mut c_char,
+    size: usize,
+    arg: *const c_char,
+    append_newline: bool,
+) -> c_int {
+    // Length the argument with the page-safe SWAR/SIMD `scan_c_string` (the exact
+    // NUL scanner the deployed `strlen` ABI uses — NO membrane `known_remaining`),
+    // then bulk-copy with `memcpy`. The previous fused scan+copy loop paid a
+    // per-byte bound branch + scalar load/store. IN-PROCESS A/B (same worker, same
+    // run; snprintf_s_strict_ab_bench): for the bare "%s" copy kernel this is
+    // 2.6x faster than the byte loop at 38B (7.85 vs 20.5ns) and 5.6x at 200B
+    // (16.3 vs 91.7ns), and beats host glibc's snprintf at every size (4x@38B,
+    // 2x@200B); tiny <=8B strings cost a few ns more than the byte loop (SIMD
+    // prologue) but still beat glibc ~3x. Crucially call `scan_c_string` DIRECTLY,
+    // NOT `c_str_bytes` (which routes through `known_remaining`, a membrane
+    // object-size lookup that is ~5x the whole copy — that path was a measured
+    // regression). Output is byte-for-byte identical: truncation, newline, and
+    // NULL ("(null)") edge cases preserved.
+    let src: &[u8] = if arg.is_null() {
+        b"(null)"
+    } else {
+        let (len, _) = unsafe { super::string_abi::scan_c_string(arg, None) };
+        // SAFETY: scan_c_string scanned to the first NUL, so `len` bytes are readable.
+        unsafe { std::slice::from_raw_parts(arg.cast::<u8>(), len) }
+    };
+    let len = src.len();
+
+    if size == 0 || str_buf.is_null() {
+        return printf_result_to_c_int(len.saturating_add(usize::from(append_newline)));
+    }
+
+    let dst = str_buf.cast::<u8>();
+    let copy_limit = size - 1;
+    let string_copy = len.min(copy_limit);
+    if string_copy > 0 {
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), dst, string_copy) };
+    }
+
+    let total_len = len.saturating_add(usize::from(append_newline));
+    if append_newline && len < copy_limit {
+        unsafe { *dst.add(len) = b'\n' };
+    }
+    unsafe { *dst.add(total_len.min(copy_limit)) = 0 };
+    printf_result_to_c_int(total_len)
+}
+
+#[inline]
+unsafe fn strict_direct_snprintf_c(str_buf: *mut c_char, size: usize, arg: c_int) -> c_int {
+    if size > 0 && !str_buf.is_null() {
+        if size > 1 {
+            unsafe { *str_buf = (arg as u8) as c_char };
+            unsafe { *str_buf.add(1) = 0 };
+        } else {
+            unsafe { *str_buf = 0 };
+        }
+    }
+    1
+}
+
+#[inline]
+unsafe fn strict_direct_snprintf_u(str_buf: *mut c_char, size: usize, arg: c_uint) -> c_int {
+    // A promoted unsigned int has at most ten decimal digits. Build backwards
+    // into a fixed stack buffer, then apply snprintf's full-length/truncation
+    // contract directly without format parsing or a heap-backed render buffer.
+    let mut rendered = [0u8; 10];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` is writable by snprintf's caller,
+            // and the local source contains exactly `len` initialized bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// Signed-decimal sibling of `strict_direct_snprintf_u` for the ubiquitous exact `%d`.
+/// A promoted signed int renders to at most "-2147483648" = 11 bytes. `unsigned_abs`
+/// on the i64-widened value handles `i32::MIN` without overflow. Byte-identical to the
+/// render engine's `%d` output (sign then magnitude, no flags/width/precision).
+unsafe fn strict_direct_snprintf_d(str_buf: *mut c_char, size: usize, arg: c_int) -> c_int {
+    let mut rendered = [0u8; 11];
+    let neg = arg < 0;
+    let mut value = (arg as i64).unsigned_abs();
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        rendered[start] = b'-';
+    }
+    let len = rendered.len() - start;
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` is writable by snprintf's caller,
+            // and the local source contains exactly `len` initialized bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// Lowercase-hex sibling for the ubiquitous exact `%x` (no `0x` prefix, no leading zeros,
+/// `0` → "0"). A promoted unsigned int is at most 8 hex digits. Byte-identical to the render
+/// engine's plain `%x`.
+unsafe fn strict_direct_snprintf_x(str_buf: *mut c_char, size: usize, arg: c_uint) -> c_int {
+    let mut rendered = [0u8; 8];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` writable; source has `len` init bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, terminator in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// 64-bit signed decimal `%ld` (bounded). Promoted `long` renders to at most
+/// "-9223372036854775808" = 20 bytes; `unsigned_abs` handles `i64::MIN`.
+unsafe fn strict_direct_snprintf_ld(str_buf: *mut c_char, size: usize, arg: i64) -> c_int {
+    let mut rendered = [0u8; 20];
+    let neg = arg < 0;
+    let mut value = arg.unsigned_abs();
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        rendered[start] = b'-';
+    }
+    let len = rendered.len() - start;
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` writable; source has `len` init bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, terminator in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// 64-bit unsigned decimal `%lu` (bounded). Promoted `unsigned long`, at most 20 digits.
+unsafe fn strict_direct_snprintf_lu(str_buf: *mut c_char, size: usize, arg: u64) -> c_int {
+    let mut rendered = [0u8; 20];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: as `strict_direct_snprintf_ld`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, terminator in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// Unbounded `%ld` for `sprintf`. Same rendering as `strict_direct_snprintf_ld`.
+unsafe fn strict_direct_sprintf_ld(str_buf: *mut c_char, arg: i64) -> c_int {
+    let mut rendered = [0u8; 20];
+    let neg = arg < 0;
+    let mut value = arg.unsigned_abs();
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        rendered[start] = b'-';
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf buffer large enough; `rendered[start..]` has `len` bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// 64-bit lowercase hex `%lx` (bounded). Promoted `unsigned long`, at most 16 hex digits.
+unsafe fn strict_direct_snprintf_lx(str_buf: *mut c_char, size: usize, arg: u64) -> c_int {
+    let mut rendered = [0u8; 16];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` writable; source has `len` init bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, terminator in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// Unbounded `%lx` for `sprintf`. Same rendering as `strict_direct_snprintf_lx`.
+unsafe fn strict_direct_sprintf_lx(str_buf: *mut c_char, arg: u64) -> c_int {
+    let mut rendered = [0u8; 16];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf buffer large enough; `rendered[start..]` has `len` bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// Unbounded `%lu` for `sprintf`.
+unsafe fn strict_direct_sprintf_lu(str_buf: *mut c_char, arg: u64) -> c_int {
+    let mut rendered = [0u8; 20];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: as `strict_direct_sprintf_ld`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// Unbounded `%x` for `sprintf`. Same rendering as `strict_direct_snprintf_x`, no truncation.
+unsafe fn strict_direct_sprintf_x(str_buf: *mut c_char, arg: c_uint) -> c_int {
+    let mut rendered = [0u8; 8];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf's C contract gives a buffer large enough; `rendered[start..]` has `len`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// Unbounded (`sprintf`) sibling of [`strict_direct_snprintf_p`]: render `(nil)` for a null
+/// pointer or lowercase `0x…` hex, then copy every rendered byte + NUL into `str_buf` (no size
+/// bound — sprintf's C contract guarantees the buffer fits). Byte-identical to the bounded helper
+/// for the unbounded case, and to glibc `%p`.
+#[inline]
+unsafe fn strict_direct_sprintf_p(str_buf: *mut c_char, arg: *mut c_void) -> c_int {
+    let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
+    let (start, len) = if arg.is_null() {
+        rendered[..5].copy_from_slice(b"(nil)");
+        (0usize, 5usize)
+    } else {
+        let mut value = arg as usize;
+        let mut pos = rendered.len();
+        loop {
+            pos -= 1;
+            let digit = (value & 0xf) as u8;
+            rendered[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            };
+            value >>= 4;
+            if value == 0 {
+                break;
+            }
+        }
+        pos -= 2;
+        rendered[pos] = b'0';
+        rendered[pos + 1] = b'x';
+        (pos, rendered.len() - pos)
+    };
+    // SAFETY: sprintf's C contract gives a buffer large enough; `rendered[start..]` has `len`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+#[inline]
+unsafe fn strict_direct_snprintf_p(str_buf: *mut c_char, size: usize, arg: *mut c_void) -> c_int {
+    let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
+    let (start, len) = if arg.is_null() {
+        rendered[..5].copy_from_slice(b"(nil)");
+        (0, 5)
+    } else {
+        let mut value = arg as usize;
+        let mut pos = rendered.len();
+        loop {
+            pos -= 1;
+            let digit = (value & 0xf) as u8;
+            rendered[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            };
+            value >>= 4;
+            if value == 0 {
+                break;
+            }
+        }
+        pos -= 2;
+        rendered[pos] = b'0';
+        rendered[pos + 1] = b'x';
+        (pos, rendered.len() - pos)
+    };
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: snprintf's contract provides `size` writable destination
+            // bytes; `copy_len <= size - 1` and the local source has `len` bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is within the caller's
+        // writable snprintf destination region.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+#[inline]
+unsafe fn strict_direct_sprintf_c(str_buf: *mut c_char, arg: c_int) -> c_int {
+    unsafe { *str_buf = (arg as u8) as c_char };
+    unsafe { *str_buf.add(1) = 0 };
+    1
+}
+
+/// Unbounded signed-decimal `%d` for `sprintf` (no `size` — writes the full output + NUL).
+/// Same rendering as `strict_direct_snprintf_d`; `i32::MIN` handled via `unsigned_abs`.
+unsafe fn strict_direct_sprintf_d(str_buf: *mut c_char, arg: c_int) -> c_int {
+    let mut rendered = [0u8; 11];
+    let neg = arg < 0;
+    let mut value = (arg as i64).unsigned_abs();
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        rendered[start] = b'-';
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf's C contract gives an output buffer large enough for the full result;
+    // `rendered[start..]` holds exactly `len` initialized bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// Unbounded `%u` for `sprintf`. Same rendering as `strict_direct_snprintf_u`, no truncation.
+unsafe fn strict_direct_sprintf_u(str_buf: *mut c_char, arg: c_uint) -> c_int {
+    let mut rendered = [0u8; 10];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: as `strict_direct_sprintf_d`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+#[inline]
+unsafe fn copy_literal_bytes(dst: *mut c_char, src: *const c_char, len: usize) {
+    let dst = dst.cast::<u8>();
+    let src = src.cast::<u8>();
+    let mut offset = 0usize;
+    while offset + 8 <= len {
+        let word = unsafe { std::ptr::read_unaligned(src.add(offset).cast::<u64>()) };
+        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u64>(), word) };
+        offset += 8;
+    }
+    while offset < len {
+        unsafe { *dst.add(offset) = *src.add(offset) };
+        offset += 1;
+    }
+}
+
+unsafe fn strict_direct_snprintf_literal(
+    str_buf: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    len: usize,
+) -> c_int {
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            unsafe { copy_literal_bytes(str_buf, format, copy_len) };
+        }
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+unsafe fn strict_direct_sprintf_literal(
+    str_buf: *mut c_char,
+    format: *const c_char,
+    len: usize,
+) -> c_int {
+    if len > 0 {
+        unsafe { copy_literal_bytes(str_buf, format, len) };
+    }
+    unsafe { *str_buf.add(len) = 0 };
+    printf_result_to_c_int(len)
+}
+
+unsafe fn try_write_direct_s_newline_stream(id: usize, payload: &[u8]) -> Option<bool> {
+    let total_len = payload.len().saturating_add(1);
+    let cell = stream_cell(id)?;
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return Some(false);
+        }
+        let _ = s.set_orientation(-1);
+    }
+
+    if s.is_mem_backed() {
+        let mut written = s.mem_write(payload);
+        if written == payload.len() {
+            written = written.saturating_add(s.mem_write(b"\n"));
+        }
+        let adverse = written < total_len;
+        if adverse {
+            s.set_error();
+        }
+        return Some(!adverse);
+    }
+
+    if !matches!(s.buf_mode(), BufMode::Full) {
+        return None;
+    }
+    let pending = s.pending_flush().len();
+    if pending.saturating_add(total_len) > s.buffer_capacity() {
+        return None;
+    }
+
+    let first = match s.buffer_write(payload) {
+        Some(result) if !result.flush_needed => result.buffered,
+        _ => {
+            s.set_error();
+            return Some(false);
+        }
+    };
+    let second = match s.buffer_write(b"\n") {
+        Some(result) if !result.flush_needed => result.buffered,
+        _ => {
+            s.set_error();
+            return Some(false);
+        }
+    };
+
+    let accepted = first.saturating_add(second);
+    if accepted == total_len {
+        s.set_offset(s.offset().saturating_add(total_len as i64));
+        Some(true)
+    } else {
+        s.set_error();
+        Some(false)
+    }
+}
+
+pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
+    write_all_fd_for_caller(fd, data, 0)
+}
+
+pub(crate) fn write_all_fd_for_caller(fd: c_int, data: &[u8], caller: usize) -> bool {
+    let mut written = 0usize;
+    while written < data.len() {
+        let rc = unsafe {
+            stream_write_fd(
+                caller,
+                fd,
+                data[written..].as_ptr().cast(),
+                data.len() - written,
+            )
+        };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if e == errno::EINTR {
+                continue;
+            }
+            return false;
+        }
+        if rc == 0 {
+            return false;
+        }
+        written += rc as usize;
+    }
+    true
+}
+
+/// POSIX `snprintf` — format at most `size` bytes into `str`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn snprintf(
+    str_buf: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the pointer addresses this frame's live C va_list. The
+        // registered path must precede native fast paths, including overrides.
+        return unsafe {
+            registered_snprintf(str_buf, size, format, core::ptr::from_mut(&mut args).cast())
+        };
+    }
+    // ONE mode read for the whole direct-format chain. Every rung below used to
+    // call `strict_passthrough_active()` itself -- THIRTEEN of them -- so a format
+    // that matches none of them (any format with more than one conversion, which
+    // is most real ones) re-read the `MODE_STATE` atomic thirteen times on its way
+    // to the render engine. The value cannot change inside this function, so the
+    // reads after the first were pure repetition.
+    //
+    // The per-rung format scans are NOT addressed here; each `exact_direct_*_format`
+    // still walks the format. This removes only the repeated mode test.
+    let strict_direct = runtime_policy::strict_passthrough_active();
+    if strict_direct && let Some(literal_len) = unsafe { strict_literal_format_len(format) } {
+        return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
+    }
+    if strict_direct && let Some(append_newline) = unsafe { exact_direct_s_format(format) } {
+        let arg = unsafe { args.next_arg::<*const c_char>() };
+        return unsafe { strict_direct_snprintf_s(str_buf, size, arg, append_newline) };
+    }
+    if strict_direct && unsafe { exact_direct_c_format(format) } {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_snprintf_c(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_u_format(format) } {
+        // SAFETY: exact `%u` consumes one promoted `unsigned int` argument.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        // SAFETY: snprintf's caller provides `size` writable bytes whenever
+        // `size > 0`; the helper bounds every write and appends the terminator.
+        return unsafe { strict_direct_snprintf_u(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_d_format(format) } {
+        // SAFETY: exact `%d` consumes one promoted `int` argument. `%d` is the most common
+        // integer format and previously fell through to the full membrane decide + render
+        // path (the `%u`/`%c`/`%p` bypass omitted it); the helper bounds every write.
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_snprintf_d(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_x_format(format) } {
+        // SAFETY: exact `%x` consumes one promoted `unsigned int`; the helper bounds writes.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_snprintf_x(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_ld_format(format) } {
+        // SAFETY: exact `%ld` consumes one `long` (64-bit on LP64); helper bounds writes.
+        let arg = unsafe { args.next_arg::<i64>() };
+        return unsafe { strict_direct_snprintf_ld(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_lu_format(format) } {
+        // SAFETY: exact `%lu` consumes one `unsigned long` (64-bit on LP64).
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_snprintf_lu(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_zu_format(format) } {
+        // SAFETY: exact `%zu` consumes one `size_t` (u64 on LP64) — same render as `%lu`.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_snprintf_lu(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_zd_format(format) } {
+        // SAFETY: exact `%zd` consumes one `ssize_t` (i64 on LP64) — same render as `%ld`.
+        let arg = unsafe { args.next_arg::<i64>() };
+        return unsafe { strict_direct_snprintf_ld(str_buf, size, arg) };
+    }
+    if strict_direct && unsafe { exact_direct_lx_format(format) } {
+        // SAFETY: exact `%lx` consumes one `unsigned long` (64-bit on LP64).
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_snprintf_lx(str_buf, size, arg) };
+    }
+    // SAFETY: `format` is non-null and valid through its NUL terminator under
+    // the printf-family C contract checked by `exact_direct_p_format`.
+    if strict_direct && unsafe { exact_direct_p_format(format) } {
+        // SAFETY: exact `%p` consumes one promoted `void *` variadic argument.
+        let arg = unsafe { args.next_arg::<*mut c_void>() };
+        // SAFETY: snprintf's C contract supplies `size` writable bytes when
+        // `size > 0`; the helper bounds every write to that region.
+        return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
+    }
+    // Placed LAST in the chain so it cannot add a byte-compare to any integer or
+    // string format's path — those are the measured campaign win and must not
+    // regress. A float format currently reaches this point having failed every
+    // probe above and then pays the full pipeline below; bd-4vwb9q measures that
+    // fixed cost at 87.5 ns, which is the whole of the 1.56-1.78x float loss.
+    // SAFETY: `format` is non-null and valid through its NUL terminator under
+    // the printf-family C contract checked by `exact_direct_f_format`.
+    if strict_direct && let Some(precision) = unsafe { exact_direct_f_format(format) } {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        // SAFETY: snprintf's C contract supplies `size` writable bytes when
+        // `size > 0`; the helper bounds every write to that region.
+        return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
+    }
+    if strict_direct && unsafe { is_strict_direct_snprintf_format(format) } {
+        return strict_direct_snprintf_fused!(str_buf, size, format, args);
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        str_buf as usize,
+        size,
+        true,
+        str_buf.is_null() && size > 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    if let Some(append_newline) = unsafe { exact_direct_s_format(format) } {
+        let arg = unsafe { args.next_arg::<*const c_char>() };
+        return unsafe { direct_snprintf_s(str_buf, size, arg, append_newline, mode, decision) };
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+
+    // Fast path for ubiquitous exact "%s" and "%s\n": copy the string
+    // argument straight to the destination, skipping the render engine and
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
+    let _rendered_hold;
+    let (src_ptr, src_len, append_newline, total_len) = if !fmt_bytes.contains(&b'%') {
+        // Pure-literal format: output is the format verbatim — skip parse/extract/render
+        // entirely; the truncating copy-out below handles `size`/NUL byte-identically.
+        (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
+            None => {
+                // Reuse the segments parsed above instead of re-parsing in render_printf.
+                let rendered = unsafe {
+                    render_segments(
+                        "snprintf",
+                        &segments,
+                        arg_buf.as_ptr(),
+                        extract_count,
+                        false,
+                    )
+                };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
+        }
+    };
+
+    let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
+    let mut adverse = false;
+    let mut has_room = size > 0 && !str_buf.is_null();
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let safe_size = size.min(bound);
+        if safe_size == 0 {
+            has_room = false;
+            if size > 0 {
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::ClampSize {
+                        requested: size,
+                        clamped: 0,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        } else {
+            let max_payload = safe_size.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                        truncated: copy_len,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        }
+    }
+
+    if has_room {
+        unsafe {
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// POSIX `sprintf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn sprintf(
+    str_buf: *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if format.is_null() || str_buf.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: sprintf's destination is unbounded by contract; hardened
+        // registered formatting still clamps any known allocation extent.
+        return unsafe {
+            registered_snprintf(
+                str_buf,
+                usize::MAX,
+                format,
+                core::ptr::from_mut(&mut args).cast(),
+            )
+        };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
+    {
+        return unsafe { strict_direct_sprintf_literal(str_buf, format, literal_len) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_c_format(format) } {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_sprintf_c(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        // SAFETY: exact `%d` consumes one promoted `int`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_sprintf_d(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_u_format(format) } {
+        // SAFETY: exact `%u` consumes one promoted `unsigned int`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_sprintf_u(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        // SAFETY: exact `%x` consumes one promoted `unsigned int`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_sprintf_x(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_ld_format(format) } {
+        // SAFETY: exact `%ld` consumes one `long`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<i64>() };
+        return unsafe { strict_direct_sprintf_ld(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_lu_format(format) } {
+        // SAFETY: exact `%lu` consumes one `unsigned long`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_sprintf_lu(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zu_format(format) } {
+        // SAFETY: exact `%zu` (size_t == u64 on LP64) — same render as `%lu`.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_sprintf_lu(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zd_format(format) } {
+        // SAFETY: exact `%zd` (ssize_t == i64 on LP64) — same render as `%ld`.
+        let arg = unsafe { args.next_arg::<i64>() };
+        return unsafe { strict_direct_sprintf_ld(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_lx_format(format) } {
+        // SAFETY: exact `%lx` consumes one `unsigned long`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_sprintf_lx(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        // SAFETY: exact `%p` consumes one promoted `void *`; unbounded sprintf buffer. Renders
+        // the same lowercase `0x…` / `(nil)` as the shipped snprintf `%p`, byte-identical.
+        let arg = unsafe { args.next_arg::<*mut c_void>() };
+        return unsafe { strict_direct_sprintf_p(str_buf, arg) };
+    }
+    // Float probe LAST, so it adds no byte-compare to the integer/string paths
+    // that carry the measured campaign win. See bd-4vwb9q / bd-5pfs0p.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        // SAFETY: sprintf's contract gives an unbounded destination.
+        return unsafe { strict_direct_sprintf_f(str_buf, arg, precision) };
+    }
+
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+
+    // Fast path for exact "%s" and "%s\n" (see snprintf): copy the string
+    // argument straight to the destination, skipping the render engine and its
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
+    let _rendered_hold;
+    let (src_ptr, src_len, append_newline, total_len) = if !fmt_bytes.contains(&b'%') {
+        // Pure-literal format: output is the format verbatim — skip parse/extract/render.
+        (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
+            None => {
+                let rendered = unsafe {
+                    render_segments("sprintf", &segments, arg_buf.as_ptr(), extract_count, false)
+                };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
+        }
+    };
+
+    let mut copy_len = total_len;
+    let mut adverse = false;
+    let mut has_room = true;
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        if bound == 0 {
+            has_room = false;
+            adverse = true;
+            global_healing_policy().record(
+                "stdio",
+                "sprintf",
+                &HealingAction::ClampSize {
+                    requested: total_len,
+                    clamped: 0,
+                },
+                RepairLogContext::new(0, Some(str_buf as usize)),
+            );
+        } else {
+            let max_payload = bound.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "sprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.saturating_add(1),
+                        truncated: copy_len,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        }
+    }
+
+    if has_room {
+        unsafe {
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// POSIX `fprintf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    let caller = core::intrinsics::return_address() as usize;
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the caller supplies the live FILE, format and variadic list.
+        return unsafe {
+            registered_printf_stream_for_caller(
+                stream,
+                c_str_bytes(format),
+                core::ptr::from_mut(&mut args).cast(),
+                false,
+                caller,
+            )
+        };
+    }
+    let id = canonical_stream_id(stream);
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Strict exact `%d`/`%d\n` fast path (the most common formatted-output pattern): render the
+    // int inline and write via the fast caches, skipping parse + render_segments. Extracts the
+    // one arg and ALWAYS completes the write (never falls through to re-extract). Byte-identical.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_stream_d(id, stream, arg, newline, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) }
+    {
+        let bits = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_stream_long(id, stream, conv, bits, newline, caller) };
+    }
+    // Float probe LAST, so it adds no byte-compare to the integer and string
+    // stream paths above. Unlike the buffer entry points this one does NOT skip
+    // the membrane -- fprintf/printf run runtime_policy::decide before any fast
+    // path -- so the win here is the parse + extract + render_segments pipeline
+    // only. Held by conformance_diff_fprintf_fixed_fastpath and
+    // conformance_diff_printf_fixed_fastpath, which compare the flushed stream
+    // bytes and assert the return equals the bytes delivered.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        return unsafe { strict_direct_stream_f(id, stream, arg, precision, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { is_strict_direct_snprintf_format(format) }
+    {
+        return strict_direct_stream_fused!(id, stream, format, args, caller);
+    }
+
+    let mut _bare_hold = None;
+    let bytes = if !fmt_bytes.contains(&b'%') {
+        fmt_bytes
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+        let direct_payload =
+            unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+        if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+            let total_len = bytes.len().saturating_add(1);
+            if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    !success,
+                );
+                return if success {
+                    printf_result_to_c_int(total_len)
+                } else {
+                    -1
+                };
+            }
+        }
+
+        // Bare "%s" fast path: emit the string straight to the stream, else render.
+        match direct_payload {
+            Some(DirectPrintfPayload::String(bytes)) => bytes,
+            _ => unsafe {
+                bare_s_or_render(
+                    "fprintf",
+                    fmt_bytes,
+                    &segments,
+                    arg_buf.as_ptr(),
+                    extract_count,
+                    &mut _bare_hold,
+                )
+            },
+        }
+    };
+    let total_len = bytes.len();
+
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        if s.is_mem_backed() {
+            let written = s.mem_write(bytes);
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        if is_cookie_stream(id) {
+            // Cookie streams (including fmemopen) have no kernel descriptor.
+            // Keep their output on the callback path and out of fd-only caches.
+            // SAFETY: the locked stream and rendered bytes remain live through
+            // the synchronous callback, just as in fwrite/fputs.
+            let written = unsafe { cookie_buffer_write(id, s, bytes) };
+            let adverse = written < total_len;
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(stream, id, s as *mut StdioStream);
+        let write_result = match s.buffer_write(bytes) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
+            let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
+            let mut written = 0usize;
+            let mut success = true;
+            while written < write_result.flush_data.len() {
+                let rc = unsafe {
+                    stream_write_fd(
+                        caller,
+                        fd,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
+                    )
+                };
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
+                    success = false;
+                    break;
+                }
+                written += rc as usize;
+            }
+            if success {
+                let flushed_new = write_result
+                    .flush_data
+                    .len()
+                    .saturating_sub(flushed_from_buffer);
+                let total_written = write_result.buffered.saturating_add(flushed_new);
+                if total_written > 0 {
+                    s.set_offset(s.offset().saturating_add(total_written as i64));
+                }
+            } else {
+                s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        }
+    } else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if stream_is_host_owned(stream)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+            if written > 0 {
+                mark_host_io_started(stream);
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                written < bytes.len(),
+            );
+            return if written == bytes.len() {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// POSIX `printf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdout_stream()) };
+    let caller = core::intrinsics::return_address() as usize;
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: printf owns this live va_list and uses the active stdout FILE.
+        return unsafe {
+            registered_printf_stream_for_caller(
+                active_stdout_stream(),
+                c_str_bytes(format),
+                core::ptr::from_mut(&mut args).cast(),
+                false,
+                caller,
+            )
+        };
+    }
+
+    // POSIX: printf(...) is equivalent to fprintf(stdout, ...).
+    // Route through the stdout stream to maintain buffer coherence.
+    let stdout_ptr = active_stdout_stream();
+    let id = canonical_stream_id(stdout_ptr);
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Strict exact `%d`/`%d\n` fast path (see fprintf): render + fast-write, one arg consumed,
+    // always completes. printf == fprintf(stdout, ...).
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_stream_d(id, stdout_ptr, arg, newline, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_stream_ux(id, stdout_ptr, arg, hex, newline, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) }
+    {
+        let bits = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_stream_long(id, stdout_ptr, conv, bits, newline, caller) };
+    }
+    // Float probe LAST, as in fprintf. printf routes through the SAME stdout
+    // stream object and the same write ladder, so buffer coherence with an
+    // interleaved fprintf/fputs is preserved -- which is why this passes
+    // `stdout_ptr` rather than resolving a stream of its own.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one promoted `double` argument.
+        let arg = unsafe { args.next_arg::<f64>() };
+        return unsafe { strict_direct_stream_f(id, stdout_ptr, arg, precision, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { is_strict_direct_snprintf_format(format) }
+    {
+        return strict_direct_stream_fused!(id, stdout_ptr, format, args, caller);
+    }
+
+    let mut _bare_hold = None;
+    let bytes = if !fmt_bytes.contains(&b'%') {
+        fmt_bytes
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        };
+        let extract_count = arg_buf.len();
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+        let direct_payload =
+            unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+        if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+            let total_len = bytes.len().saturating_add(1);
+            if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    !success,
+                );
+                return if success {
+                    printf_result_to_c_int(total_len)
+                } else {
+                    -1
+                };
+            }
+        }
+
+        // Bare "%s" fast path: emit the string straight to the stream, else render.
+        match direct_payload {
+            Some(DirectPrintfPayload::String(bytes)) => bytes,
+            _ => unsafe {
+                bare_s_or_render(
+                    "printf",
+                    fmt_bytes,
+                    &segments,
+                    arg_buf.as_ptr(),
+                    extract_count,
+                    &mut _bare_hold,
+                )
+            },
+        }
+    };
+    let total_len = bytes.len();
+
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        if s.is_mem_backed() {
+            let written = s.mem_write(bytes);
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(stdout_ptr, id, s as *mut StdioStream);
+        let write_result = match s.buffer_write(bytes) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
+            let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
+            let mut written = 0usize;
+            let mut success = true;
+            while written < write_result.flush_data.len() {
+                let rc = unsafe {
+                    stream_write_fd(
+                        caller,
+                        fd,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
+                    )
+                };
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
+                    success = false;
+                    break;
+                }
+                written += rc as usize;
+            }
+            if !success {
+                s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            let total_written = write_result.buffered.saturating_add(flushed_new);
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        }
+    } else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if stream_is_host_owned(stdout_ptr)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
+            if written > 0 {
+                mark_host_io_started(stdout_ptr);
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                written < bytes.len(),
+            );
+            return if written == bytes.len() {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// Exact `%d` (±\n) direct-fd render+write for dprintf/vdprintf: render into a stack buffer and
+/// `write_all_fd`, skipping parse+extract+render. Byte-identical to the slow path (same render
+/// helper; dprintf writes straight to the fd unbuffered so there is no stream state to sync).
+#[inline]
+unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool, caller: usize) -> c_int {
+    let mut buf = [0u8; 12];
+    let len = render_d_into_buf(arg, newline, &mut buf);
+    if write_all_fd_for_caller(fd, &buf[..len], caller) {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// Exact `%x`/`%u` (±\n) direct-fd render+write sibling of [`strict_direct_fd_d`].
+#[inline]
+unsafe fn strict_direct_fd_ux(
+    fd: c_int,
+    arg: c_uint,
+    hex: bool,
+    newline: bool,
+    caller: usize,
+) -> c_int {
+    let mut buf = [0u8; 11];
+    let len = render_ux_into_buf(arg, hex, newline, &mut buf);
+    if write_all_fd_for_caller(fd, &buf[..len], caller) {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// POSIX `dprintf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
+    let caller = core::intrinsics::return_address() as usize;
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the callback engine consumes this frame's live va_list.
+        return unsafe {
+            registered_dprintf(fd, format, core::ptr::from_mut(&mut args).cast(), caller)
+        };
+    }
+    // Exact %d/%x/%u (±\n) fast paths — render inline + write straight to the fd, skipping
+    // decide + parse + extract + render_segments. Extract-once, return immediately.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_fd_d(fd, arg, newline, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline, caller) };
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    // Bare "%s" fast path: write the string straight to the fd, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(
+            "dprintf",
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
+    };
+    let total_len = bytes.len();
+
+    // The render error belongs to this call, even if the descriptor write
+    // fails too. Consume it before I/O so no early return can poison the next
+    // fast-path printf, and retain it for the final errno decision.
+    let render_failure = take_render_failure();
+    let adverse = !write_all_fd_for_caller(fd, bytes, caller);
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    if let Some(error) = render_failure {
+        // SAFETY: errno is this thread's writable ABI error slot.
+        unsafe { set_abi_errno(error) };
+        -1
+    } else if adverse {
+        -1
+    } else {
+        printf_result_to_c_int(total_len)
+    }
+}
+
+/// GNU `asprintf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn asprintf(
+    strp: *mut *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if strp.is_null() || format.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: strp is the caller's allocation output and args is live.
+        return unsafe { registered_asprintf(strp, format, core::ptr::from_mut(&mut args).cast()) };
+    }
+    // SAFETY: caller provided non-null out-pointer.
+    unsafe { *strp = std::ptr::null_mut() };
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, strp as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    // Bare "%s" fast path: use the string directly, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(
+            "asprintf",
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
+    };
+    let total_len = bytes.len();
+    let alloc_size = total_len.saturating_add(1);
+
+    // SAFETY: allocation size is computed from rendered payload and includes trailing NUL byte.
+    let out = unsafe { malloc(alloc_size).cast::<c_char>() };
+    if out.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), total_len);
+        *out.add(total_len) = 0;
+        *strp = out;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+// ===========================================================================
+// v*printf family — Implemented (native format engine + va_list extraction)
+//
+// On x86_64 Linux, va_list is a pointer to `__va_list_tag`:
+//   struct __va_list_tag {
+//       unsigned int gp_offset;    // +0: offset into reg_save_area for next GP arg
+//       unsigned int fp_offset;    // +4: offset into reg_save_area for next FP arg
+//       void *overflow_arg_area;   // +8: pointer to next stack argument
+//       void *reg_save_area;       // +16: saved register area
+//   };
+// GP registers (rdi,rsi,rdx,rcx,r8,r9) hold integer/pointer args: gp_offset 0..48
+// FP registers (xmm0..xmm7) hold float/double args: fp_offset 48..176
+// ===========================================================================
+
+/// Extract printf arguments from a raw va_list pointer into a u64 buffer.
+///
+/// Reads each argument according to the format specifiers: integer/pointer/string
+/// args come from GP registers or overflow area, float args from FP registers or
+/// overflow area.
+pub(crate) unsafe fn vprintf_extract_args(
+    segments: &[FormatSegment<'_>],
+    ap: *mut c_void,
+    buf: &mut [u64],
+    extract_count: usize,
+) -> usize {
+    let plan = core_positional_printf_arg_plan(segments);
+    // SAFETY: the original caller supplies the live va_list and writable
+    // buffer. The architecture walker bounds writes by both count and length.
+    unsafe { vprintf_extract_args_with_plan(segments, ap, buf, extract_count, plan.as_deref()) }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn vprintf_extract_args_with_plan(
+    segments: &[FormatSegment<'_>],
+    ap: *mut c_void,
+    buf: &mut [u64],
+    extract_count: usize,
+    plan: Option<&[ValueArgKind]>,
+) -> usize {
+    let extract_count = extract_count.min(buf.len());
+    let gp_offset_ptr = ap as *mut u32;
+    let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
+    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
+    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
+
+    let mut idx = 0usize;
+    if let Some(plan) = plan {
+        for kind in plan.iter().take(extract_count) {
+            match kind {
+                ValueArgKind::Gp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                }
+                ValueArgKind::Fp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                }
+                // `%1$Lf`. Before ValueArgKind carried an X87 class this arm
+                // did not exist and a positional long double fell into `Fp`
+                // above, taking eight bytes out of the SSE register save area
+                // and leaving the caller's sixteen stack bytes unconsumed —
+                // so every LATER positional argument was read from the wrong
+                // place too. bd-longdouble-varargs-43usjw item (B).
+                ValueArgKind::X87 => {
+                    if idx < extract_count {
+                        buf[idx] = unsafe { vprintf_read_x87(overflow_ptr) };
+                        idx += 1;
+                    }
+                }
+            }
+        }
+    } else {
+        for seg in segments {
+            if let FormatSegment::Spec(spec) = seg {
+                if spec.width.uses_arg() && idx < extract_count {
+                    buf[idx] =
+                        unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    idx += 1;
+                }
+                if spec.precision.uses_arg() && idx < extract_count {
+                    buf[idx] =
+                        unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    idx += 1;
+                }
+                // Same single classification as the register-path macro above.
+                match spec.value_arg_kind() {
+                    Some(ValueArgKind::Fp | ValueArgKind::X87) if idx < extract_count => {
+                        // `%Lf` is class X87 and lives on the stack, not in an SSE
+                        // register. Reading it as a double both returns nonsense and
+                        // leaves its sixteen stack bytes unconsumed, which shifts
+                        // every later argument.
+                        buf[idx] = if spec.length == LengthMod::BigL {
+                            unsafe { vprintf_read_x87(overflow_ptr) }
+                        } else {
+                            unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) }
+                        };
+                        idx += 1;
+                    }
+                    Some(ValueArgKind::Gp) if idx < extract_count => {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    idx
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn vprintf_extract_args_with_plan(
+    segments: &[FormatSegment<'_>],
+    ap: *mut c_void,
+    buf: &mut [u64],
+    extract_count: usize,
+    plan: Option<&[ValueArgKind]>,
+) -> usize {
+    let extract_count = extract_count.min(buf.len());
+    let stack_ptr = ap as *mut *mut u8;
+    let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
+    let vr_top = unsafe { *((ap as *mut u8).add(16) as *const *mut u8) };
+    let gr_offs_ptr = unsafe { (ap as *mut u8).add(24) as *mut i32 };
+    let vr_offs_ptr = unsafe { (ap as *mut u8).add(28) as *mut i32 };
+
+    let mut idx = 0usize;
+    if let Some(plan) = plan {
+        for kind in plan.iter().take(extract_count) {
+            match kind {
+                ValueArgKind::Gp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                        idx += 1;
+                    }
+                }
+                ValueArgKind::Fp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_fp_aarch64(stack_ptr, vr_top, vr_offs_ptr) };
+                        idx += 1;
+                    }
+                }
+                ValueArgKind::X87 => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_x87_aarch64(stack_ptr, vr_top, vr_offs_ptr) };
+                        idx += 1;
+                    }
+                }
+            }
+        }
+    } else {
+        for seg in segments {
+            if let FormatSegment::Spec(spec) = seg {
+                if spec.width.uses_arg() && idx < extract_count {
+                    buf[idx] = unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                    idx += 1;
+                }
+                if spec.precision.uses_arg() && idx < extract_count {
+                    buf[idx] = unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                    idx += 1;
+                }
+                match spec.value_arg_kind() {
+                    Some(ValueArgKind::Fp | ValueArgKind::X87) if idx < extract_count => {
+                        buf[idx] = if spec.length == LengthMod::BigL {
+                            unsafe { vprintf_read_x87_aarch64(stack_ptr, vr_top, vr_offs_ptr) }
+                        } else {
+                            unsafe { vprintf_read_fp_aarch64(stack_ptr, vr_top, vr_offs_ptr) }
+                        };
+                        idx += 1;
+                    }
+                    Some(ValueArgKind::Gp) if idx < extract_count => {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                        idx += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    idx
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+unsafe fn vprintf_extract_args_with_plan(
+    _segments: &[FormatSegment<'_>],
+    _ap: *mut c_void,
+    _buf: &mut [u64],
+    _extract_count: usize,
+    _plan: Option<&[ValueArgKind]>,
+) -> usize {
+    0
+}
+
+/// Read the next GP (integer/pointer) argument from va_list.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn vprintf_read_gp(
+    gp_offset_ptr: *mut u32,
+    overflow_ptr: *mut *mut u8,
+    reg_save_ptr: *mut *mut u8,
+) -> u64 {
+    let gp_off = unsafe { *gp_offset_ptr };
+    if gp_off < 48 {
+        let p = unsafe { (*reg_save_ptr).add(gp_off as usize) as *const u64 };
+        unsafe { *gp_offset_ptr = gp_off + 8 };
+        unsafe { *p }
+    } else {
+        let p = unsafe { *overflow_ptr as *const u64 };
+        unsafe { *overflow_ptr = (*overflow_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+/// Read the next FP (float/double) argument from va_list.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn vprintf_read_fp(
+    fp_offset_ptr: *mut u32,
+    overflow_ptr: *mut *mut u8,
+    reg_save_ptr: *mut *mut u8,
+) -> u64 {
+    let fp_off = unsafe { *fp_offset_ptr };
+    if fp_off < 176 {
+        // FP register save slots are 16 bytes each (SSE register width),
+        // but we only read the low 8 bytes (double).
+        let p = unsafe { (*reg_save_ptr).add(fp_off as usize) as *const u64 };
+        unsafe { *fp_offset_ptr = fp_off + 16 };
+        unsafe { *p }
+    } else {
+        // On the stack, doubles occupy 8 bytes.
+        let p = unsafe { *overflow_ptr as *const u64 };
+        unsafe { *overflow_ptr = (*overflow_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+/// Consume a `long double` argument and return the ADDRESS of its stack slot.
+#[cfg(target_arch = "x86_64")]
+unsafe fn vprintf_read_x87(overflow_ptr: *mut *mut u8) -> u64 {
+    // The slot is 16-byte aligned, so round the cursor up before reading.
+    let raw = unsafe { *overflow_ptr } as usize;
+    let aligned = (raw + 15) & !15usize;
+    unsafe { *overflow_ptr = (aligned + 16) as *mut u8 };
+    aligned as u64
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn vprintf_read_gp_aarch64(
+    stack_ptr: *mut *mut u8,
+    gr_top: *mut u8,
+    gr_offs_ptr: *mut i32,
+) -> u64 {
+    let gr_offs = unsafe { *gr_offs_ptr };
+    if gr_offs < 0 {
+        let p = unsafe { gr_top.offset(gr_offs as isize) as *const u64 };
+        unsafe { *gr_offs_ptr = gr_offs + 8 };
+        unsafe { *p }
+    } else {
+        let p = unsafe { *stack_ptr as *const u64 };
+        unsafe { *stack_ptr = (*stack_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn vprintf_read_fp_aarch64(
+    stack_ptr: *mut *mut u8,
+    vr_top: *mut u8,
+    vr_offs_ptr: *mut i32,
+) -> u64 {
+    let vr_offs = unsafe { *vr_offs_ptr };
+    if vr_offs < 0 {
+        let p = unsafe { vr_top.offset(vr_offs as isize) as *const u64 };
+        unsafe { *vr_offs_ptr = vr_offs + 16 };
+        unsafe { *p }
+    } else {
+        let p = unsafe { *stack_ptr as *const u64 };
+        unsafe { *stack_ptr = (*stack_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn vprintf_read_x87_aarch64(
+    stack_ptr: *mut *mut u8,
+    vr_top: *mut u8,
+    vr_offs_ptr: *mut i32,
+) -> u64 {
+    let vr_offs = unsafe { *vr_offs_ptr };
+    if vr_offs <= -16 {
+        let p = unsafe { vr_top.offset(vr_offs as isize) as usize };
+        unsafe { *vr_offs_ptr = vr_offs + 16 };
+        p as u64
+    } else {
+        let cur = unsafe { *stack_ptr as usize };
+        let aligned = (cur + 15) & !15usize;
+        unsafe { *stack_ptr = (aligned + 16) as *mut u8 };
+        aligned as u64
+    }
+}
+
+/// Round an x87 80-bit extended value to `f64`, correctly and in one step.
+///
+/// The significand's leading one is EXPLICIT on x87 (bit 63), and exponent
+/// fields 0 and 1 denote the same scale, which is why `max(exp_field, 1)` is the
+/// whole subnormal handling. Rounding is round-half-to-even on the exact
+/// integer, so it agrees with converting the exact rational — checked against
+/// exact-rational rounding over 6007 values spanning x87 subnormals, the f64
+/// subnormal band, and the overflow edge.
+#[allow(dead_code)]
+pub(crate) fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
+    let significand = u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+    let sign_exp = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let sign = u64::from(sign_exp >> 15) << 63;
+    let exp_field = sign_exp & 0x7fff;
+
+    if exp_field == 0x7fff {
+        // Infinity has only the explicit integer bit set; anything else is NaN.
+        // A quiet NaN is emitted rather than the payload, which is what every
+        // %Lf rendering does with it anyway.
+        return if significand << 1 == 0 {
+            f64::from_bits(sign | 0x7ff0_0000_0000_0000)
+        } else {
+            f64::from_bits(sign | 0x7ff8_0000_0000_0000)
+        };
+    }
+    if significand == 0 {
+        return f64::from_bits(sign);
+    }
+
+    let exponent = i32::from(exp_field.max(1)) - 16383 - 63;
+    let width = 64 - significand.leading_zeros() as i32;
+    let leading = exponent + width - 1;
+    if leading > 1024 {
+        return f64::from_bits(sign | 0x7ff0_0000_0000_0000);
+    }
+    if leading < -1075 {
+        return f64::from_bits(sign);
+    }
+
+    // Keep 53 bits when the result is normal, fewer when it lands on the f64
+    // subnormal grid, whose ulp is 2^-1074.
+    let keep = if leading >= -1022 {
+        53
+    } else {
+        53 - (-1022 - leading)
+    };
+    let drop = width - keep;
+    let (mantissa, shift) = if drop <= 0 {
+        (significand << (-drop), exponent + drop)
+    } else {
+        let quotient = significand >> drop;
+        let remainder = significand & ((1u64 << drop) - 1);
+        let half = 1u64 << (drop - 1);
+        let rounded = if remainder > half || (remainder == half && quotient & 1 == 1) {
+            quotient + 1
+        } else {
+            quotient
+        };
+        (rounded, exponent + drop)
+    };
+    if mantissa == 0 {
+        return f64::from_bits(sign);
+    }
+
+    let width2 = 64 - mantissa.leading_zeros() as i32;
+    let leading2 = shift + width2 - 1;
+    if leading2 > 1023 {
+        return f64::from_bits(sign | 0x7ff0_0000_0000_0000);
+    }
+    if leading2 >= -1022 {
+        let exp_bits = (leading2 + 1023) as u64;
+        let frac = if width2 > 53 {
+            mantissa >> (width2 - 53)
+        } else {
+            mantissa << (53 - width2)
+        };
+        f64::from_bits(sign | (exp_bits << 52) | (frac & ((1u64 << 52) - 1)))
+    } else {
+        // Subnormal: `mantissa` is already counted in units of 2^-1074, and a
+        // carry into bit 52 promotes to the smallest normal on its own, because
+        // f64's leading bit is implicit. (x87's is not — see
+        // frankenlibc_core::float128::decimal_to_x87_extended.)
+        f64::from_bits(sign | mantissa)
+    }
+}
+
+/// Convenience: parse a format string, extract args from va_list, and render to a String.
+/// Used by `error()`, `err()`, `warn()`, and related functions.
+pub(crate) unsafe fn vprintf_extract_and_render(
+    symbol: &'static str,
+    fmt: &str,
+    ap: *mut c_void,
+) -> String {
+    let segments = parse_format_string(fmt.as_bytes());
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return String::new();
+        }
+    };
+    let extract = arg_buf.len();
+    if extract > 0 && !ap.is_null() {
+        unsafe { arg_buf.extract(&segments, ap) };
+    }
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(symbol, &segments, arg_buf.as_ptr(), extract, false) };
+    let _ = take_render_failure(); // no printf-style result to fail (error()).
+    String::from_utf8_lossy(&rendered).into_owned()
+}
+
+/// Read a single general-purpose (integer/pointer) argument from a SysV AMD64 `va_list` `ap`,
+/// advancing it — for the exact-format v-printf fast paths that consume exactly ONE arg without
+/// parsing the format. Reuses `vprintf_read_gp` (the same decode `vprintf_extract_args` uses:
+/// gp_offset @0, overflow_arg_area @8, reg_save_area @16). The caller must return immediately
+/// after (no fall-through to the slow path, which would re-read from the now-advanced `ap`).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
+    let gp_offset_ptr = ap as *mut u32;
+    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
+    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
+    unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
+    let stack_ptr = ap as *mut *mut u8;
+    let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
+    let gr_offs_ptr = unsafe { (ap as *mut u8).add(24) as *mut i32 };
+    unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) }
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[inline]
+unsafe fn va_read_one_gp(_ap: *mut c_void) -> u64 {
+    0
+}
+
+/// Read exactly one `double` out of a va_list for the `%f` / `%.Nf` fast path,
+/// without parsing the format.
+///
+/// This is NOT `va_read_one_gp` with a cast, and the difference is the whole
+/// hazard. On x86-64 a `double` variadic argument is passed in an SSE register
+/// and recorded in the FP half of the register save area, indexed by
+/// `fp_offset` (@4) in 16-byte slots. `gp_offset` (@0) is not advanced by it.
+/// Reading a float argument through the GP reader therefore returns an
+/// unrelated integer argument, silently, and the gate
+/// `vsnprintf_fixed_reads_the_fp_register_save_area` exists to catch exactly
+/// that substitution.
+///
+/// The caller must return immediately after (no fall-through to the slow path,
+/// which would re-read from the now-advanced `ap`).
+///
+/// WIRED AND VERIFIED (bd-5pfs0p). The dispatch in `vsnprintf`/`vsprintf` was
+/// held back in 811e6b94b for having been committed unverified; the gate it was
+/// waiting on has now been RUN green on worker vmi1153651 —
+/// `vsnprintf_fixed_reads_the_fp_register_save_area`, 5 passed / 0 failed,
+/// comparing >50,000 (format, value, size) triples against a DLSYM'd host glibc
+/// on the return value AND every destination byte, through a va_list forged by a
+/// real variadic shim. The pointer arithmetic below is byte-identical to the
+/// proven general path (`vprintf_extract_args`), but "identical to working code"
+/// is not a measurement, which is why that gate had to run before this was
+/// trusted.
+///
+/// DELIBERATELY NOT `#[allow(dead_code)]`, though it carried that twice while it
+/// was unwired. The dispatch has been removed once already, and this function
+/// going quiet is the ONLY local signal that it happened: the fast path is a
+/// pure optimisation, so unwiring it leaves every test green and every byte
+/// correct while silently costing the win. Letting the compiler report this as
+/// dead makes that regression loud at build time instead.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
+    let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
+    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
+    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
+    f64::from_bits(unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) })
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
+    let stack_ptr = ap as *mut *mut u8;
+    let vr_top = unsafe { *((ap as *mut u8).add(16) as *const *mut u8) };
+    let vr_offs_ptr = unsafe { (ap as *mut u8).add(28) as *mut i32 };
+    f64::from_bits(unsafe { vprintf_read_fp_aarch64(stack_ptr, vr_top, vr_offs_ptr) })
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[inline]
+unsafe fn va_read_one_fp(_ap: *mut c_void) -> f64 {
+    0.0
+}
+
+/// `sprintf` for an exact `%f` / `%.Nf`: same renderer as the snprintf path, but
+/// against sprintf's unbounded destination contract.
+unsafe fn strict_direct_sprintf_f(str_buf: *mut c_char, value: f64, precision: usize) -> c_int {
+    let mut rendered = [0u8; DIRECT_FIXED_BUF];
+    let len = render_direct_fixed(value, precision, &mut rendered);
+    // SAFETY: sprintf's C contract requires the caller's buffer to hold the
+    // whole result plus its terminator.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// POSIX `vsnprintf` — format at most `size` bytes from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vsnprintf(
+    str_buf: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: ap is the caller-supplied C va_list for this format.
+        return unsafe { registered_snprintf(str_buf, size, format, ap) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
+    {
+        return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
+    }
+    // Exact single-arg fast paths (mirror snprintf's): match the whole format, pull ONE gp arg from
+    // the va_list, render directly — skipping decide + parse_format_string + vprintf_extract_args +
+    // render_segments. Return immediately (never fall through: `ap` is now advanced). Expensive-
+    // render formats (int/hex/pointer) win; %s is left to the post-parse direct_printf_string_payload.
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        // SAFETY: exact `%d` consumes one promoted `int`; low 32 bits of the gp arg.
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return unsafe { strict_direct_snprintf_d(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        // SAFETY: exact `%x` consumes one promoted `unsigned int`.
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return unsafe { strict_direct_snprintf_x(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        // SAFETY: exact `%p` consumes one promoted `void *` (full 64-bit gp arg).
+        let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
+        return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
+    }
+    // Float probe LAST, so it adds no byte-compare to the integer/string paths
+    // that carry the measured campaign win. Reads through `va_read_one_fp`: a
+    // `double` lives in the FP register save area (fp_offset @4), not the GP one.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one `double` from `ap`; we return
+        // immediately, so the slow path never re-reads the advanced `ap`.
+        let arg = unsafe { va_read_one_fp(ap) };
+        return unsafe { strict_direct_snprintf_f(str_buf, size, arg, precision) };
+    }
+    let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, size, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
+
+    // Fast path for ubiquitous exact "%s" and "%s\n": copy the string
+    // argument straight to the destination, skipping the render engine and
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
+    let _rendered_hold;
+    let (src_ptr, src_len, append_newline, total_len) =
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
+            None => {
+                // Reuse the segments parsed above instead of re-parsing in render_printf.
+                let rendered = unsafe {
+                    render_segments(
+                        "vsnprintf",
+                        &segments,
+                        arg_buf.as_ptr(),
+                        extract_count,
+                        false,
+                    )
+                };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
+        };
+
+    let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
+    let mut adverse = false;
+    let mut has_room = size > 0 && !str_buf.is_null();
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let safe_size = size.min(bound);
+        if safe_size == 0 {
+            has_room = false;
+            if size > 0 {
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "vsnprintf",
+                    &HealingAction::ClampSize {
+                        requested: size,
+                        clamped: 0,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        } else {
+            let max_payload = safe_size.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "vsnprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                        truncated: copy_len,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        }
+    }
+
+    if has_room {
+        unsafe {
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+#[doc(hidden)]
+pub fn signal_runtime_ready_for_tests() {
+    runtime_policy::signal_runtime_ready();
+}
+
+#[doc(hidden)]
+pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
+    runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
+}
+
+/// POSIX `vsprintf` — format into buffer from va_list (no size limit).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vsprintf(
+    str_buf: *mut c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    if format.is_null() || str_buf.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the destination follows sprintf's unbounded buffer contract.
+        return unsafe { registered_snprintf(str_buf, usize::MAX, format, ap) };
+    }
+    // Exact single-arg va_list fast paths (unbounded twins of vsnprintf's): pull ONE gp arg and
+    // render directly, skipping decide + parse + extract + render. Return immediately (ap advanced).
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return unsafe { strict_direct_sprintf_d(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return unsafe { strict_direct_sprintf_x(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
+        return unsafe { strict_direct_sprintf_p(str_buf, arg) };
+    }
+    // Float probe LAST, so it adds no byte-compare to the integer/string paths
+    // that carry the measured campaign win. Reads through `va_read_one_fp`, NOT
+    // `va_read_one_gp`: on SysV AMD64 a `double` is passed in an SSE register and
+    // recorded in the FP half of the register save area (fp_offset @4, 16-byte
+    // slots); gp_offset is not advanced by it, so the GP reader would return an
+    // unrelated integer argument silently. Held by
+    // `vsprintf_fixed_matches_glibc`.
+    // SAFETY: `format` is non-null and NUL-terminated under the printf contract.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(precision) = unsafe { exact_direct_f_format(format) }
+    {
+        // SAFETY: exact `%f`/`%.Nf` consumes one `double` from `ap`; we return
+        // immediately, so the slow path never re-reads the advanced `ap`.
+        let arg = unsafe { va_read_one_fp(ap) };
+        // SAFETY: vsprintf's contract gives an unbounded destination.
+        return unsafe { strict_direct_sprintf_f(str_buf, arg, precision) };
+    }
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
+
+    // Fast path for exact "%s" and "%s\n" (see snprintf): copy the string
+    // argument straight to the destination, skipping the render engine and its
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
+    let _rendered_hold;
+    let (src_ptr, src_len, append_newline, total_len) =
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
+            None => {
+                let rendered = unsafe {
+                    render_segments(
+                        "vsprintf",
+                        &segments,
+                        arg_buf.as_ptr(),
+                        extract_count,
+                        false,
+                    )
+                };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
+        };
+
+    let mut copy_len = total_len;
+    let mut adverse = false;
+    let mut has_room = true;
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        if bound == 0 {
+            has_room = false;
+            adverse = true;
+            global_healing_policy().record(
+                "stdio",
+                "vsprintf",
+                &HealingAction::ClampSize {
+                    requested: total_len,
+                    clamped: 0,
+                },
+                RepairLogContext::new(0, Some(str_buf as usize)),
+            );
+        } else {
+            let max_payload = bound.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(
+                    "stdio",
+                    "vsprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.saturating_add(1),
+                        truncated: copy_len,
+                    },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
+                );
+            }
+        }
+    }
+
+    if has_room {
+        unsafe {
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// Exact `%d`/`%x`/`%u`/`%ld`/`%lu`/`%lx` (±\n) va_list STREAM fast path shared by vfprintf/vprintf:
+/// pull ONE gp arg from the va_list and reuse fprintf's render+write helpers, skipping
+/// parse_format_string + vprintf_extract_args + render_segments. `Some(result)` when handled (caller
+/// returns it IMMEDIATELY — `ap` is advanced, never fall through), `None` to fall through.
+/// Byte-identical to fprintf's shipped fast path (same helpers), just va_list-sourced args.
+#[inline]
+unsafe fn try_vprintf_exact_stream(
+    id: usize,
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> Option<c_int> {
+    if !runtime_policy::strict_passthrough_active() {
+        return None;
+    }
+    if let Some(newline) = unsafe { exact_direct_d_stream_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return Some(unsafe { strict_direct_stream_d(id, stream, arg, newline, caller) });
+    }
+    if let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return Some(unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline, caller) });
+    }
+    if let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) } {
+        let bits = unsafe { va_read_one_gp(ap) };
+        return Some(unsafe { strict_direct_stream_long(id, stream, conv, bits, newline, caller) });
+    }
+    None
+}
+
+/// POSIX `vfprintf` — format to stream from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vfprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe {
+        vfprintf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn vfprintf_for_caller(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the caller supplies the live FILE and matching C va_list.
+        return unsafe {
+            registered_printf_stream_for_caller(stream, c_str_bytes(format), ap, false, caller)
+        };
+    }
+    let id = canonical_stream_id(stream);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Exact %d/%x/%u/%ld/%lu/%lx (±\n) va_list stream fast paths — the twins of fprintf's.
+    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stream, format, ap, caller) } {
+        return r;
+    }
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
+
+    let direct_payload =
+        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+        let total_len = bytes.len().saturating_add(1);
+        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                !success,
+            );
+            return if success {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+    }
+
+    // Bare "%s" fast path: emit the string straight to the stream, else render.
+    let mut _bare_hold = None;
+    let bytes = match direct_payload {
+        Some(DirectPrintfPayload::String(bytes)) => bytes,
+        _ => unsafe {
+            bare_s_or_render(
+                "vfprintf",
+                fmt_bytes,
+                &segments,
+                arg_buf.as_ptr(),
+                extract_count,
+                &mut _bare_hold,
+            )
+        },
+    };
+    let total_len = bytes.len();
+
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        if s.is_mem_backed() {
+            let written = s.mem_write(bytes);
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        if is_cookie_stream(id) {
+            // va_list output uses the same callback sink as fprintf; a cookie
+            // must never be treated as an fd merely because it owns a buffer.
+            // SAFETY: the locked stream and rendered bytes remain live through
+            // the synchronous callback, just as in fwrite/fputs.
+            let written = unsafe { cookie_buffer_write(id, s, bytes) };
+            let adverse = written < total_len;
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(stream, id, s as *mut StdioStream);
+        let write_result = match s.buffer_write(bytes) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
+            let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
+            let mut written = 0usize;
+            let mut success = true;
+            while written < write_result.flush_data.len() {
+                let rc = unsafe {
+                    stream_write_fd(
+                        caller,
+                        fd,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
+                    )
+                };
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
+                    success = false;
+                    break;
+                }
+                written += rc as usize;
+            }
+            if !success {
+                s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            let total_written = write_result.buffered.saturating_add(flushed_new);
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        }
+    } else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if stream_is_host_owned(stream)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+            if written > 0 {
+                mark_host_io_started(stream);
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                written < bytes.len(),
+            );
+            return if written == bytes.len() {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// POSIX `vprintf` — format to stdout from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { vprintf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vprintf_for_caller(
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdout_stream()) };
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: vprintf formats the caller's arguments to active stdout.
+        return unsafe {
+            registered_printf_stream_for_caller(
+                active_stdout_stream(),
+                c_str_bytes(format),
+                ap,
+                false,
+                caller,
+            )
+        };
+    }
+
+    let stdout_ptr = active_stdout_stream();
+    let id = canonical_stream_id(stdout_ptr);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Exact %d/%x/%u/%ld/%lu/%lx (±\n) va_list stream fast paths (to stdout) — twins of fprintf's.
+    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stdout_ptr, format, ap, caller) } {
+        return r;
+    }
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
+
+    let direct_payload =
+        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+        let total_len = bytes.len().saturating_add(1);
+        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                !success,
+            );
+            return if success {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+    }
+
+    // Bare "%s" fast path: emit the string straight to the stream, else render.
+    let mut _bare_hold = None;
+    let bytes = match direct_payload {
+        Some(DirectPrintfPayload::String(bytes)) => bytes,
+        _ => unsafe {
+            bare_s_or_render(
+                "vprintf",
+                fmt_bytes,
+                &segments,
+                arg_buf.as_ptr(),
+                extract_count,
+                &mut _bare_hold,
+            )
+        },
+    };
+    let total_len = bytes.len();
+
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        if s.is_mem_backed() {
+            let written = s.mem_write(bytes);
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
+        }
+
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(stdout_ptr, id, s as *mut StdioStream);
+        let write_result = match s.buffer_write(bytes) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
+            let fd = s.fd();
+            let caller = stream_io_caller(s, caller);
+            let mut written = 0usize;
+            let mut success = true;
+            while written < write_result.flush_data.len() {
+                let rc = unsafe {
+                    stream_write_fd(
+                        caller,
+                        fd,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
+                    )
+                };
+                let errno_val = if rc < 0 {
+                    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+                } else {
+                    0
+                };
+                match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                    StreamPolicyAction::Retry => continue,
+                    StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                        success = false;
+                        break;
+                    }
+                    StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+                }
+                if rc == 0 {
+                    success = false;
+                    break;
+                }
+                written += rc as usize;
+            }
+            if !success {
+                s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            let total_written = write_result.buffered.saturating_add(flushed_new);
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        }
+    } else {
+        // Host delegation path - not available in standalone mode
+        #[cfg(not(feature = "standalone"))]
+        if stream_is_host_owned(stdout_ptr)
+            && let Some(host_fwrite) = unsafe { host_fwrite_fn() }
+        {
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
+            if written > 0 {
+                mark_host_io_started(stdout_ptr);
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                written < bytes.len(),
+            );
+            return if written == bytes.len() {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+/// POSIX `vdprintf` — format to file descriptor from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vdprintf(
+    fd: c_int,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { vdprintf_for_caller(fd, format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vdprintf_for_caller(
+    fd: c_int,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: ap is the caller-supplied C va_list for this format.
+        return unsafe { registered_dprintf(fd, format, ap, caller) };
+    }
+    // Exact %d/%x/%u (±\n) va_list fast paths — the va_list twin of dprintf's: pull ONE gp arg,
+    // render inline + write straight to the fd. Return immediately (ap advanced).
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return unsafe { strict_direct_fd_d(fd, arg, newline, caller) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline, caller) };
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
+
+    // Bare "%s" fast path: use the string directly, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(
+            "vdprintf",
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
+    };
+    let total_len = bytes.len();
+
+    // Keep the current call's render failure out of shared thread-local state
+    // while the descriptor write may fail or invoke policy hooks.
+    let render_failure = take_render_failure();
+    let mut written = 0usize;
+    let mut adverse = false;
+    while written < total_len {
+        let rc = unsafe {
+            stream_write_fd(
+                caller,
+                fd,
+                bytes[written..].as_ptr().cast(),
+                total_len - written,
+            )
+        };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if e == errno::EINTR {
+                continue;
+            }
+            adverse = true;
+            break;
+        } else if rc == 0 {
+            adverse = true;
+            break;
+        }
+        written += rc as usize;
+    }
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    if let Some(error) = render_failure {
+        // SAFETY: errno is this thread's writable ABI error slot.
+        unsafe { set_abi_errno(error) };
+        -1
+    } else if adverse {
+        -1
+    } else {
+        printf_result_to_c_int(total_len)
+    }
+}
+
+/// GNU `vasprintf` — allocate and format from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vasprintf(
+    strp: *mut *mut c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    if strp.is_null() || format.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: strp is writable and ap is the matching live C va_list.
+        return unsafe { registered_asprintf(strp, format, ap) };
+    }
+    unsafe { *strp = std::ptr::null_mut() };
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, strp as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let mut arg_buf = match PrintfArgumentBuffer::new(&segments) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+    let extract_count = arg_buf.len();
+    unsafe { arg_buf.extract(&segments, ap) };
+
+    // Bare "%s" fast path: use the string directly, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(
+            "vasprintf",
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
+    };
+    let total_len = bytes.len();
+    let alloc_size = total_len.saturating_add(1);
+
+    let out = unsafe { malloc(alloc_size).cast::<c_char>() };
+    if out.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), total_len);
+        *out.add(total_len) = 0;
+        *strp = out;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    printf_result_to_c_int(total_len)
+}
+
+// ===========================================================================
+// scanf family — Implemented (native format parser + va_list extraction)
+//
+// The core scanf engine (frankenlibc-core/src/stdio/scanf.rs) parses format
+// strings and scans typed values from byte input. The ABI layer extracts
+// destination pointers from the C caller's va_list and writes scanned values.
+// ===========================================================================
+
+use frankenlibc_core::stdio::scanf::{
+    ScanDirective, ScanDirectives, ScanResult, ScanValue, parse_scanf_format, scan_input,
+};
+
+pub fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
+    let bits = value.to_bits();
+    let sign = ((bits >> 63) as u16) << 15;
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+
+    let (significand, exponent_bits) = if exponent == 0 {
+        if fraction == 0 {
+            (0u64, sign)
+        } else {
+            let mut normalized = fraction;
+            let mut unbiased = -1022i32;
+            while normalized & (1u64 << 52) == 0 {
+                normalized <<= 1;
+                unbiased -= 1;
+            }
+            normalized &= (1u64 << 52) - 1;
+            (
+                (1u64 << 63) | (normalized << 11),
+                sign | u16::try_from(unbiased + 16383).unwrap_or(0),
+            )
+        }
+    } else if exponent == 0x7ff {
+        let significand = if fraction == 0 {
+            1u64 << 63
+        } else {
+            (1u64 << 63) | (fraction << 11)
+        };
+        (significand, sign | 0x7fff)
+    } else {
+        (
+            (1u64 << 63) | (fraction << 11),
+            sign | u16::try_from(exponent - 1023 + 16383).unwrap_or(0),
+        )
+    };
+
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&significand.to_le_bytes());
+    bytes[8..10].copy_from_slice(&exponent_bits.to_le_bytes());
+    bytes
+}
+
+pub(crate) unsafe fn write_long_double_from_f64(dest: *mut c_void, value: f64) {
+    let bytes = x86_extended80_bytes_from_f64(value);
+    // SAFETY: `%Lf` callers provide a writable long-double destination. On the
+    // supported Linux ABI used by this harness, the storage slot is 16 bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.cast::<u8>(), bytes.len());
+    }
+}
+
+/// Store an x87 extended value that arrived as its ten significant bytes.
+///
+/// The counterpart of [`write_long_double_from_f64`] for a value that was never
+/// an `f64`: scanf's `%Lf` now parses straight to x87 (`ScanValue::LongDouble`),
+/// so there is nothing to widen and no precision to lose on the way in.
+///
+/// The six padding bytes of the 16-byte storage slot are zeroed, which is what
+/// the f64 path has always done — an x87 store writes only ten, but the object
+/// is sixteen bytes wide on this ABI and leaving stale bytes there would make
+/// two identical scans of the same text produce different memory.
+///
+/// # Safety
+///
+/// `dest` must address a writable `long double` (16 bytes on x86-64 SysV).
+pub(crate) unsafe fn write_long_double_bytes(dest: *mut c_void, bytes: &[u8; 10]) {
+    let mut slot = [0u8; 16];
+    slot[..10].copy_from_slice(bytes);
+    // SAFETY: `%Lf` callers provide a writable long-double destination, whose
+    // storage slot is 16 bytes on the supported Linux ABI.
+    unsafe {
+        std::ptr::copy_nonoverlapping(slot.as_ptr(), dest.cast::<u8>(), slot.len());
+    }
+}
+
+/// Write scanned values through va_list pointers.
+/// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
+/// `$args` is the variadic `args` from `mut args: ...`.
+macro_rules! scanf_write_values {
+    ($values:expr, $directives:expr, $args:expr, $failed_alloc:expr) => {{
+        let mut _val_idx = 0usize;
+        for _dir in $directives {
+            if let ScanDirective::Spec(_spec) = _dir {
+                if _spec.suppress {
+                    continue;
+                }
+                if _val_idx >= $values.len() {
+                    break;
+                }
+                unsafe {
+                    scanf_write_one!(&$values[_val_idx], _spec, $args);
+                }
+                _val_idx += 1;
+            }
+        }
+        // The next argument belongs to the %m conversion that failed.
+        if $failed_alloc {
+            unsafe { *$args.next_arg::<*mut *mut c_char>() = std::ptr::null_mut() };
+        }
+    }};
+}
+
+/// Write a single scanned value to the next pointer from va_list.
+///
+/// Every scanf destination is a pointer, so the argument is fetched as one and
+/// the store is [`vscanf_write_one`]'s -- one implementation for the variadic
+/// and the `va_list` entry points. (They were two copies, and only this one
+/// knew about `%m`: `__isoc23_sscanf`/`vsscanf`/`vfscanf` wrote a `%ms` token
+/// over the caller's `char *` itself.)
+macro_rules! scanf_write_one {
+    ($val:expr, $spec:expr, $args:expr) => {{
+        let dest = $args.next_arg::<*mut c_void>();
+        vscanf_write_one($val, $spec, dest)
+    }};
+}
+
+/// The symbol the caller selected determines the scanf dialect, independently
+/// of the compiler used to build this library or the host libc's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScanfDialect {
+    Legacy,
+    C99,
+    C23,
+}
+
+/// Core scanf logic: parse format, scan input, return result and directives.
+pub(crate) fn scanf_core(
+    input: &[u8],
+    format: *const c_char,
+    dialect: ScanfDialect,
+) -> Option<(ScanResult, ScanDirectives)> {
+    let directives = scanf_directives(format, None, dialect)?;
+    let result = scan_input(input, directives.as_slice());
+    Some((result, directives))
+}
+
+/// Parse the wide scanf language independently of executing its assignments.
+/// The wide ABI's writer runs during scanning so a locale-conversion failure
+/// stops input consumption and later assignments at the same boundary.
+pub(crate) fn scanf_wide_directives(
+    format: *const c_char,
+    dialect: ScanfDialect,
+    locale: NumericLocale,
+) -> Option<ScanDirectives> {
+    scanf_directives(format, Some(locale), dialect)
+}
+
+fn scanf_directives(
+    format: *const c_char,
+    wide_locale: Option<NumericLocale>,
+    dialect: ScanfDialect,
+) -> Option<ScanDirectives> {
+    // PERF (bd-2g7oyh, same lever family as the sscanf input scan):
+    // this is the SHARED scanf engine, so EVERY scanf variant (sscanf/fscanf/
+    // vfscanf/vsscanf/wide) lengths a short caller FORMAT string here. Strict mode
+    // takes the page-safe SWAR scan; hardened keeps the allocation-bound early-out.
+    let (fmt_len, fmt_terminated) = unsafe { strict_c_str_len(format) };
+    if !fmt_terminated {
+        return None;
+    }
+    let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
+    let wide_input = wide_locale.is_some();
+    let mut directives = if let Some(locale) = wide_locale {
+        frankenlibc_core::stdio::scanf::parse_scanf_format_wide_with_space(fmt_bytes, &|wc| {
+            locale.wide_is_space(wc)
+        })
+    } else {
+        parse_scanf_format(fmt_bytes)
+    };
+    if wide_input || dialect == ScanfDialect::C23 {
+        // Keep the input and dialect flags on this call's directives: a nested
+        // scan must not change the outer call's prefix or whitespace policy.
+        for dir in directives.as_mut_slice() {
+            if let ScanDirective::Spec(spec) = dir {
+                spec.wide_input = wide_input;
+                spec.binary_prefix = dialect == ScanfDialect::C23;
+            }
+        }
+    }
+    Some(directives)
+}
+
+/// Read only when the active directive needs input. A short read is not EOF,
+/// and the FILE's read buffer is not a limit on a token or a whole scanf call.
+/// Assignments happen once, before any later directive requests another byte.
+unsafe fn scan_narrow_stream(
+    stream: *mut c_void,
+    id: usize,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
+    use frankenlibc_core::stdio::scanf::{
+        InlineVec, WideScanInput, WideScanProgress, WideScanReadPurpose, WideScanSession,
+    };
+
+    let mut scan_errno = unsafe { *crate::errno_abi::__errno_location() };
+
+    // The recursive FILE lock covers parsing, assignments, and pushback, and
+    // is released if a read or cookie callback unwinds through cancellation.
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if let Some(cell) = stream_cell(id)
+        && !cell.lock().is_readable()
+    {
+        // GNU rejects a write-only FILE before interpreting even an empty
+        // format or %n. This is a bad-mode rejection, not a failed read, so it
+        // does not set the stream error indicator.
+        drop(_lock);
+        unsafe { set_abi_errno(errno::EBADF) };
+        return libc::EOF;
+    }
+    if !orient_stream_byte_by_id(id) {
+        if let Some(cell) = stream_cell(id) {
+            cell.lock().set_error();
+        }
+        drop(_lock);
+        unsafe { set_abi_errno(errno::EBADF) };
+        return libc::EOF;
+    }
+    let Some(directives) = scanf_directives(format, None, dialect) else {
+        drop(_lock);
+        unsafe { set_abi_errno(scan_errno) };
+        return libc::EOF;
+    };
+    let locale = NumericLocale::current();
+    let radix = frankenlibc_core::stdio::printf::numeric_radix_byte().unwrap_or(b'.');
+    let mut session = WideScanSession::new_narrow(
+        directives.as_slice(),
+        radix,
+        crate::locale_abi::active_multibyte_codec(),
+    );
+    let mut writer = crate::wchar_abi::WideScanWriter::new_narrow(ap);
+    let mut input = None;
+    let summary = loop {
+        let progress = session.resume(
+            input.take(),
+            &mut |spec, event, context| {
+                // SAFETY: every event belongs to a reached conversion whose
+                // destination type is described by the caller's live format.
+                unsafe { writer.write_stream_event(spec, event, context) }
+            },
+            &|byte| locale.byte_is_space(byte as u8),
+        );
+        match progress {
+            WideScanProgress::Complete(summary) => break summary,
+            WideScanProgress::NeedInput(purpose) => {
+                let before_read = unsafe { *crate::errno_abi::__errno_location() };
+                // SAFETY: the FILE remains live and locked, and the original
+                // caller is retained for cancellation-aware descriptor reads.
+                let byte = unsafe { fgetc_for_caller(stream, caller) };
+                input = Some(if byte != libc::EOF {
+                    WideScanInput::Character(byte as u32)
+                } else if unsafe { feof(stream) } != 0 {
+                    WideScanInput::Eof
+                } else {
+                    WideScanInput::Error
+                });
+                if matches!(purpose, WideScanReadPurpose::FormatWhitespace) {
+                    unsafe { set_abi_errno(before_read) };
+                }
+                scan_errno = unsafe { *crate::errno_abi::__errno_location() };
+            }
+        }
+    };
+    let mut input_failure = summary.input_failure;
+    let mut error = writer.error.unwrap_or(if session.encoding_error() {
+        errno::EILSEQ
+    } else {
+        scan_errno
+    });
+    let mut unread = InlineVec::<u8, 8>::default();
+    for byte in session.unread() {
+        unread.push(byte as u8);
+    }
+    if !unread.is_empty() {
+        if let Some(cell) = stream_cell(id) {
+            let mut state = cell.lock();
+            sync_and_unregister_fast_fixed_mem_read(id, &mut state);
+            // A numeric suffix can span more than ungetc's in-buffer space,
+            // especially on cookies and at a refill boundary. The ordinary
+            // FILE pushback queue preserves every byte and its logical offset.
+            state.unread_bytes(unread.as_slice(), false);
+        } else {
+            input_failure = true;
+            error = errno::EBADF;
+        }
+    }
+    let result = if writer.allocation_failure || (input_failure && summary.count == 0) {
+        libc::EOF
+    } else {
+        summary.count
+    };
+    drop(writer);
+    drop(_lock);
+    // SAFETY: preserve the scan's errno across allocation, cursor cleanup, and unlock.
+    unsafe { set_abi_errno(error) };
+    result
+}
+
+/// Match exactly one narrow `%c` conversion.
+///
+/// A plain character conversion neither skips whitespace nor needs lookahead:
+/// routing it through the bulk scanner needlessly reads and seeks an entire
+/// buffer for every byte in a stream-oriented loop. Keep this deliberately
+/// narrow so widths, suppression, length modifiers, and adjacent literals keep
+/// the general scanner's complete grammar.
+#[inline]
+unsafe fn strict_single_char_scan_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: scanf's format argument is a NUL-terminated C string.
+    unsafe { *f == b'%' && *f.add(1) == b'c' && *f.add(2) == 0 }
+}
+
+/// Serve an exact `%c` from the stream's normal buffered-byte path.
+///
+/// `fgetc` owns stream cursor, EOF, ungetc, and refill semantics. Reusing it
+/// avoids a speculative 8 KiB read plus lseek/restore cycle while preserving
+/// the one-byte consumption contract of `%c`.
+#[inline]
+unsafe fn strict_scan_stream_single_char(
+    stream: *mut c_void,
+    destination: *mut c_char,
+    caller: usize,
+) -> c_int {
+    let byte = unsafe { fgetc_for_caller(stream, caller) };
+    if byte == libc::EOF {
+        return libc::EOF;
+    }
+    // SAFETY: a non-suppressed `%c` conversion requires the caller to provide
+    // one writable `char`; the general scanf engine has the same precondition.
+    unsafe { *destination = byte as u8 as c_char };
+    1
+}
+
+/// POSIX `sscanf` — scan formatted input from string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut args: ...) -> c_int {
+    if s.is_null() || format.is_null() {
+        return -1;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    if runtime_policy::strict_passthrough_active() {
+        if let Some((fields, sep, kinds, delims)) =
+            unsafe { strict_decimal_int_format_count(format) }
+            && strict_field_list_is_scannable(fields, sep, &kinds)
+        {
+            // Every destination is fetched BEFORE the scan. Fetching a variadic
+            // argument only reads the list, it writes nothing, so a field that
+            // later fails to match still leaves its destination untouched — which
+            // is what C requires.
+            let mut destinations = [std::ptr::null_mut::<c_void>(); STRICT_INT_LIST_MAX];
+            for slot in destinations.iter_mut().take(fields) {
+                *slot = unsafe { args.next_arg::<*mut c_void>() };
+            }
+            let fast =
+                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+            return fast.count;
+        }
+        if unsafe { strict_single_string_format(format) } {
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { strict_scan_single_string(s, dst) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+        if let Some(delim) = unsafe { strict_single_negated_scanset(format) } {
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { strict_scan_negated_scanset(s, dst, delim) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+    }
+
+    // PERF (bd-2g7oyh):
+    // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
+    // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
+    // keeps the allocation-bound EOF branch for fl-tracked unterminated buffers.
+    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
+    if !input_terminated {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
+    let Some((result, directives)) = scanf_core(input, format, ScanfDialect::Legacy) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
+
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
+    scanf_write_values!(
+        result.values.as_slice(),
+        directives.as_slice(),
+        args,
+        result.failed_alloc
+    );
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
+}
+
+/// POSIX `fscanf` — scan formatted input from stream.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    let caller = core::intrinsics::return_address() as usize;
+    if stream.is_null() || format.is_null() {
+        return -1;
+    }
+    let id = canonical_stream_id(stream);
+    // Host delegation, the SAME path `vfscanf` takes — see the note there.
+    //
+    // It has to be here as well, and its absence was a live defect rather than
+    // an inconsistency. <stdio.h> redirects compiled `fscanf` calls to
+    // `__isoc99_fscanf`, which forwards to `vfscanf` and therefore delegated a
+    // foreign stream to the host; anything reaching THIS symbol pointed fl's
+    // engine at a `FILE*` fl never created. On a stream from host `fopen` that
+    // returned -1 having written nothing, where the alias and glibc both
+    // returned 2. fl's own fscanf suite could not see it: it calls `fscanf` by
+    // name, and an fl-created stream IS in the registry, so `may_delegate_to_host`
+    // is false and both paths run the engine (bd-r8hpym).
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn(ScanfDialect::Legacy) }
+    {
+        // SAFETY: on x86_64 Linux a Rust `VaListImpl` has C's `va_list` layout,
+        // which is what every v* entry point here relies on.
+        let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+        let rc = unsafe { host_vfscanf(stream, format, ap) };
+        mark_host_io_started(stream);
+        if rc < 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    if unsafe { strict_single_char_scan_format(format) } {
+        // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
+        let destination = unsafe { args.next_arg::<*mut c_char>() };
+        let rc = unsafe { strict_scan_stream_single_char(stream, destination, caller) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
+        return rc;
+    }
+
+    // SAFETY: this frame's variadic state has the C va_list layout used by the
+    // shared scanner, and no argument has been extracted on this path.
+    let result = unsafe {
+        scan_narrow_stream(
+            stream,
+            id,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            caller,
+            ScanfDialect::Legacy,
+        )
+    };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+    result
+}
+
+/// POSIX `scanf` — scan formatted input from stdin.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(active_stdin_stream()) };
+    let caller = core::intrinsics::return_address() as usize;
+    if format.is_null() {
+        return -1;
+    }
+    let stdin_ptr = active_stdin_stream();
+    let stdin_id = canonical_stream_id(stdin_ptr);
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stdin_ptr, stdin_id)
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn(ScanfDialect::Legacy) }
+    {
+        let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+        let rc = unsafe { host_vfscanf(stdin_ptr, format, ap) };
+        mark_host_io_started(stdin_ptr);
+        if rc < 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, stdin_id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    if unsafe { strict_single_char_scan_format(format) } {
+        // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
+        let destination = unsafe { args.next_arg::<*mut c_char>() };
+        let rc = unsafe { strict_scan_stream_single_char(stdin_ptr, destination, caller) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
+        return rc;
+    }
+
+    // SAFETY: stdin and this frame's unconsumed va_list remain live throughout.
+    let result = unsafe {
+        scan_narrow_stream(
+            stdin_ptr,
+            stdin_id,
+            format,
+            std::ptr::addr_of_mut!(args).cast(),
+            caller,
+            ScanfDialect::Legacy,
+        )
+    };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+    result
+}
+
+/// POSIX `vsscanf` — scan formatted input from string with va_list.
+///
+/// For the v* variants, we receive a raw `*mut c_void` pointing to the C
+/// caller's va_list. On x86_64, C's `va_list` (`__va_list_tag[1]`) has the
+/// same memory layout as Rust's internal `VaListImpl`. We cast the raw
+/// pointer and call `arg()` to extract destination pointers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vsscanf(
+    s: *const c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { vsscanf_with_dialect(s, format, ap, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vsscanf_with_dialect(
+    s: *const c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+    dialect: ScanfDialect,
+) -> c_int {
+    if s.is_null() || format.is_null() || ap.is_null() {
+        return -1;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    // THE SAME STRICT FAST PATHS `sscanf` HAS, reached through the va_list.
+    //
+    // They were variadic-only, which left this entry point on the engine for
+    // every format — and it is not a rare one: `<stdio.h>` sends compiled
+    // `vsscanf` calls here, every va_list forwarder in a logging or parsing
+    // helper lands here, and the certified wall-clock run of this arm was 11
+    // losses out of 12 while the variadic arm was 5 wins.
+    //
+    // The destinations come from `va_next_pointer`, the same arithmetic
+    // `vscanf_write_values` uses, so there is one implementation of advancing a
+    // va_list rather than two.
+    if runtime_policy::strict_passthrough_active() {
+        if let Some((fields, sep, kinds, delims)) =
+            unsafe { strict_decimal_int_format_count(format) }
+            && strict_field_list_is_scannable(fields, sep, &kinds)
+        {
+            let mut destinations = [std::ptr::null_mut::<c_void>(); STRICT_INT_LIST_MAX];
+            for slot in destinations.iter_mut().take(fields) {
+                // SAFETY: `ap` is a live va_list and the probe accepted `fields`
+                // conversions, so that many pointer arguments follow.
+                *slot = unsafe { va_next_pointer(ap) };
+            }
+            let fast =
+                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+            return fast.count;
+        }
+        if unsafe { strict_single_string_format(format) } {
+            // SAFETY: the format is exactly `"%s"`, so one `char *` follows.
+            let dst = unsafe { va_next_pointer(ap) };
+            let rc = unsafe { strict_scan_single_string(s, dst.cast()) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+        if let Some(delim) = unsafe { strict_single_negated_scanset(format) } {
+            // SAFETY: the format is exactly `"%[^X]"`, so one `char *` follows.
+            let dst = unsafe { va_next_pointer(ap) };
+            let rc = unsafe { strict_scan_negated_scanset(s, dst.cast(), delim) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+    }
+
+    // PERF (bd-2g7oyh):
+    // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
+    // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
+    // keeps the allocation-bound EOF branch for fl-tracked unterminated buffers.
+    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
+    if !input_terminated {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
+    let Some((result, directives)) = scanf_core(input, format, dialect) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
+
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
+    // Write scanned values via raw va_list pointer.
+    // SAFETY: On x86_64 Linux, the raw va_list pointer has the same layout
+    // as Rust's VaListImpl. We transmute to access arg().
+    unsafe {
+        vscanf_write_values(
+            result.values.as_slice(),
+            directives.as_slice(),
+            ap,
+            result.failed_alloc,
+        );
+    }
+
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
+}
+
+/// POSIX `vfscanf` — scan formatted input from stream with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vfscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe {
+        vfscanf_for_caller(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn vfscanf_for_caller(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    unsafe { vfscanf_with_dialect(stream, format, ap, caller, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vfscanf_with_dialect(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if stream.is_null() || format.is_null() || ap.is_null() {
+        return -1;
+    }
+    let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn(dialect) }
+    {
+        let rc = unsafe { host_vfscanf(stream, format, ap) };
+        mark_host_io_started(stream);
+        if rc < 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    if unsafe { strict_single_char_scan_format(format) } {
+        // SAFETY: exact `%c` consumes exactly one `char *` variadic argument.
+        let destination = unsafe { va_read_one_gp(ap) } as usize as *mut c_char;
+        let rc = unsafe { strict_scan_stream_single_char(stream, destination, caller) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc == libc::EOF);
+        return rc;
+    }
+
+    // SAFETY: ap points to the caller's unconsumed va_list for this format.
+    let result = unsafe { scan_narrow_stream(stream, id, format, ap, caller, dialect) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, result == libc::EOF);
+    result
+}
+
+/// POSIX `vscanf` — scan formatted input from stdin with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { vscanf_for_caller(format, ap, core::intrinsics::return_address() as usize) }
+}
+
+pub(crate) unsafe fn vscanf_for_caller(
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+) -> c_int {
+    unsafe { vscanf_with_dialect(format, ap, caller, ScanfDialect::Legacy) }
+}
+
+pub(crate) unsafe fn vscanf_with_dialect(
+    format: *const c_char,
+    ap: *mut c_void,
+    caller: usize,
+    dialect: ScanfDialect,
+) -> c_int {
+    unsafe { vfscanf_with_dialect(active_stdin_stream(), format, ap, caller, dialect) }
+}
+
+/// Write scanned values via raw va_list pointer (v* functions).
+///
+/// On x86_64 Linux, C's va_list is `__va_list_tag` which has the layout:
+/// ```c
+/// struct __va_list_tag {
+///     unsigned int gp_offset;    // offset 0, 4 bytes
+///     unsigned int fp_offset;    // offset 4, 4 bytes
+///     void *overflow_arg_area;   // offset 8, 8 bytes
+///     void *reg_save_area;       // offset 16, 8 bytes
+/// };                             // total: 24 bytes
+/// ```
+///
+/// We manually read pointer arguments from the overflow area, which is used
+/// when all register save slots are exhausted (common in scanf where all
+/// args are pointers passed after the format string).
+/// Take the next POINTER argument from a raw `va_list`, advancing it.
+///
+/// On x86_64 a `va_list` is a `__va_list_tag`: `gp_offset` (u32) at +0,
+/// `fp_offset` at +4, `overflow_arg_area` at +8, `reg_save_area` at +16. Every
+/// scanf destination is a pointer, so only the general-purpose half matters:
+/// `gp_offset < 48` means the argument is still in the register save area,
+/// otherwise it has spilled to the overflow area.
+///
+/// Factored out of `vscanf_write_values` so the va_list entry points can reach
+/// the strict fast paths, which need the destinations BEFORE any scanning. Two
+/// copies of this arithmetic would be two chances to advance the list wrongly,
+/// and a va_list advanced wrongly writes a scanned value through whatever
+/// pointer happens to sit next in the caller's frame.
+///
+/// # Safety
+/// `ap` must be a live `va_list` positioned at a pointer argument.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn va_next_pointer(ap: *mut c_void) -> *mut c_void {
+    let gp_offset_ptr = ap as *mut u32;
+    // SAFETY: the caller guarantees `ap` points at a `__va_list_tag`.
+    unsafe {
+        let overflow_ptr = (ap as *mut u8).add(8) as *mut *mut u8;
+        let reg_save_ptr = (ap as *mut u8).add(16) as *mut *mut u8;
+        let gp_off = *gp_offset_ptr;
+        if gp_off < 48 {
+            let p = (*reg_save_ptr).add(gp_off as usize) as *mut *mut c_void;
+            *gp_offset_ptr = gp_off + 8;
+            *p
+        } else {
+            let p = *overflow_ptr as *mut *mut c_void;
+            *overflow_ptr = (*overflow_ptr).add(8);
+            *p
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn va_next_pointer(ap: *mut c_void) -> *mut c_void {
+    let stack_ptr = ap as *mut *mut u8;
+    let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
+    let gr_offs_ptr = unsafe { (ap as *mut u8).add(24) as *mut i32 };
+    let val = unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+    val as usize as *mut c_void
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(crate) unsafe fn va_next_pointer(_ap: *mut c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+pub(crate) unsafe fn vscanf_write_values(
+    values: &[ScanValue],
+    directives: &[ScanDirective],
+    ap: *mut c_void,
+    failed_alloc: bool,
+) {
+    // On x86_64, the va_list structure fields:
+    // gp_offset (u32) at +0: offset into reg_save_area for next GP register arg
+    // fp_offset (u32) at +4: offset into reg_save_area for next FP register arg
+    // overflow_arg_area (*mut u8) at +8: pointer to next stack argument
+    // reg_save_area (*mut u8) at +16: saved register area
+    //
+    // For pointer arguments (all scanf destinations), gp_offset < 48 means
+    // the arg is in a register save slot; otherwise it's in overflow_arg_area.
+    let mut val_idx = 0usize;
+    for dir in directives {
+        if let ScanDirective::Spec(spec) = dir {
+            if spec.suppress {
+                continue;
+            }
+            if val_idx >= values.len() {
+                break;
+            }
+
+            // SAFETY: `ap` is a live va_list positioned at the next pointer
+            // argument; the helper advances it.
+            let dest_ptr: *mut c_void = unsafe { va_next_pointer(ap) };
+
+            // Write the value through the pointer.
+            unsafe {
+                vscanf_write_one(&values[val_idx], spec, dest_ptr);
+            }
+            val_idx += 1;
+        }
+    }
+    // The next argument belongs to the %m conversion that failed: glibc leaves
+    // NULL there.
+    if failed_alloc {
+        // SAFETY: that conversion's destination is a `char **`.
+        unsafe { *va_next_pointer(ap).cast::<*mut c_char>() = std::ptr::null_mut() };
+    }
+}
+
+/// Write a single scanned value to a destination pointer.
+pub(crate) unsafe fn vscanf_write_one(
+    val: &ScanValue,
+    spec: &frankenlibc_core::stdio::scanf::ScanSpec,
+    dest: *mut c_void,
+) {
+    match val {
+        // See the macro: placeholder slot, never inside the populated prefix.
+        ScanValue::Unset => {}
+        ScanValue::SignedInt(v) => match spec.length {
+            LengthMod::Hh => unsafe { *(dest as *mut i8) = *v as i8 },
+            LengthMod::H => unsafe { *(dest as *mut i16) = *v as i16 },
+            LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe { *(dest as *mut i64) = *v },
+            LengthMod::Z | LengthMod::T => unsafe { *(dest as *mut isize) = *v as isize },
+            _ => unsafe { *(dest as *mut c_int) = *v as c_int },
+        },
+        ScanValue::UnsignedInt(v) => match spec.length {
+            LengthMod::Hh => unsafe { *(dest as *mut u8) = *v as u8 },
+            LengthMod::H => unsafe { *(dest as *mut u16) = *v as u16 },
+            LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe { *(dest as *mut u64) = *v },
+            LengthMod::Z | LengthMod::T => unsafe { *(dest as *mut usize) = *v as usize },
+            _ => unsafe { *(dest as *mut u32) = *v as u32 },
+        },
+        // See the macro: `%Lf` alone yields this, and `dest` is its
+        // `long double *`.
+        ScanValue::LongDouble(bytes) => unsafe { write_long_double_bytes(dest, bytes) },
+        ScanValue::Float(v) => match spec.length {
+            LengthMod::BigL => unsafe { write_long_double_from_f64(dest, *v) },
+            LengthMod::L => unsafe { *(dest as *mut f64) = *v },
+            _ => unsafe {
+                // Preserve a NaN payload across the f64->f32 narrowing.
+                *(dest as *mut f32) = frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(*v)
+            },
+        },
+        // GNU `%m`: `dest` is a `char **`; store a malloc'd copy there. `%mc`
+        // gets exactly the matched bytes (no NUL, as glibc), `%ms`/`%m[` a
+        // NUL-terminated string.
+        ScanValue::Char(bytes) if spec.alloc => unsafe {
+            let buf = malloc(bytes.len().max(1)).cast::<u8>();
+            if !buf.is_null() {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+            }
+            *(dest as *mut *mut u8) = buf;
+        },
+        ScanValue::String(bytes) if spec.alloc => unsafe {
+            let buf = malloc(bytes.len() + 1).cast::<u8>();
+            if !buf.is_null() {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+                *buf.add(bytes.len()) = 0;
+            }
+            *(dest as *mut *mut u8) = buf;
+        },
+        ScanValue::Char(bytes) => unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest as *mut u8, bytes.len());
+        },
+        ScanValue::String(bytes) => unsafe {
+            let p = dest as *mut u8;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            *p.add(bytes.len()) = 0; // NUL-terminate
+        },
+        ScanValue::CharsConsumed(n) => match spec.length {
+            LengthMod::Hh => unsafe { *(dest as *mut i8) = *n as i8 },
+            LengthMod::H => unsafe { *(dest as *mut i16) = *n as i16 },
+            LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe {
+                *(dest as *mut i64) = *n as i64;
+            },
+            _ => unsafe { *(dest as *mut c_int) = *n as c_int },
+        },
+        ScanValue::Pointer(v) => unsafe {
+            *(dest as *mut *mut c_void) = *v as *mut c_void;
+        },
+    }
+}
+
+// __printf_chk — defined in fortify_abi.rs (canonical module)
+
+// __fprintf_chk — defined in fortify_abi.rs (canonical module)
+
+// __sprintf_chk — defined in fortify_abi.rs (canonical module)
+
+// ---------------------------------------------------------------------------
+// getc / putc (function versions of fgetc / fputc)
+// ---------------------------------------------------------------------------
+
+/// POSIX `getc` — identical to `fgetc` but as a function (not macro).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getc(stream: *mut c_void) -> c_int {
+    unsafe { fgetc_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+/// POSIX `putc` — identical to `fputc` but as a function (not macro).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn putc(c: c_int, stream: *mut c_void) -> c_int {
+    unsafe { fputc_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+}
+
+// ---------------------------------------------------------------------------
+// fgetpos / fsetpos
+// ---------------------------------------------------------------------------
+
+/// POSIX `fgetpos` — save the current stream position.
+///
+/// Stores the current value of the stream's file position into `*pos`.
+/// Returns 0 on success, -1 on error with errno set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if stream.is_null() || pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, canonical_stream_id(stream))
+        && let Some(host_fgetpos) = unsafe { host_fgetpos_fn() }
+    {
+        let (_, decision) = runtime_policy::decide(
+            ApiFamily::Stdio,
+            canonical_stream_id(stream),
+            0,
+            false,
+            false,
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        }
+        let rc = unsafe { host_fgetpos(stream, pos) };
+        if rc != 0 {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, rc != 0);
+        return rc;
+    }
+
+    // Native streams use stateless codecs and return incomplete multibyte
+    // input to their byte buffer. Their saved position is therefore the same
+    // logical offset as ftell, including pipe errors, append output and cookie
+    // callbacks. Host-owned conversion state is preserved by the route above.
+    // Do not write any part of the caller's fpos_t if querying the position fails.
+    let offset = unsafe { ftell(stream) };
+    if offset < 0 {
+        return -1;
+    }
+
+    // fpos_t is opaque; we store the offset as i64 at the start of the struct.
+    // On Linux x86_64, fpos_t starts with __pos: i64.
+    // SAFETY: pos is non-null and points to a valid fpos_t; we write the
+    // offset into the first 8 bytes which correspond to the __pos field.
+    unsafe {
+        std::ptr::write(pos as *mut i64, offset as i64);
+    }
+
+    0
+}
+
+/// POSIX `fsetpos` — restore a previously saved stream position.
+///
+/// Restores the file position from `*pos` (previously set by `fgetpos`).
+/// Returns 0 on success, -1 on error with errno set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) -> c_int {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if stream.is_null() || pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let _id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, _id)
+        && let Some(host_fsetpos) = unsafe { host_fsetpos_fn() }
+    {
+        let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, _id, 0, false, false, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        }
+        let rc = unsafe { host_fsetpos(stream, pos) };
+        if rc != 0 {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, rc != 0);
+        return rc;
+    }
+
+    // Read the offset from the fpos_t (first 8 bytes = __pos field).
+    let offset = unsafe { std::ptr::read(pos as *const i64) };
+
+    // Delegate to fseek with SEEK_SET.
+    unsafe { fseek(stream, offset as c_long, libc::SEEK_SET) }
+}
+
+// ---------------------------------------------------------------------------
+// fdopen
+// ---------------------------------------------------------------------------
+
+/// POSIX `fdopen` — associate a FILE stream with an existing file descriptor.
+///
+/// The mode string must be compatible with the fd's open mode.
+/// The fd is NOT duplicated — the stream takes ownership for buffering/close.
+/// Returns an opaque stream handle managed by the ABI registry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
+    if mode.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    // Parse mode string into open flags.
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
+    let Some(mut open_flags) = parse_mode(mode_bytes) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    };
+    // GNU fdopen ignores `c`: it associates an existing descriptor and does
+    // not give its I/O the special fopen/open-stream cancellation policy.
+    open_flags.no_cancel = false;
+
+    // A positive descriptor can still be closed.  Validate it before creating
+    // a registry-owned stream so fdopen() preserves glibc's EBADF contract for
+    // invalid descriptors regardless of whether the mode requests CLOEXEC.
+    let descriptor_flags = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFL, 0) } {
+        Ok(flags) => flags,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+    };
+    let access_mode = descriptor_flags & libc::O_ACCMODE;
+    if (open_flags.readable && access_mode == libc::O_WRONLY)
+        || (open_flags.writable && access_mode == libc::O_RDONLY)
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    // fdopen does not reopen the descriptor. Append mode must therefore set
+    // the kernel flag explicitly so every write appends atomically, even after
+    // fseek. Preserve existing status flags such as O_NONBLOCK.
+    if open_flags.append
+        && descriptor_flags & libc::O_APPEND == 0
+        // SAFETY: F_GETFL validated fd; F_SETFL takes an integer flag argument,
+        // and OR-ing O_APPEND preserves the descriptor's existing status flags.
+        && let Err(e) = unsafe {
+            raw_syscall::sys_fcntl(
+                fd,
+                libc::F_SETFL,
+                (descriptor_flags | libc::O_APPEND) as usize,
+            )
+        }
+    {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        unsafe { set_abi_errno(e) };
+        return std::ptr::null_mut();
+    }
+
+    if open_flags.cloexec {
+        let existing = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
+            Ok(flags) => flags,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return std::ptr::null_mut();
+            }
+        };
+        let _ = unsafe {
+            raw_syscall::sys_fcntl(fd, libc::F_SETFD, (existing | libc::FD_CLOEXEC) as usize)
+        };
+    }
+
+    // Create stream via fdopen_native_impl.
+    let fp = fdopen_native_impl(fd, &open_flags);
+    if fp.is_null() {
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        unsafe { set_abi_errno(saved_errno) };
+    } else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+    }
+    fp
+}
+
+// ---------------------------------------------------------------------------
+// freopen
+// ---------------------------------------------------------------------------
+
+/// POSIX `freopen` — reopen a stream with a new file.
+///
+/// Closes the existing stream and opens a new file with the given mode.
+/// If pathname is NULL, attempts to change the mode of the existing fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Write `n` in decimal into `buf`, returning the digit count. Used to build
+/// `/proc/self/fd/N` without allocating on a path that must not depend on the
+/// allocator being usable.
+fn fd_decimal_into(n: u32, buf: &mut [u8]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut digits = [0u8; 10];
+    let mut len = 0usize;
+    let mut v = n;
+    while v > 0 {
+        digits[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    for i in 0..len {
+        buf[i] = digits[len - 1 - i];
+    }
+    len
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn freopen(
+    pathname: *const c_char,
+    mode: *const c_char,
+    stream: *mut c_void,
+) -> *mut c_void {
+    if mode.is_null() || stream.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let id = canonical_stream_id(stream);
+    let (safety_mode, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
+
+    // Validate pathname if provided.
+    if !pathname.is_null() {
+        let (_path_len, path_terminated) = unsafe {
+            scan_c_str_len(
+                pathname,
+                if repair {
+                    known_remaining(pathname as usize)
+                } else {
+                    None
+                },
+            )
+        };
+        if !path_terminated && repair {
+            unsafe { set_abi_errno(errno::ENAMETOOLONG) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+    }
+
+    // Validate mode string.
+    let (mode_len, mode_terminated) = unsafe {
+        scan_c_str_len(
+            mode,
+            if repair {
+                known_remaining(mode as usize)
+            } else {
+                None
+            },
+        )
+    };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
+    let Some(open_flags) = parse_mode(mode_bytes) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return std::ptr::null_mut();
+    };
+
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_freopen) = unsafe { host_freopen_fn() }
+    {
+        unregister_host_stream(stream);
+        let result = unsafe { host_freopen(pathname, mode, stream) };
+        if result.is_null() {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        } else {
+            register_host_stream(result);
+        }
+        return result;
+    }
+
+    if io_internal_abi::parked_static_slot() != 0 {
+        evict_parked_st_fmemopen_slot();
+    }
+    // Native freopen keeps the FILE handle (and its recursive lock) alive
+    // while replacing the stream underneath it, including failure paths.
+    // Resolve and acquire before taking the stream registry mutex.
+    let file_lock = unsafe { StdioLockGuard::acquire(stream) };
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+
+    // Close the old stream. Lock ordering: registry → cell (freopen only); no path
+    // acquires the registry while holding a cell lock, so this nesting cannot deadlock.
+    let mut target_fd = -1;
+    let mut process_child = None;
+    let mut deferred_cookie_close = false;
+    let removed_old_stream = if let Some(old_cell) = reg.remove_stream(id) {
+        let mut old_guard = old_cell.lock();
+        let old = &mut *old_guard;
+        retire_read_window(old);
+        if is_cookie_stream(id) {
+            let _ = unsafe { flush_cookie_stream(id, old) };
+            unregister_fast_fixed_mem_read(id);
+            deferred_cookie_close = true;
+        }
+        if old.is_mem_backed() {
+            sync_and_unregister_fast_fixed_mem_read(id, old);
+            unsafe {
+                sync_memstream_to_caller(id, old, true);
+                let _ = crate::wchar_abi::sync_open_wmemstream_to_caller(id, old, true);
+            }
+            let mut sync_guard = lock_mem_sync_registry();
+            if let Some(ref mut map) = *sync_guard {
+                map.remove(&id);
+            }
+            crate::wchar_abi::unregister_open_wmemstream(id);
+        }
+        let pending = old.prepare_close();
+        let old_fd = old.fd();
+        if !pending.is_empty() && old_fd >= 0 {
+            let mut written = 0usize;
+            while written < pending.len() {
+                let rc = unsafe {
+                    sys_write_fd(
+                        old_fd,
+                        pending[written..].as_ptr().cast(),
+                        pending.len() - written,
+                    )
+                };
+                if rc <= 0 {
+                    break;
+                }
+                written += rc as usize;
+            }
+        }
+        if id == STDIN_SENTINEL || id == STDOUT_SENTINEL || id == STDERR_SENTINEL {
+            target_fd = old_fd;
+        } else if old_fd >= 0 {
+            if pathname.is_null() {
+                // Keep it OPEN. With a NULL pathname the old descriptor is both
+                // the thing we reopen through (/proc/self/fd/N) and the number
+                // the result must keep, so closing it here would destroy the
+                // only handle on the file. bd-mpp7kt.
+                target_fd = old_fd;
+            } else {
+                (process_child, _) = close_stream_descriptor(id, old_fd);
+            }
+        }
+        true
+    } else {
+        false
+    };
+
+    // Release the stream registry lock before running user `fopencookie` close
+    // callbacks or `waitpid` on a replaced `popen` child.
+    if deferred_cookie_close || process_child.is_some() {
+        drop(reg);
+        if deferred_cookie_close {
+            let _ = unsafe { cookie_stream_close(id) };
+        }
+        if let Some(pid) = process_child {
+            let _ = wait_popen_child(pid);
+        }
+        reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    }
+
+    // `freopen(NULL, mode, stream)` changes a stream's mode without naming the
+    // file. glibc implements it by reopening the descriptor's own
+    // /proc/self/fd/N link and dup2-ing the result back onto the original fd,
+    // so the caller keeps both its FILE* and its descriptor number. fl used to
+    // return NULL with EINVAL — after having already closed the descriptor
+    // above, so the stream was destroyed AND the call reported failure.
+    //
+    // Verified against live glibc 2.42:
+    //   f = fopen(p,"w"); fputs("line-one\n",f); fflush(f);
+    //   freopen(NULL,"r",f) -> same FILE*, same fd (3), fgets reads "line-one\n"
+    //   freopen(NULL,"r+") on an "r" handle succeeds and does NOT truncate
+    let mut proc_path = [0u8; 32];
+    let path_ptr: *const c_char = if pathname.is_null() {
+        if target_fd < 0 {
+            // No descriptor to reopen through (memory-backed stream, or one
+            // whose fd was already gone).
+            drop(reg);
+            drop(file_lock);
+            if removed_old_stream
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                maybe_unregister_dynamic_native_stream(id as *mut c_void);
+            }
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return std::ptr::null_mut();
+        }
+        let prefix = b"/proc/self/fd/";
+        proc_path[..prefix.len()].copy_from_slice(prefix);
+        let digits = fd_decimal_into(target_fd as u32, &mut proc_path[prefix.len()..]);
+        proc_path[prefix.len() + digits] = 0;
+        proc_path.as_ptr().cast::<c_char>()
+    } else {
+        pathname
+    };
+
+    // Open the new file.
+    let oflags = flags_to_oflags(&open_flags);
+    let create_mode: libc::mode_t = 0o666;
+    let mut fd = match unsafe {
+        raw_syscall::sys_openat(libc::AT_FDCWD, path_ptr as *const u8, oflags, create_mode)
+    } {
+        Ok(f) => f,
+        Err(e) => {
+            drop(reg);
+            // The NULL-pathname path deliberately kept the old descriptor open
+            // to reopen through it; if that reopen failed there is no stream
+            // left to own it, so close it here rather than leak. Standard
+            // streams keep their 0/1/2 descriptors either way.
+            if pathname.is_null()
+                && target_fd >= 0
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                let (child, _) = close_stream_descriptor(id, target_fd);
+                if let Some(pid) = child {
+                    let _ = wait_popen_child(pid);
+                }
+            }
+            drop(file_lock);
+            if removed_old_stream
+                && id != STDIN_SENTINEL
+                && id != STDOUT_SENTINEL
+                && id != STDERR_SENTINEL
+            {
+                maybe_unregister_dynamic_native_stream(id as *mut c_void);
+            }
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    // If reopening a standard stream, dup2 the new fd onto the standard fd.
+    if target_fd >= 0 && fd != target_fd {
+        let _ = raw_syscall::sys_dup2(fd, target_fd);
+        let _ = raw_syscall::sys_close(fd);
+        fd = target_fd;
+    }
+
+    let new_stream = fd_stream(fd, open_flags, std_stream_buf_mode(fd));
+    // Keep the caller's FILE * valid and truthful: same handle, new fd and
+    // mode bits, EOF/ERR/orientation reset (bd-rc0923-epic-eeuy4f.1).
+    let handle = if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {
+        // SAFETY: `id` is a registered fl handle (checked just above).
+        unsafe {
+            io_internal_abi::reset_stdio_handle_header(
+                id as *mut c_void,
+                fd,
+                initial_glibc_flags(&open_flags, true, new_stream.buf_mode()),
+            );
+        }
+        id
+    } else {
+        // A reopened stdin/stdout/stderr keeps mirroring into its std handle
+        // (resolved lock-free, see resolve_flags_word): with 0 here, a read
+        // error after freopen(path, "r", stdin) never reached the inline
+        // ferror_unlocked (coreutils uniq/tsort/shuf, which freopen stdin,
+        // exited 0 on a directory: tests/misc/read-errors.sh).
+        let std_word = match id {
+            STDIN_SENTINEL => 1,
+            STDOUT_SENTINEL => 2,
+            STDERR_SENTINEL => 3,
+            _ => 0,
+        };
+        if std_word != 0 {
+            let glibc_flags = initial_glibc_flags(&open_flags, true, new_stream.buf_mode());
+            let vis = io_internal_abi::visible_stdio_handle_addr_lockfree(std_word - 1);
+            if vis != 0 {
+                unsafe {
+                    io_internal_abi::reset_stdio_handle_header(vis as *mut c_void, fd, glibc_flags);
+                }
+            }
+            let slot = io_internal_abi::native_stdio_slot_addr_lockfree(std_word - 1);
+            if slot != 0 && slot != vis {
+                unsafe {
+                    io_internal_abi::reset_stdio_handle_header(
+                        slot as *mut c_void,
+                        fd,
+                        glibc_flags,
+                    );
+                }
+            }
+        }
+        std_word
+    };
+    reg.insert_stream_with_handle(id, new_stream, handle);
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, false);
+    // The caller's own FILE *, as glibc returns: for stdin/stdout/stderr `id` is
+    // a registry sentinel, and returning it broke `freopen(p, m, stderr) ==
+    // stderr` (gnulib test-perror2).
+    stream
+}
+
+// ---------------------------------------------------------------------------
+// remove / rename
+// ---------------------------------------------------------------------------
+
+/// POSIX `remove` — remove a file or directory.
+///
+/// Equivalent to `unlink` for files and `rmdir` for directories.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
+    if pathname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return -1;
+    }
+
+    // Try unlink first; if EISDIR, try rmdir. The raw syscalls report their
+    // errno in `Err` and never touch the thread's errno, so reading
+    // `last_os_error()` here saw a stale value and directories were never
+    // rmdir'd (gnulib test-canonicalize-lgpl: remove of an empty dir failed).
+    let final_errno =
+        match unsafe { raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, 0) } {
+            Ok(()) => {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+                return 0;
+            }
+            Err(errno::EISDIR) => match unsafe {
+                raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, libc::AT_REMOVEDIR)
+            } {
+                Ok(()) => {
+                    // glibc's remove leaves the failed unlink's EISDIR in errno.
+                    unsafe { set_abi_errno(errno::EISDIR) };
+                    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+                    return 0;
+                }
+                Err(e) => e,
+            },
+            Err(e) => e,
+        };
+    unsafe { set_abi_errno(final_errno) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+    -1
+}
+
+// ---------------------------------------------------------------------------
+// getdelim / getline
+// ---------------------------------------------------------------------------
+
+// POSIX `getdelim` — read until a delimiter, dynamically allocating the buffer.
+//
+// Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
+// `*lineptr` using `malloc`/`realloc`. Stores the buffer capacity in `*n`.
+// Returns the number of bytes read (including delim), or -1 on error/EOF.
+thread_local! {
+    /// Reusable getdelim scratch buffer — avoids a fresh `Vec::with_capacity(128)` (a per-line
+    /// fl-malloc, ~61ns, that glibc doesn't pay) on every getdelim/getline call. Retains its
+    /// capacity across calls; a drop guard restores it on every return path.
+    static GETDELIM_SCRATCH: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+struct GetdelimScratchGuard(Vec<u8>);
+impl GetdelimScratchGuard {
+    #[inline]
+    fn take() -> Self {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return Self(Vec::new());
+        }
+        Self(GETDELIM_SCRATCH.try_with(|c| c.take()).unwrap_or_default())
+    }
+}
+impl Drop for GetdelimScratchGuard {
+    fn drop(&mut self) {
+        if crate::malloc_abi::native_thread_backend_active() {
+            return;
+        }
+        // Return the (grown) buffer to the thread-local so its capacity is reused next call.
+        let _ = GETDELIM_SCRATCH.try_with(|c| c.set(std::mem::take(&mut self.0)));
+    }
+}
+
+/// Shared getdelim read loop: fill `buf` from `s` through the first `delim_byte`, or EOF/
+/// error. Bulk-scans the stream buffer via read_until_delim (no per-char re-lock), refilling
+/// the fd. Extracted verbatim from the original loop so both the slow path (registry lock
+/// held) and the ST pointer-keyed fast path (cache-gated) share one implementation.
+///
+/// # Safety
+/// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
+unsafe fn getdelim_fill_stream(
+    s: &mut StdioStream,
+    delim_byte: u8,
+    buf: &mut Vec<u8>,
+    caller: usize,
+) {
+    // GNU line input stops on an existing error, even when ungetc or scanf
+    // left readable bytes. Check before read_until_delim consumes that input;
+    // clearerr must leave it available to the next successful read.
+    if s.is_error() {
+        return;
+    }
+    let caller = stream_io_caller(s, caller);
+    loop {
+        match s.read_until_delim(delim_byte, &mut *buf) {
+            ReadUntil::Found | ReadUntil::Eof => break,
+            ReadUntil::NeedRefill => {
+                if s.is_eof() || s.is_error() {
+                    break;
+                }
+                if s.buffer_capacity() == 0 {
+                    // Unbuffered fd stream: read a byte directly.
+                    let mut b = [0u8; 1];
+                    let fd = s.fd();
+                    let rc = unsafe { stream_read_fd(caller, fd, b.as_mut_ptr().cast(), 1) };
+                    if rc > 0 {
+                        s.set_offset(s.offset().saturating_add(1));
+                        buf.push(b[0]);
+                        if b[0] == delim_byte {
+                            break;
+                        }
+                    } else if rc == 0 {
+                        s.set_eof();
+                        break;
+                    } else {
+                        s.set_error();
+                        break;
+                    }
+                } else if unsafe { refill_stream(s, caller) } <= 0 {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// The capacity is an input only when the caller supplied a buffer. In the
+/// NULL-buffer case it is an output slot and may be uninitialized.
+///
+/// # Safety
+/// If `buffer` is non-null, `capacity` points to an initialized size_t.
+unsafe fn getdelim_capacity(buffer: *mut c_char, capacity: *const usize) -> usize {
+    if buffer.is_null() {
+        0
+    } else {
+        // SAFETY: only a supplied buffer requires an initialized input capacity.
+        unsafe { *capacity }
+    }
+}
+
+/// Shared getdelim tail: (re)allocate `*lineptr` to fit `buf` + NUL, copy, NUL-terminate.
+/// Returns the line length, or -1 (empty read / ENOMEM). No observe/membrane — the caller
+/// handles telemetry (the fast path skips it).
+///
+/// # Safety
+/// `lineptr`/`n` are valid getdelim out-params; `*lineptr` (if non-null) was
+/// returned by a compatible allocator entrypoint.
+unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) -> isize {
+    if buf.is_empty() {
+        return -1;
+    }
+    let needed = buf.len() + 1; // +1 for NUL terminator
+    let current_buf = unsafe { *lineptr };
+    // SAFETY: a non-null input buffer has an initialized capacity; otherwise
+    // n is only an output and must not be read.
+    let current_size = unsafe { getdelim_capacity(current_buf, n) };
+    let out_buf = if current_buf.is_null() || current_size < needed {
+        let new_size = needed.max(128);
+        // SAFETY: FrankenLibC realloc routes segment, fallback-tracked host,
+        // and unknown host pointers through their matching ownership path.
+        let new_buf = unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) };
+        if new_buf.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        }
+        unsafe { *lineptr = new_buf.cast() };
+        unsafe { *n = new_size };
+        new_buf as *mut u8
+    } else {
+        current_buf as *mut u8
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), out_buf, buf.len());
+        *out_buf.add(buf.len()) = 0; // NUL terminate
+    }
+    buf.len() as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getdelim(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    delim: c_int,
+    stream: *mut c_void,
+) -> isize {
+    unsafe {
+        getdelim_for_caller(
+            lineptr,
+            n,
+            delim,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+pub(crate) unsafe fn getdelim_for_caller(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    delim: c_int,
+    stream: *mut c_void,
+    caller: usize,
+) -> isize {
+    let _lock = unsafe { StdioLockGuard::acquire(stream) };
+    if lineptr.is_null() || n.is_null() || stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let delim_byte = delim as u8;
+
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so fill lock-free + finish,
+    // skipping canonical_stream_id's native lock + registry_contains + registry().lock() +
+    // decide/observe per line (getline is hot for file processing). Byte-identical.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let mut scratch = GetdelimScratchGuard::take();
+        let buf = &mut scratch.0;
+        buf.clear();
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
+        unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf, caller) };
+        mirror_raw_cached(stream, p);
+        return unsafe { getdelim_finish(buf, lineptr, n) };
+    }
+    // MT-safe cell-cache fast path (see fgets): the ST cache above is `__libc_single_threaded`-
+    // gated, so a threaded getline/getdelim loop otherwise pays the registry map lock +
+    // decide/observe PER LINE. A gen-valid cell hit is a non-cookie non-mem fd stream (both store
+    // sites, incl. this fn's slow path below), so `getdelim_fill_stream` under this stream's lock
+    // is byte-identical to the slow path.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        if !s.is_mem_backed() {
+            let mut scratch = GetdelimScratchGuard::take();
+            let buf = &mut scratch.0;
+            buf.clear();
+            // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
+            unsafe { getdelim_fill_stream(&mut s, delim_byte, buf, caller) };
+            return unsafe { getdelim_finish(buf, lineptr, n) };
+        }
+    }
+
+    let id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, id)
+        && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
+    {
+        // Native clone threads can own a different errno cell from glibc.
+        // Seed the host only after allocator handoff has finished its work.
+        // SAFETY: the ABI accessor returns this thread's initialized errno.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        // SAFETY: valid output slots; capacity is an input only for a supplied buffer.
+        let (buffer, capacity) = unsafe {
+            let buffer = *lineptr;
+            (buffer, getdelim_capacity(buffer, n))
+        };
+        // SAFETY: the valid caller buffer and its input capacity match; a NULL
+        // buffer is paired with zero capacity.
+        let Some(prepared) =
+            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer(buffer.cast(), capacity) })
+        else {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        };
+        unsafe { *lineptr = prepared.cast() };
+        // SAFETY: only this thread's ABI and host errno slots are written.
+        unsafe {
+            set_abi_errno(saved_errno);
+            crate::host_resolve::write_host_errno_if_available(saved_errno);
+        }
+        let rc = unsafe { host_getdelim(lineptr, n, delim, stream) };
+        let host_errno = crate::host_resolve::host_errno(saved_errno);
+        // A host-owned cookie callback can use our interposed errno accessor.
+        // If glibc left its slot unchanged, retain the callback's ABI errno;
+        // a changed host slot carries the host operation's error instead.
+        // SAFETY: the ABI accessor returns this thread's initialized errno.
+        let callback_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let returned_errno = if host_errno == saved_errno {
+            callback_errno
+        } else {
+            host_errno
+        };
+        // SAFETY: the host initializes capacity when it supplies a buffer, but
+        // may leave both slots untouched after an existing stream error.
+        let (returned, capacity) = unsafe {
+            let returned = *lineptr;
+            (returned, getdelim_capacity(returned, n))
+        };
+        crate::malloc_abi::finish_host_realloc_buffer(returned.cast(), capacity);
+        if rc >= 0 {
+            mark_host_io_started(stream);
+        }
+        // Preserve errno on partial success and on an existing error.
+        // SAFETY: only this thread's ABI errno is updated.
+        unsafe { set_abi_errno(returned_errno) };
+        return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    // Reuse the thread-local scratch (retains capacity) instead of a fresh per-call Vec.
+    let mut scratch = GetdelimScratchGuard::take();
+    let buf = &mut scratch.0;
+    buf.clear();
+
+    if is_cookie_stream(id) {
+        // Cookie streams have no descriptor. Reuse the callback-aware reader,
+        // including the fixed-memory cursor and scanf/ungetc pushback.
+        // Unlike fgetc, GNU getdelim stops on a pre-existing error indicator.
+        let stopped = stream_cell(id).is_some_and(|cell| {
+            let s = cell.lock();
+            s.is_eof() || s.is_error()
+        });
+        if stopped {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        }
+        loop {
+            let byte = unsafe { fgetc_for_caller(stream, caller) };
+            if byte == libc::EOF {
+                break;
+            }
+            buf.push(byte as u8);
+            if byte as u8 == delim_byte {
+                break;
+            }
+        }
+        return unsafe { getdelim_finish(buf, lineptr, n) };
+    }
+
+    // Read the whole line under the stream's OWN lock + the policy decision above (bulk
+    // read_until_delim, not per-char fgetc; the ABI layer owns descriptor refill).
+    {
+        let Some(cell) = stream_cell(id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
+        if s.is_mem_backed() {
+            sync_and_unregister_fast_fixed_mem_read(id, s);
+        } else if !is_cookie_stream(id) {
+            // Cache the non-cookie non-mem fd stream so subsequent getdelim/getline hit the
+            // fast path — a pure getline loop otherwise never populates the cache. See fgets.
+            write_cache_store(stream, id, s as *mut StdioStream);
+            // MT-safe cell cache: a threaded getline loop warms this once then skips the map lock.
+            stream_cell_cache_store(stream, &cell);
+        }
+        // SAFETY: `s` uniquely borrowed under the stream lock.
+        unsafe { getdelim_fill_stream(s, delim_byte, buf, caller) };
+    }
+
+    let r = unsafe { getdelim_finish(buf, lineptr, n) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, r < 0);
+    r
+}
+
+/// POSIX `getline` — read a complete line, dynamically allocating the buffer.
+///
+/// Equivalent to `getdelim(lineptr, n, '\n', stream)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getline(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+) -> isize {
+    unsafe {
+        getline_for_caller(
+            lineptr,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+unsafe fn getline_for_caller(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+    caller: usize,
+) -> isize {
+    if lineptr.is_null() || n.is_null() || stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let _id = canonical_stream_id(stream);
+    // Host delegation path - not available in standalone mode
+    #[cfg(not(feature = "standalone"))]
+    if may_delegate_to_host(stream, _id)
+        && let Some(host_getline) = unsafe { host_getline_fn() }
+    {
+        // SAFETY: the ABI accessor returns this thread's initialized errno.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        // SAFETY: valid output slots; a NULL buffer leaves capacity output-only.
+        let (buffer, capacity) = unsafe {
+            let buffer = *lineptr;
+            (buffer, getdelim_capacity(buffer, n))
+        };
+        // SAFETY: the caller buffer, if present, is a valid realloc allocation
+        // whose capacity was initialized by the caller.
+        let Some(prepared) =
+            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer(buffer.cast(), capacity) })
+        else {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        };
+        unsafe { *lineptr = prepared.cast() };
+        // SAFETY: only this thread's ABI and host errno slots are written.
+        unsafe {
+            set_abi_errno(saved_errno);
+            crate::host_resolve::write_host_errno_if_available(saved_errno);
+        }
+        let rc = unsafe { host_getline(lineptr, n, stream) };
+        let host_errno = crate::host_resolve::host_errno(saved_errno);
+        // SAFETY: a host cookie callback can write this thread's ABI slot.
+        let callback_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let returned_errno = if host_errno == saved_errno {
+            callback_errno
+        } else {
+            host_errno
+        };
+        // SAFETY: the host need not initialize capacity on a pre-existing error
+        // when it has left the buffer NULL.
+        let (returned, capacity) = unsafe {
+            let returned = *lineptr;
+            (returned, getdelim_capacity(returned, n))
+        };
+        crate::malloc_abi::finish_host_realloc_buffer(returned.cast(), capacity);
+        if rc >= 0 {
+            mark_host_io_started(stream);
+        }
+        // SAFETY: restore this thread's caller-visible errno after bookkeeping,
+        // including a successful partial line that carries a real read error.
+        unsafe { set_abi_errno(returned_errno) };
+        return rc;
+    }
+    unsafe { getdelim_for_caller(lineptr, n, b'\n' as c_int, stream, caller) }
+}
+
+/// glibc reserved-namespace alias for [`getline`]. Some headers
+/// and a few third-party callers link against the underscored
+/// variant instead of the public name.
+///
+/// # Safety
+///
+/// Same as [`getline`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __getline(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+) -> isize {
+    unsafe {
+        getline_for_caller(
+            lineptr,
+            n,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// tmpfile / tmpnam
+// ---------------------------------------------------------------------------
+
+/// POSIX `tmpfile` — create a temporary file opened for update.
+///
+/// Creates and opens a temporary file that is automatically removed when closed.
+/// Returns a FILE stream pointer or NULL on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpfile() -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+        return std::ptr::null_mut();
+    }
+
+    // Use O_TMPFILE for efficient temporary file creation.
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/tmp".as_ptr() as *const u8,
+            libc::O_RDWR | libc::O_TMPFILE | libc::O_EXCL,
+            0o600,
+        )
+    }
+    .unwrap_or(-1);
+
+    if fd < 0 {
+        // Fallback: create a named temp file and unlink it.
+        let template = b"/tmp/frankenlibc_XXXXXX\0";
+        let mut path = *template;
+        let fd2 = unsafe { crate::wchar_abi::mkstemp(path.as_mut_ptr().cast()) };
+        if fd2 < 0 {
+            let e = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(errno::EIO);
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+            return std::ptr::null_mut();
+        }
+        // Unlink immediately so it's deleted on close.
+        let _ = unsafe { raw_syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr(), 0) };
+
+        let open_flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let fp = fdopen_native_impl(fd2, &open_flags);
+        if fp.is_null() {
+            let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+            let _ = raw_syscall::sys_close(fd2);
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+            unsafe { set_abi_errno(saved_errno) };
+            return std::ptr::null_mut();
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
+        return fp;
+    }
+
+    let open_flags = OpenFlags {
+        readable: true,
+        writable: true,
+        ..Default::default()
+    };
+    let fp = fdopen_native_impl(fd, &open_flags);
+    if fp.is_null() {
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let _ = raw_syscall::sys_close(fd);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+        unsafe { set_abi_errno(saved_errno) };
+        return std::ptr::null_mut();
+    }
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
+    fp
+}
+
+/// Thread-local counter for tmpnam uniqueness.
+static TMPNAM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(feature = "owned-tls-cache")]
+static TMPNAM_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 64]);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static TMPNAM_BUF: crate::util::TlsHeapCell<std::cell::UnsafeCell<[u8; 64]>> =
+        const { crate::util::TlsHeapCell::new() };
+}
+
+fn tmpnam_static_buffer(name: &[u8], total: usize) -> *mut c_char {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        TMPNAM_BUF_OWNED_TLS.with(|buf| {
+            // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
+            // is bounded by the fixed local formatter buffer.
+            unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), buf.as_mut_ptr(), total) };
+            buf.as_ptr() as *mut c_char
+        })
+    }
+
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        TMPNAM_BUF.with(|slot| {
+            slot.with_zeroed(None, |cell| {
+                let buf = cell.get();
+                // SAFETY: `buf` is the per-thread static tmpnam buffer and `total`
+                // is bounded by the fixed local formatter buffer.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), total);
+                    (*buf).as_ptr() as *mut c_char
+                }
+            })
+        })
+    }
+}
+
+/// POSIX `tmpnam` — generate a unique temporary file name.
+///
+/// If `s` is not NULL, the name is written to the buffer pointed to by `s`
+/// (which must be at least `L_tmpnam` bytes). If `s` is NULL, a static
+/// buffer is used (NOT thread-safe in that case).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
+    let counter = TMPNAM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = raw_syscall::sys_getpid() as u32;
+
+    // Format: /tmp/flc_<pid>_<counter>
+    let mut name = [0u8; 48];
+    let prefix = b"/tmp/flc_";
+    let prefix_len = prefix.len();
+    name[..prefix_len].copy_from_slice(prefix);
+
+    let mut pos = prefix_len;
+    // Write pid.
+    pos = write_u32_to_buf(&mut name, pos, pid);
+    name[pos] = b'_';
+    pos += 1;
+    // Write counter.
+    pos = write_u64_to_buf(&mut name, pos, counter);
+    name[pos] = 0; // NUL
+
+    let total = pos + 1;
+
+    if !s.is_null() {
+        unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), s as *mut u8, total) };
+        s
+    } else {
+        tmpnam_static_buffer(&name, total)
+    }
+}
+
+/// Write a u32 as decimal digits into `buf` starting at `start`. Returns the new position.
+fn write_u32_to_buf(buf: &mut [u8], start: usize, mut v: u32) -> usize {
+    if v == 0 {
+        buf[start] = b'0';
+        return start + 1;
+    }
+    let mut tmp = [0u8; 10];
+    let mut len = 0;
+    while v > 0 {
+        tmp[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    // Reverse into buf.
+    for i in 0..len {
+        buf[start + i] = tmp[len - 1 - i];
+    }
+    start + len
+}
+
+/// Write a u64 as decimal digits into `buf` starting at `start`. Returns the new position.
+fn write_u64_to_buf(buf: &mut [u8], start: usize, mut v: u64) -> usize {
+    if v == 0 {
+        buf[start] = b'0';
+        return start + 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut len = 0;
+    while v > 0 {
+        tmp[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    for i in 0..len {
+        buf[start + i] = tmp[len - 1 - i];
+    }
+    start + len
+}
+
+// ---------------------------------------------------------------------------
+// popen / pclose
+// ---------------------------------------------------------------------------
+
+struct PopenChild {
+    pid: i32,
+    fd: c_int,
+}
+
+/// Every active process stream's parent descriptor must be closed in a new
+/// popen child. Publication, fork and descriptor removal share this lock so a
+/// child cannot inherit an untracked writer or close a reused descriptor.
+const POPEN_INLINE_SLOTS: usize = 16;
+
+struct PopenPidTable {
+    inline: [Option<(usize, PopenChild)>; POPEN_INLINE_SLOTS],
+    overflow: Vec<(usize, PopenChild)>,
+}
+
+impl PopenPidTable {
+    const fn new() -> Self {
+        Self {
+            inline: [const { None }; POPEN_INLINE_SLOTS],
+            overflow: Vec::new(),
+        }
+    }
+
+    fn insert(&mut self, id: usize, child: PopenChild) {
+        for slot in &mut self.inline {
+            if let Some((slot_id, slot_child)) = slot
+                && *slot_id == id
+            {
+                *slot_child = child;
+                return;
+            }
+        }
+        for (slot_id, slot_child) in &mut self.overflow {
+            if *slot_id == id {
+                *slot_child = child;
+                return;
+            }
+        }
+        ACTIVE_POPEN_COUNT.fetch_add(1, Ordering::Release);
+        for slot in &mut self.inline {
+            if slot.is_none() {
+                *slot = Some((id, child));
+                return;
+            }
+        }
+        self.overflow.push((id, child));
+    }
+
+    fn remove(&mut self, id: usize) -> Option<PopenChild> {
+        for slot in &mut self.inline {
+            if slot.as_ref().is_some_and(|(slot_id, _)| *slot_id == id) {
+                let (_, child) = slot.take()?;
+                ACTIVE_POPEN_COUNT.fetch_sub(1, Ordering::Release);
+                return Some(child);
+            }
+        }
+        if let Some(pos) = self.overflow.iter().position(|(slot_id, _)| *slot_id == id) {
+            let (_, child) = self.overflow.swap_remove(pos);
+            ACTIVE_POPEN_COUNT.fetch_sub(1, Ordering::Release);
+            return Some(child);
+        }
+        None
+    }
+
+    fn contains_key(&self, id: usize) -> bool {
+        self.inline
+            .iter()
+            .any(|slot| slot.as_ref().is_some_and(|(slot_id, _)| *slot_id == id))
+            || self.overflow.iter().any(|(slot_id, _)| *slot_id == id)
+    }
+
+    fn iter_children(&self) -> impl Iterator<Item = &PopenChild> {
+        self.inline
+            .iter()
+            .filter_map(|slot| slot.as_ref().map(|(_, child)| child))
+            .chain(self.overflow.iter().map(|(_, child)| child))
+    }
+}
+
+static ACTIVE_POPEN_COUNT: AtomicUsize = AtomicUsize::new(0);
+static POPEN_PIDS: Mutex<PopenPidTable> = Mutex::new(PopenPidTable::new());
+
+fn popen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
+    let buf_mode = BufMode::Full;
+    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    stream.set_buffering(buf_mode, 4096);
+    stream.set_orientation(-1);
+    let Some((id, handle)) = alloc_stream_handle(fd, open_flags, buf_mode) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if reg.contains_stream(id) {
+        drop(reg);
+        maybe_unregister_dynamic_native_stream(id as *mut c_void);
+        unsafe { set_abi_errno(errno::EMFILE) };
+        return std::ptr::null_mut();
+    }
+    reg.insert_stream_with_handle(id, stream, handle);
+    id as *mut c_void
+}
+
+#[inline]
+fn lock_popen_pids() -> std::sync::MutexGuard<'static, PopenPidTable> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&POPEN_PIDS)
+}
+
+fn close_stream_descriptor(id: usize, fd: c_int) -> (Option<i32>, Result<(), c_int>) {
+    if ACTIVE_POPEN_COUNT.load(Ordering::Acquire) == 0 {
+        return (None, raw_syscall::sys_close(fd));
+    }
+    let mut guard = lock_popen_pids();
+    let child = guard.remove(id);
+    if child.is_none() {
+        // An ordinary descriptor can have a blocking close (e.g. SO_LINGER).
+        // Only process pipes need to serialize their close with popen forks.
+        drop(guard);
+        return (None, raw_syscall::sys_close(fd));
+    }
+    let closed = raw_syscall::sys_close(fd);
+    (child.map(|child| child.pid), closed)
+}
+
+fn wait_popen_child(pid: i32) -> Result<c_int, c_int> {
+    let mut status = 0;
+    loop {
+        // GNU process-stream close retries interruptions and does not enter a
+        // cancellation window while it owns an unreaped child. No locks may be
+        // held by the caller during this wait.
+        match unsafe { raw_syscall::sys_wait4(pid, &mut status, 0, std::ptr::null_mut()) } {
+            Ok(child) if child == pid => return Ok(status),
+            Ok(_) | Err(libc::EINTR) => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// POSIX `popen` — open a process by creating a pipe.
+///
+/// Forks and execs `/bin/sh -c command`. If type is `"r"`, returns a stream
+/// that reads from the child's stdout. If `"w"`, returns a stream that writes
+/// to the child's stdin.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char) -> *mut c_void {
+    if command.is_null() || typ.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(typ, None) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+    let mode_bytes = unsafe { std::slice::from_raw_parts(typ.cast::<u8>(), mode_len) };
+    if mode_bytes.is_empty() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+    let mode = mode_bytes[0];
+    let reading = mode == b'r';
+    if mode != b'r' && mode != b'w' {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+    let mut close_on_exec = false;
+    for &flag in &mode_bytes[1..] {
+        if flag == b'e' && !close_on_exec {
+            close_on_exec = true;
+        } else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            return std::ptr::null_mut();
+        }
+    }
+
+    // Start both ends close-on-exec. Plain r/w clears the parent flag only
+    // after publishing the descriptor under the process registry lock.
+    let mut pipe_fds = [0i32; 2];
+    let pipe_result = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) };
+    if let Err(e) = pipe_result {
+        if e != libc::ENOSYS {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
+        // Retain the fallback for environments rejecting pipe2 flags.
+        if let Err(e) = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), 0) } {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
+        for fd in pipe_fds {
+            if let Err(e) =
+                unsafe { raw_syscall::sys_fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC as usize) }
+            {
+                let _ = raw_syscall::sys_close(pipe_fds[0]);
+                let _ = raw_syscall::sys_close(pipe_fds[1]);
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+                unsafe { set_abi_errno(e) };
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
+    let (our_fd, child_fd) = if reading {
+        (pipe_fds[0], pipe_fds[1])
+    } else {
+        (pipe_fds[1], pipe_fds[0])
+    };
+    let open_flags = OpenFlags {
+        readable: reading,
+        writable: !reading,
+        cloexec: close_on_exec,
+        ..Default::default()
+    };
+    // Allocate/register before starting a child. Failure must not run the
+    // command, and no stream-registry or stream-cell lock nests under POPEN_PIDS.
+    let fp = popen_native_impl(our_fd, &open_flags);
+    if fp.is_null() {
+        let saved_errno = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        let _ = raw_syscall::sys_close(our_fd);
+        let _ = raw_syscall::sys_close(child_fd);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        unsafe { set_abi_errno(saved_errno) };
+        return std::ptr::null_mut();
+    }
+    let id = canonical_stream_id(fp);
+    let mut guard = lock_popen_pids();
+    // Reserve the entry before forking so the parent publication cannot
+    // allocate after a child has started. pid 0 denotes this unpublished child.
+    guard.insert(id, PopenChild { pid: 0, fd: our_fd });
+    if !close_on_exec && let Err(e) = unsafe { raw_syscall::sys_fcntl(our_fd, libc::F_SETFD, 0) } {
+        guard.remove(id);
+        drop(guard);
+        let _ = raw_syscall::sys_close(child_fd);
+        unsafe { fclose(fp) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        unsafe { set_abi_errno(e) };
+        return std::ptr::null_mut();
+    }
+
+    // Fork via clone(SIGCHLD).
+    let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+        Ok(p) => p,
+        Err(e) => {
+            guard.remove(id);
+            drop(guard);
+            let _ = raw_syscall::sys_close(child_fd);
+            unsafe { fclose(fp) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    if pid == 0 {
+        // Child process.
+        let child_exit = || -> ! { raw_syscall::sys_exit_group(127) };
+
+        // The child only reads the fork snapshot: no allocation, locking or
+        // destructors before exec. Close old pipes before installing stdio,
+        // because an older popen descriptor can itself occupy fd 0 or fd 1.
+        for child in guard.iter_children() {
+            if child.pid != 0 {
+                let _ = raw_syscall::sys_close(child.fd);
+            }
+        }
+
+        // Move the child's pipe end onto `target`. If the pipe already landed
+        // there (the parent had closed stdin/stdout, so pipe2 returned fd 0 or
+        // 1), dup2 is a no-op and the old close-after-dup2 closed the child's
+        // own stdio (gnulib test-popen); only the inherited close-on-exec ("e"
+        // mode) has to be cleared, which dup2 would otherwise have done.
+        let install = |fd: c_int, target: c_int| {
+            if fd == target {
+                if unsafe { raw_syscall::sys_fcntl(fd, libc::F_SETFD, 0) }.is_err() {
+                    child_exit();
+                }
+                return;
+            }
+            if raw_syscall::sys_dup2(fd, target).is_err() {
+                child_exit();
+            }
+            if raw_syscall::sys_close(fd).is_err() {
+                child_exit();
+            }
+        };
+        if reading {
+            // Parent reads from child's stdout: dup write end to stdout.
+            if raw_syscall::sys_close(pipe_fds[0]).is_err() {
+                child_exit();
+            }
+            install(pipe_fds[1], libc::STDOUT_FILENO);
+        } else {
+            // Parent writes to child's stdin: dup read end to stdin.
+            if raw_syscall::sys_close(pipe_fds[1]).is_err() {
+                child_exit();
+            }
+            install(pipe_fds[0], libc::STDIN_FILENO);
+        }
+
+        let sh = c"/bin/sh".as_ptr();
+        let dash_c = c"-c".as_ptr();
+        let argv: [*const c_char; 4] = [sh, dash_c, command, std::ptr::null()];
+        // Pass the current process environment so the child inherits PATH, etc.
+        unsafe extern "C" {
+            static mut environ: *mut *mut c_char;
+        }
+        let _ = unsafe {
+            raw_syscall::sys_execve(
+                sh as *const u8,
+                argv.as_ptr() as *const *const u8,
+                environ as *const *const u8,
+            )
+        };
+        child_exit();
+    }
+
+    let _ = raw_syscall::sys_close(child_fd);
+    guard.insert(id, PopenChild { pid, fd: our_fd });
+    drop(guard);
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, false);
+    fp
+}
+
+/// POSIX `pclose` — close a stream opened by popen and wait for the child.
+///
+/// Returns the child's exit status, or -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pclose(stream: *mut c_void) -> c_int {
+    if stream.is_null() || ACTIVE_POPEN_COUNT.load(Ordering::Acquire) == 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let id = canonical_stream_id(stream);
+    let is_process_stream = {
+        let pids = lock_popen_pids();
+        pids.contains_key(id)
+    };
+    if !is_process_stream {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // fclose owns flush, descriptor removal and reaping for process streams.
+    // In particular, a successful child exit must not hide an EPIPE on flush.
+    unsafe { fclose(stream) }
+}
+
+// __snprintf_chk — defined in fortify_abi.rs (canonical module)
+
+// ---------------------------------------------------------------------------
+// 64-bit aliases
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fopen64(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe { fopen(pathname, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn freopen64(
+    pathname: *const c_char,
+    mode: *const c_char,
+    stream: *mut c_void,
+) -> *mut c_void {
+    unsafe { freopen(pathname, mode, stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpfile64() -> *mut c_void {
+    unsafe { tmpfile() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+    unsafe { fseeko(stream, offset, whence) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn ftello64(stream: *mut c_void) -> i64 {
+    unsafe { ftello(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int {
+    if pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { fgetpos(stream, pos.cast::<libc::fpos_t>()) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int {
+    if pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { fsetpos(stream, pos.cast::<libc::fpos_t>()) }
+}
+
+// ---------------------------------------------------------------------------
+// stdio extras
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// fopencookie — Implemented (native cookie-based stream)
+// ---------------------------------------------------------------------------
+
+/// cookie_io_functions_t layout (matches glibc x86_64):
+///   read:  fn(*mut c_void, *mut c_char, usize) -> isize
+///   write: fn(*mut c_void, *const c_char, usize) -> isize
+///   seek:  fn(*mut c_void, *mut i64, c_int) -> c_int
+///   close: fn(*mut c_void) -> c_int
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CookieIoFuncs {
+    pub read: Option<unsafe extern "C-unwind" fn(*mut c_void, *mut c_char, usize) -> isize>,
+    pub write: Option<unsafe extern "C-unwind" fn(*mut c_void, *const c_char, usize) -> isize>,
+    pub seek: Option<unsafe extern "C-unwind" fn(*mut c_void, *mut i64, c_int) -> c_int>,
+    pub close: Option<unsafe extern "C-unwind" fn(*mut c_void) -> c_int>,
+}
+
+/// The buffer lives either in this stream or in storage kept alive by the C
+/// caller. Single-threaded creator reads borrow `inner` via `st_busy` without
+/// `LOCK` prefixes; once multi-threaded (or on non-creator / slow-path calls),
+/// `mt_lock` serializes all accesses.
+struct FixedMemCookie {
+    inner: std::cell::UnsafeCell<FixedMemCookieInner>,
+    st_busy: std::sync::atomic::AtomicU8,
+    mt_lock: parking_lot::Mutex<()>,
+    owner_tls: AtomicUsize,
+    read_capacity: AtomicUsize,
+    readable: AtomicBool,
+}
+
+// SAFETY: `inner` is accessed exclusively either while `!is_multi_threaded()`
+// on the creator thread with `st_busy == 1` (preventing same-thread signal
+// reentrancy) or under `mt_lock` with `st_busy == 1`.
+unsafe impl Send for FixedMemCookie {}
+unsafe impl Sync for FixedMemCookie {}
+
+struct FixedMemCookieGuard<'a> {
+    cookie: &'a FixedMemCookie,
+    _mt_guard: parking_lot::MutexGuard<'a, ()>,
+}
+
+impl core::ops::Deref for FixedMemCookieGuard<'_> {
+    type Target = FixedMemCookieInner;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: `_mt_guard` + `st_busy == 1` guarantee exclusive access.
+        unsafe { &*self.cookie.inner.get() }
+    }
+}
+
+impl core::ops::DerefMut for FixedMemCookieGuard<'_> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: `_mt_guard` + `st_busy == 1` guarantee exclusive access.
+        unsafe { &mut *self.cookie.inner.get() }
+    }
+}
+
+impl Drop for FixedMemCookieGuard<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.cookie.st_busy.store(0, Ordering::Release);
+    }
+}
+
+struct FixedMemCookieInner {
+    cursor: frankenlibc_core::stdio::file::FixedMemCursor,
+    borrowed: usize,
+    owned: Option<Vec<u8>>,
+}
+
+struct PooledFmemopenObjects {
+    cell: StreamCell,
+    cursor: Arc<FastFixedMemRead>,
+}
+
+const FIXED_MEM_INPUT_POOL_MAX_CAP: usize = 64 * 1024;
+
+thread_local! {
+    /// Destructor-order-safe 1-slot recycler for `FixedMemCursor` input buffers
+    /// across repeated `fmemopen` + `fclose` lifecycles on the same thread.
+    static FIXED_MEM_INPUT_POOL: crate::util::TlsHeapCell<std::cell::Cell<Option<Vec<u8>>>> =
+        const { crate::util::TlsHeapCell::new() };
+    /// Destructor-order-safe 1-slot recycler for `(StreamCell, Arc<FastFixedMemRead>)`
+    /// bundles across repeated read-only `fmemopen` + `fclose` lifecycles.
+    static FMEMOPEN_OBJECT_POOL: crate::util::TlsHeapCell<
+        std::cell::Cell<Option<PooledFmemopenObjects>>,
+    > = const { crate::util::TlsHeapCell::new() };
+}
+
+#[inline]
+fn take_pooled_fmemopen_objects() -> Option<PooledFmemopenObjects> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return None;
+    }
+    FMEMOPEN_OBJECT_POOL
+        .try_with(|cell| {
+            cell.try_with_init(|| std::cell::Cell::new(None), None, |slot| slot.take())
+                .flatten()
+        })
+        .ok()
+        .flatten()
+}
+
+#[inline]
+fn return_pooled_fmemopen_objects(bundle: PooledFmemopenObjects) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
+    let _ = FMEMOPEN_OBJECT_POOL.try_with(|cell| {
+        let _ = cell.try_with_init(
+            || std::cell::Cell::new(None),
+            None,
+            |slot| {
+                slot.set(Some(bundle));
+            },
+        );
+    });
+}
+
+#[inline]
+fn recycle_fmemopen_objects(mut cell: StreamCell, mut cursor: Arc<FastFixedMemRead>) {
+    let can_recycle = if let Some(_cell_mut) = Arc::get_mut(&mut cell)
+        && let Some(cursor_mut) = Arc::get_mut(&mut cursor)
+        && let Some(mem_mut) = Arc::get_mut(&mut cursor_mut.memory)
+    {
+        let inner = mem_mut.inner.get_mut();
+        inner.owned = None;
+        inner.borrowed = 0;
+        inner.cursor.reset(0, 0, false);
+        true
+    } else {
+        if let Some(cursor_mut) = Arc::get_mut(&mut cursor)
+            && let Some(mem_mut) = Arc::get_mut(&mut cursor_mut.memory)
+        {
+            let buf = mem_mut.inner.get_mut().cursor.take_input_buffer();
+            return_pooled_fixed_mem_input(buf);
+        }
+        false
+    };
+    if can_recycle {
+        return_pooled_fmemopen_objects(PooledFmemopenObjects { cell, cursor });
+    }
+}
+
+#[inline]
+fn take_pooled_fixed_mem_input() -> Vec<u8> {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return Vec::new();
+    }
+    FIXED_MEM_INPUT_POOL
+        .try_with(|cell| {
+            cell.try_with_init(|| std::cell::Cell::new(None), None, |slot| slot.take())
+                .flatten()
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+#[inline]
+fn return_pooled_fixed_mem_input(mut buf: Vec<u8>) {
+    if crate::malloc_abi::native_thread_backend_active() {
+        return;
+    }
+    let cap = buf.capacity();
+    if cap == 0 || cap > FIXED_MEM_INPUT_POOL_MAX_CAP {
+        return;
+    }
+    buf.clear();
+    let _ = FIXED_MEM_INPUT_POOL.try_with(|cell| {
+        let _ = cell.try_with_init(
+            || std::cell::Cell::new(None),
+            None,
+            |slot| {
+                let keep_existing = slot.take().filter(|prev| prev.capacity() >= cap);
+                slot.set(Some(keep_existing.unwrap_or(buf)));
+            },
+        );
+    });
+}
+
+impl FixedMemCookie {
+    #[inline]
+    fn lock_inner(&self) -> FixedMemCookieGuard<'_> {
+        let mt_guard = crate::runtime_policy::lock_parking_lot_preserving_errno(&self.mt_lock);
+        assert_eq!(
+            self.st_busy.swap(1, Ordering::Acquire),
+            0,
+            "reentrant FixedMemCookie access on the same thread"
+        );
+        FixedMemCookieGuard {
+            cookie: self,
+            _mt_guard: mt_guard,
+        }
+    }
+
+    #[inline(always)]
+    fn read_into_st_with_anchor(&self, dst: &mut [u8], tls_anchor: usize) -> usize {
+        if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+            && !crate::malloc_abi::is_multi_threaded()
+            && self.owner_tls.load(Ordering::Relaxed) == tls_anchor
+            && self.st_busy.load(Ordering::Relaxed) == 0
+        {
+            struct StBusyGuard<'a>(&'a FixedMemCookie);
+            impl Drop for StBusyGuard<'_> {
+                #[inline(always)]
+                fn drop(&mut self) {
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                    self.0.st_busy.store(0, Ordering::Relaxed);
+                }
+            }
+            self.st_busy.store(1, Ordering::Relaxed);
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+            let _busy = StBusyGuard(self);
+            let prefetch = self.read_capacity.load(Ordering::Relaxed);
+            // SAFETY: `!is_multi_threaded()` is latched synchronously before any
+            // thread creation, `read_with_refill` invokes no external callbacks
+            // or thread creation, and `st_busy == 1` blocks same-thread signal reentrancy.
+            let FixedMemCookieInner {
+                cursor,
+                borrowed,
+                owned,
+            } = unsafe { &mut *self.inner.get() };
+            return cursor.read_with_refill(dst, None, prefetch, |start, count, output| {
+                if let Some(data) = owned {
+                    output.extend_from_slice(&data[start..start + count]);
+                } else {
+                    let slice = unsafe {
+                        std::slice::from_raw_parts((*borrowed as *const u8).add(start), count)
+                    };
+                    output.extend_from_slice(slice);
+                }
+            });
+        }
+        if self.st_busy.load(Ordering::Acquire) != 0 && !crate::malloc_abi::is_multi_threaded() {
+            return 0;
+        }
+        self.read_into(dst, None)
+    }
+
+    fn read_into(&self, dst: &mut [u8], delimiter: Option<u8>) -> usize {
+        let prefetch = self.read_capacity.load(Ordering::Acquire);
+        let mut inner = self.lock_inner();
+        let FixedMemCookieInner {
+            cursor,
+            borrowed,
+            owned,
+        } = &mut *inner;
+        cursor.read_with_refill(dst, delimiter, prefetch, |start, count, output| {
+            if let Some(data) = owned {
+                output.extend_from_slice(&data[start..start + count]);
+            } else {
+                // SAFETY: FixedMemCursor bounds each span by the capacity
+                // supplied to fmemopen. Its caller guarantees readable backing
+                // through fclose; only this synchronous copy borrows it.
+                let slice = unsafe {
+                    std::slice::from_raw_parts((*borrowed as *const u8).add(start), count)
+                };
+                output.extend_from_slice(slice);
+            }
+        })
+    }
+}
+
+unsafe extern "C-unwind" fn fixed_mem_cookie_read(
+    cookie: *mut c_void,
+    dst: *mut c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: the cookie registry owns this Arc through the synchronous
+    // callback, and the stdio reader supplies a writable span of count bytes.
+    let (memory, dst) = unsafe {
+        (
+            &*cookie.cast::<FixedMemCookie>(),
+            std::slice::from_raw_parts_mut(dst.cast(), count),
+        )
+    };
+    if !memory.readable.load(Ordering::Relaxed) {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    memory.read_into(dst, None) as isize
+}
+
+unsafe extern "C-unwind" fn fixed_mem_cookie_write(
+    cookie: *mut c_void,
+    src: *const c_char,
+    count: usize,
+) -> isize {
+    // SAFETY: the cookie registry owns this Arc and the flush supplies a
+    // readable span that remains valid until this callback returns.
+    let (memory, src) = unsafe {
+        (
+            &*cookie.cast::<FixedMemCookie>(),
+            std::slice::from_raw_parts(src.cast(), count),
+        )
+    };
+    let mut inner = memory.lock_inner();
+    let FixedMemCookieInner {
+        cursor,
+        borrowed,
+        owned,
+    } = &mut *inner;
+    let written = cursor.write(src, |start, bytes| {
+        if let Some(data) = owned {
+            data[start..start + bytes.len()].copy_from_slice(bytes);
+        } else {
+            // SAFETY: the cursor bounds data and terminator writes by the
+            // caller's writable capacity. This stream owns neither the caller
+            // allocation nor bytes outside the committed output span.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    (*borrowed as *mut u8).add(start),
+                    bytes.len(),
+                );
+            }
+        }
+    });
+    if written < count {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+    }
+    written as isize
+}
+
+unsafe extern "C-unwind" fn fixed_mem_cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: the cookie registry owns the state and stdio supplies a live
+    // offset slot for the duration of the callback.
+    let (memory, offset) = unsafe { (&*cookie.cast::<FixedMemCookie>(), &mut *offset) };
+    if let Some(position) = memory.lock_inner().cursor.seek(*offset, whence) {
+        *offset = position as i64;
+        0
+    } else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        -1
+    }
+}
+
+/// Metadata for a cookie-backed stream.
+struct CookieStreamInfo {
+    cookie: *mut c_void,
+    funcs: CookieIoFuncs,
+    fixed_memory: Option<Arc<FixedMemCookie>>,
+}
+
+// SAFETY: The C caller is responsible for ensuring the cookie and
+// function pointers remain valid for the lifetime of the stream.
+unsafe impl Send for CookieStreamInfo {}
+unsafe impl Sync for CookieStreamInfo {}
+
+/// Registry of cookie streams, keyed by stream sentinel ID.
+static COOKIE_REGISTRY: Mutex<Option<StreamMap<CookieStreamInfo>>> = Mutex::new(None);
+
+/// Monotonic "has any cookie stream ever been created?" flag. `fopencookie` is
+/// rare; the overwhelmingly common case is that NO cookie stream exists, yet
+/// every `fgetc`/`fputs`/`fputc` calls [`is_cookie_stream`], which otherwise
+/// takes the `COOKIE_REGISTRY` mutex just to learn "no". This lets the hot path
+/// skip that lock entirely until the first `fopencookie`. It is never reset to
+/// false (cookie streams are rare and the reset would race a concurrent
+/// `fopencookie`), so once set the locked check resumes — still correct.
+static COOKIE_STREAMS_PRESENT: AtomicBool = AtomicBool::new(false);
+
+fn cookie_registry() -> &'static Mutex<Option<StreamMap<CookieStreamInfo>>> {
+    &COOKIE_REGISTRY
+}
+
+#[inline]
+fn lock_cookie_registry() -> std::sync::MutexGuard<'static, Option<StreamMap<CookieStreamInfo>>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(&COOKIE_REGISTRY)
+}
+
+/// Read from a cookie-backed stream. Called by fread/fgetc for cookie streams.
+pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -> isize {
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        if aux.id == id
+            && let Some(ref info) = aux.cookie
+        {
+            if let Some(read_fn) = info.funcs.read {
+                let cookie = info.cookie;
+                drop(aux);
+                return unsafe { read_fn(cookie, buf as *mut c_char, count) };
+            }
+            return -1;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    let guard = lock_cookie_registry();
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        if let Some(read_fn) = info.funcs.read {
+            let cookie = info.cookie;
+            drop(guard);
+            return unsafe { read_fn(cookie, buf as *mut c_char, count) };
+        }
+        // A NULL read hook is a legal fopencookie configuration, not a bad
+        // descriptor: glibc's _IO_cookie_read returns -1 and leaves errno
+        // ALONE, so the caller sees ferror set with errno untouched. fl set
+        // EBADF here, which a caller doing `if (ferror(f)) perror(...)` would
+        // report as "Bad file descriptor" on a stream that was opened exactly
+        // as documented. Measured against live glibc 2.42:
+        //   read=NULL: fread(...,10) -> 0, errno unchanged, ferror=1, feof=0
+        // bd-zpmf99.
+        return -1;
+    }
+    unsafe { set_abi_errno(errno::EBADF) };
+    -1
+}
+
+/// Write to a cookie-backed stream. Called by fwrite/fputc for cookie streams.
+pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize) -> isize {
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        if aux.id == id
+            && let Some(ref info) = aux.cookie
+        {
+            if let Some(write_fn) = info.funcs.write {
+                let cookie = info.cookie;
+                drop(aux);
+                return unsafe { write_fn(cookie, buf as *const c_char, count) };
+            }
+            return 0;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    let guard = lock_cookie_registry();
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        if let Some(write_fn) = info.funcs.write {
+            let cookie = info.cookie;
+            drop(guard);
+            return unsafe { write_fn(cookie, buf as *const c_char, count) };
+        }
+        // A NULL write hook returns 0, not -1, and leaves errno alone —
+        // glibc's _IO_cookie_write sets the stream's error flag and reports a
+        // zero-length write. Returning 0 here reaches the same state through
+        // fl's own machinery: the caller treats it as a short write and calls
+        // set_error(). Measured against live glibc 2.42:
+        //   write=NULL: fwrite(...,5) -> 5 (buffered), ferror=0
+        //               then fflush   -> -1, errno unchanged, ferror=1
+        // The failure deliberately surfaces at the flush, not at the fwrite.
+        // bd-zpmf99.
+        return 0;
+    }
+    unsafe { set_abi_errno(errno::EBADF) };
+    -1
+}
+
+/// Deliver one contiguous byte span to a cookie write callback. Preserve this
+/// path's existing callback EINTR retry independently of descriptor writes.
+unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
+    let mut written = 0usize;
+    while written < bytes.len() {
+        let rc =
+            unsafe { cookie_stream_write(id, bytes[written..].as_ptr(), bytes.len() - written) };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        if rc < 0 && errno_val == errno::EINTR {
+            continue;
+        }
+        match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
+            StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+        }
+        if rc <= 0 {
+            break;
+        }
+        written += (rc as usize).min(bytes.len() - written);
+    }
+    written
+}
+
+/// Buffer a cookie write using the same `StdioStream` policy as fd streams.
+///
+/// Cookie streams have no kernel fd, so only the eventual sink differs: full
+/// and line-buffered writes accumulate in `StdioStream`, while an unbuffered
+/// write reaches the callback immediately.  The logical offset advances when
+/// the caller's bytes are accepted into that buffer, matching stdio's visible
+/// write progress rather than callback timing.
+unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8]) -> usize {
+    let fixed_memory = fixed_mem_cookie(id);
+    if stream.is_appending()
+        && let Some(memory) = &fixed_memory
+    {
+        let end = memory.lock_inner().cursor.content_end();
+        stream.set_offset(end.saturating_add(stream.pending_flush().len()) as i64);
+    }
+    let Some(result) = stream.buffer_write(bytes) else {
+        // The core marks a read-only stream's error flag. Cookie-backed
+        // fmemopen/fopencookie writers must publish the matching ABI errno.
+        // SAFETY: only the calling thread's errno is modified.
+        unsafe { set_abi_errno(errno::EBADF) };
+        return 0;
+    };
+    let flush_needed = result.flush_needed;
+    let flushed_from_buffer = result.flushed_from_buffer;
+    let flush_data = result.flush_data.into_owned();
+
+    if !flush_needed {
+        stream.set_offset(
+            stream
+                .offset()
+                .saturating_add(bytes.len().min(i64::MAX as usize) as i64),
+        );
+        return bytes.len();
+    }
+
+    let flushed = unsafe { cookie_write_all(id, &flush_data) };
+    if flushed == flush_data.len() {
+        // StreamBuffer consumed the emitted prefix and retained any suffix
+        // after the full block or final newline. That suffix still belongs
+        // to every cookie stream until a later write, fflush, or fclose;
+        // clearing it here would silently discard bytes already accepted.
+        stream.set_offset(
+            stream
+                .offset()
+                .saturating_add(bytes.len().min(i64::MAX as usize) as i64),
+        );
+        return bytes.len();
+    }
+
+    stream.set_error();
+    let current = flushed.saturating_sub(flushed_from_buffer).min(bytes.len());
+    if let Some(memory) = fixed_memory {
+        stream.mark_flushed();
+        stream.set_offset(memory.lock_inner().cursor.position() as i64);
+        return current;
+    }
+    stream.set_offset(
+        stream
+            .offset()
+            .saturating_add(current.min(i64::MAX as usize) as i64),
+    );
+    current
+}
+
+/// Flush pending cookie output through its callback.
+unsafe fn flush_cookie_stream(id: usize, stream: &mut StdioStream) -> bool {
+    let pending = stream.pending_flush();
+    if pending.is_empty() {
+        return true;
+    }
+    // A cookie callback reports the outcome of one flush, not a raw syscall
+    // to retry. A short result is an error; discard the pending span even on
+    // failure so a later fflush/fclose cannot replay an accepted prefix.
+    let expected = pending.len();
+    // SAFETY: pending remains readable for the synchronous callback, and id
+    // identifies the live cookie owned by this locked stream.
+    let written = unsafe { cookie_stream_write(id, pending.as_ptr(), expected) };
+    stream.mark_flushed();
+    if let Some(memory) = fixed_mem_cookie(id) {
+        // A short fixed-buffer flush consumes its available prefix. Discard
+        // staged overflow and expose the resulting position, never replay it.
+        stream.set_offset(memory.lock_inner().cursor.position() as i64);
+    }
+    if written == expected as isize {
+        true
+    } else {
+        stream.set_error();
+        false
+    }
+}
+
+fn fixed_mem_cookie(id: usize) -> Option<Arc<FixedMemCookie>> {
+    if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return None;
+    }
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        if STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 1 {
+            return None;
+        }
+        let aux = lock_static_slot_aux(slot);
+        return (aux.id == id)
+            .then(|| aux.cookie.as_ref()?.fixed_memory.clone())
+            .flatten();
+    }
+    lock_cookie_registry()
+        .as_ref()?
+        .get(&id)?
+        .fixed_memory
+        .clone()
+}
+
+fn flush_fixed_mem_input(id: usize, stream: &mut StdioStream) {
+    if let Some(memory) = fixed_mem_cookie(id) {
+        let _ = sync_fast_fixed_mem_read_to_stream(id, stream);
+        let mut inner = memory.lock_inner();
+        if !stream.last_was_write() {
+            let _ = inner.cursor.seek(stream.offset(), libc::SEEK_SET);
+            let eof = stream.is_eof();
+            let _ = stream.prepare_seek();
+            if eof {
+                stream.set_eof();
+            }
+        }
+        inner.cursor.discard_input();
+    }
+}
+
+/// Seek a cookie-backed stream.
+pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_int) -> c_int {
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        if aux.id == id
+            && let Some(ref info) = aux.cookie
+        {
+            if let Some(seek_fn) = info.funcs.seek {
+                let cookie = info.cookie;
+                drop(aux);
+                return unsafe { seek_fn(cookie, offset, whence) };
+            }
+            unsafe { set_abi_errno(errno::ESPIPE) };
+            return -1;
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    let guard = lock_cookie_registry();
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        if let Some(seek_fn) = info.funcs.seek {
+            let cookie = info.cookie;
+            drop(guard);
+            return unsafe { seek_fn(cookie, offset, whence) };
+        }
+        unsafe { set_abi_errno(errno::ESPIPE) };
+        return -1;
+    }
+    unsafe { set_abi_errno(errno::EBADF) };
+    -1
+}
+
+/// Query a custom backend without inventing a byte-counter position for an
+/// unseekable stream. GNU tell/getpos retain a callback's errno (including a
+/// pre-existing value); when no error was supplied they report EIO.
+unsafe fn cookie_stream_position(id: usize, whence: c_int) -> Option<i64> {
+    let (cookie, seek) = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        let aux = lock_static_slot_aux(slot);
+        let Some(info) = (aux.id == id).then_some(aux.cookie.as_ref()).flatten() else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return None;
+        };
+        (info.cookie, info.funcs.seek)
+    } else {
+        let guard = lock_cookie_registry();
+        let Some(info) = guard.as_ref().and_then(|map| map.get(&id)) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return None;
+        };
+        (info.cookie, info.funcs.seek)
+    };
+    let mut position = 0i64;
+    if let Some(seek) = seek
+        // SAFETY: the live stream owns cookie; position is initialized local
+        // storage and no registry or stream-state lock spans the callback.
+        && unsafe { seek(cookie, &mut position, whence) } == 0
+        && position >= 0
+    {
+        return Some(position);
+    }
+    // SAFETY: access only the calling thread's canonical errno slot.
+    if unsafe { *crate::errno_abi::__errno_location() } == 0 {
+        unsafe { set_abi_errno(errno::EIO) };
+    }
+    None
+}
+
+/// Close a cookie-backed stream: call the close callback and remove from registry.
+pub(crate) unsafe fn cookie_stream_close(id: usize) -> c_int {
+    let removed = if let Some(slot) = dynamic_static_slot_for_id(id) {
+        STATIC_SLOT_COOKIE_KIND[slot].store(0, Ordering::Release);
+        let mut aux = lock_static_slot_aux(slot);
+        if aux.id == id {
+            let info = aux.cookie.take();
+            if aux.fast_mem_read.is_none() {
+                aux.id = 0;
+            }
+            info
+        } else {
+            None
+        }
+    } else {
+        let mut guard = lock_cookie_registry();
+        guard.as_mut().and_then(|map| map.remove(&id))
+    };
+    if let Some(info) = removed {
+        if let Some(memory) = info.fixed_memory {
+            let buf = memory.lock_inner().cursor.take_input_buffer();
+            return_pooled_fixed_mem_input(buf);
+        }
+        if let Some(close_fn) = info.funcs.close {
+            return unsafe { close_fn(info.cookie) };
+        }
+    }
+    0
+}
+
+/// Check if a stream ID is cookie-backed.
+pub(crate) fn is_cookie_stream(id: usize) -> bool {
+    // Lock-free fast path: if no cookie stream has ever been registered, the id
+    // cannot be cookie-backed. A new cookie id is only published (returned from
+    // `fopencookie`) AFTER the `Release` store below, so any `is_cookie_stream`
+    // for a real cookie id happens-after this `Acquire` load observes `true`.
+    if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return false;
+    }
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        return STATIC_SLOT_COOKIE_KIND[slot].load(Ordering::Acquire) != 0;
+    }
+    let guard = lock_cookie_registry();
+    if let Some(ref map) = *guard {
+        return map.contains_key(&id);
+    }
+    false
+}
+
+/// Metadata for open_memstream: tracks the C caller's pointer and size locations.
+struct MemStreamSync {
+    ptr_loc: *mut *mut c_char,
+    size_loc: *mut usize,
+}
+
+// SAFETY: MemStreamSync holds raw pointers passed by the C caller.
+// The C caller is responsible for keeping these pointers valid for
+// the lifetime of the stream (per POSIX open_memstream contract).
+unsafe impl Send for MemStreamSync {}
+unsafe impl Sync for MemStreamSync {}
+
+/// Registry of open_memstream sync metadata, keyed by stream sentinel ID.
+static MEM_STREAM_SYNC: Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> = Mutex::new(None);
+
+/// Monotonic "has any `open_memstream` ever been created?" flag (cookie-pattern
+/// twin of `COOKIE_STREAMS_PRESENT`). `sync_memstream_to_caller` runs on every
+/// mem-backed flush/close but only does work for `open_memstream` ids; without
+/// any such stream the lock + lookup is pure waste. Set on `open_memstream`
+/// (Release), loaded with Acquire, never reset (the stream's sentinel id is only
+/// published after the store, so the fast path is correct).
+static MEM_STREAM_SYNC_PRESENT: AtomicBool = AtomicBool::new(false);
+
+fn mem_sync_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> {
+    &MEM_STREAM_SYNC
+}
+
+#[inline]
+fn lock_mem_sync_registry()
+-> std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, MemStreamSync>>> {
+    crate::runtime_policy::lock_std_mutex_preserving_errno(mem_sync_registry())
+}
+
+/// Synchronize open_memstream data to the C caller's pointers.
+/// Called after fflush and fclose for open_memstream streams.
+unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream, closing: bool) {
+    // Lock-free fast path: no open_memstream has ever been created, so this id
+    // cannot have sync metadata. A new open_memstream id is only published after
+    // the Release store in `open_memstream`, so this Acquire load is correct.
+    if !MEM_STREAM_SYNC_PRESENT.load(Ordering::Acquire) {
+        return;
+    }
+    let sync_guard = lock_mem_sync_registry();
+    if let Some(ref map) = *sync_guard
+        && let Some(info) = map.get(&id)
+        && let Some(data) = stream.mem_data()
+    {
+        let len = data.len();
+        // POSIX: *sizeloc is the SMALLER of the buffer's content length and the
+        // current file position — so seeking backwards and writing shrinks the
+        // reported size even though the tail bytes (and the NUL terminator at the
+        // max extent) survive in the buffer. fl previously reported the full
+        // content length, diverging from glibc after a backward seek.
+        let pos = stream.offset().max(0) as usize;
+        let reported = len.min(pos);
+        let previous = unsafe { *info.ptr_loc };
+        // Allocate a new buffer via malloc and copy data + NUL terminator.
+        let buf = unsafe { malloc(len + 1) };
+        if !buf.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), len);
+                *buf.cast::<u8>().add(len) = 0; // NUL-terminate at the max extent
+                // At close glibc truncates the buffer at the current position
+                // (realloc to size+1, NUL there): "abc123", seek 1, 'Q',
+                // fclose -> "aQ". A flush while open keeps the tail
+                // (open_memstream_differential_test), so only on close.
+                if closing {
+                    *buf.cast::<u8>().add(reported) = 0;
+                }
+                *info.ptr_loc = buf.cast::<c_char>();
+                *info.size_loc = reported;
+                if !previous.is_null() {
+                    free(previous.cast::<c_void>());
+                }
+            }
+        }
+    }
+    drop(sync_guard);
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn setlinebuf(stream: *mut c_void) {
+    let _ = unsafe { setvbuf(stream, std::ptr::null_mut(), 1, 0) };
+}
+
+/// Classify stream type for locking purposes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamType {
+    /// Native NativeFile stream (stdin/stdout/stderr) - has ReentrantMutex locking
+    NativeFile(usize), // slot index
+    /// Legacy StdioStream from our registry - no mutex support, locking is no-op
+    LegacyStdioStream,
+    /// Foreign stream from host glibc - delegate to host locking functions
+    Foreign,
+}
+
+/// Classify a stream pointer for locking purposes.
+///
+/// Uses bloom filter pre-check (~10ns) for fast ownership detection.
+fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
+    if stream.is_null() {
+        return StreamType::Foreign;
+    }
+
+    // Check for sentinels first (these are well-known addresses, not in bloom)
+    match stream as usize {
+        STDIN_SENTINEL => return StreamType::NativeFile(0),
+        STDOUT_SENTINEL => return StreamType::NativeFile(1),
+        STDERR_SENTINEL => return StreamType::NativeFile(2),
+        _ => {}
+    }
+
+    // Lock-free O(1) resolution for all 256 static NativeFile slots (0..256)
+    if let Some(slot) = io_internal_abi::occupied_static_native_slot_lockfree(stream) {
+        return StreamType::NativeFile(slot);
+    }
+
+    // Lock-free std stream slot check (including visible/copy-relocated _IO_2_1_*)
+    if let Some(fd) = io_internal_abi::native_stdio_fd_for_ptr(stream) {
+        return StreamType::NativeFile(fd as usize);
+    }
+
+    // Fast path: bloom filter pre-check (~10ns)
+    // If bloom says "definitely not ours", skip expensive lookups
+    if io_internal_abi::might_be_native_file(stream) {
+        // Bloom says "might be ours" - verify via registry lookup
+        if let Some(slot) = io_internal_abi::verify_native_file(stream) {
+            return StreamType::NativeFile(slot);
+        }
+    }
+
+    // Check if registered in our legacy StdioStream registry
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        // This is our stream (from fopen, etc.) but using legacy StdioStream
+        // which doesn't have mutex support. Treat as no-op for locking.
+        return StreamType::LegacyStdioStream;
+    }
+
+    // An id fl minted but that the registry no longer holds is still OURS, not
+    // foreign. Classifying it Foreign sends it to host_flockfile/ftrylockfile/
+    // funlockfile, which dereference it as a `FILE *` -- the same defect as
+    // bd-u2daxd's fclose and fwrite doors. Locking a legacy stream is already a
+    // no-op, so that is the correct landing place.
+    if is_fl_issued_stream_id(id) {
+        return StreamType::LegacyStdioStream;
+    }
+
+    // Not our stream - foreign glibc stream
+    StreamType::Foreign
+}
+
+/// The `NativeFile` in registry `slot`, with the registry lock RELEASED.
+///
+/// flockfile used to block on the stream lock while holding the registry lock.
+/// A thread already holding that stream lock (an earlier flockfile) then
+/// deadlocked in its next putc, whose stream resolution
+/// (`canonical_stream_id` -> `native_stdio_fd_for_ptr`) takes the registry
+/// lock: threads doing flockfile; putc; funlockfile on stdout hung forever.
+/// Registry slots live inside a static and never move, so the address stays
+/// valid while the stream is open -- the caller's contract for the `FILE *`.
+fn native_file_unlocked_registry(slot: usize) -> Option<&'static io_internal_abi::NativeFile> {
+    if slot < 3 {
+        let addr = io_internal_abi::native_stdio_slot_addr_lockfree(slot);
+        if addr != 0 {
+            // SAFETY: reserved std slots 0..3 live in static storage and never move.
+            return Some(unsafe { &*(addr as *const io_internal_abi::NativeFile) });
+        }
+    }
+    let reg = io_internal_abi::native_stream_registry();
+    let file: *const io_internal_abi::NativeFile = reg.get(slot)?;
+    drop(reg);
+    // SAFETY: points into the static registry (see above).
+    Some(unsafe { &*file })
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    match classify_stream_for_locking(stream) {
+        StreamType::NativeFile(slot) => {
+            if !io_internal_abi::try_static_slot_explicit_lock(slot)
+                && let Some(native_file) = native_file_unlocked_registry(slot)
+            {
+                native_file.explicit_lock();
+            }
+        }
+        StreamType::LegacyStdioStream => {
+            // Legacy StdioStream doesn't have mutex support.
+            // Per bd-9chy.17: locking for these is a no-op until fully migrated to NativeFile.
+        }
+        StreamType::Foreign => {
+            // Host delegation path - not available in standalone mode
+            #[cfg(not(feature = "standalone"))]
+            if let Some(host_flockfile) = unsafe { host_flockfile_fn() } {
+                unsafe { host_flockfile(stream) };
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
+    if stream.is_null() {
+        return -1;
+    }
+    match classify_stream_for_locking(stream) {
+        StreamType::NativeFile(slot) => {
+            if let Some(acquired) = io_internal_abi::try_static_slot_explicit_trylock(slot) {
+                return if acquired { 0 } else { -1 };
+            }
+            if let Some(native_file) = native_file_unlocked_registry(slot) {
+                return if native_file.try_explicit_lock() {
+                    0
+                } else {
+                    -1
+                };
+            }
+            0 // Slot not found - treat as success
+        }
+        StreamType::LegacyStdioStream => {
+            // Legacy StdioStream: always succeeds (no actual lock)
+            0
+        }
+        StreamType::Foreign => {
+            // Host delegation path - not available in standalone mode
+            #[cfg(not(feature = "standalone"))]
+            if let Some(host_ftrylockfile) = unsafe { host_ftrylockfile_fn() } {
+                return unsafe { host_ftrylockfile(stream) };
+            }
+            -1
+        }
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    match classify_stream_for_locking(stream) {
+        StreamType::NativeFile(slot) => {
+            // SAFETY: Caller is responsible for having called flockfile/ftrylockfile first.
+            // This is the POSIX contract - funlockfile behavior is undefined if the caller
+            // doesn't hold the lock.
+            if !unsafe { io_internal_abi::try_static_slot_explicit_unlock(slot) }
+                && let Some(native_file) = native_file_unlocked_registry(slot)
+            {
+                unsafe { native_file.explicit_unlock() };
+            }
+        }
+        StreamType::LegacyStdioStream => {
+            // Legacy StdioStream: no-op
+        }
+        StreamType::Foreign => {
+            // Host delegation path - not available in standalone mode
+            #[cfg(not(feature = "standalone"))]
+            if let Some(host_funlockfile) = unsafe { host_funlockfile_fn() } {
+                unsafe { host_funlockfile(stream) };
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getc_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { fgetc_unlocked_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn putc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
+    unsafe { fputc_unlocked_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { fgetc_unlocked_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
+    unsafe { fputc_unlocked_for_caller(c, stream, core::intrinsics::return_address() as usize) }
+}
+
+/// POSIX `fmemopen` — open a memory buffer as a stream.
+///
+/// If `buf` is NULL, an internal buffer of `size` bytes is allocated.
+/// The returned FILE* is a FrankenLibC sentinel backed by memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fmemopen(
+    buf: *mut c_void,
+    size: usize,
+    mode: *const c_char,
+) -> *mut c_void {
+    // glibc accepts size 0 (since 2.22): a valid, empty stream whose reads hit
+    // EOF immediately. The buffer handling below already produces an empty Vec
+    // and zero content length for size 0, so only a null mode is rejected.
+    if mode.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let heals_enabled = if runtime_policy::explicit_strict_passthrough_resolved() {
+        false
+    } else {
+        runtime_policy::mode().heals_enabled()
+    };
+
+    // Fast-parse common single-character modes ("r", "w") inline in strict mode;
+    // hardened mode always validates `mode` through `scan_c_str_len` so 0/1-byte
+    // or quarantined allocations never suffer a 2-byte inline peek.
+    let open_flags = if !heals_enabled {
+        let b0 = unsafe { *mode.cast::<u8>() };
+        if b0 == b'r' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
+            OpenFlags {
+                readable: true,
+                ..Default::default()
+            }
+        } else if b0 == b'w' && unsafe { *mode.cast::<u8>().add(1) } == 0 {
+            OpenFlags {
+                writable: true,
+                create: true,
+                truncate: true,
+                ..Default::default()
+            }
+        } else {
+            let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+            if !mode_terminated {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return std::ptr::null_mut();
+            }
+            let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
+            let Some(flags) = parse_mode(mode_bytes) else {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return std::ptr::null_mut();
+            };
+            flags
+        }
+    } else {
+        let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+        if !mode_terminated {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        }
+        let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
+        let Some(flags) = parse_mode(mode_bytes) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        };
+        flags
+    };
+
+    if size > isize::MAX as usize || (!buf.is_null() && (buf as usize).checked_add(size).is_none())
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    let mut size = size;
+    if heals_enabled
+        && !buf.is_null()
+        && let Some(bound) = known_remaining(buf as usize)
+        && size > bound
+    {
+        global_healing_policy().record(
+            "stdio",
+            "fmemopen",
+            &HealingAction::ClampSize {
+                requested: size,
+                clamped: bound,
+            },
+            RepairLogContext::new(0, Some(buf as usize)),
+        );
+        size = bound;
+    }
+    let content_len = if open_flags.truncate {
+        0
+    } else if open_flags.append {
+        if buf.is_null() {
+            0
+        } else {
+            // SAFETY: the caller supplies a readable region of size bytes;
+            // only append mode needs its initial NUL-delimited extent.
+            unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), size) }
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(size)
+        }
+    } else {
+        size
+    };
+
+    let read_only = open_flags.readable && !open_flags.writable;
+    crate::glibc_internal_abi::note_current_thread_activity();
+    if read_only
+        && !buf.is_null()
+        && !open_flags.append
+        && !open_flags.truncate
+        && crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0
+        && !crate::malloc_abi::is_multi_threaded()
+        && !crate::malloc_abi::native_thread_backend_active()
+    {
+        let tls = &TLS_FAST_MEM_READ;
+        let parked = tls.parked.get();
+        if parked.slot != 0 && !parked.cursor.is_null() && tls.borrowed.get() == 0 {
+            tls.parked.set(ParkedStFmemopenSlot::EMPTY);
+            if io_internal_abi::try_claim_parked_static_slot(parked.slot) {
+                PARKED_GLOBAL_HANDLE.store(0, Ordering::Relaxed);
+                PARKED_GLOBAL_CURSOR.store(0, Ordering::Relaxed);
+                let cursor = unsafe { &*parked.cursor };
+                cursor.memory.st_busy.store(1, Ordering::Relaxed);
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                let inner = unsafe { &mut *cursor.memory.inner.get() };
+                inner.cursor.reset(size, content_len, false);
+                inner.borrowed = buf as usize;
+                cursor.eof.store(false, Ordering::Relaxed);
+                cursor.closed.store(false, Ordering::Relaxed);
+                core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                cursor.memory.st_busy.store(0, Ordering::Relaxed);
+                STATIC_SLOT_COOKIE_KIND[parked.slot].store(1, Ordering::Release);
+                unsafe {
+                    io_internal_abi::reoccupy_parked_static_slot_st(
+                        parked.slot,
+                        parked.handle as *mut c_void,
+                        initial_glibc_flags(&open_flags, false, BufMode::Full),
+                    );
+                }
+                let cur_gen = REGISTRY_GEN.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+                tls.stream.set(parked.handle);
+                tls.reg_gen.set(cur_gen);
+                let old_ptr = tls.cursor.replace(parked.cursor);
+                release_replaced_tls_fast_mem_ptr(tls, old_ptr);
+                return parked.handle as *mut c_void;
+            }
+        }
+    } else if (crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        || crate::malloc_abi::is_multi_threaded()
+        || crate::malloc_abi::native_thread_backend_active())
+        && io_internal_abi::parked_static_slot() != 0
+    {
+        evict_parked_st_fmemopen_slot();
+    }
+
+    // Allocate internal backing fallibly BEFORE registering a static/native slot
+    // so an oversized `fmemopen(NULL, size, ...)` fails cleanly with `ENOMEM`
+    // rather than aborting across `extern "C"` or leaking a registered slot.
+    let mut owned = if buf.is_null() {
+        let mut backing = Vec::new();
+        if size > 0 {
+            if backing.try_reserve_exact(size).is_err() {
+                unsafe { set_abi_errno(errno::ENOMEM) };
+                return std::ptr::null_mut();
+            }
+            backing.resize(size, 0);
+        }
+        Some(backing)
+    } else {
+        None
+    };
+
+    let Some(handle) = io_internal_abi::register_memory_handle(
+        io_internal_abi::NativeFileBacking::MemoryFixed {
+            buf: buf.cast::<u8>(),
+            size,
+            content_len,
+            owns: buf.is_null(),
+        },
+        native_stream_open_flags(open_flags),
+        -2,
+        initial_glibc_flags(&open_flags, false, BufMode::Full),
+    ) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+
+    // `register_memory_handle` never returns one of the three reserved std
+    // streams (`0..3`), so `handle as usize` is already its canonical id.
+    let id = handle as usize;
+    let initial_offset = if open_flags.append {
+        content_len as i64
+    } else {
+        0
+    };
+    let tls_cell = std::ptr::addr_of!(TLS_FAST_MEM_READ);
+    let tls_anchor = tls_cell as usize;
+
+    let mut reused = None;
+    if read_only
+        && let Some(PooledFmemopenObjects {
+            mut cell,
+            mut cursor,
+        }) = take_pooled_fmemopen_objects()
+        && let Some(cell_mut) = Arc::get_mut(&mut cell)
+        && let Some(cursor_mut) = Arc::get_mut(&mut cursor)
+        && let Some(mem_mut) = Arc::get_mut(&mut cursor_mut.memory)
+    {
+        let inner = mem_mut.inner.get_mut();
+        inner.cursor.reset(size, content_len, open_flags.append);
+        inner.borrowed = buf as usize;
+        inner.owned = owned.take();
+        *mem_mut.owner_tls.get_mut() = tls_anchor;
+        *mem_mut.st_busy.get_mut() = 0;
+        *mem_mut.read_capacity.get_mut() = 8192;
+        *mem_mut.readable.get_mut() = open_flags.readable;
+        *cell_mut.slow_touched.get_mut() = false;
+        let slow_ptr = std::ptr::addr_of!(cell_mut.slow_touched) as usize;
+        cursor_mut.reset_mut(id, slow_ptr);
+        let stream_mut = cell_mut.stream.get_mut();
+        stream_mut.reset_for_fmemopen(open_flags, initial_offset, id);
+        mirror_stream_flags(id, stream_mut);
+        *cell_mut.flags_word.get_mut() = id;
+        let memory = Arc::clone(&cursor.memory);
+        reused = Some((cell, memory, Some(cursor)));
+    }
+
+    let (cell, memory, fast_cursor) = if let Some(bundle) = reused {
+        bundle
+    } else {
+        let input_buf = if open_flags.readable && size > 0 {
+            take_pooled_fixed_mem_input()
+        } else {
+            Vec::new()
+        };
+        let memory = Arc::new(FixedMemCookie {
+            inner: std::cell::UnsafeCell::new(FixedMemCookieInner {
+                cursor: frankenlibc_core::stdio::file::FixedMemCursor::with_input_buffer(
+                    size,
+                    content_len,
+                    open_flags.append,
+                    input_buf,
+                ),
+                borrowed: buf as usize,
+                owned,
+            }),
+            st_busy: std::sync::atomic::AtomicU8::new(0),
+            mt_lock: parking_lot::Mutex::new(()),
+            owner_tls: AtomicUsize::new(tls_anchor),
+            read_capacity: AtomicUsize::new(8192),
+            readable: AtomicBool::new(open_flags.readable),
+        });
+        let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
+        stream.set_offset(initial_offset);
+        // glibc's fmemopen streams are byte-oriented from creation (_mode == -1).
+        stream.set_orientation(-1);
+        stream.set_c_handle(id);
+        mirror_stream_flags(id, &stream);
+        let cell = new_stream_cell_with_handle(stream, id);
+        let slow_ptr = std::ptr::addr_of!(cell.slow_touched) as usize;
+        let fast_cursor =
+            read_only.then(|| Arc::new(FastFixedMemRead::new(Arc::clone(&memory), id, slow_ptr)));
+        (cell, memory, fast_cursor)
+    };
+
+    let info = CookieStreamInfo {
+        cookie: Arc::as_ptr(&memory).cast_mut().cast(),
+        funcs: CookieIoFuncs {
+            read: Some(fixed_mem_cookie_read),
+            write: Some(fixed_mem_cookie_write),
+            seek: Some(fixed_mem_cookie_seek),
+            close: None,
+        },
+        fixed_memory: Some(memory),
+    };
+
+    let single_threaded =
+        crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0;
+    let st_cursor = if single_threaded {
+        fast_cursor.clone()
+    } else {
+        None
+    };
+    let mt_cursor = if single_threaded {
+        None
+    } else {
+        fast_cursor.clone()
+    };
+
+    // Publish cookie + fast-mem metadata before inserting into `REGISTRY` so a
+    // concurrent `fflush(NULL)` snapshot never observes `id` before
+    // `is_cookie_stream(id)` returns `true`.
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        if fast_cursor.is_some() {
+            FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
+        }
+        {
+            let mut aux = lock_static_slot_aux(slot);
+            aux.id = id;
+            aux.cookie = Some(info);
+            if core::mem::replace(&mut aux.fast_mem_read, fast_cursor).is_some() {
+                FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+            }
+        }
+        STATIC_SLOT_COOKIE_KIND[slot].store(1, Ordering::Release);
+        if !COOKIE_STREAMS_PRESENT.load(Ordering::Relaxed) {
+            COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+        }
+    } else {
+        lock_cookie_registry()
+            .get_or_insert_with(stream_map)
+            .insert(id, info);
+        if !COOKIE_STREAMS_PRESENT.load(Ordering::Relaxed) {
+            COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+        }
+        if let Some(cursor) = fast_cursor {
+            FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
+            let mut map = fast_fixed_mem_reads()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if map.insert(id, cursor).is_some() {
+                FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+            }
+        }
+    }
+
+    let cur_gen = {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.insert_cell(id, cell)
+    };
+    if st_cursor.is_some() || mt_cursor.is_some() {
+        populate_fast_fixed_mem_read_tls(tls_cell, id, cur_gen, st_cursor, mt_cursor.as_ref());
+    }
+
+    if !buf.is_null() && open_flags.truncate && open_flags.readable && size > 0 {
+        // SAFETY: w+ requires writable backing and exposes the initial NUL;
+        // bytes beyond it are untouched until actual output is flushed.
+        unsafe { *buf.cast::<u8>() = 0 };
+    }
+
+    handle
+}
+
+/// POSIX `open_memstream` — open a dynamic memory buffer for writing.
+///
+/// After each fflush/fclose, `*ptr` is updated to point to a malloc'd buffer
+/// containing the stream data (NUL-terminated), and `*sizeloc` is set to the
+/// data length (not counting the NUL).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usize) -> *mut c_void {
+    if ptr.is_null() || sizeloc.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let initial_buf = unsafe { malloc(1) };
+    if initial_buf.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    }
+
+    let mut stream = StdioStream::new_mem_dynamic();
+    // POSIX/glibc: open_memstream creates a byte-oriented stream from creation (_mode == -1).
+    stream.set_orientation(-1);
+    let handle = register_memory_stream_with_native_handle(
+        stream,
+        io_internal_abi::NativeFileBacking::MemoryGrowing {
+            buf_ptr: ptr,
+            size_ptr: sizeloc,
+            capacity: 1,
+            data: Vec::new(),
+        },
+        OpenFlags {
+            writable: true,
+            ..Default::default()
+        },
+        -1,
+    );
+    if handle.is_null() {
+        unsafe { free(initial_buf.cast::<c_void>()) };
+        return std::ptr::null_mut();
+    }
+    let id = canonical_stream_id(handle);
+
+    // Register sync metadata so fflush/fclose can update the C caller's pointers.
+    let mut sync_guard = lock_mem_sync_registry();
+    let map = sync_guard.get_or_insert_with(artifact_hash_map);
+    map.insert(
+        id,
+        MemStreamSync {
+            ptr_loc: ptr,
+            size_loc: sizeloc,
+        },
+    );
+    // Publish before releasing the lock and before the stream id is returned, so
+    // the lock-free fast path in `sync_memstream_to_caller` is correct.
+    MEM_STREAM_SYNC_PRESENT.store(true, Ordering::Release);
+    drop(sync_guard);
+
+    // Initialize caller's pointers to empty state.
+    unsafe {
+        *initial_buf.cast::<u8>() = 0; // NUL-terminate
+        *ptr = initial_buf.cast::<c_char>();
+        *sizeloc = 0;
+    }
+
+    handle
+}
+
+/// GNU `fopencookie` — open a custom stream with user-defined I/O callbacks.
+///
+/// `funcs` is a `cookie_io_functions_t` passed by value, containing read, write,
+/// seek, and close function pointers. The `cookie` pointer is passed as the
+/// first argument to each callback. All four hooks may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fopencookie(
+    cookie: *mut c_void,
+    mode: *const c_char,
+    funcs: CookieIoFuncs,
+) -> *mut c_void {
+    if mode.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    // Parse mode string.
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
+    let Some(open_flags) = parse_mode(mode_bytes) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    };
+
+    // Cookie streams have no kernel fd, but they still use the ordinary stdio
+    // write buffer.  This makes the default `_IOFBF` behavior observable before
+    // the callback is invoked, exactly as it is for glibc cookie streams.
+    let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
+    // glibc's fopencookie streams are byte-oriented from creation (_mode == -1).
+    stream.set_orientation(-1);
+    let Some((id, handle)) = alloc_stream_handle(-1, &open_flags, BufMode::Full) else {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    };
+
+    // Publish cookie info before inserting into `REGISTRY` so a concurrent
+    // `fflush(NULL)` snapshot never observes `id` before `is_cookie_stream(id)`
+    // returns `true`.
+    let info = CookieStreamInfo {
+        cookie,
+        funcs,
+        fixed_memory: None,
+    };
+    if let Some(slot) = dynamic_static_slot_for_id(id) {
+        {
+            let mut aux = lock_static_slot_aux(slot);
+            aux.id = id;
+            aux.cookie = Some(info);
+            if aux.fast_mem_read.take().is_some() {
+                FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+            }
+        }
+        STATIC_SLOT_COOKIE_KIND[slot].store(2, Ordering::Release);
+        COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+    } else {
+        let mut cookie_guard = lock_cookie_registry();
+        let map = cookie_guard.get_or_insert_with(stream_map);
+        map.insert(id, info);
+        // Publish before releasing the lock and before the id is returned, so the
+        // lock-free fast path in `is_cookie_stream` is correct (Acquire/Release pair).
+        COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
+        drop(cookie_guard);
+    }
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.insert_stream_with_handle(id, stream, handle);
+    drop(reg);
+
+    id as *mut c_void
+}
+
+// ---------------------------------------------------------------------------
+// funopen — BSD callback-based stdio over fopencookie
+// ---------------------------------------------------------------------------
+//
+// `FILE *funopen(const void *cookie,
+//                int    (*readfn)(void *, char *, int),
+//                int    (*writefn)(void *, const char *, int),
+//                fpos_t (*seekfn)(void *, fpos_t, int),
+//                int    (*closefn)(void *));`
+//
+// Differences vs. glibc fopencookie:
+//   - read/write fns return int (truncated ssize_t) and take int byte
+//     count instead of size_t.
+//   - seek fn takes/returns fpos_t (off_t = i64) directly instead of
+//     reading/writing through a *mut off64_t pointer.
+//   - mode is inferred from which callbacks are NULL, not passed as a
+//     separate string. read+write -> "r+", read only -> "r", write only
+//     -> "w", both NULL -> EINVAL.
+//
+// Implementation: heap-allocate a `FunopenTrampoline` struct holding the
+// original BSD callbacks plus the user cookie, then build a
+// `CookieIoFuncs` with adapter functions that route through the
+// trampoline. The trampoline pointer is itself the cookie passed to
+// `fopencookie`. The close adapter invokes the user's closefn (if any)
+// and then frees the trampoline regardless of its result.
+
+type FunopenReadFn = unsafe extern "C-unwind" fn(*mut c_void, *mut c_char, c_int) -> c_int;
+type FunopenWriteFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, c_int) -> c_int;
+type FunopenSeekFn = unsafe extern "C-unwind" fn(*mut c_void, i64, c_int) -> i64;
+type FunopenCloseFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+
+#[repr(C)]
+struct FunopenTrampoline {
+    cookie: *mut c_void,
+    readfn: Option<FunopenReadFn>,
+    writefn: Option<FunopenWriteFn>,
+    seekfn: Option<FunopenSeekFn>,
+    closefn: Option<FunopenCloseFn>,
+}
+
+unsafe extern "C-unwind" fn funopen_trampoline_read(
+    cookie: *mut c_void,
+    buf: *mut c_char,
+    nbytes: usize,
+) -> isize {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>.
+    let tr = unsafe { &*(cookie as *const FunopenTrampoline) };
+    let Some(readfn) = tr.readfn else {
+        return 0;
+    };
+    let n = nbytes.min(c_int::MAX as usize) as c_int;
+    // SAFETY: buf is valid for `nbytes` bytes per fread/cookie contract.
+    let rc = unsafe { readfn(tr.cookie, buf, n) };
+    rc as isize
+}
+
+unsafe extern "C-unwind" fn funopen_trampoline_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    nbytes: usize,
+) -> isize {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>.
+    let tr = unsafe { &*(cookie as *const FunopenTrampoline) };
+    let Some(writefn) = tr.writefn else {
+        return 0;
+    };
+    let n = nbytes.min(c_int::MAX as usize) as c_int;
+    // SAFETY: buf is valid for `nbytes` bytes per fwrite/cookie contract.
+    let rc = unsafe { writefn(tr.cookie, buf, n) };
+    rc as isize
+}
+
+unsafe extern "C-unwind" fn funopen_trampoline_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>.
+    let tr = unsafe { &*(cookie as *const FunopenTrampoline) };
+    let Some(seekfn) = tr.seekfn else {
+        return -1;
+    };
+    if offset.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied writable slot per fopencookie contract.
+    let req = unsafe { *offset };
+    // SAFETY: BSD seek callback signature.
+    let result = unsafe { seekfn(tr.cookie, req, whence) };
+    if result < 0 {
+        return -1;
+    }
+    // SAFETY: caller-supplied writable slot per fopencookie contract.
+    unsafe { *offset = result };
+    0
+}
+
+unsafe extern "C-unwind" fn funopen_trampoline_close(cookie: *mut c_void) -> c_int {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>;
+    // we now reclaim ownership and drop it after the user's closefn runs.
+    let tr_box = unsafe { Box::from_raw(cookie as *mut FunopenTrampoline) };
+    let rc = if let Some(closefn) = tr_box.closefn {
+        // SAFETY: BSD close callback signature.
+        unsafe { closefn(tr_box.cookie) }
+    } else {
+        0
+    };
+    drop(tr_box);
+    rc
+}
+
+/// BSD `funopen(cookie, readfn, writefn, seekfn, closefn)` — open a
+/// custom FILE backed by user callbacks. See module-level comment for
+/// the differences vs. fopencookie. Returns NULL on EINVAL (both
+/// readfn and writefn NULL) or allocation failure, with errno set.
+///
+/// # Safety
+///
+/// The supplied callbacks must remain valid for the lifetime of the
+/// returned stream. `cookie` is passed unmodified as the first
+/// argument to each callback.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn funopen(
+    cookie: *const c_void,
+    readfn: Option<FunopenReadFn>,
+    writefn: Option<FunopenWriteFn>,
+    seekfn: Option<FunopenSeekFn>,
+    closefn: Option<FunopenCloseFn>,
+) -> *mut c_void {
+    let mode: &CStr = match (readfn.is_some(), writefn.is_some()) {
+        (true, true) => c"r+",
+        (true, false) => c"r",
+        (false, true) => c"w",
+        (false, false) => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    let trampoline = Box::new(FunopenTrampoline {
+        cookie: cookie as *mut c_void,
+        readfn,
+        writefn,
+        seekfn,
+        closefn,
+    });
+    let tr_ptr = Box::into_raw(trampoline) as *mut c_void;
+
+    // Build the cookie_io_functions_t adapter.
+    let funcs = CookieIoFuncs {
+        read: if readfn.is_some() {
+            Some(funopen_trampoline_read)
+        } else {
+            None
+        },
+        write: if writefn.is_some() {
+            Some(funopen_trampoline_write)
+        } else {
+            None
+        },
+        seek: if seekfn.is_some() {
+            Some(funopen_trampoline_seek)
+        } else {
+            None
+        },
+        // Always install the close adapter so the trampoline is freed
+        // even when the user supplied no closefn.
+        close: Some(funopen_trampoline_close),
+    };
+
+    // SAFETY: callback table is passed by value; mode is a static C string
+    // and the trampoline remains live until the close callback reclaims it.
+    let stream = unsafe { fopencookie(tr_ptr, mode.as_ptr(), funcs) };
+    if stream.is_null() {
+        // Reclaim and drop the trampoline so we don't leak it.
+        // SAFETY: tr_ptr was just produced by Box::into_raw above and
+        // hasn't been registered with any fopencookie cookie stream
+        // because fopencookie returned NULL.
+        let _ = unsafe { Box::from_raw(tr_ptr as *mut FunopenTrampoline) };
+        return std::ptr::null_mut();
+    }
+    stream
+}
+
+// ===========================================================================
+// Batch: Unlocked stdio variants — Implemented
+// ===========================================================================
+//
+// These GNU extensions bypass the public FILE lock. Native stream state still
+// uses its internal synchronization; foreign streams use the host's matching
+// unlocked operation. The ordinary entrypoints acquire StdioLockGuard first.
+
+/// GNU `feof_unlocked` — test end-of-file indicator without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn feof_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { feof_without_lock(stream) }
+}
+
+/// GNU `ferror_unlocked` — test error indicator without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn ferror_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { ferror_without_lock(stream) }
+}
+
+/// GNU `fflush_unlocked` — flush stream without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fflush_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { fflush_unlocked_for_caller(stream, core::intrinsics::return_address() as usize) }
+}
+
+/// Test hook (bd-0ftdgt): reports whether the three standard streams are still
+/// resolvable in the registry.
+///
+/// This is the invariant `fcloseall` used to break. It is exposed as a plain
+/// boolean because the alternative — proving it by USING `stdout` afterwards —
+/// aborts the whole process when it regresses instead of failing one test, and
+/// an aborted test binary reports nothing at all.
+#[doc(hidden)]
+#[must_use]
+pub fn stdio_standard_streams_registered_for_tests() -> bool {
+    registry_contains_stream(STDIN_SENTINEL)
+        && registry_contains_stream(STDOUT_SENTINEL)
+        && registry_contains_stream(STDERR_SENTINEL)
+}
+
+/// True for the three ids that stand in for `stdin`/`stdout`/`stderr`.
+///
+/// These ids are SENTINEL ADDRESSES (`0x1000_0001..=0x1000_0003`), not real
+/// `FILE *` values, so they must never be handed to the host allocator or to
+/// host stdio — see [`fcloseall`].
+#[inline]
+fn is_standard_sentinel_id(id: usize) -> bool {
+    matches!(id, STDIN_SENTINEL | STDOUT_SENTINEL | STDERR_SENTINEL)
+}
+
+/// GNU `fcloseall` — flush every stream and close the non-standard ones.
+///
+/// Returns 0 on success. This is a GNU extension.
+///
+/// The three standard streams are flushed but NOT unregistered (bd-0ftdgt).
+/// Removing them used to corrupt the process, because every stdio entry point
+/// maps `stdin`/`stdout`/`stderr` to a sentinel id and falls back to HOST stdio
+/// for any id the registry does not contain — passing that sentinel through as
+/// if it were a `FILE *`. Once `fcloseall` had unregistered them, the next
+/// standard-stream call reached glibc with the address `0x1000_0002`, which
+/// glibc dereferenced and rejected:
+///
+/// ```text
+/// Fatal error: glibc detected an invalid stdio handle
+/// ```
+///
+/// killing the process. That was reproducible as `stdio_libio_wave02` followed
+/// by `stdio_libio_wave06` in one process (SIGABRT single-threaded, SIGSEGV
+/// multi-threaded), and it took the whole conformance suite down mid-run, so 44
+/// of 173 tests never reported at all.
+///
+/// Keeping the standard cells alive also matches the host: measured on live
+/// glibc 2.42, `fcloseall()` returns 0 and a subsequent `fflush(NULL)` is still
+/// safe, i.e. glibc does not leave a dangling standard handle behind either.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn fcloseall() -> c_int {
+    // Flush all open streams by passing NULL to fflush (POSIX semantics).
+    unsafe { fflush(std::ptr::null_mut()) };
+
+    let ids: Vec<usize> = {
+        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        sorted_stream_ids(&reg)
+    };
+
+    let mut overall_rc = 0;
+    for id in ids {
+        // Already flushed above, and unregistering one would turn its sentinel
+        // into a fake `FILE *` for every later standard-stream call.
+        if is_standard_sentinel_id(id) {
+            continue;
+        }
+        // `id as *mut c_void` resolves back to the same `id` inside `fclose`:
+        // a non-standard stream's id IS its `FILE *`, and the sentinels that do
+        // not round-trip are skipped above.
+        let rc = unsafe { fclose(id as *mut c_void) };
+        if rc != 0 {
+            overall_rc = libc::EOF;
+        }
+    }
+    overall_rc
+}
+
+// ===========================================================================
+// Batch: mktemp — Implemented
+// ===========================================================================
+
+/// `mktemp` — generate a unique temporary filename (DEPRECATED, use mkstemp).
+///
+/// Replaces trailing 'X' characters in template with unique characters.
+/// Returns the modified template, or an empty string on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
+    if template.is_null() {
+        return template;
+    }
+
+    let len = unsafe { crate::string_abi::strlen(template) };
+    if len < 6 {
+        unsafe { *template = 0 };
+        return template;
+    }
+
+    // Count trailing X characters
+    let tmpl = unsafe { std::slice::from_raw_parts_mut(template as *mut u8, len) };
+    let mut x_count = 0;
+    for b in tmpl.iter().rev() {
+        if *b == b'X' {
+            x_count += 1;
+        } else {
+            break;
+        }
+    }
+    if x_count < 6 {
+        unsafe { *template = 0 };
+        return template;
+    }
+
+    // Generate random suffix using /dev/urandom
+    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rand_buf = vec![0u8; x_count];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| {
+            use std::io::Read;
+            f.read_exact(&mut rand_buf)
+        })
+        .is_err()
+    {
+        unsafe { *template = 0 };
+        return template;
+    }
+
+    let start = len - x_count;
+    for (i, &rb) in rand_buf.iter().enumerate() {
+        tmpl[start + i] = chars[(rb as usize) % chars.len()];
+    }
+
+    template
+}
+
+// ===========================================================================
+// Unlocked stdio variants — bypass locking, delegate to locked versions
+// ===========================================================================
+
+/// `getchar_unlocked` — read a character from stdin without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getchar_unlocked() -> c_int {
+    unsafe {
+        fgetc_unlocked_for_caller(
+            active_stdin_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+/// `putchar_unlocked` — write a character to stdout without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn putchar_unlocked(c: c_int) -> c_int {
+    unsafe {
+        fputc_unlocked_for_caller(
+            c,
+            active_stdout_stream(),
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+/// `fread_unlocked` — binary stream input without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fread_unlocked(
+    ptr: *mut c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+) -> usize {
+    unsafe {
+        fread_unlocked_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+/// `fwrite_unlocked` — binary stream output without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fwrite_unlocked(
+    ptr: *const c_void,
+    size: usize,
+    nmemb: usize,
+    stream: *mut c_void,
+) -> usize {
+    unsafe {
+        fwrite_unlocked_for_caller(
+            ptr,
+            size,
+            nmemb,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+/// `fgets_unlocked` — get a string from stream without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgets_unlocked(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
+    unsafe {
+        fgets_unlocked_for_caller(
+            buf,
+            size,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    }
+}
+
+/// `fputs_unlocked` — put a string to stream without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fputs_unlocked(s: *const c_char, stream: *mut c_void) -> c_int {
+    unsafe { fputs_unlocked_for_caller(s, stream, core::intrinsics::return_address() as usize) }
+}
+
+/// `clearerr_unlocked` — clear stream error/EOF indicators without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clearerr_unlocked(stream: *mut c_void) {
+    unsafe { clearerr_without_lock(stream) }
+}
+
+/// `fileno_unlocked` — get file descriptor from stream without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fileno_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { fileno(stream) }
+}
+
+/// `setbuffer` — set buffering for a stream (BSD extension).
+/// Equivalent to `setvbuf(stream, buf, buf ? _IOFBF : _IONBF, BUFSIZ)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn setbuffer(stream: *mut c_void, buf: *mut c_char, size: usize) {
+    if stream.is_null() {
+        return;
+    }
+    let mode = if buf.is_null() {
+        2 // _IONBF
+    } else {
+        0 // _IOFBF
+    };
+    unsafe { setvbuf(stream, buf, mode, size) };
+}
+
+// ===========================================================================
+// __isoc99_* scanf aliases — GCC/clang emit these for C99+ code
+// ===========================================================================
+
+/// `__isoc99_scanf` — C99-conformant scanf (alias for scanf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __isoc99_scanf(format: *const c_char, mut args: ...) -> c_int {
+    let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+    unsafe {
+        vscanf_with_dialect(
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
+        )
+    }
+}
+
+/// `__isoc99_sscanf` — C99-conformant sscanf (alias for sscanf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc99_sscanf(
+    s: *const c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    // FAST PATH, same as `sscanf`'s and for the same reason `__isoc23_sscanf`
+    // carries one: <stdio.h> redirects source-level `sscanf` calls to THIS
+    // symbol, so a compiler never emits a call to the plain name and every
+    // optimisation applied there missed compiled C entirely.
+    //
+    // SAFETY: `format` is non-null and NUL-terminated under the scanf contract.
+    // The format test comes BEFORE the membrane decision — see the note on
+    // `__isoc23_sscanf`: the fallback delegates to `vsscanf`, which decides for
+    // itself, so deciding here too would bill the engine path twice.
+    if !s.is_null() && !format.is_null() && runtime_policy::strict_passthrough_active() {
+        if let Some((fields, sep, kinds, delims)) =
+            unsafe { strict_decimal_int_format_count(format) }
+            && strict_field_list_is_scannable(fields, sep, &kinds)
+        {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+            if matches!(decision.action, MembraneAction::Deny) {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            // SAFETY: the probe accepted `fields` conversions, so the caller
+            // passed that many pointers of the matching type.
+            let mut destinations = [std::ptr::null_mut::<c_void>(); STRICT_INT_LIST_MAX];
+            for slot in destinations.iter_mut().take(fields) {
+                *slot = unsafe { args.next_arg::<*mut c_void>() };
+            }
+            let fast =
+                unsafe { strict_scan_decimal_ints(s, fields, sep, &kinds, &delims, &destinations) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+            return fast.count;
+        }
+        if unsafe { strict_single_string_format(format) } {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+            if matches!(decision.action, MembraneAction::Deny) {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            // SAFETY: the format is exactly `"%s"`, so the caller passed one
+            // `char *` sized for the token plus its NUL.
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { strict_scan_single_string(s, dst) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+        if let Some(delim) = unsafe { strict_single_negated_scanset(format) } {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
+            if matches!(decision.action, MembraneAction::Deny) {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            // SAFETY: the format is exactly `"%[^X]"`, so the caller passed one
+            // `char *` sized for the field plus its NUL.
+            let dst = unsafe { args.next_arg::<*mut c_char>() };
+            let rc = unsafe { strict_scan_negated_scanset(s, dst, delim) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, rc < 0);
+            return rc;
+        }
+    }
+    let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+    unsafe { vsscanf_with_dialect(s, format, ap, ScanfDialect::C99) }
+}
+
+/// `__isoc99_fscanf` — C99-conformant fscanf (alias for fscanf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __isoc99_fscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
+    unsafe {
+        vfscanf_with_dialect(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
+        )
+    }
+}
+
+/// `__isoc99_vscanf` — C99-conformant vscanf (alias for vscanf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __isoc99_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe {
+        vscanf_with_dialect(
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
+        )
+    }
+}
+
+/// `__isoc99_vsscanf` — C99-conformant vsscanf (alias for vsscanf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc99_vsscanf(
+    s: *const c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { vsscanf_with_dialect(s, format, ap, ScanfDialect::C99) }
+}
+
+/// `__isoc99_vfscanf` — C99-conformant vfscanf (alias for vfscanf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __isoc99_vfscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe {
+        vfscanf_with_dialect(
+            stream,
+            format,
+            ap,
+            core::intrinsics::return_address() as usize,
+            ScanfDialect::C99,
+        )
+    }
+}
+
+// ===========================================================================
+// getw / putw — legacy SVID/POSIX.1 word I/O
+// ===========================================================================
+
+/// `getw` — read an int from a stream.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn getw(stream: *mut c_void) -> c_int {
+    let mut val: c_int = 0;
+    let n = unsafe {
+        fread_for_caller(
+            &mut val as *mut c_int as *mut c_void,
+            std::mem::size_of::<c_int>(),
+            1,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    };
+    if n != 1 { libc::EOF } else { val }
+}
+
+/// `putw` — write an int to a stream.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn putw(w: c_int, stream: *mut c_void) -> c_int {
+    let n = unsafe {
+        fwrite_for_caller(
+            &w as *const c_int as *const c_void,
+            std::mem::size_of::<c_int>(),
+            1,
+            stream,
+            core::intrinsics::return_address() as usize,
+        )
+    };
+    if n != 1 { libc::EOF } else { 0 }
+}
+
+// ── C23 __isoc23_* scanf aliases ─────────────────────────────────────────────
+//
+// GCC 14+ with -std=c23 emits __isoc23_* variants for scanf family functions.
+// These are ABI-identical to the base versions.
+// ── glibc _IO_* internal libio symbols ──────────────────────────────────────
+//
+// Many programs compiled against glibc link to these internal libio symbols
+// directly (e.g., _IO_putc, _IO_getc). They are thin wrappers over the
+// standard stdio functions.
+#[allow(non_snake_case, non_upper_case_globals)]
+mod _io_internal {
+    use super::*;
+
+    // NOTE: _IO_putc and _IO_getc are defined in io_internal_abi.rs
+    // (the canonical location for _IO_* internal symbols).
+
+    /// `_IO_puts` — glibc internal puts.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C-unwind" fn _IO_puts(s: *const c_char) -> c_int {
+        unsafe { puts_for_caller(s, core::intrinsics::return_address() as usize) }
+    }
+
+    // NOTE: _IO_feof and _IO_ferror are defined in io_internal_abi.rs.
+
+    /// `_IO_flockfile` — glibc internal flockfile.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_flockfile(stream: *mut c_void) {
+        unsafe { flockfile(stream) }
+    }
+
+    /// `_IO_funlockfile` — glibc internal funlockfile.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_funlockfile(stream: *mut c_void) {
+        unsafe { funlockfile(stream) }
+    }
+
+    /// `_IO_ftrylockfile` — glibc internal ftrylockfile.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_ftrylockfile(stream: *mut c_void) -> c_int {
+        unsafe { ftrylockfile(stream) }
+    }
+
+    // NOTE: _IO_peekc_locked is defined in io_internal_abi.rs.
+
+    /// `_IO_padn` — write `count` copies of `pad` char to stream. Returns count or EOF.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C-unwind" fn _IO_padn(
+        stream: *mut c_void,
+        pad: c_int,
+        count: isize,
+    ) -> isize {
+        let caller = core::intrinsics::return_address() as usize;
+        if count <= 0 {
+            return 0;
+        }
+        for _ in 0..count {
+            if unsafe { fputc_for_caller(pad, stream, caller) } == libc::EOF {
+                return libc::EOF as isize;
+            }
+        }
+        count
+    }
+
+    /// `_IO_sgetn` — read `n` bytes from stream into buffer. Returns bytes read.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C-unwind" fn _IO_sgetn(
+        stream: *mut c_void,
+        buf: *mut c_void,
+        n: usize,
+    ) -> usize {
+        unsafe {
+            fread_for_caller(
+                buf,
+                1,
+                n,
+                stream,
+                core::intrinsics::return_address() as usize,
+            )
+        }
+    }
+
+    /// `_IO_seekoff` — seek to offset in stream (internal interface).
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_seekoff(
+        stream: *mut c_void,
+        offset: i64,
+        dir: c_int,
+        _mode: c_int,
+    ) -> i64 {
+        if unsafe { fseeko(stream, offset, dir) } != 0 {
+            return -1;
+        }
+        unsafe { ftello(stream) }
+    }
+
+    /// `_IO_seekpos` — seek to absolute position (internal interface).
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_seekpos(stream: *mut c_void, pos: i64, _mode: c_int) -> i64 {
+        if unsafe { fseeko(stream, pos, libc::SEEK_SET) } != 0 {
+            return -1;
+        }
+        pos
+    }
+
+    // `_IO_2_1_{stdin,stdout,stderr}_` are exported by the outer module as
+    // aliases to `stdin/stdout/stderr`, so all six names resolve to the same
+    // NativeFile-backed standard stream cells.
+} // mod _io_internal
+pub use _io_internal::*;
+
+// ---------------------------------------------------------------------------
+// fgetln / fpurge (BSD)
+// ---------------------------------------------------------------------------
+//
+// fgetln reads a logical line from `stream` and returns a pointer into a
+// thread-local Vec<u8> that stays alive until the next stdio call on the
+// same thread. We don't track per-stream lifetimes — the returned pointer
+// is valid as long as the caller doesn't trigger another fgetln (or any
+// other stdio call that might touch the buffer) on the *current* thread.
+//
+// fpurge is a thin wrapper over our existing __fpurge that returns int
+// (the BSD signature) instead of void (the GNU signature).
+
+#[cfg(feature = "owned-tls-cache")]
+static FGETLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+thread_local! {
+    static FGETLN_BUFFER: crate::util::TlsHeapCell<RefCell<Vec<u8>>> =
+        const { crate::util::TlsHeapCell::new() };
+}
+
+fn fgetln_read_into_buffer(stream: *mut c_void, buf: &mut Vec<u8>) -> Option<(*mut c_char, usize)> {
+    buf.clear();
+    loop {
+        // SAFETY: callers pass a non-NULL FILE* validated by the public ABI entrypoint.
+        let c = unsafe { fgetc(stream) };
+        if c == -1 {
+            // EOF or error. If we already have bytes, return them
+            // (last line without trailing newline). Otherwise
+            // signal end-of-input.
+            if buf.is_empty() {
+                return None;
+            }
+            break;
+        }
+        buf.push(c as u8);
+        if c as u8 == b'\n' {
+            break;
+        }
+    }
+    // The buffer pointer is `buf.as_mut_ptr()`, but the buffer itself stays
+    // owned by the per-thread storage between calls.
+    let ptr = buf.as_mut_ptr() as *mut c_char;
+    let n = buf.len();
+    Some((ptr, n))
+}
+
+#[cfg(feature = "owned-tls-cache")]
+fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
+    FGETLN_BUFFER_OWNED_TLS.with(|buf| fgetln_read_into_buffer(stream, buf))
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
+    FGETLN_BUFFER.with(|slot| {
+        slot.with_init(
+            || RefCell::new(Vec::new()),
+            |cell| {
+                let mut buf = cell.borrow_mut();
+                fgetln_read_into_buffer(stream, &mut buf)
+            },
+        )
+    })
+}
+
+/// BSD `fgetln(stream, *len)` — read a line from `stream` (up to and
+/// including the trailing `\n`) and return a pointer into a
+/// thread-local buffer plus the line length via `*len`. Returns NULL
+/// on EOF (with `*len = 0`) or on read error.
+///
+/// The returned pointer remains valid until the next `fgetln` call on
+/// the same thread. Callers MUST NOT modify or `free()` it.
+///
+/// # Safety
+///
+/// `stream` must be a valid `FILE *`. `len`, when non-NULL, must
+/// point to writable `size_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fgetln(stream: *mut c_void, len: *mut usize) -> *mut c_char {
+    if stream.is_null() {
+        if !len.is_null() {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *len = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+
+    let result = fgetln_current_buffer(stream);
+
+    match result {
+        Some((ptr, n)) => {
+            if !len.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *len = n };
+            }
+            ptr
+        }
+        None => {
+            if !len.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *len = 0 };
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// BSD `fpurge(stream)` — discard any pending input or unwritten
+/// output buffered on `stream`. Returns 0 on success, EOF on error.
+///
+/// Internally delegates to the GNU `__fpurge` no-op stub (we don't
+/// keep our own buffer). The return value is therefore always 0
+/// when `stream` is non-NULL, matching glibc's `__fpurge` (which
+/// signals failure only via `ferror`).
+///
+/// # Safety
+///
+/// `stream`, when non-NULL, must be a valid `FILE *`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fpurge(stream: *mut c_void) -> c_int {
+    if stream.is_null() {
+        // BSD spec: NULL stream is undefined; we choose to return EOF.
+        return -1;
+    }
+    // SAFETY: __fpurge delegates to the GNU stub which is itself a no-op
+    // for non-FILE buffers (we don't own the FILE buffer).
+    unsafe { crate::glibc_internal_abi::__fpurge(stream) };
+    0
+}
+
+// ---------------------------------------------------------------------------
+// fparseln (NetBSD libutil logical-line reader)
+// ---------------------------------------------------------------------------
+//
+// Drives our own fgetc loop to assemble physical lines, then folds them
+// through frankenlibc_core::stdio::fparseln per the libutil grammar.
+// Returns a malloc'd C string the caller must free().
+
+const FPARSELN_DEFAULT_DELIM: [u8; 3] = *b"\\\n#";
+
+/// NetBSD libutil `fparseln(stream, *len, *lineno, delim, flags)` —
+/// read a logical line from `stream`, handling backslash
+/// continuation, comments, and escape sequences per the
+/// `frankenlibc_core::stdio::fparseln` rules. Returns a
+/// freshly-`malloc`-allocated NUL-terminated string the caller is
+/// responsible for freeing, or NULL on EOF / read error.
+///
+/// `delim`, when non-NULL, is a 3-byte array `[escape, separator,
+/// comment]`. NULL selects the documented defaults `['\\', '\n', '#']`.
+///
+/// `*len` (when non-NULL) is set to the length of the returned
+/// string excluding the trailing NUL. `*lineno` (when non-NULL) is
+/// incremented by the number of physical lines consumed.
+///
+/// # Safety
+///
+/// `stream` must be a valid `FILE *`. `len`/`lineno`/`delim`, when
+/// non-NULL, must point to writable storage of the appropriate type.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn fparseln(
+    stream: *mut c_void,
+    len: *mut usize,
+    lineno: *mut usize,
+    delim: *const c_char,
+    flags: c_int,
+) -> *mut c_char {
+    if stream.is_null() {
+        if !len.is_null() {
+            unsafe { *len = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+
+    let delim_bytes = if delim.is_null() {
+        FPARSELN_DEFAULT_DELIM
+    } else {
+        // SAFETY: caller-supplied 3-byte array.
+        unsafe { [*delim as u8, *delim.add(1) as u8, *delim.add(2) as u8] }
+    };
+
+    let mut out_buf: Vec<u8> = Vec::new();
+    let mut consumed_any_line = false;
+    let mut lines_consumed: usize = 0;
+
+    loop {
+        // Read one physical line via fgetc until separator or EOF.
+        let mut phys: Vec<u8> = Vec::new();
+        let mut hit_eof_immediately = true;
+        loop {
+            // SAFETY: stream is a valid FILE* per caller.
+            let c = unsafe { fgetc(stream) };
+            if c == -1 {
+                break;
+            }
+            hit_eof_immediately = false;
+            phys.push(c as u8);
+            if c as u8 == delim_bytes[1] {
+                break;
+            }
+        }
+        if hit_eof_immediately && !consumed_any_line {
+            // True EOF on the very first read of this fparseln call.
+            if !len.is_null() {
+                unsafe { *len = 0 };
+            }
+            return std::ptr::null_mut();
+        }
+        consumed_any_line = true;
+        lines_consumed += 1;
+
+        let outcome = frankenlibc_core::stdio::fparseln::fold_line(
+            &phys,
+            &mut out_buf,
+            delim_bytes,
+            flags as u32,
+        );
+        if matches!(
+            outcome,
+            frankenlibc_core::stdio::fparseln::FoldOutcome::Done
+        ) {
+            break;
+        }
+        // Continuation: loop and read the next physical line.
+        if hit_eof_immediately {
+            break;
+        }
+    }
+
+    if !lineno.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *lineno = (*lineno).wrapping_add(lines_consumed) };
+    }
+
+    // Allocate via malloc so the caller can free() per BSD contract.
+    let n = out_buf.len();
+    let raw = unsafe { crate::malloc_abi::malloc(n + 1) } as *mut c_char;
+    if raw.is_null() {
+        if !len.is_null() {
+            unsafe { *len = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(out_buf.as_ptr(), raw as *mut u8, n);
+        *raw.add(n) = 0;
+    }
+    if !len.is_null() {
+        unsafe { *len = n };
+    }
+    raw
+}
+
+// ---------------------------------------------------------------------------
+// strvis / strnvis / strunvis / strnunvis (NetBSD vis(3) family)
+// ---------------------------------------------------------------------------
+
+unsafe fn bounded_c_str_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    let (len, terminated) = unsafe { scan_c_str_len(ptr, None) };
+    if !terminated {
+        return None;
+    }
+    Some(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) })
+}
+
+/// NetBSD `strvis(dst, src, flags)` — encode `src` into `dst` per
+/// the vis(3) byte transformation. Returns the number of bytes
+/// written excluding the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is large enough (worst case 4 × strlen(src) + 1).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strvis(dst: *mut c_char, src: *const c_char, flags: c_int) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strnvis(dst, dlen, src, flags)` — bounded variant of
+/// [`strvis`]. Returns encoded length on success or -1 if `dst`
+/// would overflow (the prefix that fits is still NUL-terminated).
+///
+/// # Safety
+///
+/// Same as [`strvis`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnvis(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    flags: c_int,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    if encoded.len() < dlen {
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+            *dst.add(encoded.len()) = 0;
+        }
+        encoded.len() as c_int
+    } else {
+        let copy_len = dlen - 1;
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, copy_len);
+            *dst.add(copy_len) = 0;
+        }
+        -1
+    }
+}
+
+/// NetBSD `strunvis(dst, src)` — decode `src` into `dst`. Returns
+/// the number of decoded bytes (excluding NUL) or -1 on malformed
+/// input.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is at least `strlen(src) + 1` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strunvis(dst: *mut c_char, src: *const c_char) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
+
+/// NetBSD `strnunvis(dst, dlen, src)` — bounded variant of
+/// [`strunvis`]. Returns decoded length or -1 on malformed input
+/// or buffer too small.
+///
+/// # Safety
+///
+/// Same as [`strunvis`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnunvis(dst: *mut c_char, dlen: usize, src: *const c_char) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    if decoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
+
+// ---------------------------------------------------------------------------
+// vis / nvis (NetBSD vis(3) single-byte encoders)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `vis(dst, c, flags, nextc)` — encode the single byte `c`
+/// into `dst` (NUL-terminated), returning a pointer to the trailing
+/// NUL. `nextc` is used by `VIS_CSTYLE` to avoid ambiguous `\0`
+/// before an octal digit.
+///
+/// Returns NULL when `dst` is NULL.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is large enough for the worst-case
+/// encoded byte (7 bytes for `\M-\000`) plus the trailing NUL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vis(
+    dst: *mut c_char,
+    c: c_int,
+    flags: c_int,
+    nextc: c_int,
+) -> *mut c_char {
+    if dst.is_null() {
+        return std::ptr::null_mut();
+    }
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    frankenlibc_core::stdio::vis::encode_byte_with_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        &mut buf,
+    );
+    // SAFETY: caller-supplied dst has room for the worst-case
+    // encoded byte (max 7 bytes + NUL).
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
+        *dst.add(buf.len()) = 0;
+        dst.add(buf.len())
+    }
+}
+
+/// NetBSD `nvis(dst, dlen, c, flags, nextc)` — bounded variant of
+/// [`vis`]. Returns NULL on overflow (encoded form + NUL exceeds
+/// `dlen`) without writing anything; otherwise writes and returns a
+/// pointer to the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `dlen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nvis(
+    dst: *mut c_char,
+    dlen: usize,
+    c: c_int,
+    flags: c_int,
+    nextc: c_int,
+) -> *mut c_char {
+    if dst.is_null() || dlen == 0 {
+        return std::ptr::null_mut();
+    }
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    frankenlibc_core::stdio::vis::encode_byte_with_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        &mut buf,
+    );
+    if buf.len() + 1 > dlen {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller-supplied dst has dlen writable bytes; we just
+    // confirmed buf.len()+1 fits.
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
+        *dst.add(buf.len()) = 0;
+        dst.add(buf.len())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strvisx / strnvisx / strunvisx / strnunvisx (NetBSD vis(3) extended length)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `strvisx(dst, src, srclen, flags)` — encode the first
+/// `srclen` bytes of `src` (may contain embedded NULs) into `dst`.
+/// Returns the encoded length excluding the trailing NUL, or -1 on
+/// NULL input.
+///
+/// # Safety
+///
+/// `dst` must hold at least 4 × srclen + 1 writable bytes (the
+/// worst-case encoded length). `src` must be valid for `srclen`
+/// readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strvisx(
+    dst: *mut c_char,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) {
+        return -1;
+    }
+    let bytes: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strnvisx(dst, dlen, src, srclen, flags)` — bounded
+/// variant of [`strvisx`]. Returns the encoded length on success;
+/// returns -1 when the encoded form + NUL exceeds `dlen` (the
+/// prefix that fits is still NUL-terminated).
+///
+/// # Safety
+///
+/// Same as [`strvisx`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) || dlen == 0 {
+        return -1;
+    }
+    let bytes: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    if encoded.len() < dlen {
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+            *dst.add(encoded.len()) = 0;
+        }
+        encoded.len() as c_int
+    } else {
+        let copy_len = dlen - 1;
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, copy_len);
+            *dst.add(copy_len) = 0;
+        }
+        -1
+    }
+}
+
+/// NetBSD `strunvisx(dst, src, flags)` — decode `src` (NUL-terminated
+/// vis-encoded ASCII) into `dst`. Accepts `flags` for libutil API
+/// compat; current decoder is mode-agnostic so the parameter has no
+/// effect.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is at least `strlen(src) + 1` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strunvisx(dst: *mut c_char, src: *const c_char, _flags: c_int) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
+
+/// NetBSD `strnunvisx(dst, dlen, src, flags)` — bounded variant of
+/// [`strunvisx`]. Returns -1 on malformed input or when the decoded
+/// form + NUL exceeds `dlen`.
+///
+/// # Safety
+///
+/// Same as [`strunvisx`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnunvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    _flags: c_int,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    if decoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
+
+// ---------------------------------------------------------------------------
+// unvis (NetBSD vis(3) streaming byte decoder)
+// ---------------------------------------------------------------------------
+//
+// The C ABI threads decoder state through an opaque `int *astate`
+// cell. We round-trip the full UnvisDecoder state through that cell
+// using `UnvisDecoder::save_state` / `from_saved_state` so the
+// streaming machine can continue across successive calls without
+// allocating.
+
+const UNVIS_VALID: c_int = 1;
+const UNVIS_VALIDPUSH: c_int = 2;
+const UNVIS_NOCHAR: c_int = 3;
+const UNVIS_SYNBAD: c_int = -1;
+const UNVIS_END_VAL: c_int = 0;
+const UNVIS_END_FLAG: c_int = 1; // libutil's UNVIS_END flag
+
+fn step_outcome(
+    cp: *mut c_char,
+    dec: &mut frankenlibc_core::stdio::vis::UnvisDecoder,
+    outcome: frankenlibc_core::stdio::vis::UnvisOutcome,
+) -> c_int {
+    use frankenlibc_core::stdio::vis::UnvisOutcome as O;
+    match outcome {
+        O::Valid(b) => {
+            if !cp.is_null() {
+                unsafe { *cp = b as c_char };
+            }
+            UNVIS_VALID
+        }
+        O::ValidPush(b) => {
+            if !cp.is_null() {
+                unsafe { *cp = b as c_char };
+            }
+            UNVIS_VALIDPUSH
+        }
+        O::NoChar => UNVIS_NOCHAR,
+        O::Bad => {
+            dec.reset();
+            UNVIS_SYNBAD
+        }
+        O::End => UNVIS_END_VAL,
+    }
+}
+
+/// NetBSD `unvis(cp, c, astate, flag)` — streaming single-byte
+/// decoder. Caller feeds bytes one at a time, threading the opaque
+/// `*astate` (a single int round-tripped through
+/// [`UnvisDecoder::save_state`]). Returns one of:
+///
+/// * `UNVIS_VALID` (1) — `*cp` holds a fully decoded byte.
+/// * `UNVIS_VALIDPUSH` (2) — `*cp` is decoded; re-feed the current
+///   input byte.
+/// * `UNVIS_NOCHAR` (3) — partial sequence, keep feeding.
+/// * `UNVIS_SYNBAD` (-1) — malformed input.
+/// * `0` — terminal (call with `flag = UNVIS_END = 1` after the last
+///   input byte to flush state).
+///
+/// # Safety
+///
+/// `astate` must point to a writable `c_int` that survives across
+/// successive calls. `cp`, when non-NULL, must point to a writable
+/// `c_char`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn unvis(
+    cp: *mut c_char,
+    c: c_int,
+    astate: *mut c_int,
+    flag: c_int,
+) -> c_int {
+    use frankenlibc_core::stdio::vis::UnvisDecoder;
+
+    if astate.is_null() {
+        return UNVIS_SYNBAD;
+    }
+
+    let packed = unsafe { *astate } as u32;
+    let mut dec = UnvisDecoder::from_saved_state(packed);
+
+    if flag & UNVIS_END_FLAG != 0 {
+        let outcome = dec.feed_end();
+        let result = step_outcome(cp, &mut dec, outcome);
+        unsafe {
+            *astate = dec.save_state() as c_int;
+        }
+        return result;
+    }
+
+    let outcome = dec.feed(c as u8);
+    let result = step_outcome(cp, &mut dec, outcome);
+    unsafe {
+        *astate = dec.save_state() as c_int;
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// svis / snvis / strsvis / strsnvis / strsvisx / strsnvisx
+// (NetBSD vis(3) extra-bytes family)
+// ---------------------------------------------------------------------------
+
+/// Read the NUL-terminated `extra` argument shared by the svis(3)
+/// family. Returns an empty slice for NULL and `None` when a tracked
+/// non-NULL string has no terminator inside its allocation.
+unsafe fn extras_slice<'a>(extra: *const c_char) -> Option<&'a [u8]> {
+    if extra.is_null() {
+        return Some(&[]);
+    }
+    unsafe { bounded_c_str_bytes(extra) }
+}
+
+/// NetBSD `svis(dst, c, flags, nextc, extra)` — sibling of [`vis`]
+/// that additionally treats every byte in the NUL-terminated `extra`
+/// string as needing escape. Writes encoded bytes followed by NUL,
+/// returns a pointer to the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` has room for the encoded form plus NUL
+/// (worst case 5 bytes). `extra`, when non-NULL, must point to a
+/// NUL-terminated byte string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svis(
+    dst: *mut c_char,
+    c: c_int,
+    flags: c_int,
+    nextc: c_int,
+    extra: *const c_char,
+) -> *mut c_char {
+    if dst.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return std::ptr::null_mut();
+    };
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    frankenlibc_core::stdio::vis::encode_byte_with_extra_and_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        extras,
+        &mut buf,
+    );
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
+        *dst.add(buf.len()) = 0;
+        dst.add(buf.len())
+    }
+}
+
+/// NetBSD `snvis(dst, dlen, c, flags, nextc, extra)` — bounded
+/// variant of [`svis`]. Returns NULL on overflow without writing
+/// anything; otherwise writes encoded bytes + NUL and returns a
+/// pointer to the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `dlen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn snvis(
+    dst: *mut c_char,
+    dlen: usize,
+    c: c_int,
+    flags: c_int,
+    nextc: c_int,
+    extra: *const c_char,
+) -> *mut c_char {
+    if dst.is_null() || dlen == 0 {
+        return std::ptr::null_mut();
+    }
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return std::ptr::null_mut();
+    };
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    frankenlibc_core::stdio::vis::encode_byte_with_extra_and_next(
+        c as u8,
+        flags as u32,
+        Some(nextc as u8),
+        extras,
+        &mut buf,
+    );
+    if buf.len() + 1 > dlen {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
+        *dst.add(buf.len()) = 0;
+        dst.add(buf.len())
+    }
+}
+
+/// NetBSD `strsvis(dst, src, flags, extra)` — sibling of [`strvis`]
+/// that treats every byte in `extra` as needing escape. Returns the
+/// encoded length excluding the trailing NUL, or -1 on NULL `dst` /
+/// `src`.
+///
+/// # Safety
+///
+/// `dst` must hold at least 4 × strlen(src) + 1 writable bytes.
+/// `src` and `extra` (when non-NULL) must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsvis(
+    dst: *mut c_char,
+    src: *const c_char,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let Some(src_slice) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsnvis(dst, dlen, src, flags, extra)` — bounded variant
+/// of [`strsvis`]. Returns the encoded length on success or -1 on
+/// overflow / NULL input. On overflow no bytes are written.
+///
+/// # Safety
+///
+/// Same as [`strsvis`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsnvis(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let Some(src_slice) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    if encoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsvisx(dst, src, srclen, flags, extra)` — extended
+/// length variant of [`strsvis`] that accepts embedded NULs in
+/// `src`. Returns encoded length excluding trailing NUL, or -1 on
+/// NULL input.
+///
+/// # Safety
+///
+/// `dst` must hold at least 4 × srclen + 1 writable bytes. `src`
+/// must be valid for `srclen` readable bytes. `extra`, when non-NULL,
+/// must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsvisx(
+    dst: *mut c_char,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) {
+        return -1;
+    }
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsnvisx(dst, dlen, src, srclen, flags, extra)` —
+/// bounded variant of [`strsvisx`]. Returns encoded length on
+/// success or -1 on overflow / NULL input. On overflow no bytes are
+/// written.
+///
+/// # Safety
+///
+/// Same as [`strsvisx`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsnvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) || dlen == 0 {
+        return -1;
+    }
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    if encoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+// ---------------------------------------------------------------------------
+// stravis (NetBSD allocating strvis)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `stravis(outp, src, flags)` — allocate an output buffer
+/// large enough to hold the encoded form of `src`, fill it via
+/// [`strvis`], and store the pointer in `*outp`. Returns the encoded
+/// length (excluding the trailing NUL) on success, or -1 on NULL
+/// inputs / allocation failure. The caller is responsible for
+/// `free()`ing `*outp`.
+///
+/// # Safety
+///
+/// `outp`, when non-NULL, must point to a writable `*mut c_char`
+/// cell. `src` must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stravis(
+    outp: *mut *mut c_char,
+    src: *const c_char,
+    flags: c_int,
+) -> c_int {
+    if outp.is_null() || src.is_null() {
+        return -1;
+    }
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    let needed = encoded.len() + 1;
+    let buf = unsafe { crate::malloc_abi::malloc(needed) } as *mut c_char;
+    if buf.is_null() {
+        unsafe { *outp = std::ptr::null_mut() };
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), buf as *mut u8, encoded.len());
+        *buf.add(encoded.len()) = 0;
+        *outp = buf;
+    }
+    encoded.len() as c_int
+}
+
+// ---------------------------------------------------------------------------
+// strnvis_netbsd / strnunvis_netbsd
+//
+// libbsd ships these as namespaced aliases for callers that want to
+// disambiguate against the FreeBSD/glibc `strnvis(dst, src, dlen,
+// flags)` argument order. Our existing `strnvis` and `strnunvis`
+// already use the NetBSD `(dst, dlen, src, ...)` order, so the
+// `_netbsd` aliases delegate directly.
+// ---------------------------------------------------------------------------
+
+/// libbsd `strnvis_netbsd(dst, dlen, src, flags)` — direct alias of
+/// our NetBSD-order [`strnvis`].
+///
+/// # Safety
+///
+/// Same as [`strnvis`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnvis_netbsd(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    flags: c_int,
+) -> c_int {
+    unsafe { strnvis(dst, dlen, src, flags) }
+}
+
+/// libbsd `strnunvis_netbsd(dst, dlen, src)` — direct alias of our
+/// NetBSD-order [`strnunvis`].
+///
+/// # Safety
+///
+/// Same as [`strnunvis`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnunvis_netbsd(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+) -> c_int {
+    unsafe { strnunvis(dst, dlen, src) }
+}
+
+// ---------------------------------------------------------------------------
+// strenvisx / strsenvisx (NetBSD env-aware vis(3) variants)
+// ---------------------------------------------------------------------------
+
+/// Read the `VIS_OPTIONS` env var (if set) and return the OR of the
+/// flag bits it names. Empty / unset env returns 0.
+fn vis_options_from_env() -> u32 {
+    let key = c"VIS_OPTIONS";
+    let val_ptr = unsafe { crate::stdlib_abi::getenv(key.as_ptr()) };
+    if val_ptr.is_null() {
+        return 0;
+    }
+    let (len, terminated) = unsafe { scan_c_str_len(val_ptr, None) };
+    if !terminated {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(val_ptr.cast::<u8>(), len) };
+    frankenlibc_core::stdio::vis::parse_vis_options(bytes)
+}
+
+/// NetBSD `strenvisx(dst, src, srclen, flags, cerr_ptr)` — extended
+/// strvisx that ORs in any `VIS_*` bits parsed from the
+/// `VIS_OPTIONS` environment variable, then encodes `srclen` bytes
+/// of `src` into `dst`. Writes 0 to `*cerr_ptr` (always — our
+/// byte-stream encoder never raises a character-set error).
+/// Returns the encoded length excluding NUL, or -1 on NULL inputs.
+///
+/// # Safety
+///
+/// `dst` must hold at least `4 * srclen + 1` writable bytes. `src`
+/// must be valid for `srclen` readable bytes. `cerr_ptr`, when
+/// non-NULL, must be writable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strenvisx(
+    dst: *mut c_char,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    cerr_ptr: *mut c_int,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) {
+        return -1;
+    }
+    let merged_flags = (flags as u32) | vis_options_from_env();
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(src_slice, merged_flags);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    if !cerr_ptr.is_null() {
+        unsafe { *cerr_ptr = 0 };
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsenvisx(dst, dlen, src, srclen, flags, extra,
+/// cerr_ptr)` — bounded extended strsvisx that combines the
+/// extras-bytes contract of [`strsvisx`] with the env-var flag
+/// merge of [`strenvisx`]. Writes 0 to `*cerr_ptr`. Returns the
+/// encoded length on success or -1 on overflow / NULL input. On
+/// overflow no bytes are written.
+///
+/// # Safety
+///
+/// Same as [`strenvisx`] but `dst` need only have `dlen` bytes.
+/// `extra`, when non-NULL, must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsenvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    extra: *const c_char,
+    cerr_ptr: *mut c_int,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) || dlen == 0 {
+        return -1;
+    }
+    let merged_flags = (flags as u32) | vis_options_from_env();
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, merged_flags, extras);
+    if encoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    if !cerr_ptr.is_null() {
+        unsafe { *cerr_ptr = 0 };
+    }
+    encoded.len() as c_int
+}
+
+// ---------------------------------------------------------------------------
+// snprintb / snprintb_m (BSD libutil bit-name formatter)
+// ---------------------------------------------------------------------------
+
+/// Internal helper: copy the rendered bytes into the caller-supplied
+/// bounded buffer per snprintf(3) semantics. Returns the full
+/// rendered length (excluding the NUL) regardless of truncation.
+unsafe fn snprintb_write_bounded(buf: *mut c_char, bufsize: usize, rendered: &[u8]) -> c_int {
+    if buf.is_null() || bufsize == 0 {
+        return rendered.len() as c_int;
+    }
+    let cap = bufsize.saturating_sub(1);
+    let n = rendered.len().min(cap);
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), buf as *mut u8, n);
+        *buf.add(n) = 0;
+    }
+    rendered.len() as c_int
+}
+
+/// BSD `snprintb(buf, bufsize, fmt, val)` — render `val` according
+/// to the BSD bit-name format string `fmt` into `buf`. Output looks
+/// like `"0x3<FOO,BAR>"` for a hex base with named bits set.
+/// Returns the full rendered length (excluding NUL); truncates to
+/// `bufsize` if necessary, just like `snprintf(3)`.
+///
+/// # Safety
+///
+/// `buf`, when non-NULL, must be valid for `bufsize` writable
+/// bytes. `fmt` must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn snprintb(
+    buf: *mut c_char,
+    bufsize: usize,
+    fmt: *const c_char,
+    val: u64,
+) -> c_int {
+    if fmt.is_null() {
+        return -1;
+    }
+    let Some(fmt_bytes) = (unsafe { bounded_c_str_bytes(fmt) }) else {
+        return -1;
+    };
+    let rendered = frankenlibc_core::stdio::snprintb::format_snprintb(fmt_bytes, val);
+    unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
+}
+
+/// BSD `snprintb_m(buf, bufsize, fmt, val, max_per_line)` — like
+/// [`snprintb`] but inserts newline-separated continuation lines
+/// (re-emitting the base+value prefix) so no rendered line exceeds
+/// `max_per_line` bytes. `max_per_line == 0` falls back to
+/// single-line behavior.
+///
+/// # Safety
+///
+/// Same as [`snprintb`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn snprintb_m(
+    buf: *mut c_char,
+    bufsize: usize,
+    fmt: *const c_char,
+    val: u64,
+    max_per_line: usize,
+) -> c_int {
+    if fmt.is_null() {
+        return -1;
+    }
+    let Some(fmt_bytes) = (unsafe { bounded_c_str_bytes(fmt) }) else {
+        return -1;
+    };
+    let rendered =
+        frankenlibc_core::stdio::snprintb::format_snprintb_m(fmt_bytes, val, max_per_line);
+    unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
+}
+
+// BURN-DOWN MAP for the dead inline `#[cfg(test)] mod tests` that stood here
+// until 2026-09-01 (bd-xh08pf). `lib.rs` declares this module
+// `#[cfg(not(test))] pub mod stdio_abi;`, so nothing in that block ever
+// compiled. The notes from the two earlier passes are kept below; this pass
+// cleared the last three and removed the block itself.
+//
+//   stdio_stream_id_hasher_integer_fast_path_matches_usize_and_u64
+//     RETIRED as a TAUTOLOGY, the fifth impossibility shape found on this bead.
+//     Its first assertion is `via_usize.finish() == via_u64.finish()`, and
+//     `StreamIdHasher::write_usize` is literally `self.write_u64(value as u64)`
+//     three lines above — there is no state in which those can differ. Its
+//     second, `via_usize != via_bytes`, is an INCIDENTAL inequality: a single
+//     FNV-1a step over a whole u64 is not expected to agree with eight per-byte
+//     steps, nothing depends on their disagreeing, and nothing mixes the two
+//     paths (`StreamMap` is keyed by `usize`, so only `write_usize` is ever
+//     called). What the hasher actually has to do — resolve every registered
+//     stream id back to its cell — is exercised by every fopen/fclose/fwrite in
+//     tests/stdio_abi_test.rs; a broken hasher fails hundreds of them.
+//
+//   stdio_flush_all_id_snapshot_is_sorted
+//     SPLIT, then retired. Its first assertion, "the ids are sorted", is
+//     tautological: `sorted_stream_ids` calls `sort_unstable` immediately
+//     before returning. Its second, "stdin/stdout/stderr come first", is two
+//     real but separate facts, and both are now covered better:
+//       * the three standard streams are REGISTERED — already asserted three
+//         times over in tests/stdio_abi_test.rs via
+//         `stdio_standard_streams_registered_for_tests` (bd-0ftdgt);
+//       * their ids sort below every dynamically allocated one — now a `const`
+//         assertion beside `FIRST_DYNAMIC_STREAM_ID`, which is checked in the
+//         build that ships rather than in one that never compiled.
+//
+//   printf_direct_newline_stream_only_absorbs_full_buffered_without_flush
+//     REWRITTEN against the public ABI and LIVE GLIBC as
+//     tests/conformance_diff_stdio_ext.rs::
+//     fpending_after_printf_newline_matches_glibc_across_buffering_modes.
+//     The original poked `try_write_direct_s_newline_stream` and read
+//     `pending_flush()` off the private stream. The observable contract is the
+//     POSIX one it implements — a line-buffered stream flushes at the newline
+//     and a fully-buffered one does not — and `__fpending` reports exactly the
+//     byte count the dead test was reading, on both implementations. The
+//     rewrite also asserts the fl stream is NOT delegating to host glibc, so
+//     the comparison cannot collapse into glibc-vs-glibc.
+//
+// BURNED DOWN (bd-xh08pf), second pass. Three tests stood here —
+// `printf_direct_payload_classifies_string_newline_only_for_nonnull_s`,
+// `printf_direct_payload_copy_preserves_snprintf_truncation_boundary` and
+// `printf_direct_unsigned_decimal_preserves_full_length_and_truncation` —
+// driving the private `direct_printf_string_payload`,
+// `copy_direct_printf_payload` and `strict_direct_snprintf_u`. Dead, like
+// everything in this block.
+//
+// Rewritten against the public entry points and LIVE GLIBC in
+// tests/conformance_diff_printf_direct.rs, which is stronger than the
+// originals: they asserted fl's private helpers matched fl's own
+// expectations, and glibc is the authority on all three contracts. The
+// NULL-`%s` case in particular is a real divergence risk rather than an
+// internal detail — glibc prints `(null)`, so a direct path that took the
+// pointer would fault or print nothing — and it now has its own arm.
+//
+// The stream case uses a private TEMP FILE rather than redirecting the
+// process's fd 1. Tests in this suite that redirect it are flaky under
+// default libtest parallelism, because other threads' progress lines land in
+// the capture (observed on conformance_diff_error_at_line, 2026-09-01).
+
+// BURNED DOWN (bd-xh08pf). Two tests stood here —
+// `fused_strict_snprintf_grammar_is_general_and_excludes_complex_specs` and
+// `fused_strict_snprintf_writer_preserves_cross_segment_truncation`. This
+// module is `#[cfg(not(test))] pub mod` in lib.rs, so this whole block
+// compiles in neither configuration and neither had ever run.
+//
+// They drove the module-private `is_strict_direct_snprintf_format` and
+// `StrictDirectSnprintfWriter`, so they are REWRITTEN rather than moved:
+//   tests/conformance_diff_snprintf_fused.rs
+// which asserts the same two contracts — the grammar boundary and
+// cross-segment truncation — against LIVE GLIBC through the public
+// `snprintf`. That is stronger than the originals, which only checked fl's
+// private predicate against fl's own expectations.
+//
+// WHY THIS PATH ESPECIALLY: the fused emitter has already been deleted once
+// unnoticed. Landed 2026-07-31 (7eebd3db4, banked at 0.788267x), removed
+// 2026-08-03 by 73c8da5cd, measured as a 2.64-3.92x LOSS on 2026-08-16 while
+// absent, restored 2026-08-30 by 89c356d7e as a macro. For that whole month
+// the only tests naming it were these two, dead in this block.

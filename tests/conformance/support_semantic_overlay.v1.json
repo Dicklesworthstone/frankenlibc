@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
-  "generated_at_utc": "2026-11-03T04:21:32Z",
+  "generated_at_utc": "2026-11-18T23:15:02Z",
   "purpose": "Representative source-observed semantic limitations, joined to the exhaustive explicit-unknown declared-export inventory; neither is full semantic review or runtime parity.",
   "support_matrix_snapshot": {
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2464,
+      "Implemented": 2555,
       "RawSyscall": 408,
-      "WrapsHostLibc": 1247,
+      "WrapsHostLibc": 1156,
       "GlibcCallThrough": 0,
       "Stub": 0
     }

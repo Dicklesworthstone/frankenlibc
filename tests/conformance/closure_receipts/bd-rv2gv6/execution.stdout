@@ -1,0 +1,7 @@
+
+running 2 tests
+test fmemopen_fread_fast_path_contracts_are_wired ... ok
+test fmemopen_fread_live_preload_and_deepbind_gate_passes ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+

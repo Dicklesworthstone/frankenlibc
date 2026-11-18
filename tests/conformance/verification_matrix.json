@@ -228,29 +228,29 @@
     ]
   },
   "dashboard": {
-    "total_critique_beads": 220,
-    "total_entries": 220,
+    "total_critique_beads": 230,
+    "total_entries": 230,
     "by_coverage_status": {
-      "complete": 158,
+      "complete": 168,
       "partial": 1,
       "missing": 61
     },
     "by_priority": {
       "P0": {
-        "total": 41,
-        "complete": 24,
+        "total": 42,
+        "complete": 25,
         "partial": 1,
         "missing": 16
       },
       "P1": {
-        "total": 122,
-        "complete": 105,
+        "total": 128,
+        "complete": 111,
         "partial": 0,
         "missing": 17
       },
       "P2": {
-        "total": 54,
-        "complete": 26,
+        "total": 57,
+        "complete": 29,
         "partial": 0,
         "missing": 28
       },
@@ -263,50 +263,56 @@
     },
     "by_obligation_type": {
       "unit_tests": {
-        "required": 219,
-        "complete": 158,
+        "required": 229,
+        "complete": 168,
         "partial": 0,
         "missing": 61
       },
       "e2e_scripts": {
-        "required": 119,
-        "complete": 84,
+        "required": 118,
+        "complete": 86,
         "partial": 0,
-        "missing": 35
+        "missing": 32
       },
       "structured_logs": {
-        "required": 150,
-        "complete": 77,
+        "required": 146,
+        "complete": 85,
         "partial": 0,
-        "missing": 73
+        "missing": 61
       },
       "perf_evidence": {
-        "required": 42,
-        "complete": 16,
+        "required": 33,
+        "complete": 18,
         "partial": 0,
-        "missing": 26
+        "missing": 14
       },
       "conformance_fixtures": {
-        "required": 60,
-        "complete": 24,
+        "required": 54,
+        "complete": 30,
         "partial": 0,
-        "missing": 36
+        "missing": 24
       },
       "golden_artifacts": {
-        "required": 140,
-        "complete": 66,
+        "required": 137,
+        "complete": 75,
         "partial": 0,
-        "missing": 74
+        "missing": 62
       }
     },
     "by_stream": {
       "abi": {
-        "total": 29,
-        "complete": 29,
+        "total": 35,
+        "complete": 35,
         "partial": 0,
         "missing": 0
       },
       "conformance": {
+        "total": 2,
+        "complete": 2,
+        "partial": 0,
+        "missing": 0
+      },
+      "core": {
         "total": 2,
         "complete": 2,
         "partial": 0,
@@ -319,8 +325,8 @@
         "missing": 15
       },
       "e2e": {
-        "total": 81,
-        "complete": 72,
+        "total": 83,
+        "complete": 74,
         "partial": 1,
         "missing": 8
       },
@@ -32194,7 +32200,7 @@
     },
     {
       "bead_id": "bd-rc0923-epic-eeuy4f.13",
-      "title": "[RC-0923] whole .so compiled with +avx2,+fma — SIGILL on non-AVX2 x86_64; needs baseline build + runtime dispatch",
+      "title": "[RC-0923] whole .so compiled with +avx2,+fma \u2014 SIGILL on non-AVX2 x86_64; needs baseline build + runtime dispatch",
       "priority": 1,
       "status": "closed",
       "assignee": "antigravity",
@@ -33140,7 +33146,7 @@
     },
     {
       "bead_id": "bd-ny3hsa",
-      "title": "[perf][malloc] the residual ~26ns is the segment path's own wrapper, not the arena — successor to the refuted bd-e0y02p",
+      "title": "[perf][malloc] the residual ~26ns is the segment path's own wrapper, not the arena \u2014 successor to the refuted bd-e0y02p",
       "priority": 2,
       "status": "closed",
       "assignee": "antigravity",
@@ -33284,6 +33290,162 @@
           }
         }
       }
+    },
+    {
+      "bead_id": "bd-rv2gv6",
+      "title": "[perf][stdio] fmemopen_4k_fread_64b deployed loss 3.21x vs glibc (fresh DECIDABLE receipt) \u2014 cursor/cell-cache read path",
+      "priority": 2,
+      "status": "closed",
+      "assignee": "antigravity",
+      "labels": [],
+      "dependencies": [],
+      "obligations": {
+        "unit_tests": {
+          "required": true,
+          "scope": ".init_array(argc, argv, envp) environ preseeding, parked static-slot fmemopen reuse with global ST->MT eviction, unified FastMemReadTls, FixedMemCursor::try_take_buffered, and frameless leaf fread (<128B)"
+        },
+        "e2e_scripts": {
+          "required": false,
+          "scope": ""
+        },
+        "structured_logs": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
+        },
+        "perf_evidence": {
+          "required": false,
+          "scope": ""
+        },
+        "conformance_fixtures": {
+          "required": true,
+          "scope": "fmemopen_fread_perf_gate_test across {strict, hardened} x {host, native=1} LD_PRELOAD + RTLD_DEEPBIND + double-fclose EBADF + fflush(NULL) + partial-element reopen + ST->MT pthread_create eviction"
+        },
+        "golden_artifacts": {
+          "required": true,
+          "scope": "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
+        }
+      },
+      "coverage": {
+        "unit_tests": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs"
+        },
+        "e2e_scripts": {
+          "status": "not_required"
+        },
+        "structured_logs": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
+        },
+        "perf_evidence": {
+          "status": "not_required"
+        },
+        "conformance_fixtures": {
+          "status": "complete",
+          "artifacts": "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs"
+        },
+        "golden_artifacts": {
+          "status": "complete",
+          "artifacts": "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
+        }
+      },
+      "coverage_summary": {
+        "overall": "complete",
+        "required": 4,
+        "complete": 4,
+        "partial": 0,
+        "missing": 0
+      },
+      "row": {
+        "bead_id": "bd-rv2gv6",
+        "stream": "abi",
+        "status": "complete",
+        "unit_cmds": [
+          "cargo test -p frankenlibc-harness --test fmemopen_fread_perf_gate_test -- --test-threads=1"
+        ],
+        "e2e_cmds": [],
+        "expected_assertions": [
+          "Certified same-invocation incumbent_coverage_ab fmemopen_4k_fread_64b beats host glibc (fl_median_ns=536.372 vs glibc_median_ns=695.900, ratio_median=0.768887, CI95=[0.764812,0.772956], FL_FASTER, DECIDABLE, nulls_hold=true) and fmemopen_fread_perf_gate_test passes 2/2 across {strict, hardened} x {host, native=1} + RTLD_DEEPBIND"
+        ],
+        "log_schema_refs": [
+          "tests/conformance/log_schema.json"
+        ],
+        "artifact_paths": [
+          "crates/frankenlibc-abi/src/io_internal_abi.rs",
+          "crates/frankenlibc-abi/src/startup_abi.rs",
+          "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "crates/frankenlibc-core/src/stdio/file.rs",
+          "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs",
+          "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
+        ],
+        "perf_proof_refs": [],
+        "close_blockers": [],
+        "notes": "Verified on release libfrankenlibc_abi.so SHA256 ce0781d382042021cd41e9af1aff31a5623db9eb9edad9ab263eccece44bbab7 at commit 77f53a59bf414d7f39392cf4407dd68ed31b94a1: same-invocation incumbent_coverage_ab --family fread_mem --fl-deepbind --pin-quietest 1 reduced fmemopen_4k_fread_64b from 2244.8 ns (3.208x FL_SLOWER) to 536.372 ns vs glibc 695.900 ns (ratio_median=0.768887, CI95=[0.764812,0.772956], null_fl_fl=1.000183, null_glibc_glibc=1.005229, DECIDABLE, FL_FASTER, 3/3 conformance pass).",
+        "result_receipts": [
+          "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
+        ],
+        "closure_evidence": {
+          "behavior": "Beat host glibc on deployed fmemopen_4k_fread_64b (<= 1.0x) via .init_array environ preseeding, parked static-slot fmemopen reuse with global ST->MT eviction, unified FastMemReadTls, FixedMemCursor::try_take_buffered, and frameless leaf fread",
+          "acceptance_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "claim_class": "executed_unit",
+          "evidence_class": "executed_unit",
+          "behavior_paths": [
+            "crates/frankenlibc-abi/src/io_internal_abi.rs",
+            "crates/frankenlibc-abi/src/startup_abi.rs",
+            "crates/frankenlibc-abi/src/stdio_abi.rs",
+            "crates/frankenlibc-core/src/stdio/file.rs"
+          ],
+          "test_paths": [
+            "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs"
+          ],
+          "source": {
+            "commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+            "files": {
+              "crates/frankenlibc-abi/src/io_internal_abi.rs": "93289103221d6746f2a72c2a990dfddb9070695dc84b34d9f1b5d930395c7774",
+              "crates/frankenlibc-abi/src/startup_abi.rs": "3587fdd2ed8e7f3d86101c4e3d0fd69b3c3ac87df54fc95cc133a911de0f8ed4",
+              "crates/frankenlibc-abi/src/stdio_abi.rs": "580a91692749ab5573f4a1bb29e53d2839110f20cfe48721b68edaeceea94e6a",
+              "crates/frankenlibc-core/src/stdio/file.rs": "defdf4a752a148c60ff01d3f9b01938285412d16bf786902a23e2c8cc7883199",
+              "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs": "b0c92baaeaaa19503a09055a964100058d7a1fd3a6443e699105e8bdd1ee69da"
+            }
+          },
+          "configuration": {
+            "architecture": "x86_64",
+            "mode": "strict",
+            "profile": "test",
+            "features": []
+          },
+          "not_before": "2026-11-18T00:00:00Z",
+          "gate": {
+            "command": [
+              "target/closure_bins/fmemopen_fread_perf_gate_test",
+              "--test-threads=1"
+            ],
+            "environment": {
+              "FRANKENLIBC_MODE": "strict"
+            },
+            "build_command": [
+              "rustc",
+              "--edition=2024",
+              "--test",
+              "-C",
+              "debuginfo=0",
+              "-C",
+              "strip=symbols",
+              "crates/frankenlibc-harness/tests/fmemopen_fread_perf_gate_test.rs",
+              "-o",
+              "target/closure_bins/fmemopen_fread_perf_gate_test"
+            ],
+            "artifacts": [
+              "target/closure_bins/fmemopen_fread_perf_gate_test"
+            ],
+            "result_format": "libtest",
+            "required_tests": [
+              "fmemopen_fread_fast_path_contracts_are_wired",
+              "fmemopen_fread_live_preload_and_deepbind_gate_passes"
+            ]
+          }
+        }
+      }
     }
   ],
   "result_receipts": {
@@ -33297,6 +33459,7 @@
     "bd-otip6a": "tests/conformance/closure_receipts/bd-otip6a/receipt.json",
     "bd-rc0923-epic-eeuy4f.26": "tests/conformance/closure_receipts/bd-rc0923-epic-eeuy4f.26/receipt.json",
     "bd-f874go": "tests/conformance/closure_receipts/bd-f874go/receipt.json",
-    "bd-ny3hsa": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json"
+    "bd-ny3hsa": "tests/conformance/closure_receipts/bd-ny3hsa/receipt.json",
+    "bd-rv2gv6": "tests/conformance/closure_receipts/bd-rv2gv6/receipt.json"
   }
 }
