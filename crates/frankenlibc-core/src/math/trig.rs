@@ -22,12 +22,15 @@ pub fn tan(x: f64) -> f64 {
 
 #[inline]
 pub fn asin(x: f64) -> f64 {
-    libm::asin(x)
+    // Clean-room correctly-rounded binary64 asin (3-tier Estrin/DD/Fp192 Ziv
+    // cascade; 0 diffs vs 113-bit __float128 across 2M inputs, bd-otip6a).
+    crate::math::coremath::asin(x)
 }
 
 #[inline]
 pub fn acos(x: f64) -> f64 {
-    libm::acos(x)
+    // Clean-room correctly-rounded binary64 acos (bd-otip6a).
+    crate::math::coremath::acos(x)
 }
 
 #[inline]
@@ -40,7 +43,8 @@ pub fn atan(x: f64) -> f64 {
 
 #[inline]
 pub fn atan2(y: f64, x: f64) -> f64 {
-    libm::atan2(y, x)
+    // Clean-room correctly-rounded binary64 atan2 (bd-otip6a).
+    crate::math::coremath::atan2(y, x)
 }
 
 // sinh/cosh/tanh are fdlibm's e_sinh.c / e_cosh.c / s_tanh.c (Sun Microsystems,

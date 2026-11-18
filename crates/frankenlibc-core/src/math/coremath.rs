@@ -5466,6 +5466,1545 @@ fn lgamma_r_body(x: f64) -> (f64, i32) {
     (ub, sign)
 }
 
+// --- Clean-room correctly-rounded asin, acos, atan2 (bd-otip6a) --------------
+//
+// Three-tier Ziv cascade:
+// 1. Tier-1 inline Estrin / single-reciprocal fast path (~99.9% of inputs).
+// 2. Tier-2 out-of-line double-double refinement (< 2^-88 / 2^-102 error).
+// 3. Tier-3 out-of-line normalized 192-bit floating-point (`Fp192`, > 185 bits
+//    of relative precision across all binary64 exponents including subnormals).
+
+const ATAN64_DD: [[f64; 2]; 65] = [
+    [0.0, 0.0],
+    [hf!("0x1.fff555bbb729bp-7"), hf!("-0x1.220c39d4dff50p-61")],
+    [hf!("0x1.ffd55bba97625p-6"), hf!("-0x1.5ec431444912cp-60")],
+    [hf!("0x1.7fb818430da2ap-5"), hf!("-0x1.86ef8f794f105p-63")],
+    [hf!("0x1.ff55bb72cfdeap-5"), hf!("-0x1.c934d86d23f1dp-60")],
+    [hf!("0x1.3f59f0e7c559dp-4"), hf!("0x1.ac4ce285df847p-58")],
+    [hf!("0x1.7ee182602f10fp-4"), hf!("-0x1.cfb654c0c3d98p-58")],
+    [hf!("0x1.be39ebe6f07c3p-4"), hf!("0x1.f7b8f29a05987p-58")],
+    [hf!("0x1.fd5ba9aac2f6ep-4"), hf!("-0x1.cd37686760c17p-59")],
+    [hf!("0x1.1e1fafb043727p-3"), hf!("-0x1.b485914dacf8cp-59")],
+    [hf!("0x1.3d6eee8c6626cp-3"), hf!("0x1.61a3b0ce9281bp-57")],
+    [hf!("0x1.5c9811e3ec26ap-3"), hf!("-0x1.054ab2c010f3dp-58")],
+    [hf!("0x1.7b97b4bce5b02p-3"), hf!("0x1.347b0b4f881cap-58")],
+    [hf!("0x1.9a6a8e96c8626p-3"), hf!("0x1.cf601e7b4348ep-59")],
+    [hf!("0x1.b90d7529260a2p-3"), hf!("0x1.17b10d2e0e5abp-61")],
+    [hf!("0x1.d77d5df205736p-3"), hf!("0x1.c648d1534597ep-57")],
+    [hf!("0x1.f5b75f92c80ddp-3"), hf!("0x1.8ab6e3cf7afbdp-57")],
+    [hf!("0x1.09dc597d86362p-2"), hf!("0x1.62e47390cb865p-56")],
+    [hf!("0x1.18bf5a30bf178p-2"), hf!("0x1.30ca4748b1bf9p-57")],
+    [hf!("0x1.278372057ef46p-2"), hf!("-0x1.077cdd36dfc81p-56")],
+    [hf!("0x1.362773707ebccp-2"), hf!("-0x1.963a544b672d8p-57")],
+    [hf!("0x1.44aa436c2af0ap-2"), hf!("-0x1.5d5e43c55b3bap-56")],
+    [hf!("0x1.530ad9951cd4ap-2"), hf!("-0x1.2566480884082p-57")],
+    [hf!("0x1.614840309cfe2p-2"), hf!("-0x1.a725715711f00p-56")],
+    [hf!("0x1.6f61941e4def1p-2"), hf!("-0x1.c63aae6f6e918p-56")],
+    [hf!("0x1.7d5604b63b3f7p-2"), hf!("0x1.69c885c2b249ap-56")],
+    [hf!("0x1.8b24d394a1b25p-2"), hf!("0x1.b6d0ba3748fa8p-56")],
+    [hf!("0x1.98cd5454d6b18p-2"), hf!("0x1.9e6c988fd0a77p-56")],
+    [hf!("0x1.a64eec3cc23fdp-2"), hf!("-0x1.24dec1b50b7ffp-56")],
+    [hf!("0x1.b3a911da65c6cp-2"), hf!("0x1.ae187b1ca5040p-56")],
+    [hf!("0x1.c0db4c94ec9f0p-2"), hf!("-0x1.cc1ce70934c34p-56")],
+    [hf!("0x1.cde53432c1351p-2"), hf!("-0x1.a2cfa4418f1adp-56")],
+    [hf!("0x1.dac670561bb4fp-2"), hf!("0x1.a2b7f222f65e2p-56")],
+    [hf!("0x1.e77eb7f175a34p-2"), hf!("0x1.0e53dc1bf3435p-56")],
+    [hf!("0x1.f40dd0b541418p-2"), hf!("-0x1.a3992dc382a23p-57")],
+    [hf!("0x1.0039c73c1a40cp-1"), hf!("-0x1.b32c949c9d593p-55")],
+    [hf!("0x1.0657e94db30d0p-1"), hf!("-0x1.d5b495f6349e6p-56")],
+    [hf!("0x1.0c6145b5b43dap-1"), hf!("0x1.974fa13b5404fp-58")],
+    [hf!("0x1.1255d9bfbd2a9p-1"), hf!("-0x1.2bdaee1c0ee35p-58")],
+    [hf!("0x1.1835a88be7c13p-1"), hf!("0x1.c621cec00c301p-55")],
+    [hf!("0x1.1e00babdefeb4p-1"), hf!("-0x1.928df287a668fp-58")],
+    [hf!("0x1.23b71e2cc9e6ap-1"), hf!("0x1.c421c9f38224ep-57")],
+    [hf!("0x1.2958e59308e31p-1"), hf!("-0x1.09e73b0c6c087p-56")],
+    [hf!("0x1.2ee628406cbcap-1"), hf!("0x1.c5d5e9ff0cf8dp-55")],
+    [hf!("0x1.345f01cce37bbp-1"), hf!("0x1.1021137c71102p-55")],
+    [hf!("0x1.39c391cd4171ap-1"), hf!("-0x1.2304331d8bf46p-55")],
+    [hf!("0x1.3f13fb89e96f4p-1"), hf!("0x1.ecf8b492644f0p-56")],
+    [hf!("0x1.445065b795b56p-1"), hf!("-0x1.f76d0163f79c8p-56")],
+    [hf!("0x1.4978fa3269ee1p-1"), hf!("0x1.2419a87f2a458p-56")],
+    [hf!("0x1.4e8de5bb6ec04p-1"), hf!("0x1.4a33dbeb3796cp-55")],
+    [hf!("0x1.538f57b89061fp-1"), hf!("-0x1.1bb74abda520cp-55")],
+    [hf!("0x1.587d81f732fbbp-1"), hf!("-0x1.5e5c9d8c5a950p-56")],
+    [hf!("0x1.5d58987169b18p-1"), hf!("0x1.0028e4bc5e7cap-57")],
+    [hf!("0x1.6220d115d7b8ep-1"), hf!("-0x1.2b785350ee8c1p-57")],
+    [hf!("0x1.66d663923e087p-1"), hf!("-0x1.6ea6febe8bbbap-56")],
+    [hf!("0x1.6b798920b3d99p-1"), hf!("-0x1.a80386188c50ep-55")],
+    [hf!("0x1.700a7c5784634p-1"), hf!("-0x1.8c34d25aadef6p-56")],
+    [hf!("0x1.748978fba8e0fp-1"), hf!("0x1.7b2a6165884a1p-59")],
+    [hf!("0x1.78f6bbd5d315ep-1"), hf!("0x1.406a089803740p-55")],
+    [hf!("0x1.7d528289fa093p-1"), hf!("0x1.560821e2f3aa9p-55")],
+    [hf!("0x1.819d0b7158a4dp-1"), hf!("-0x1.bf76229d3b917p-56")],
+    [hf!("0x1.85d69576cc2c5p-1"), hf!("0x1.6b66e7fc8b8c3p-57")],
+    [hf!("0x1.89ff5ff57f1f8p-1"), hf!("-0x1.55b9a5e177a1bp-55")],
+    [hf!("0x1.8e17aa99cc05ep-1"), hf!("-0x1.ec182ab042f61p-56")],
+    [hf!("0x1.921fb54442d18p-1"), hf!("0x1.1a62633145c07p-55")],
+];
+
+const ATAN64_FP192: [([u64; 3], i32); 65] = [
+    (
+        [0x0000000000000000, 0x0000000000000000, 0x0000000000000000],
+        0,
+    ),
+    (
+        [0xfffaaadddb94d5bb, 0xe78c564015f76048, 0x20ef65c10deef460],
+        -7,
+    ),
+    (
+        [0xffeaaddd4bb12542, 0x779d776dda8c6213, 0x806d0294c0db8816],
+        -6,
+    ),
+    (
+        [0xbfdc0c2186d14fcf, 0x220e10d61df56ec7, 0x1dddd64f807f208a],
+        -5,
+    ),
+    (
+        [0xffaaddb967ef4e36, 0xcb2792dc0e2e0d51, 0x319c12cf59d4b2dc],
+        -5,
+    ),
+    (
+        [0x9facf873e2aceb58, 0x99c50bbf08e6cdf6, 0x4f5987da5f9bc867],
+        -4,
+    ),
+    (
+        [0xbf70c13017887460, 0x93567e784cf83676, 0x7e0a847982ae0dc3],
+        -4,
+    ),
+    (
+        [0xdf1cf5f3783e1bef, 0x71e5340b30e5d9ee, 0x90d7e50e91a213ee],
+        -4,
+    ),
+    (
+        [0xfeadd4d5617b6e32, 0xc897989f3e888ef7, 0x8b3957d95d9ad923],
+        -4,
+    ),
+    (
+        [0x8f0fd7d821b93725, 0xbd37592983a0af99, 0xe2a15ac29fc00c8e],
+        -3,
+    ),
+    (
+        [0x9eb77746331362c3, 0x47619d250360fe85, 0x7752f4f8badd28dc],
+        -3,
+    ),
+    (
+        [0xae4c08f1f6134efa, 0xb54d3fef0c2de994, 0x2d3e6dd51b06b4cc],
+        -3,
+    ),
+    (
+        [0xbdcbda5e72d81134, 0x7b0b4f881c9c7487, 0x93ad00d6838a2b2b],
+        -3,
+    ),
+    (
+        [0xcd35474b643130e7, 0xb00f3da1a46eeb3a, 0xabf1264c1bc2761c],
+        -3,
+    ),
+    (
+        [0xdc86ba9493051022, 0xf621a5c1cb552f02, 0x8645128d3a4b1255],
+        -3,
+    ),
+    (
+        [0xebbeaef902b9b38c, 0x91a2a68b2fbd78e7, 0xb12cec2a032ff006],
+        -3,
+    ),
+    (
+        [0xfadbafc96406eb15, 0x6dc79ef5f7a217e5, 0xaa7fa90388b3836b],
+        -3,
+    ),
+    (
+        [0x84ee2cbec31b12c5, 0xc8e721970cabd3a2, 0xae250aa0b6fd05b1],
+        -2,
+    ),
+    (
+        [0x8c5fad185f8bc130, 0xca4748b1bf88298d, 0x0fd2e29bc1a4fbd0],
+        -2,
+    ),
+    (
+        [0x93c1b902bf7a2df1, 0x064592406fe1447a, 0x447c219f20d6322c],
+        -2,
+    ),
+    (
+        [0x9b13b9b83f5e5e69, 0xc5abb498d27af328, 0x08a48f850b2f5600],
+        -2,
+    ),
+    (
+        [0xa25521b615784d45, 0x4378754988b8d9e3, 0x4e8278a4345d860c],
+        -2,
+    ),
+    (
+        [0xa9856cca8e6a4eda, 0x99b7f77bf7d9e8c1, 0x212c39d31ef4d7d4],
+        -2,
+    ),
+    (
+        [0xb0a420184e7f0cb1, 0xb51d51dc200a0fc2, 0xb4085cde97ad6d70],
+        -2,
+    ),
+    (
+        [0xb7b0ca0f26f78473, 0x8aa32122dcfe4483, 0x3d843977ae5455cc],
+        -2,
+    ),
+    (
+        [0xbeab025b1d9fbad3, 0x910b856493411026, 0x25c13c1d5e5df740],
+        -2,
+    ),
+    (
+        [0xc59269ca50d92b6d, 0xa1746e91f50a28dd, 0xc4b7c9e50d3aa1f7],
+        -2,
+    ),
+    (
+        [0xcc66aa2a6b58c33c, 0xd9311fa14ed9b7c3, 0x927a005488219614],
+        -2,
+    ),
+    (
+        [0xd327761e611fe5b6, 0x427c95e9001e7136, 0x6e0040dd2161a73c],
+        -2,
+    ),
+    (
+        [0xd9d488ed32e3635c, 0x30f6394a0806345d, 0x55481118bfb7044d],
+        -2,
+    ),
+    (
+        [0xe06da64a764f7c67, 0xc631ed96798cb803, 0xb614bf2f5f3eb824],
+        -2,
+    ),
+    (
+        [0xe6f29a19609a84ba, 0x60b77ce1ca6dc2c8, 0x64b24e873cf283b4],
+        -2,
+    ),
+    (
+        [0xed63382b0dda7b45, 0x6fe445ecbc3a8d03, 0x6e141587261cdf01],
+        -2,
+    ),
+    (
+        [0xf3bf5bf8bad1a21c, 0xa7b837e686adf3fa, 0x2f20a0b8805d8e48],
+        -2,
+    ),
+    (
+        [0xfa06e85aa0a0be5c, 0x66d23c7d5dc8ecc2, 0x100c92df8b8b5583],
+        -2,
+    ),
+    (
+        [0x801ce39e0d205c99, 0xa6d6c6c54d938596, 0x692486326fe2e1cc],
+        -1,
+    ),
+    (
+        [0x832bf4a6d9867e2a, 0x4b6a09cb61a515c0, 0xf1155cd8774ddfbc],
+        -1,
+    ),
+    (
+        [0x8630a2dada1ed065, 0xd3e84ed5013ca37d, 0x92a950da94553291],
+        -1,
+    ),
+    (
+        [0x892aecdfde9547b5, 0x094478fc472b4afb, 0x8fbe7b9fb9ddf67f],
+        -1,
+    ),
+    (
+        [0x8c1ad445f3e09b8c, 0x439d801860205920, 0xf8e244490311ce07],
+        -1,
+    ),
+    (
+        [0x8f005d5ef7f59f9b, 0x5c835e1665c43747, 0x918a67e0652b375d],
+        -1,
+    ),
+    (
+        [0x91db8f1664f350e2, 0x10e4f9c1126e021f, 0xd995e8d1fc353437],
+        -1,
+    ),
+    (
+        [0x94ac72c9847186f6, 0x18c4f393f78a32f8, 0xf38ae0f47a945eda],
+        -1,
+    ),
+    (
+        [0x97731420365e538b, 0xabd3fe19f1aeb6b2, 0x9798db274070578e],
+        -1,
+    ),
+    (
+        [0x9a2f80e671bdda20, 0x4226f8e2204ff3bc, 0xdae46f0617489d5c],
+        -1,
+    ),
+    (
+        [0x9ce1c8e6a0b8cdb9, 0xf799c4e8174cf11c, 0x5a2ac6a3b26e793f],
+        -1,
+    ),
+    (
+        [0x9f89fdc4f4b7a1ec, 0xf8b492644f0701df, 0x9d743d1bc801acaa],
+        -1,
+    ),
+    (
+        [0xa22832dbcadaae08, 0x92fe9c08637af0e5, 0xd084146d4fd55be4],
+        -1,
+    ),
+    (
+        [0xa4bc7d1934f70924, 0x19a87f2a457dac9e, 0xe3f08689eeb2b9e7],
+        -1,
+    ),
+    (
+        [0xa746f2ddb7602294, 0x67b7d66f2d74e019, 0x21b81774d87a36a5],
+        -1,
+    ),
+    (
+        [0xa9c7abdc4830f5c8, 0x916a84b5be7933f5, 0xf9971655e427bf1c],
+        -1,
+    ),
+    (
+        [0xac3ec0fb997dd6a1, 0xa36273a56afa8ef4, 0x183db5406c42068d],
+        -1,
+    ),
+    (
+        [0xaeac4c38b4d8c080, 0x14725e2f3e52070a, 0x03742b4643effe26],
+        -1,
+    ),
+    (
+        [0xb110688aebdc6f6a, 0x43d65788b9f6a7b5, 0x09e2828d4df9e1c7],
+        -1,
+    ),
+    (
+        [0xb36b31c91f043691, 0x590141744462f939, 0xe469ff280783f6fe],
+        -1,
+    ),
+    (
+        [0xb5bcc49059ecc4af, 0xf8f3cee75e3907d5, 0x75216f47b3891e08],
+        -1,
+    ),
+    (
+        [0xb8053e2bc2319e73, 0xcb2da55210a4443d, 0x3d7aecc114c79a81],
+        -1,
+    ),
+    (
+        [0xba44bc7dd470782f, 0x654c2cb10942e386, 0x23228454d454a343],
+        -1,
+    ),
+    (
+        [0xbc7b5deae98af280, 0xd4113006e80fb290, 0x13fab81f5ba4ab8a],
+        -1,
+    ),
+    (
+        [0xbea94144fd049aac, 0x1043c5e755282e7d, 0x01438341f13d5c3a],
+        -1,
+    ),
+    (
+        [0xc0ce85b8ac526640, 0x89dd62c46e92fa24, 0xd58ee867aef436f6],
+        -1,
+    ),
+    (
+        [0xc2eb4abb661628b5, 0xb373fe45c61bb9fa, 0xe970ec0e0e4baa67],
+        -1,
+    ),
+    (
+        [0xc4ffaffabf8fbd54, 0x8cb43d10bc9e0221, 0x4da621b60039834f],
+        -1,
+    ),
+    (
+        [0xc70bd54ce602ee13, 0xe7d54fbd09f2be38, 0x0e9c986eaf9b702b],
+        -1,
+    ),
+    (
+        [0xc90fdaa22168c234, 0xc4c6628b80dc1cd1, 0x29024e088a67cc74],
+        -1,
+    ),
+];
+
+const PI_DD: [f64; 2] = [hf!("0x1.921fb54442d18p+1"), hf!("0x1.1a62633145c07p-53")];
+const PI_FP192: ([u64; 3], i32) = (
+    [0xc90fdaa22168c234, 0xc4c6628b80dc1cd1, 0x29024e088a67cc74],
+    1,
+);
+const PI_2_DD: [f64; 2] = [hf!("0x1.921fb54442d18p+0"), hf!("0x1.1a62633145c07p-54")];
+const PI_2_FP192: ([u64; 3], i32) = (
+    [0xc90fdaa22168c234, 0xc4c6628b80dc1cd1, 0x29024e088a67cc74],
+    0,
+);
+const PI_4_DD: [f64; 2] = [hf!("0x1.921fb54442d18p-1"), hf!("0x1.1a62633145c07p-55")];
+const PI_3_4_DD: [f64; 2] = [hf!("0x1.2d97c7f3321d2p+1"), hf!("0x1.a79394c9e8a0ap-54")];
+
+const ATAN_ODD_RECIP_DD: [[f64; 2]; 4] = [
+    [hf!("-0x1.5555555555555p-2"), hf!("-0x1.5555555555555p-56")],
+    [hf!("0x1.999999999999ap-3"), hf!("-0x1.999999999999ap-57")],
+    [hf!("-0x1.2492492492492p-3"), hf!("-0x1.2492492492492p-57")],
+    [hf!("0x1.c71c71c71c71cp-4"), hf!("0x1.c71c71c71c71cp-58")],
+];
+const ATAN_ODD_RECIP_F64: [f64; 4] = [
+    hf!("-0x1.745d1745d1746p-4"),
+    hf!("0x1.3b13b13b13b14p-4"),
+    hf!("-0x1.1111111111111p-4"),
+    hf!("0x1.e1e1e1e1e1e1ep-5"),
+];
+const ATAN_ODD_RECIP_FP192: [([u64; 3], i32, bool); 14] = [
+    (
+        [0xaaaaaaaaaaaaaaaa, 0xaaaaaaaaaaaaaaaa, 0xaaaaaaaaaaaaaaab],
+        -2,
+        true,
+    ),
+    (
+        [0xcccccccccccccccc, 0xcccccccccccccccc, 0xcccccccccccccccd],
+        -3,
+        false,
+    ),
+    (
+        [0x9249249249249249, 0x2492492492492492, 0x4924924924924925],
+        -3,
+        true,
+    ),
+    (
+        [0xe38e38e38e38e38e, 0x38e38e38e38e38e3, 0x8e38e38e38e38e39],
+        -4,
+        false,
+    ),
+    (
+        [0xba2e8ba2e8ba2e8b, 0xa2e8ba2e8ba2e8ba, 0x2e8ba2e8ba2e8ba3],
+        -4,
+        true,
+    ),
+    (
+        [0x9d89d89d89d89d89, 0xd89d89d89d89d89d, 0x89d89d89d89d89d9],
+        -4,
+        false,
+    ),
+    (
+        [0x8888888888888888, 0x8888888888888888, 0x8888888888888889],
+        -4,
+        true,
+    ),
+    (
+        [0xf0f0f0f0f0f0f0f0, 0xf0f0f0f0f0f0f0f0, 0xf0f0f0f0f0f0f0f1],
+        -5,
+        false,
+    ),
+    (
+        [0xd79435e50d79435e, 0x50d79435e50d7943, 0x5e50d79435e50d79],
+        -5,
+        true,
+    ),
+    (
+        [0xc30c30c30c30c30c, 0x30c30c30c30c30c3, 0x0c30c30c30c30c31],
+        -5,
+        false,
+    ),
+    (
+        [0xb21642c8590b2164, 0x2c8590b21642c859, 0x0b21642c8590b216],
+        -5,
+        true,
+    ),
+    (
+        [0xa3d70a3d70a3d70a, 0x3d70a3d70a3d70a3, 0xd70a3d70a3d70a3d],
+        -5,
+        false,
+    ),
+    (
+        [0x97b425ed097b425e, 0xd097b425ed097b42, 0x5ed097b425ed097b],
+        -5,
+        true,
+    ),
+    (
+        [0x8d3dcb08d3dcb08d, 0x3dcb08d3dcb08d3d, 0xcb08d3dcb08d3dcb],
+        -5,
+        false,
+    ),
+];
+
+const ASIN_GV_DD: [[f64; 2]; 6] = [
+    [hf!("0x1.6a1887fac5ab8p-3"), hf!("0x1.a4cc4e93d0958p-57")],
+    [hf!("0x1.678fec81fd249p-4"), hf!("-0x1.90b70e2ca2d0dp-59")],
+    [hf!("0x1.df7ed1245b7c5p-5"), hf!("0x1.f74ee31984a92p-60")],
+    [hf!("0x1.702d48c48001ap-5"), hf!("0x1.c3d7b827a8446p-60")],
+    [hf!("0x1.3316da04b0ad8p-5"), hf!("-0x1.7c26568ac09abp-59")],
+    [hf!("0x1.0e70f97f454e7p-5"), hf!("-0x1.4035d697cc646p-60")],
+];
+const ASIN_GV_F64: [f64; 14] = [
+    hf!("0x1.eefaf469a0b75p-6"),
+    hf!("0x1.d219470662d6fp-6"),
+    hf!("0x1.c0b2a6501f30cp-6"),
+    hf!("0x1.b799d2d73f38ap-6"),
+    hf!("0x1.b4e5307cb1827p-6"),
+    hf!("0x1.b7653cff7ce86p-6"),
+    hf!("0x1.be5c2bc600dacp-6"),
+    hf!("0x1.c95603304dc2cp-6"),
+    hf!("0x1.d81925ca6c9aap-6"),
+    hf!("0x1.ea76fb7451eaap-6"),
+    hf!("0x1.fea463a46ab0bp-6"),
+    hf!("0x1.0c1ae2cbe8d98p-5"),
+    hf!("0x1.361dcb2435b4cp-5"),
+    hf!("0x1.48ab88548eadbp-5"),
+];
+
+const ASIN_FAST_C0: [f64; 2] = [hf!("0x1.6a1887fac5ab8p-3"), hf!("0x1.a4cc4ebf83a11p-57")];
+const ASIN_FAST_C1: [f64; 2] = [hf!("0x1.678fec81fd249p-4"), hf!("0x1.222d73c9d0108p-58")];
+const ASIN_FAST_TAIL: [f64; 13] = [
+    hf!("0x1.df7ed1245b7c6p-5"),
+    hf!("0x1.702d48c47f72ap-5"),
+    hf!("0x1.3316da04b0180p-5"),
+    hf!("0x1.0e70f980c6fd4p-5"),
+    hf!("0x1.eefaf46cc70bap-6"),
+    hf!("0x1.d2194371f137dp-6"),
+    hf!("0x1.c0b2a29234595p-6"),
+    hf!("0x1.b79c00fb10eadp-6"),
+    hf!("0x1.b4e777cf0155fp-6"),
+    hf!("0x1.b6afae7fb92abp-6"),
+    hf!("0x1.bd9e797cbe017p-6"),
+    hf!("0x1.e73747a06605bp-6"),
+    hf!("0x1.f74bdb0d4b5bep-6"),
+];
+
+const INV64_APPROX: [u16; 64] = [
+    32514, 32018, 31536, 31069, 30615, 30175, 29747, 29331, 28926, 28533, 28150, 27777, 27414,
+    27060, 26715, 26379, 26052, 25732, 25420, 25116, 24818, 24528, 24245, 23967, 23697, 23432,
+    23173, 22920, 22672, 22429, 22192, 21960, 21732, 21509, 21291, 21077, 20867, 20662, 20460,
+    20262, 20068, 19878, 19692, 19508, 19329, 19152, 18979, 18809, 18641, 18477, 18316, 18157,
+    18001, 17848, 17697, 17549, 17404, 17261, 17120, 16981, 16845, 16710, 16578, 16448,
+];
+
+#[inline(always)]
+fn adddd_norm(xh: f64, xl: f64, ch: f64, cl: f64) -> (f64, f64) {
+    let (s, e) = adddd(xh, xl, ch, cl);
+    fasttwosum(s, e)
+}
+
+#[inline(always)]
+fn divdd_norm(nh: f64, nl: f64, dh: f64, dl: f64) -> (f64, f64) {
+    let qh = nh / dh;
+    let rem = (-qh).mul_add(dh, nh);
+    let ql = (rem + (nl - qh * dl)) / dh;
+    fasttwosum(qh, ql)
+}
+
+#[inline(always)]
+fn sqrtdd_norm(xh: f64, xl: f64) -> (f64, f64) {
+    if xh == 0.0 {
+        return (0.0, 0.0);
+    }
+    let sh = xh.sqrt();
+    let rem = (-sh).mul_add(sh, xh) + xl;
+    let sl = rem / (2.0 * sh);
+    fasttwosum(sh, sl)
+}
+
+#[inline(always)]
+fn domain_nan_invalid() -> f64 {
+    (core::hint::black_box(-1.0f64)).sqrt()
+}
+
+#[inline(always)]
+fn pick_atan_anchor(num: f64, den: f64) -> usize {
+    let nb = num.to_bits();
+    let db = den.to_bits();
+    let ediff = ((db >> 52) - (nb >> 52)) as u32;
+    if ediff >= 8 {
+        return 0;
+    }
+    let mn = (1u64 << 15) | ((nb >> 37) & 0x7fff);
+    let idx_d = ((db >> 46) & 0x3f) as usize;
+    let q30 = (mn * u64::from(INV64_APPROX[idx_d])) >> ediff;
+    (((q30 + (1u64 << 23)) >> 24) as usize).min(64)
+}
+
+#[inline(always)]
+fn atan_ratio_unit_tier1(num: f64, den: f64) -> (f64, f64) {
+    let i = pick_atan_anchor(num, den);
+    let (hh, hl) = if i == 0 {
+        let inv_d = 1.0 / den;
+        let q = num * inv_d;
+        let rem = (-q).mul_add(den, num);
+        fasttwosum(q, rem * inv_d)
+    } else {
+        let ta = (i as f64) * hf!("0x1p-6");
+        let (ph, pl) = a_mul(den, ta);
+        let (uh, e_u) = two_sum(num, -ph);
+        let ul = e_u - pl;
+        let (qh, ql) = a_mul(num, ta);
+        let (vh, e_v) = two_sum(den, qh);
+        let vl = e_v + ql;
+        let inv_v = 1.0 / vh;
+        let q = uh * inv_v;
+        let rem = (-q).mul_add(vh, uh);
+        fasttwosum(q, (rem + (ul - q * vl)) * inv_v)
+    };
+    let h2 = hh * hh;
+    let h4 = h2 * h2;
+    let p_tail = (ATAN_ODD_RECIP_DD[1][0] + h2 * ATAN_ODD_RECIP_DD[2][0])
+        + h4 * (ATAN_ODD_RECIP_DD[3][0] + h2 * ATAN_ODD_RECIP_F64[0]);
+    let (h3h, h3l) = a_mul(hh, h2);
+    let (c3h, c3l) = a_mul(h3h, ATAN_ODD_RECIP_DD[0][0]);
+    let poly_lo =
+        c3l + h3h.mul_add(
+            ATAN_ODD_RECIP_DD[0][1],
+            (h3l + 3.0 * h2 * hl) * ATAN_ODD_RECIP_DD[0][0],
+        ) + (h3h * h2) * p_tail
+            + hl;
+    if i == 0 {
+        let (sh, sl) = fasttwosum(hh, c3h);
+        fasttwosum(sh, sl + poly_lo)
+    } else {
+        let (sh, sl) = two_sum(ATAN64_DD[i][0], hh);
+        let (th, tl) = two_sum(sh, c3h);
+        fasttwosum(th, (sl + tl) + (ATAN64_DD[i][1] + poly_lo))
+    }
+}
+
+#[inline(always)]
+fn eval_asin_gv_tier1(uh: f64, ul: f64) -> (f64, f64) {
+    let vh = uh - 0.125;
+    let vl = (uh - (vh + 0.125)) + ul;
+    let v2 = vh * vh;
+    let v4 = v2 * v2;
+    let v8 = v4 * v4;
+    let p0 = vh.mul_add(ASIN_FAST_TAIL[1], ASIN_FAST_TAIL[0]);
+    let p1 = vh.mul_add(ASIN_FAST_TAIL[3], ASIN_FAST_TAIL[2]);
+    let p2 = vh.mul_add(ASIN_FAST_TAIL[5], ASIN_FAST_TAIL[4]);
+    let p3 = vh.mul_add(ASIN_FAST_TAIL[7], ASIN_FAST_TAIL[6]);
+    let p4 = vh.mul_add(ASIN_FAST_TAIL[9], ASIN_FAST_TAIL[8]);
+    let p5 = vh
+        .mul_add(ASIN_FAST_TAIL[12], ASIN_FAST_TAIL[11])
+        .mul_add(vh, ASIN_FAST_TAIL[10]);
+    let q0 = v2.mul_add(p1, p0);
+    let q1 = v2.mul_add(p3, p2);
+    let q2 = v2.mul_add(p5, p4);
+    let tail = v8.mul_add(q2, v4.mul_add(q1, q0));
+    let (vc1h, vc1l) = a_mul(vh, ASIN_FAST_C1[0]);
+    let s = ASIN_FAST_C0[0] + vc1h;
+    let e = vc1h - (s - ASIN_FAST_C0[0]);
+    let lo = e + v2.mul_add(
+        tail,
+        ASIN_FAST_C0[1] + vc1l + vl.mul_add(ASIN_FAST_C1[0], vh * ASIN_FAST_C1[1]),
+    );
+    (s, lo)
+}
+
+#[inline(always)]
+fn eval_asin_gv_dd(uh: f64, ul: f64) -> (f64, f64) {
+    let (vh, e_v) = two_sum(uh, -0.125);
+    let (vh, vl) = fasttwosum(vh, e_v + ul);
+    let mut tail = ASIN_GV_F64[13];
+    for k in (0..13).rev() {
+        tail = tail.mul_add(vh, ASIN_GV_F64[k]);
+    }
+    let (mut ph, mut pl) = fasttwosum(ASIN_GV_DD[5][0], tail * vh);
+    pl += ASIN_GV_DD[5][1];
+    for k in (0..5).rev() {
+        (ph, pl) = muldd_acc(vh, vl, ph, pl);
+        (ph, pl) = adddd_norm(ASIN_GV_DD[k][0], ASIN_GV_DD[k][1], ph, pl);
+    }
+    (ph, pl)
+}
+
+#[derive(Clone, Copy)]
+struct Fp192 {
+    m: [u64; 3], // m[2] is MSW (bit 63 = 1 when non-zero), m[0] is LSW
+    exp: i32,    // value = (-1)^neg * (m / 2^191) * 2^exp
+    neg: bool,
+}
+
+impl Fp192 {
+    const ZERO: Self = Self {
+        m: [0, 0, 0],
+        exp: 0,
+        neg: false,
+    };
+
+    const ONE: Self = Self {
+        m: [0, 0, 1u64 << 63],
+        exp: 0,
+        neg: false,
+    };
+
+    #[inline(always)]
+    fn from_const(c: ([u64; 3], i32), neg: bool) -> Self {
+        Self {
+            m: [c.0[2], c.0[1], c.0[0]],
+            exp: c.1,
+            neg,
+        }
+    }
+
+    #[inline(always)]
+    fn is_zero(&self) -> bool {
+        self.m[2] == 0
+    }
+
+    fn from_f64(x: f64) -> Self {
+        let bits = x.to_bits();
+        let neg = (bits >> 63) != 0;
+        let bexp = ((bits >> 52) & 0x7ff) as i32;
+        let frac = bits & MASK52;
+        if bexp == 0 && frac == 0 {
+            return Self {
+                m: [0, 0, 0],
+                exp: 0,
+                neg,
+            };
+        }
+        if bexp == 0 {
+            let lz = frac.leading_zeros();
+            Self {
+                m: [0, 0, frac << lz],
+                exp: -1011 - lz as i32,
+                neg,
+            }
+        } else {
+            let sig = (1u64 << 52) | frac;
+            Self {
+                m: [0, 0, sig << 11],
+                exp: bexp - 1023,
+                neg,
+            }
+        }
+    }
+
+    fn cmp_abs(&self, other: &Self) -> core::cmp::Ordering {
+        if self.is_zero() && other.is_zero() {
+            return core::cmp::Ordering::Equal;
+        }
+        if self.is_zero() {
+            return core::cmp::Ordering::Less;
+        }
+        if other.is_zero() {
+            return core::cmp::Ordering::Greater;
+        }
+        self.exp
+            .cmp(&other.exp)
+            .then(self.m[2].cmp(&other.m[2]))
+            .then(self.m[1].cmp(&other.m[1]))
+            .then(self.m[0].cmp(&other.m[0]))
+    }
+
+    fn shl_words(m: [u64; 3], sh: u32) -> [u64; 3] {
+        if sh == 0 {
+            return m;
+        }
+        if sh >= 192 {
+            return [0, 0, 0];
+        }
+        if sh >= 128 {
+            let s = sh - 128;
+            return [0, 0, m[0] << s];
+        }
+        if sh >= 64 {
+            let s = sh - 64;
+            if s == 0 {
+                return [0, m[0], m[1]];
+            }
+            return [0, m[0] << s, (m[1] << s) | (m[0] >> (64 - s))];
+        }
+        [
+            m[0] << sh,
+            (m[1] << sh) | (m[0] >> (64 - sh)),
+            (m[2] << sh) | (m[1] >> (64 - sh)),
+        ]
+    }
+
+    fn shr_words(m: [u64; 3], sh: u32) -> [u64; 3] {
+        if sh == 0 {
+            return m;
+        }
+        if sh >= 192 {
+            return [0, 0, 0];
+        }
+        if sh >= 128 {
+            let s = sh - 128;
+            return [m[2] >> s, 0, 0];
+        }
+        if sh >= 64 {
+            let s = sh - 64;
+            if s == 0 {
+                return [m[1], m[2], 0];
+            }
+            return [(m[1] >> s) | (m[2] << (64 - s)), m[2] >> s, 0];
+        }
+        [
+            (m[0] >> sh) | (m[1] << (64 - sh)),
+            (m[1] >> sh) | (m[2] << (64 - sh)),
+            m[2] >> sh,
+        ]
+    }
+
+    fn normalize(m: [u64; 3], exp: i32, neg: bool) -> Self {
+        let lz = if m[2] != 0 {
+            m[2].leading_zeros()
+        } else if m[1] != 0 {
+            64 + m[1].leading_zeros()
+        } else if m[0] != 0 {
+            128 + m[0].leading_zeros()
+        } else {
+            return Self::ZERO;
+        };
+        Self {
+            m: Self::shl_words(m, lz),
+            exp: exp - lz as i32,
+            neg,
+        }
+    }
+
+    fn add(self, other: Self) -> Self {
+        if self.is_zero() {
+            return other;
+        }
+        if other.is_zero() {
+            return self;
+        }
+        let (a, b) = if self.cmp_abs(&other) == core::cmp::Ordering::Less {
+            (other, self)
+        } else {
+            (self, other)
+        };
+        let diff = (a.exp - b.exp) as u32;
+        if diff >= 194 {
+            return a;
+        }
+        if a.neg == b.neg {
+            let bm = Self::shr_words(b.m, diff);
+            let (w0, c0) = a.m[0].overflowing_add(bm[0]);
+            let (t1, c1a) = a.m[1].overflowing_add(bm[1]);
+            let (w1, c1b) = t1.overflowing_add(u64::from(c0));
+            let (t2, c2a) = a.m[2].overflowing_add(bm[2]);
+            let (w2, c2b) = t2.overflowing_add(u64::from(c1a | c1b));
+            if c2a | c2b {
+                Self {
+                    m: [
+                        (w0 >> 1) | (w1 << 63),
+                        (w1 >> 1) | (w2 << 63),
+                        (w2 >> 1) | (1u64 << 63),
+                    ],
+                    exp: a.exp + 1,
+                    neg: a.neg,
+                }
+            } else {
+                Self {
+                    m: [w0, w1, w2],
+                    exp: a.exp,
+                    neg: a.neg,
+                }
+            }
+        } else if diff == 0 {
+            let (w0, br0) = a.m[0].overflowing_sub(b.m[0]);
+            let (t1, br1a) = a.m[1].overflowing_sub(b.m[1]);
+            let (w1, br1b) = t1.overflowing_sub(u64::from(br0));
+            let w2 = a.m[2]
+                .wrapping_sub(b.m[2])
+                .wrapping_sub(u64::from(br1a | br1b));
+            Self::normalize([w0, w1, w2], a.exp, a.neg)
+        } else {
+            let a4 = [0u64, a.m[0], a.m[1], a.m[2]];
+            let b4 = if diff < 64 {
+                [
+                    b.m[0] << (64 - diff),
+                    (b.m[1] << (64 - diff)) | (b.m[0] >> diff),
+                    (b.m[2] << (64 - diff)) | (b.m[1] >> diff),
+                    b.m[2] >> diff,
+                ]
+            } else if diff == 64 {
+                [b.m[0], b.m[1], b.m[2], 0]
+            } else {
+                let low3 = Self::shr_words(b.m, diff - 64);
+                [low3[0], low3[1], low3[2], 0]
+            };
+            let (d0, br0) = a4[0].overflowing_sub(b4[0]);
+            let (t1, br1a) = a4[1].overflowing_sub(b4[1]);
+            let (d1, br1b) = t1.overflowing_sub(u64::from(br0));
+            let (t2, br2a) = a4[2].overflowing_sub(b4[2]);
+            let (d2, br2b) = t2.overflowing_sub(u64::from(br1a | br1b));
+            let d3 = a4[3]
+                .wrapping_sub(b4[3])
+                .wrapping_sub(u64::from(br2a | br2b));
+            if d3 != 0 {
+                let lz = d3.leading_zeros();
+                let m2 = if lz == 0 {
+                    d3
+                } else {
+                    (d3 << lz) | (d2 >> (64 - lz))
+                };
+                let m1 = if lz == 0 {
+                    d2
+                } else {
+                    (d2 << lz) | (d1 >> (64 - lz))
+                };
+                let m0 = if lz == 0 {
+                    d1
+                } else {
+                    (d1 << lz) | (d0 >> (64 - lz))
+                };
+                Self {
+                    m: [m0, m1, m2],
+                    exp: a.exp - lz as i32,
+                    neg: a.neg,
+                }
+            } else {
+                Self::normalize([d0, d1, d2], a.exp - 64, a.neg)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn sub(self, mut other: Self) -> Self {
+        other.neg = !other.neg;
+        self.add(other)
+    }
+
+    fn mul(self, other: Self) -> Self {
+        if self.is_zero() || other.is_zero() {
+            return Self::ZERO;
+        }
+        let mut prod = [0u64; 6];
+        for i in 0..3 {
+            let mut carry = 0u128;
+            for j in 0..3 {
+                let cur = u128::from(prod[i + j])
+                    + u128::from(self.m[i]) * u128::from(other.m[j])
+                    + carry;
+                prod[i + j] = cur as u64;
+                carry = cur >> 64;
+            }
+            prod[i + 3] = carry as u64;
+        }
+        let top_set = (prod[5] >> 63) != 0;
+        let (m, exp_adj) = if top_set {
+            let round = (prod[2] >> 63) & 1;
+            let (w0, c0) = prod[3].overflowing_add(round);
+            let (w1, c1) = prod[4].overflowing_add(u64::from(c0));
+            let (w2, c2) = prod[5].overflowing_add(u64::from(c1));
+            if c2 {
+                ([0, 0, 1u64 << 63], 2)
+            } else {
+                ([w0, w1, w2], 1)
+            }
+        } else {
+            let m0 = (prod[3] << 1) | (prod[2] >> 63);
+            let m1 = (prod[4] << 1) | (prod[3] >> 63);
+            let m2 = (prod[5] << 1) | (prod[4] >> 63);
+            let round = (prod[2] >> 62) & 1;
+            let (w0, c0) = m0.overflowing_add(round);
+            let (w1, c1) = m1.overflowing_add(u64::from(c0));
+            let (w2, c2) = m2.overflowing_add(u64::from(c1));
+            if c2 {
+                ([0, 0, 1u64 << 63], 1)
+            } else {
+                ([w0, w1, w2], 0)
+            }
+        };
+        Self {
+            m,
+            exp: self.exp + other.exp + exp_adj,
+            neg: self.neg ^ other.neg,
+        }
+    }
+
+    fn scale_pow2(mut self, k: i32) -> Self {
+        if !self.is_zero() {
+            self.exp += k;
+        }
+        self
+    }
+
+    fn recip(self) -> Self {
+        let mut norm_self = self;
+        norm_self.exp = 0;
+        norm_self.neg = false;
+        let approx_d = (norm_self.m[2] as f64) * hf!("0x1p-63");
+        let mut r = Self::from_f64(1.0 / approx_d);
+        let two = Self::ONE.scale_pow2(1);
+        r = r.mul(two.sub(norm_self.mul(r)));
+        r = r.mul(two.sub(norm_self.mul(r)));
+        r.exp -= self.exp;
+        r.neg = self.neg;
+        r
+    }
+
+    fn div(self, den: Self) -> Self {
+        self.mul(den.recip())
+    }
+
+    fn sqrt(self) -> Self {
+        if self.is_zero() {
+            return Self::ZERO;
+        }
+        let odd = (self.exp & 1) != 0;
+        let mut x_norm = self;
+        x_norm.exp = if odd { 1 } else { 0 };
+        x_norm.neg = false;
+        let approx_d = (x_norm.m[2] as f64) * if odd { hf!("0x1p-62") } else { hf!("0x1p-63") };
+        let mut r = Self::from_f64(1.0 / approx_d.sqrt());
+        let half_x = x_norm.scale_pow2(-1);
+        let three_halves = Self {
+            m: [0, 0, 3u64 << 62],
+            exp: 0,
+            neg: false,
+        };
+        r = r.mul(three_halves.sub(half_x.mul(r.mul(r))));
+        r = r.mul(three_halves.sub(half_x.mul(r.mul(r))));
+        let mut s = x_norm.mul(r);
+        s.exp += (self.exp - x_norm.exp) >> 1;
+        s
+    }
+
+    fn to_f64(self) -> f64 {
+        if self.is_zero() {
+            return if self.neg { -0.0 } else { 0.0 };
+        }
+        if self.exp > 1023 {
+            let huge = if self.neg { -f64::MAX } else { f64::MAX };
+            return core::hint::black_box(huge) * core::hint::black_box(hf!("0x1p+100"));
+        }
+        if self.exp < -1075 {
+            let tiny = if self.neg {
+                -f64::from_bits(1)
+            } else {
+                f64::from_bits(1)
+            };
+            return core::hint::black_box(tiny) * core::hint::black_box(0.25);
+        }
+        if self.exp <= -1023 {
+            let sh = (-883 - self.exp) as u32;
+            let (q, half, sticky) = if sh == 192 {
+                (
+                    0u64,
+                    self.m[2] >> 63,
+                    (self.m[2] & (u64::MAX >> 1)) != 0 || self.m[1] != 0 || self.m[0] != 0,
+                )
+            } else {
+                let s = sh - 128;
+                let q = self.m[2] >> s;
+                let half = (self.m[2] >> (s - 1)) & 1;
+                let mask = if s > 1 { (1u64 << (s - 1)) - 1 } else { 0 };
+                let sticky = (self.m[2] & mask) != 0 || self.m[1] != 0 || self.m[0] != 0;
+                (q, half, sticky)
+            };
+            let round_up = half != 0 && (sticky || (q & 1) != 0);
+            let q_rounded = q + u64::from(round_up);
+            if half != 0 || sticky {
+                let tiny = f64::from_bits(0x0010_0000_0000_0001);
+                let _ =
+                    core::hint::black_box(core::hint::black_box(tiny) * core::hint::black_box(0.5));
+            }
+            let sign_bit = if self.neg { 1u64 << 63 } else { 0 };
+            return f64::from_bits(sign_bit | q_rounded);
+        }
+        let top53 = self.m[2] >> 11;
+        let half = (self.m[2] >> 10) & 1;
+        let sticky = (self.m[2] & 0x3ff) != 0 || self.m[1] != 0 || self.m[0] != 0;
+        let sign = if self.neg { -1.0 } else { 1.0 };
+        let mut r = f64::from_bits((0x3ffu64 << 52) | (top53 & MASK52)) * sign;
+        let mut adj = 0.0;
+        if half != 0 {
+            adj += hf!("0x1p-53");
+        }
+        if sticky {
+            adj += hf!("0x1p-54");
+        }
+        r += adj * sign;
+        if self.exp == -1022 {
+            (r * hf!("0x1p-500")) * hf!("0x1p-522")
+        } else if self.exp == 1023 {
+            (r * hf!("0x1p+500")) * hf!("0x1p+523")
+        } else {
+            r * f64::from_bits(((self.exp + 1023) as u64) << 52)
+        }
+    }
+}
+
+fn atan_ratio_unit_fp192(num: Fp192, den: Fp192) -> Fp192 {
+    if num.is_zero() {
+        return Fp192::ZERO;
+    }
+    let de = num.exp - den.exp;
+    let z_est = if de < -8 {
+        0.0
+    } else {
+        ((num.m[2] as f64) / (den.m[2] as f64)) * f64::from_bits(((de + 1023) as u64) << 52)
+    };
+    let i = ((z_est * 64.0 + 0.5) as usize).min(64);
+    let h = if i == 0 {
+        num.div(den)
+    } else {
+        let ta = Fp192::from_f64((i as f64) * hf!("0x1p-6"));
+        let u = num.sub(den.mul(ta));
+        let v = den.add(num.mul(ta));
+        u.div(v)
+    };
+    let h2 = h.mul(h);
+    let mut p = Fp192 {
+        m: [
+            ATAN_ODD_RECIP_FP192[13].0[2],
+            ATAN_ODD_RECIP_FP192[13].0[1],
+            ATAN_ODD_RECIP_FP192[13].0[0],
+        ],
+        exp: ATAN_ODD_RECIP_FP192[13].1,
+        neg: ATAN_ODD_RECIP_FP192[13].2,
+    };
+    for k in (0..13).rev() {
+        let c = Fp192 {
+            m: [
+                ATAN_ODD_RECIP_FP192[k].0[2],
+                ATAN_ODD_RECIP_FP192[k].0[1],
+                ATAN_ODD_RECIP_FP192[k].0[0],
+            ],
+            exp: ATAN_ODD_RECIP_FP192[k].1,
+            neg: ATAN_ODD_RECIP_FP192[k].2,
+        };
+        p = p.mul(h2).add(c);
+    }
+    let atan_h = h.add(h.mul(h2).mul(p));
+    if i == 0 {
+        atan_h
+    } else {
+        Fp192::from_const(ATAN64_FP192[i], false).add(atan_h)
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn atan2_cold(y: f64, x: f64) -> f64 {
+    let ay = Fp192::from_f64(y.abs());
+    let ax = Fp192::from_f64(x.abs());
+    let swap = ax.cmp_abs(&ay) == core::cmp::Ordering::Less;
+    let (num, den) = if swap { (ax, ay) } else { (ay, ax) };
+    let base = atan_ratio_unit_fp192(num, den);
+    let mut angle = match (x.is_sign_negative(), swap) {
+        (false, false) => base,
+        (false, true) => Fp192::from_const(PI_2_FP192, false).sub(base),
+        (true, true) => Fp192::from_const(PI_2_FP192, false).add(base),
+        (true, false) => Fp192::from_const(PI_FP192, false).sub(base),
+    };
+    angle.neg = y.is_sign_negative();
+    angle.to_f64()
+}
+
+#[cold]
+#[inline(never)]
+fn atan2_refine_dd(y: f64, x: f64, num: f64, den: f64, swap: bool, x_neg: bool) -> f64 {
+    let z = num / den;
+    let i = ((z * 64.0 + 0.5) as usize).min(64);
+    let (hh, hl) = if i == 0 {
+        divdd_norm(num, 0.0, den, 0.0)
+    } else {
+        let ta = (i as f64) * hf!("0x1p-6");
+        let (ph, pl) = a_mul(den, ta);
+        let (uh, ul) = adddd_norm(num, 0.0, -ph, -pl);
+        let (qh, ql) = a_mul(num, ta);
+        let (vh, vl) = adddd_norm(den, 0.0, qh, ql);
+        divdd_norm(uh, ul, vh, vl)
+    };
+    let (h2h, h2l) = muldd_acc(hh, hl, hh, hl);
+    let tail = ATAN_ODD_RECIP_F64[3]
+        .mul_add(h2h, ATAN_ODD_RECIP_F64[2])
+        .mul_add(h2h, ATAN_ODD_RECIP_F64[1])
+        .mul_add(h2h, ATAN_ODD_RECIP_F64[0])
+        * h2h;
+    let (mut ph, mut pl) = fasttwosum(ATAN_ODD_RECIP_DD[3][0], tail);
+    pl += ATAN_ODD_RECIP_DD[3][1];
+    for k in (0..3).rev() {
+        (ph, pl) = muldd_acc(h2h, h2l, ph, pl);
+        (ph, pl) = adddd_norm(ATAN_ODD_RECIP_DD[k][0], ATAN_ODD_RECIP_DD[k][1], ph, pl);
+    }
+    let (h3h, h3l) = muldd_acc(hh, hl, h2h, h2l);
+    let (th, tl) = muldd_acc(h3h, h3l, ph, pl);
+    let (atan_h, atan_l) = adddd_norm(hh, hl, th, tl);
+    let (bh, bl) = if i == 0 {
+        (atan_h, atan_l)
+    } else {
+        adddd_norm(ATAN64_DD[i][0], ATAN64_DD[i][1], atan_h, atan_l)
+    };
+    let (ah, al) = match (x_neg, swap) {
+        (false, false) => (bh, bl),
+        (false, true) => adddd_norm(PI_2_DD[0], PI_2_DD[1], -bh, -bl),
+        (true, true) => adddd_norm(PI_2_DD[0], PI_2_DD[1], bh, bl),
+        (true, false) => adddd_norm(PI_DD[0], PI_DD[1], -bh, -bl),
+    };
+    let eps = ah * hf!("0x1p-96");
+    let ub = ah + (al + eps);
+    let lb = ah + (al - eps);
+    if ub == lb {
+        return ub.copysign(y);
+    }
+    atan2_cold(y, x)
+}
+
+avx2_fma_dispatch! {
+    /// Correctly rounded `atan2`.
+    #[inline]
+    pub fn atan2(y: f64, x: f64) -> f64 => atan2_body;
+}
+
+#[inline(always)]
+fn atan2_body(y: f64, x: f64) -> f64 {
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    let x_neg = x.is_sign_negative();
+    if y == 0.0 {
+        return if x_neg {
+            (PI_DD[0] + PI_DD[1]).copysign(y)
+        } else {
+            y
+        };
+    }
+    if x == 0.0 {
+        return (PI_2_DD[0] + PI_2_DD[1]).copysign(y);
+    }
+    if !x.is_finite() || !y.is_finite() {
+        if !x.is_finite() && !y.is_finite() {
+            return if x_neg {
+                (PI_3_4_DD[0] + PI_3_4_DD[1]).copysign(y)
+            } else {
+                (PI_4_DD[0] + PI_4_DD[1]).copysign(y)
+            };
+        }
+        if !x.is_finite() {
+            return if x_neg {
+                (PI_DD[0] + PI_DD[1]).copysign(y)
+            } else {
+                0.0f64.copysign(y)
+            };
+        }
+        return (PI_2_DD[0] + PI_2_DD[1]).copysign(y);
+    }
+
+    let ay_bits = y.to_bits() & (u64::MAX >> 1);
+    let ax_bits = x.to_bits() & (u64::MAX >> 1);
+    let ey = ((ay_bits >> 52) as i32).max(1);
+    let ex = ((ax_bits >> 52) as i32).max(1);
+    let ediff = ey - ex;
+    if ediff >= 56 {
+        return (PI_2_DD[0] + PI_2_DD[1]).copysign(y);
+    }
+    if ediff <= -56 {
+        if x_neg {
+            return (PI_DD[0] + PI_DD[1]).copysign(y);
+        }
+        if ediff >= -960 {
+            let q = y / x;
+            let rem = (-q).mul_add(x, y);
+            if rem == 0.0 {
+                return hf!("-0x1p-54").mul_add(q, q);
+            }
+            return q;
+        }
+        let q = core::hint::black_box(core::hint::black_box(y) / core::hint::black_box(x));
+        if (ax_bits & MASK52) == 0 {
+            if q != 0.0 && q * x == y {
+                if q.abs() < f64::MIN_POSITIVE {
+                    let _ = core::hint::black_box(
+                        core::hint::black_box(f64::from_bits(0x0010_0000_0000_0001))
+                            * core::hint::black_box(0.5),
+                    );
+                } else {
+                    return hf!("-0x1p-54").mul_add(q, q);
+                }
+            }
+            return q;
+        }
+        return atan2_cold(y, x);
+    }
+
+    let (ay, ax) = if ey > 1500 || ex > 1500 {
+        (y.abs() * hf!("0x1p-600"), x.abs() * hf!("0x1p-600"))
+    } else if ey < 500 || ex < 500 {
+        (y.abs() * hf!("0x1p+600"), x.abs() * hf!("0x1p+600"))
+    } else {
+        (y.abs(), x.abs())
+    };
+
+    let swap = ax < ay;
+    let (num, den) = if swap { (ax, ay) } else { (ay, ax) };
+    if !x_neg && !swap && num < den * hf!("0x1p-27") {
+        let (qh, ql) = divdd_norm(ay, 0.0, ax, 0.0);
+        let c3 = -(qh * (qh * qh)) * hf!("0x1.5555555555555p-2");
+        let (ah, al) = adddd_norm(qh, ql, c3, 0.0);
+        if al == 0.0 {
+            return hf!("-0x1p-54").mul_add(ah, ah).copysign(y);
+        }
+        let eps = ah * hf!("0x1p-72");
+        let ub = ah + (al + eps);
+        let lb = ah + (al - eps);
+        if ub == lb {
+            return ub.copysign(y);
+        }
+        return atan2_cold(y, x);
+    }
+
+    let (bh, bl) = atan_ratio_unit_tier1(num, den);
+    let (ah, al) = match (x_neg, swap) {
+        (false, false) => (bh, bl),
+        (false, true) => {
+            let (sh, sl) = fasttwosum(PI_2_DD[0], -bh);
+            (sh, sl + (PI_2_DD[1] - bl))
+        }
+        (true, true) => {
+            let (sh, sl) = fasttwosum(PI_2_DD[0], bh);
+            (sh, sl + (PI_2_DD[1] + bl))
+        }
+        (true, false) => {
+            let (sh, sl) = fasttwosum(PI_DD[0], -bh);
+            (sh, sl + (PI_DD[1] - bl))
+        }
+    };
+    let eps = ah * hf!("0x1p-63");
+    let ub = ah + (al + eps);
+    let lb = ah + (al - eps);
+    if ub == lb {
+        return ub.copysign(y);
+    }
+    atan2_refine_dd(y, x, num, den, swap, x_neg)
+}
+
+#[cold]
+#[inline(never)]
+fn asin_cold(x: f64) -> f64 {
+    let ax = x.abs();
+    let angle = if ax <= 0.5 {
+        let xf = Fp192::from_f64(ax);
+        let one_m_x2 = Fp192::ONE.sub(xf.mul(xf));
+        let den = one_m_x2.sqrt();
+        atan_ratio_unit_fp192(xf, den)
+    } else {
+        let t = (1.0 - ax) * 0.5;
+        let tf = Fp192::from_f64(t);
+        let one_m_t = Fp192::ONE.sub(tf);
+        let num = tf.sqrt();
+        let den = one_m_t.sqrt();
+        let half_comp = atan_ratio_unit_fp192(num, den);
+        Fp192::from_const(PI_2_FP192, false).sub(half_comp.scale_pow2(1))
+    };
+    let mut signed = angle;
+    signed.neg = x.is_sign_negative();
+    signed.to_f64()
+}
+
+#[cold]
+#[inline(never)]
+fn asin_refine(x: f64) -> f64 {
+    let ax = x.abs();
+    let (ah, al) = if ax <= 0.5 {
+        let (uh, ul) = a_mul(ax, ax);
+        let (gh, gl) = eval_asin_gv_dd(uh, ul);
+        let (ug_h, ug_l) = muldd_acc(uh, ul, gh, gl);
+        let (corr_h, corr_l) = muldd_acc(ax, 0.0, ug_h, ug_l);
+        adddd_norm(ax, 0.0, corr_h, corr_l)
+    } else {
+        let t = (1.0 - ax) * 0.5;
+        let (sh, sl) = sqrtdd_norm(t, 0.0);
+        let (gh, gl) = eval_asin_gv_dd(t, 0.0);
+        let (tg_h, tg_l) = muldd_acc(t, 0.0, gh, gl);
+        let (corr_h, corr_l) = muldd_acc(sh, sl, tg_h, tg_l);
+        let (as_h, as_l) = adddd_norm(sh, sl, corr_h, corr_l);
+        adddd_norm(PI_2_DD[0], PI_2_DD[1], -(2.0 * as_h), -(2.0 * as_l))
+    };
+    let eps = ah * hf!("0x1p-80");
+    let ub = ah + (al + eps);
+    let lb = ah + (al - eps);
+    if ub == lb {
+        return ub.copysign(x);
+    }
+    asin_cold(x)
+}
+
+avx2_fma_dispatch! {
+    /// Correctly rounded `asin`.
+    #[inline]
+    pub fn asin(x: f64) -> f64 => asin_body;
+}
+
+#[inline(always)]
+fn asin_body(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let abits = bits & (u64::MAX >> 1);
+    if abits >= 0x3ff0_0000_0000_0000 {
+        if abits == 0x3ff0_0000_0000_0000 {
+            return (PI_2_DD[0] + PI_2_DD[1]).copysign(x);
+        }
+        if abits > 0x7ff0_0000_0000_0000 {
+            return x + x;
+        }
+        return domain_nan_invalid();
+    }
+    if abits < 0x3e40_0000_0000_0000 {
+        if abits == 0 {
+            return x;
+        }
+        if abits < 0x0010_0000_0000_0000 {
+            let _ = core::hint::black_box(core::hint::black_box(x) * core::hint::black_box(0.5));
+            return x;
+        }
+        return hf!("0x1p-54").mul_add(x, x);
+    }
+    let ax = x.abs();
+    if ax <= 0.5 {
+        let (uh, ul) = a_mul(ax, ax);
+        let (gh, gl) = eval_asin_gv_tier1(uh, ul);
+        let x3h = ax * uh;
+        let x3l = ax.mul_add(uh, -x3h) + ax * ul;
+        let (ch, cl) = a_mul(x3h, gh);
+        let lo = cl + x3h.mul_add(gl, x3l * gh);
+        let (ah, e_a) = fasttwosum(ax, ch);
+        let al = e_a + lo;
+        let eps = ah * hf!("0x1p-59");
+        let ub = ah + (al + eps);
+        let lb = ah + (al - eps);
+        if ub == lb {
+            return ub.copysign(x);
+        }
+        return asin_refine(x);
+    }
+    let t = (1.0 - ax) * 0.5;
+    let inv_2t = 0.5 / t;
+    let sh = t.sqrt();
+    let sl = (-sh).mul_add(sh, t) * (sh * inv_2t);
+    let (gh, gl) = eval_asin_gv_tier1(t, 0.0);
+    let st = sh * t;
+    let stl = sh.mul_add(t, -st) + sl * t;
+    let (ch, cl) = a_mul(st, gh);
+    let (as_h, e_s) = fasttwosum(sh, ch);
+    let as_l = e_s + (sl + cl + st.mul_add(gl, stl * gh));
+    let (ah, e_r) = fasttwosum(PI_2_DD[0], -(2.0 * as_h));
+    let al = e_r + (PI_2_DD[1] - 2.0 * as_l);
+    let eps = ah * hf!("0x1p-59");
+    let ub = ah + (al + eps);
+    let lb = ah + (al - eps);
+    if ub == lb {
+        return ub.copysign(x);
+    }
+    asin_refine(x)
+}
+
+#[cold]
+#[inline(never)]
+fn acos_cold(x: f64) -> f64 {
+    let ax = x.abs();
+    let angle = if ax <= 0.5 {
+        let xf = Fp192::from_f64(ax);
+        let one_m_x2 = Fp192::ONE.sub(xf.mul(xf));
+        let den = one_m_x2.sqrt();
+        let as_val = atan_ratio_unit_fp192(xf, den);
+        if x.is_sign_negative() {
+            Fp192::from_const(PI_2_FP192, false).add(as_val)
+        } else {
+            Fp192::from_const(PI_2_FP192, false).sub(as_val)
+        }
+    } else {
+        let t = (1.0 - ax) * 0.5;
+        let tf = Fp192::from_f64(t);
+        let one_m_t = Fp192::ONE.sub(tf);
+        let num = tf.sqrt();
+        let den = one_m_t.sqrt();
+        let two_atan = atan_ratio_unit_fp192(num, den).scale_pow2(1);
+        if x.is_sign_negative() {
+            Fp192::from_const(PI_FP192, false).sub(two_atan)
+        } else {
+            two_atan
+        }
+    };
+    angle.to_f64()
+}
+
+#[cold]
+#[inline(never)]
+fn acos_refine(x: f64) -> f64 {
+    let ax = x.abs();
+    let (ah, al) = if ax <= 0.5 {
+        let (uh, ul) = a_mul(ax, ax);
+        let (gh, gl) = eval_asin_gv_dd(uh, ul);
+        let (ug_h, ug_l) = muldd_acc(uh, ul, gh, gl);
+        let (corr_h, corr_l) = muldd_acc(ax, 0.0, ug_h, ug_l);
+        let (bh, bl) = adddd_norm(ax, 0.0, corr_h, corr_l);
+        if x.is_sign_negative() {
+            adddd_norm(PI_2_DD[0], PI_2_DD[1], bh, bl)
+        } else {
+            adddd_norm(PI_2_DD[0], PI_2_DD[1], -bh, -bl)
+        }
+    } else {
+        let t = (1.0 - ax) * 0.5;
+        let (sh, sl) = sqrtdd_norm(t, 0.0);
+        let (gh, gl) = eval_asin_gv_dd(t, 0.0);
+        let (tg_h, tg_l) = muldd_acc(t, 0.0, gh, gl);
+        let (corr_h, corr_l) = muldd_acc(sh, sl, tg_h, tg_l);
+        let (as_h, as_l) = adddd_norm(sh, sl, corr_h, corr_l);
+        if x.is_sign_negative() {
+            adddd_norm(PI_DD[0], PI_DD[1], -(2.0 * as_h), -(2.0 * as_l))
+        } else {
+            (2.0 * as_h, 2.0 * as_l)
+        }
+    };
+    let eps = ah * hf!("0x1p-80");
+    let ub = ah + (al + eps);
+    let lb = ah + (al - eps);
+    if ub == lb {
+        return ub;
+    }
+    acos_cold(x)
+}
+
+avx2_fma_dispatch! {
+    /// Correctly rounded `acos`.
+    #[inline]
+    pub fn acos(x: f64) -> f64 => acos_body;
+}
+
+#[inline(always)]
+fn acos_body(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let abits = bits & (u64::MAX >> 1);
+    if abits >= 0x3ff0_0000_0000_0000 {
+        if bits == 0x3ff0_0000_0000_0000 {
+            return 0.0;
+        }
+        if bits == 0xbff0_0000_0000_0000 {
+            return PI_DD[0] + PI_DD[1];
+        }
+        if abits > 0x7ff0_0000_0000_0000 {
+            return x + x;
+        }
+        return domain_nan_invalid();
+    }
+    if abits < 0x3c90_0000_0000_0000 {
+        return PI_2_DD[0] + (PI_2_DD[1] - x);
+    }
+    let ax = x.abs();
+    if ax <= 0.5 {
+        let (uh, ul) = a_mul(ax, ax);
+        let (gh, gl) = eval_asin_gv_tier1(uh, ul);
+        let x3h = ax * uh;
+        let x3l = ax.mul_add(uh, -x3h) + ax * ul;
+        let (ch, cl) = a_mul(x3h, gh);
+        let (bh, e_b) = fasttwosum(ax, ch);
+        let bl = e_b + (cl + x3h.mul_add(gl, x3l * gh));
+        let (ah, al) = if x.is_sign_negative() {
+            let (rh, rl) = fasttwosum(PI_2_DD[0], bh);
+            (rh, rl + (PI_2_DD[1] + bl))
+        } else {
+            let (rh, rl) = fasttwosum(PI_2_DD[0], -bh);
+            (rh, rl + (PI_2_DD[1] - bl))
+        };
+        let eps = ah * hf!("0x1p-59");
+        let ub = ah + (al + eps);
+        let lb = ah + (al - eps);
+        if ub == lb {
+            return ub;
+        }
+        return acos_refine(x);
+    }
+    let t = (1.0 - ax) * 0.5;
+    let inv_2t = 0.5 / t;
+    let sh = t.sqrt();
+    let sl = (-sh).mul_add(sh, t) * (sh * inv_2t);
+    let (gh, gl) = eval_asin_gv_tier1(t, 0.0);
+    let st = sh * t;
+    let stl = sh.mul_add(t, -st) + sl * t;
+    let (ch, cl) = a_mul(st, gh);
+    let (as_h, e_s) = fasttwosum(sh, ch);
+    let as_l = e_s + (sl + cl + st.mul_add(gl, stl * gh));
+    let (ah, al) = if x.is_sign_negative() {
+        let (rh, rl) = fasttwosum(PI_DD[0], -(2.0 * as_h));
+        (rh, rl + (PI_DD[1] - 2.0 * as_l))
+    } else {
+        (2.0 * as_h, 2.0 * as_l)
+    };
+    let eps = ah * hf!("0x1p-59");
+    let ub = ah + (al + eps);
+    let lb = ah + (al - eps);
+    if ub == lb {
+        return ub;
+    }
+    acos_refine(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5737,6 +7276,61 @@ mod tests {
         // Pinned from the CORE-MATH C original (glibc's atan is not quite
         // correctly rounded: it differs from this on 1206 of these inputs).
         assert_eq!(corpus_hash(atan, -30, 60), 0x0a3d_5099_2cb9_43eb);
+    }
+
+    #[test]
+    fn asin_acos_atan2_match_113bit_cr_oracle_on_corpus() {
+        // Pinned against 113-bit __float128 (libquadmath asinq / acosq / atan2q)
+        // across 1,000,000 inputs each (bd-otip6a).
+        assert_eq!(corpus_hash(asin, -60, 0), 0xac7b_877a_2840_3cd6);
+        assert_eq!(corpus_hash(acos, -60, 0), 0xaf79_0812_c99c_174e);
+
+        let mut c = Corpus::new();
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for i in 0..1_000_000 {
+            let sample_signed = |c: &mut Corpus, cls: usize| -> f64 {
+                let r = c.next_u64();
+                match cls {
+                    0 => {
+                        let e = (1023 - 40 + ((r >> 53) % 80) as i32) as u64;
+                        f64::from_bits((r << 63) | (e << 52) | ((r >> 1) & MASK52))
+                    }
+                    1 => (r >> 11) as f64 * hf!("0x1p-53") * 2.0 - 1.0,
+                    _ => {
+                        let v = 1.0 - (r >> 11) as f64 * hf!("0x1p-73");
+                        if (r & 1) != 0 { -v } else { v }
+                    }
+                }
+            };
+            let y = sample_signed(&mut c, i % 3);
+            let x = sample_signed(&mut c, (i + 1) % 3);
+            h = (h ^ atan2(y, x).to_bits()).wrapping_mul(0x100_0000_01b3);
+        }
+        assert_eq!(h, 0xcefe_fa6c_54b3_8cfa);
+
+        // Special and axis cases:
+        assert_eq!(asin(0.0).to_bits(), 0);
+        assert_eq!(asin(-0.0).to_bits(), 1u64 << 63);
+        assert_eq!(asin(1.0).to_bits(), 0x3ff9_21fb_5444_2d18);
+        assert_eq!(asin(-1.0).to_bits(), 0xbff9_21fb_5444_2d18);
+        assert!(asin(1.0001).is_nan());
+        assert!(asin(-f64::INFINITY).is_nan());
+        assert_eq!(acos(1.0).to_bits(), 0);
+        assert_eq!(acos(0.0).to_bits(), 0x3ff9_21fb_5444_2d18);
+        assert_eq!(acos(-1.0).to_bits(), 0x4009_21fb_5444_2d18);
+        assert!(acos(-1.0001).is_nan());
+        assert_eq!(atan2(-0.0, 1.0).to_bits(), 1u64 << 63);
+        assert_eq!(atan2(-0.0, -1.0).to_bits(), 0xc009_21fb_5444_2d18);
+        assert_eq!(
+            atan2(f64::INFINITY, f64::NEG_INFINITY).to_bits(),
+            0x4002_d97c_7f33_21d2
+        );
+        // Subnormal midpoint ratio 3*2^-1000 / 2^75 = 1.5*2^-1074: atan(u) < u rounds down to 2^-1074!
+        let sub_mid = atan2(
+            f64::from_bits((23u64 << 52) | (1u64 << 51)),
+            f64::from_bits(1098u64 << 52),
+        );
+        assert_eq!(sub_mid.to_bits(), 1);
     }
 
     #[test]
@@ -6075,7 +7669,17 @@ mod tests {
         assert_dispatch_matches_body("atan", &inputs, atan, atan_body);
         assert_dispatch_matches_body("asinh", &inputs, asinh, asinh_body);
         let near_one = avx2_fma_dispatch_inputs(-1.5, 1.5);
+        assert_dispatch_matches_body("asin", &near_one, asin, asin_body);
+        assert_dispatch_matches_body("acos", &near_one, acos, acos_body);
         assert_dispatch_matches_body("atanh", &near_one, atanh, atanh_body);
+        for &y in &near_one[..512] {
+            assert_dispatch_matches_body(
+                "atan2",
+                &inputs[..512],
+                |x| atan2(y, x),
+                |x| atan2_body(y, x),
+            );
+        }
         let above_one = avx2_fma_dispatch_inputs(1.0, 1.0e4);
         assert_dispatch_matches_body("acosh", &above_one, acosh, acosh_body);
         let special = avx2_fma_dispatch_inputs(-30.0, 30.0);

@@ -1054,7 +1054,10 @@ pub fn remquof(x: f32, y: f32) -> (f32, i32) {
 /// Compute sine and cosine simultaneously (f32 variant).
 #[inline]
 pub fn sincosf(x: f32) -> (f32, f32) {
-    libm::sincosf(x)
+    // Bit-identical to `(sinf(x), cosf(x))`, evaluating both via CORE-MATH's
+    // correctly rounded f64 kernels rounded once (`libm::sincosf` was up to
+    // 2 ULP off and disagreed with `sinf`/`cosf`; bd-li7fb3).
+    (sinf(x), cosf(x))
 }
 
 /// Generate a quiet NaN (f32 variant), encoding the `tag` payload like
@@ -2078,5 +2081,53 @@ mod tests {
         assert_eq!(isinff(1.0), 0);
         assert_eq!(isnanf(f32::NAN), 1);
         assert_eq!(isnanf(1.0), 0);
+    }
+
+    #[test]
+    fn sincosf_matches_sinf_cosf_bit_for_bit() {
+        let mut s = 0x9e37_79b9u32;
+        for &special in &[
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            core::f32::consts::PI,
+            f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            f32::MAX,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ] {
+            let (gs, gc) = sincosf(special);
+            let ws = sinf(special);
+            let wc = cosf(special);
+            assert!(
+                (gs.is_nan() && ws.is_nan()) || gs.to_bits() == ws.to_bits(),
+                "sincosf sin mismatch at {special:e}"
+            );
+            assert!(
+                (gc.is_nan() && wc.is_nan()) || gc.to_bits() == wc.to_bits(),
+                "sincosf cos mismatch at {special:e}"
+            );
+        }
+        for _ in 0..100_000 {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            let x = f32::from_bits(s);
+            let (gs, gc) = sincosf(x);
+            let (ws, wc) = (sinf(x), cosf(x));
+            assert!(
+                (gs.is_nan() && ws.is_nan()) || gs.to_bits() == ws.to_bits(),
+                "sincosf sin mismatch at {:#x}",
+                x.to_bits()
+            );
+            assert!(
+                (gc.is_nan() && wc.is_nan()) || gc.to_bits() == wc.to_bits(),
+                "sincosf cos mismatch at {:#x}",
+                x.to_bits()
+            );
+        }
     }
 }
