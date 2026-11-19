@@ -197,7 +197,7 @@ fn gate_passes_clean_tree_and_emits_report_and_required_log_fields() {
     );
     assert_eq!(
         report["summary"]["support_matrix_stub_count"].as_u64(),
-        Some(18)
+        Some(0)
     );
     assert!(
         report["claim_surfaces_blocked_by_findings"]
@@ -313,13 +313,28 @@ fn moved_function_anchor_fails_even_when_the_surface_digest_is_refreshed() {
 fn stale_zero_stub_claim_and_removed_semantic_blocker_are_rejected() {
     let root = workspace_root();
     let canonical = load_json(&root.join("tests/conformance/support_semantic_overlay.v1.json"));
-    for (name, remove_blocker) in [("zero-stub", false), ("removed-blocker", true)] {
+    let current_stubs = canonical["support_matrix_snapshot"]["status_counts"]["Stub"]
+        .as_u64()
+        .unwrap_or(0);
+    for name in [
+        "stale-stub-count",
+        "premature-semantic-complete",
+        "removed-blocker",
+    ] {
         let path = unique_temp_path(&format!("semantic-contract-{name}.json"));
         let mut overlay = canonical.clone();
-        if remove_blocker {
-            overlay["coverage_policy"]["release_blocker"] = "".into();
-        } else {
-            overlay["support_matrix_snapshot"]["status_counts"]["Stub"] = 0.into();
+        match name {
+            "stale-stub-count" => {
+                overlay["support_matrix_snapshot"]["status_counts"]["Stub"] =
+                    (current_stubs + 1).into();
+            }
+            "premature-semantic-complete" => {
+                overlay["coverage_policy"]["semantic_review_complete"] = true.into();
+            }
+            "removed-blocker" => {
+                overlay["coverage_policy"]["release_blocker"] = "".into();
+            }
+            _ => unreachable!(),
         }
         std::fs::write(&path, serde_json::to_vec_pretty(&overlay).unwrap()).unwrap();
         let output = run_gate_with_env(&[("FLC_SEMANTIC_DRIFT_OVERLAY", &path)]);
