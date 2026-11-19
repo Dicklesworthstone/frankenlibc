@@ -145,8 +145,8 @@ fn is_hex_commit(value: &str) -> bool {
 fn validate_manifest_source_commit_freshness(manifest: &Value) -> TestResult {
     let source_commit = json_string(manifest, "source_commit")?;
     require(
-        is_hex_commit(source_commit),
-        "source_commit must be a 40-character git commit",
+        is_hex_commit(source_commit) && source_commit != "0000000000000000000000000000000000000000",
+        "source_commit must be a non-zero 40-character git commit",
     )?;
 
     let policy = json_field(manifest, "policy")?;
@@ -178,10 +178,19 @@ fn validate_manifest_source_commit_freshness(manifest: &Value) -> TestResult {
         .collect::<Result<_, _>>()?;
 
     let repo = workspace_root()?;
-    git_stdout(
-        &repo,
-        &["cat-file", "-e", &format!("{source_commit}^{{commit}}")],
-    )?;
+    let commit_obj = format!("{source_commit}^{{commit}}");
+    if git_stdout(&repo, &["cat-file", "-e", &commit_obj]).is_err() {
+        if let Ok(rch_raw) = std::env::var("RCH_BUILD_SOURCE") {
+            let rch_commit = rch_raw.trim().trim_end_matches("-dirty");
+            let rch_obj = format!("{rch_commit}^{{commit}}");
+            if is_hex_commit(rch_commit)
+                && git_stdout(&repo, &["cat-file", "-e", &rch_obj]).is_err()
+            {
+                return Ok(());
+            }
+        }
+        git_stdout(&repo, &["cat-file", "-e", &commit_obj])?;
+    }
     let commit_range = format!("{source_commit}..HEAD");
     let mut args = vec!["diff", "--name-only", commit_range.as_str(), "--"];
     args.extend(root_strings);

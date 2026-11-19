@@ -4,7 +4,7 @@
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
 The base taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-11-18, and it records the same base ABI source commit as `support_matrix.json` (`77f53a59b`).
-Reality snapshot: total_exported=4119, implemented=2555, raw_syscall=408, wraps_host_libc=1156, glibc_call_through=0, stub=0.
+Reality snapshot: total_exported=4119, implemented=2552, raw_syscall=408, wraps_host_libc=1159, glibc_call_through=0, stub=0.
 Counts below reflect recorded support matrix labels validated against live source and host-delegation census v20 (`status_invalid = 0`; unproven native wrapper bodies remain conservatively classified under `WrapsHostLibc` until fixture or promotion-proof evidence is attached). Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; these labels do not establish complete unsupported or implemented behavior.
 Regenerate deterministically with:
 
@@ -15,9 +15,9 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 The current support matrix contains **4119 symbols**, classified as:
-- `Implemented`: 2555
+- `Implemented`: 2552
 - `RawSyscall`: 408
-- `WrapsHostLibc`: 1156
+- `WrapsHostLibc`: 1159
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 

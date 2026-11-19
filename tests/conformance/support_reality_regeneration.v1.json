@@ -21,13 +21,13 @@
       "id": "support_matrix",
       "kind": "canonical_support_matrix",
       "path": "support_matrix.json",
-      "sha256": "61cc6f2dcc0eb8dad1806f3c41cfc97799d5918254716da6dbf852aadb625a80"
+      "sha256": "997cf798c9ac995e75cfb6264bb1ff03d15ff944c3fd7d3b8b956fe79f6e5d10"
     },
     {
       "id": "reality_report",
       "kind": "canonical_reality_report",
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "4a0a8da4fa07083cea9d0e8c5c632cb899cec4bb8884b58e037f287891185af4"
+      "sha256": "32f4c7e239de5062a748cdd0bab02ec5d7ada50f116611f5c3b8ae46ff066a7d"
     }
   ],
   "mode": "validate_only",
@@ -41,13 +41,13 @@
       "id": "support_matrix",
       "kind": "canonical_support_matrix",
       "path": "support_matrix.json",
-      "sha256": "61cc6f2dcc0eb8dad1806f3c41cfc97799d5918254716da6dbf852aadb625a80"
+      "sha256": "997cf798c9ac995e75cfb6264bb1ff03d15ff944c3fd7d3b8b956fe79f6e5d10"
     },
     {
       "id": "reality_report",
       "kind": "canonical_reality_report",
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "4a0a8da4fa07083cea9d0e8c5c632cb899cec4bb8884b58e037f287891185af4"
+      "sha256": "32f4c7e239de5062a748cdd0bab02ec5d7ada50f116611f5c3b8ae46ff066a7d"
     }
   ],
   "paired_update_policy": {

@@ -19154,7 +19154,7 @@
     },
     {
       "symbol": "_authenticate",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "rpc_abi"
     },
     {
@@ -19389,7 +19389,7 @@
     },
     {
       "symbol": "callrpc",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "rpc_abi"
     },
     {
@@ -19434,7 +19434,7 @@
     },
     {
       "symbol": "clnt_create",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "rpc_abi"
     },
     {
@@ -33231,22 +33231,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2555,
+    "implemented": 2552,
     "raw_syscall": 408,
-    "wraps_host_libc": 1156,
+    "wraps_host_libc": 1159,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 2555,
+  "implemented": 2552,
   "raw_syscall": 408,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 2555,
+    "implemented": 2552,
     "raw_syscall": 408,
-    "wraps_host_libc": 1156,
+    "wraps_host_libc": 1159,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "wraps_host_libc": 1156
+  "wraps_host_libc": 1159
 }

@@ -16,7 +16,7 @@
     "source": "support_matrix.json",
     "generated_at": "2026-11-18T23:15:02Z",
     "total": 4119,
-    "Implemented": 2555,
+    "Implemented": 2552,
     "RawSyscall": 408,
     "GlibcCallThrough": 0,
     "Stub": 0

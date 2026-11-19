@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-bp8fl.1.1",
-  "source_commit": "77f53a59bf414d7f39392cf4407dd68ed31b94a1",
+  "source_commit": "current",
   "generated_at_utc": "2026-11-17T23:40:00Z",
   "purpose": "Inventory every declared export as an explicit semantic unknown, with representative source-observed limitations retained as obligations. Inventory completeness is not semantic review, runtime execution, dynamic-symbol availability or replacement readiness.",
   "source_artifacts": {
@@ -621,7 +621,7 @@
     },
     "source_tree_sha256": "fe9db6dd012e1a6cdbdc40fda513c96628a0a8451bd8977d34ce41900e13ef75",
     "version_script_sha256": "6e86c755989237c67964740cd3eca4f598062166061ea14b46e7d1f6b1f5cb92",
-    "support_rows_sha256": "3db765bc10ca2c2cbd9f877947879ad30c2861f4e30ac07144a3102f90945d3e",
+    "support_rows_sha256": "9a4514170ce7edd416ac516eeacd654f140ad5bb39734fd41941275a3cf7d48c",
     "contract_rows_sha256": "92968c9d27f992d0cb481c7bac1d9302e79e2c71251a831570e0427be4f6c55f",
     "summary": {
       "declared_symbol_count": 4731,
@@ -636,7 +636,7 @@
       },
       "version_script_symbol_count": 4237,
       "support_symbol_count": 4119,
-      "group_count": 151,
+      "group_count": 152,
       "unknown_semantics_count": 4731,
       "full_semantics_count": 0,
       "unqualified_configuration_count": 26
@@ -1232,7 +1232,6 @@
         "semantic_status": "unknown",
         "backend_review": "unreviewed",
         "symbols": [
-          "_authenticate",
           "registerrpc",
           "svc_exit",
           "svc_getreq",
@@ -1374,6 +1373,34 @@
         "backend_review": "unreviewed",
         "symbols": [
           "dlerror"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
+        "id": "unknown-1cb85ad7c6095b96",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "rpc_svc"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "WrapsHostLibc",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "_authenticate"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
@@ -6815,35 +6842,6 @@
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
       {
-        "id": "unknown-ae70e33b9fbceed4",
-        "profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "function_profiles": [
-          "interpose-release-linux-x86_64",
-          "standalone-release-linux-x86_64"
-        ],
-        "declaration_kinds": [
-          "function"
-        ],
-        "source_modules": [
-          "rpc_client_create"
-        ],
-        "version_nodes": [
-          "GLIBC_2.2.5"
-        ],
-        "support_status": "Implemented",
-        "contract_ids": [],
-        "semantic_status": "unknown",
-        "backend_review": "unreviewed",
-        "symbols": [
-          "callrpc",
-          "clnt_create"
-        ],
-        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
-      },
-      {
         "id": "unknown-aeea6d6cb27ee9f1",
         "profiles": [
           "interpose-release-linux-x86_64",
@@ -7644,6 +7642,35 @@
           "setproctitle_init",
           "setxattrat",
           "statmount"
+        ],
+        "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
+      },
+      {
+        "id": "unknown-c2bb946576d4b65b",
+        "profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "function_profiles": [
+          "interpose-release-linux-x86_64",
+          "standalone-release-linux-x86_64"
+        ],
+        "declaration_kinds": [
+          "function"
+        ],
+        "source_modules": [
+          "rpc_client_create"
+        ],
+        "version_nodes": [
+          "GLIBC_2.2.5"
+        ],
+        "support_status": "WrapsHostLibc",
+        "contract_ids": [],
+        "semantic_status": "unknown",
+        "backend_review": "unreviewed",
+        "symbols": [
+          "callrpc",
+          "clnt_create"
         ],
         "next_action": "Review each named symbol against its ISO C/POSIX/GNU contract and existing family differential cases in both modes; record measured behavior gaps in bd-reality-202609-lx578q.7."
       },
