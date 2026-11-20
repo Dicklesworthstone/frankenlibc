@@ -858,7 +858,11 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // in the drain bound, 2 fetch_add on free, 2 fetch_sub on drain, 1 test
         // load). The totals are Relaxed: they only bound how much the shards
         // (each updated under its own lock) hold, and publish no other memory.
-        expected_sites: 9,
+        // 3 fragmentation sampling sites: Release marks pending work (including
+        // retries), Acquire checks the hint, and AcqRel swap claims it. A later
+        // producer's Release remains pending after that claim. This flag only
+        // coalesces sampling work; shard locks protect the measured counters.
+        expected_sites: 12,
         stop_at_cfg_test: false,
         optional: false,
     },
@@ -930,9 +934,10 @@ Update MEMORY_MODEL_SOURCES after reviewing barrier requirements.",
 mod memory_model_inventory_tests {
     use super::*;
 
-    const REVIEWED_SOURCES: [(&str, &str); 2] = [
+    const REVIEWED_SOURCES: [(&str, &str); 3] = [
         ("src/ptr_validator.rs", include_str!("src/ptr_validator.rs")),
         ("src/tls_cache.rs", include_str!("src/tls_cache.rs")),
+        ("src/arena.rs", include_str!("src/arena.rs")),
     ];
 
     fn source_for(path: &str) -> &'static MemoryModelSource {
@@ -947,8 +952,7 @@ mod memory_model_inventory_tests {
         for (path, text) in REVIEWED_SOURCES {
             let source = source_for(path);
             let observed = extract_atomic_sites(source, text).len();
-            verify_atomic_site_count(source, observed)
-                .unwrap_or_else(|error| panic!("{error}"));
+            verify_atomic_site_count(source, observed).unwrap_or_else(|error| panic!("{error}"));
         }
     }
 
