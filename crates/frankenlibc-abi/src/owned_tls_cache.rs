@@ -19,6 +19,30 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use frankenlibc_core::pthread::tls::{self, InternalTlsKey};
 use frankenlibc_core::syscall;
 
+/// Select storage by the caller's actual lifecycle, not its inherited compiler
+/// thread pointer. Default hosted callers retain their original TLS values and
+/// returned addresses after native-thread admission, including late host TLS
+/// callbacks. Native clones must never read or mutate their creator's values.
+#[inline]
+pub(crate) fn uses_owned_tls() -> bool {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        true
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if !frankenlibc_membrane::tls_cache::native_threads_may_share_compiler_tls() {
+            return false;
+        }
+        let tid = syscall::sys_gettid();
+        if tid <= 0 {
+            // Without identity neither backend can establish unique ownership.
+            std::process::abort();
+        }
+        frankenlibc_core::pthread::thread::handle_for_tid(tid).is_some()
+    }
+}
+
 pub(crate) struct OwnedTlsCache<T> {
     key: AtomicU32,
     // PID/TID of the initial key publisher. The marker covers the core key

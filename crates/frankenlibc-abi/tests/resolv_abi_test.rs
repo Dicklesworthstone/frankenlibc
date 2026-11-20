@@ -109,6 +109,340 @@ const EAI_ADDRFAMILY: c_int = -9;
 static RESOLVER_FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
 static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
 
+fn run_native_resolver_test_in_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_NATIVE_RESOLVER_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return false;
+    }
+    // Each regression must observe the first native clone without changing
+    // compiler-TLS admission for unrelated tests in this integration binary.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start native resolver child");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out && output.status.success() && stdout.contains("1 passed;"),
+        "native resolver child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+        output.status
+    );
+    true
+}
+
+fn run_native_resolver_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> usize {
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    let _restore = RestoreBackend(
+        frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests(),
+    );
+    let mut thread = 0;
+    // SAFETY: all callback arguments stay alive through the matching join.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::pthread_abi::pthread_create(
+                &mut thread,
+                ptr::null(),
+                Some(worker),
+                argument,
+            )
+        },
+        0
+    );
+    let mut result = ptr::null_mut();
+    // SAFETY: this is the live joinable native thread returned above.
+    assert_eq!(
+        unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) },
+        0
+    );
+    result as usize
+}
+
+#[test]
+fn resolver_native_tls_preserves_errors_hooks_and_format_buffers() {
+    if run_native_resolver_test_in_child(
+        "resolver_native_tls_preserves_errors_hooks_and_format_buffers",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn resolve(creator_error: *mut c_void) -> *mut c_void {
+        // SAFETY: each function returns this caller's live resolver storage;
+        // opaque hook tokens are only stored and compared, never called.
+        unsafe {
+            let error = resolv_abi::__h_errno_location();
+            if error.cast::<c_void>() == creator_error || *error != 0 {
+                return 1usize as *mut c_void;
+            }
+            if !resolv_abi::res_send_qhook_for_tests().is_null()
+                || !resolv_abi::res_send_rhook_for_tests().is_null()
+            {
+                return 2usize as *mut c_void;
+            }
+            *error = 91;
+            resolv_abi::res_send_setqhook(3usize as *mut c_void);
+            resolv_abi::res_send_setrhook(4usize as *mut c_void);
+            if CStr::from_ptr(resolv_abi::__p_type(65001)).to_bytes() != b"65001"
+                || CStr::from_ptr(resolv_abi::__p_option(0x40000001)).to_bytes() != b"?0x40000001?"
+                || CStr::from_ptr(resolv_abi::__p_secstodate(86400)).to_bytes() != b"19700102000000"
+                || CStr::from_ptr(resolv_abi::__sym_ntop(ptr::null(), 654, ptr::null_mut()))
+                    .to_bytes()
+                    != b"654"
+                || CStr::from_ptr(resolv_abi::__sym_ntos(ptr::null(), 765, ptr::null_mut()))
+                    .to_bytes()
+                    != b"765"
+            {
+                return 4usize as *mut c_void;
+            }
+            if error != resolv_abi::__h_errno_location() || *error != 91 {
+                return 8usize as *mut c_void;
+            }
+        }
+        ptr::null_mut()
+    }
+    // Retain the addresses, not copies: a child writing the creator's buffers
+    // or consuming the creator's error state must be observable after join.
+    unsafe {
+        let error = resolv_abi::__h_errno_location();
+        *error = 73;
+        resolv_abi::res_send_setqhook(1usize as *mut c_void);
+        resolv_abi::res_send_setrhook(2usize as *mut c_void);
+        let class = resolv_abi::__p_class(65000);
+        let option = resolv_abi::__p_option(0x40000000);
+        let date = resolv_abi::__p_secstodate(0);
+        let ntop = resolv_abi::__sym_ntop(ptr::null(), 123, ptr::null_mut());
+        let ntos = resolv_abi::__sym_ntos(ptr::null(), 234, ptr::null_mut());
+        for _ in 0..2 {
+            assert_eq!(run_native_resolver_worker(resolve, error.cast()), 0);
+            assert_eq!(resolv_abi::__h_errno_location(), error);
+            assert_eq!(*error, 73);
+            assert_eq!(resolv_abi::res_send_qhook_for_tests() as usize, 1);
+            assert_eq!(resolv_abi::res_send_rhook_for_tests() as usize, 2);
+            assert_eq!(CStr::from_ptr(class).to_bytes(), b"65000");
+            assert_eq!(CStr::from_ptr(option).to_bytes(), b"?0x40000000?");
+            assert_eq!(CStr::from_ptr(date).to_bytes(), b"19700101000000");
+            assert_eq!(CStr::from_ptr(ntop).to_bytes(), b"123");
+            assert_eq!(CStr::from_ptr(ntos).to_bytes(), b"234");
+        }
+        assert_eq!(resolv_abi::__p_class(65000), class);
+        assert_eq!(resolv_abi::__p_option(0x40000000), option);
+        resolv_abi::res_send_setqhook(ptr::null_mut());
+        resolv_abi::res_send_setrhook(ptr::null_mut());
+    }
+}
+
+const NATIVE_TLS_HOSTS: &[u8] =
+    b"192.0.2.1 creator-host\n198.51.100.2 native-host\n203.0.113.3 final-host\n";
+const NATIVE_TLS_SERVICES: &[u8] = b"creator-svc 41001/tcp\nnative-svc 41002/udp\n";
+const NATIVE_TLS_PROTOCOLS: &[u8] = b"creator-proto 201\nnative-proto 202\n";
+
+#[test]
+fn resolver_native_tls_preserves_returned_results_and_iterator() {
+    if run_native_resolver_test_in_child(
+        "resolver_native_tls_preserves_returned_results_and_iterator",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn lookup(creator_results: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator keeps the address array live through join. All
+        // result pointers below are checked before dereferencing and consumed
+        // before this native thread's storage is reclaimed.
+        unsafe {
+            let creator = &*creator_results.cast::<[usize; 4]>();
+            let first = resolv_abi::_gethtent().cast::<libc::hostent>();
+            if first.is_null()
+                || first as usize == creator[0]
+                || CStr::from_ptr((*first).h_name).to_bytes() != b"creator-host"
+            {
+                return 1usize as *mut c_void;
+            }
+            let second = resolv_abi::_gethtent().cast::<libc::hostent>();
+            if second.is_null() || CStr::from_ptr((*second).h_name).to_bytes() != b"native-host" {
+                return 2usize as *mut c_void;
+            }
+            let service = resolv_abi::getservbyname(c"native-svc".as_ptr(), c"udp".as_ptr())
+                .cast::<libc::servent>();
+            if service.is_null()
+                || service as usize == creator[1]
+                || CStr::from_ptr((*service).s_name).to_bytes() != b"native-svc"
+                || u16::from_be((*service).s_port as u16) != 41002
+            {
+                return 4usize as *mut c_void;
+            }
+            let protocol =
+                resolv_abi::getprotobyname(c"native-proto".as_ptr()).cast::<libc::protoent>();
+            if protocol.is_null()
+                || protocol as usize == creator[2]
+                || CStr::from_ptr((*protocol).p_name).to_bytes() != b"native-proto"
+                || (*protocol).p_proto != 202
+            {
+                return 8usize as *mut c_void;
+            }
+            let address = inet_abi::inet_ntoa(u32::from_ne_bytes([198, 51, 100, 2]));
+            if address as usize == creator[3]
+                || CStr::from_ptr(address).to_bytes() != b"198.51.100.2"
+            {
+                return 16usize as *mut c_void;
+            }
+        }
+        ptr::null_mut()
+    }
+    // Pin the service provider so no machine-specific NSS module is involved.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup(
+                c"services".as_ptr(),
+                c"files".as_ptr(),
+            )
+        },
+        0
+    );
+    with_resolver_backends_full(
+        Some(NATIVE_TLS_HOSTS),
+        Some(NATIVE_TLS_SERVICES),
+        Some(NATIVE_TLS_PROTOCOLS),
+        None,
+        None,
+        |_| unsafe {
+            resolv_abi::_sethtent(0);
+            let host = resolv_abi::_gethtent().cast::<libc::hostent>();
+            let service = resolv_abi::getservbyname(c"creator-svc".as_ptr(), c"tcp".as_ptr())
+                .cast::<libc::servent>();
+            let protocol =
+                resolv_abi::getprotobyname(c"creator-proto".as_ptr()).cast::<libc::protoent>();
+            let address = inet_abi::inet_ntoa(u32::from_ne_bytes([192, 0, 2, 1]));
+            assert!(!host.is_null() && !service.is_null() && !protocol.is_null());
+            let mut creator = [
+                host as usize,
+                service as usize,
+                protocol as usize,
+                address as usize,
+            ];
+            for _ in 0..2 {
+                assert_eq!(
+                    run_native_resolver_worker(lookup, (&raw mut creator).cast()),
+                    0
+                );
+                assert_eq!(CStr::from_ptr((*host).h_name).to_bytes(), b"creator-host");
+                assert_eq!(CStr::from_ptr((*service).s_name).to_bytes(), b"creator-svc");
+                assert_eq!(u16::from_be((*service).s_port as u16), 41001);
+                assert_eq!(
+                    CStr::from_ptr((*protocol).p_name).to_bytes(),
+                    b"creator-proto"
+                );
+                assert_eq!((*protocol).p_proto, 201);
+                assert_eq!(CStr::from_ptr(address).to_bytes(), b"192.0.2.1");
+            }
+            let next = resolv_abi::_gethtent().cast::<libc::hostent>();
+            assert_eq!(next, host, "hosted result storage must not migrate");
+            assert_eq!(CStr::from_ptr((*next).h_name).to_bytes(), b"native-host");
+            assert_eq!(
+                inet_abi::inet_ntoa(u32::from_ne_bytes([203, 0, 113, 1])),
+                address
+            );
+            assert_eq!(CStr::from_ptr(address).to_bytes(), b"203.0.113.1");
+        },
+    );
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn resolver_native_tls_ignores_the_creators_borrowed_caches() {
+    if run_native_resolver_test_in_child("resolver_native_tls_ignores_the_creators_borrowed_caches")
+    {
+        return;
+    }
+    unsafe extern "C" fn lookup(_: *mut c_void) -> *mut c_void {
+        // SAFETY: all names are terminated literals and all returned records
+        // are consumed while this native thread's result storage is live.
+        unsafe {
+            let host = resolv_abi::_gethtbyname(c"native-host".as_ptr()).cast::<libc::hostent>();
+            if host.is_null() || CStr::from_ptr((*host).h_name).to_bytes() != b"native-host" {
+                return 1usize as *mut c_void;
+            }
+            let service = resolv_abi::getservbyname(c"native-svc".as_ptr(), c"udp".as_ptr())
+                .cast::<libc::servent>();
+            if service.is_null() || u16::from_be((*service).s_port as u16) != 41002 {
+                return 2usize as *mut c_void;
+            }
+            let protocol =
+                resolv_abi::getprotobyname(c"native-proto".as_ptr()).cast::<libc::protoent>();
+            if protocol.is_null() || (*protocol).p_proto != 202 {
+                return 4usize as *mut c_void;
+            }
+            let mut hints: libc::addrinfo = mem::zeroed();
+            hints.ai_family = libc::AF_INET;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            hints.ai_flags = libc::AI_ADDRCONFIG | libc::AI_NUMERICHOST | libc::AI_NUMERICSERV;
+            let mut result = ptr::null_mut();
+            if resolv_abi::getaddrinfo(
+                c"198.51.100.2".as_ptr(),
+                c"41002".as_ptr(),
+                &hints,
+                &mut result,
+            ) != 0
+                || result.is_null()
+            {
+                return 8usize as *mut c_void;
+            }
+            resolv_abi::freeaddrinfo(result);
+        }
+        ptr::null_mut()
+    }
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::__nss_configure_lookup(
+                c"services".as_ptr(),
+                c"files".as_ptr(),
+            )
+        },
+        0
+    );
+    with_resolver_backends_full(
+        Some(NATIVE_TLS_HOSTS),
+        Some(NATIVE_TLS_SERVICES),
+        Some(NATIVE_TLS_PROTOCOLS),
+        Some(b"Iface Destination Gateway Flags\neth0 00000000 00000000 0001\n"),
+        Some(b""),
+        |_| {
+            let result = resolv_abi::with_resolver_cache_borrows_for_tests(|| {
+                run_native_resolver_worker(lookup, ptr::null_mut())
+            })
+            .expect("load the creator's files backend caches");
+            assert_eq!(result, 0);
+            // The creator remains able to use those same caches after its
+            // outstanding borrows end; the child never invalidates them.
+            let host = unsafe { resolv_abi::_gethtbyname(c"creator-host".as_ptr()) }
+                .cast::<libc::hostent>();
+            assert!(!host.is_null());
+            assert_eq!(
+                unsafe { CStr::from_ptr((*host).h_name).to_bytes() },
+                b"creator-host"
+            );
+        },
+    );
+}
+
 struct ResolverFixturePaths {
     hosts: std::path::PathBuf,
     services: std::path::PathBuf,

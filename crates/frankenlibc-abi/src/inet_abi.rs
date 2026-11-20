@@ -134,7 +134,6 @@ unsafe fn read_bounded_cstr_ref<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     Some(unsafe { core::slice::from_raw_parts(ptr as *const u8, len) })
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static INET_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 16]> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| [0; 16]);
 
@@ -152,6 +151,9 @@ fn with_inet_ntoa_buffer<R>(f: impl FnOnce(&mut [u8; 16]) -> R) -> R {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return INET_NTOA_BUF_OWNED_TLS.with(f);
+        }
         INET_NTOA_BUF.with(|cell| f(&mut cell.borrow_mut()))
     }
 }

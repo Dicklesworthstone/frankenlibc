@@ -640,62 +640,51 @@ fn ascii_casefold_hash(bytes: &[u8]) -> u64 {
     hash ^ (bytes.len() as u64)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_hosts_backend_cache() -> BackendFileCache {
     BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_services_backend_cache() -> BackendFileCache {
     BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_protocols_backend_cache() -> BackendFileCache {
     BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_proc_net_route_cache() -> BackendFileCache {
     BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_proc_net_if_inet6_cache() -> BackendFileCache {
     BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV)
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_service_lookup_cache() -> ServiceLookupCache {
     ServiceLookupCache::new()
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn new_protocol_lookup_cache() -> ProtocolLookupCache {
     ProtocolLookupCache::new()
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static HOSTS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_hosts_backend_cache);
-#[cfg(feature = "owned-tls-cache")]
 static SERVICES_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_services_backend_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROTOCOLS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_protocols_backend_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROC_NET_ROUTE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_route_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROC_NET_IF_INET6_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_if_inet6_cache);
-#[cfg(feature = "owned-tls-cache")]
 static SERVICE_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServiceLookupCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_service_lookup_cache);
-#[cfg(feature = "owned-tls-cache")]
 static PROTOCOL_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtocolLookupCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_protocol_lookup_cache);
+
+#[cfg(not(feature = "owned-tls-cache"))]
+use crate::owned_tls_cache::uses_owned_tls;
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
@@ -734,6 +723,9 @@ fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot());
+        }
         HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
     }
 }
@@ -750,6 +742,9 @@ pub(crate) fn with_hosts_backend_snapshot<R>(
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback));
+        }
         HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
     }
 }
@@ -888,6 +883,9 @@ fn read_services_backend() -> std::io::Result<Vec<u8>> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot());
+        }
         SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
     }
 }
@@ -899,6 +897,9 @@ fn with_services_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback));
+        }
         SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
     }
 }
@@ -910,6 +911,9 @@ fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVICE_LOOKUP_OWNED_TLS.with(callback);
+        }
         SERVICE_LOOKUP_TLS.with(|cell| {
             let mut cache = cell.borrow_mut();
             callback(&mut cache)
@@ -1112,6 +1116,9 @@ fn with_protocols_backend_snapshot<R>(
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return PROTOCOLS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback));
+        }
         PROTOCOLS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
     }
 }
@@ -1178,11 +1185,29 @@ fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return PROTOCOL_LOOKUP_OWNED_TLS.with(callback);
+        }
         PROTOCOL_LOOKUP_TLS.with(|cell| {
             let mut cache = cell.borrow_mut();
             callback(&mut cache)
         })
     }
+}
+
+/// Hold the creator's real files-backend and parsed-index borrows across a
+/// native create/join regression. Production never invokes NSS callbacks while
+/// holding these borrows; this hook deliberately tests another thread's access.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_resolver_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> std::io::Result<R> {
+    with_hosts_backend_snapshot(|_, _| {
+        with_services_backend_snapshot(|_, _| {
+            with_protocols_backend_snapshot(|_, _| {
+                with_service_lookup_cache(|_| with_protocol_lookup_cache(|_| f()))
+            })
+        })
+    })??
 }
 
 fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
@@ -1200,12 +1225,20 @@ fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConf
     #[cfg(feature = "owned-tls-cache")]
     let route = PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
-    let route = PROC_NET_ROUTE_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+    let route = if uses_owned_tls() {
+        PROC_NET_ROUTE_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?
+    } else {
+        PROC_NET_ROUTE_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?
+    };
 
     #[cfg(feature = "owned-tls-cache")]
     let if_inet6 = PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?;
     #[cfg(not(feature = "owned-tls-cache"))]
-    let if_inet6 = PROC_NET_IF_INET6_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+    let if_inet6 = if uses_owned_tls() {
+        PROC_NET_IF_INET6_OWNED_TLS.with(|cache| cache.read_snapshot().ok())?
+    } else {
+        PROC_NET_IF_INET6_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?
+    };
 
     Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
         &route, &if_inet6,
@@ -2174,14 +2207,11 @@ impl HostentTlsStorage {
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed hostent result per thread
-// id. `hostent` and its alias/address lists only point into the same boxed
-// storage, so moving the box while the cache mutex is held does not transfer
-// ownership of pointees across threads.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: owned TLS keeps each native thread's result at a stable address.
+// `hostent` and its alias/address lists point only into that thread's storage;
+// no pointee ownership is transferred to another thread.
 unsafe impl Send for HostentTlsStorage {}
 
-#[cfg(feature = "owned-tls-cache")]
 static GETHOSTBYNAME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostentTlsStorage> =
     crate::owned_tls_cache::OwnedTlsCache::new(HostentTlsStorage::new);
 
@@ -2199,6 +2229,9 @@ fn with_tls_hostent<R>(callback: impl FnOnce(&mut HostentTlsStorage) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return GETHOSTBYNAME_OWNED_TLS.with(callback);
+        }
         GETHOSTBYNAME_TLS.with(|cell| {
             let mut storage = cell.borrow_mut();
             callback(&mut storage)
@@ -4828,14 +4861,11 @@ impl ServentTlsStorage {
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed service result per thread
-// id. `servent` only points into the same boxed storage, so moving the box while
-// the cache mutex is held does not transfer ownership of pointees across
-// threads.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: owned TLS keeps each native thread's result at a stable address.
+// `servent` points only into that thread's storage; no pointee ownership is
+// transferred to another thread.
 unsafe impl Send for ServentTlsStorage {}
 
-#[cfg(feature = "owned-tls-cache")]
 static SERVENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServentTlsStorage> =
     crate::owned_tls_cache::OwnedTlsCache::new(ServentTlsStorage::new);
 
@@ -4855,6 +4885,9 @@ fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SERVENT_OWNED_TLS.with(callback);
+        }
         SERVENT_TLS.with(|cell| {
             let mut storage = cell.borrow_mut();
             callback(&mut storage)
@@ -4960,14 +4993,11 @@ impl ProtoentTlsStorage {
     }
 }
 
-// SAFETY: the owned-TLS experiment stores one boxed protocol result per thread
-// id. `protoent` only points into the same boxed storage, so moving the box
-// while the cache mutex is held does not transfer ownership of pointees across
-// threads.
-#[cfg(feature = "owned-tls-cache")]
+// SAFETY: owned TLS keeps each native thread's result at a stable address.
+// `protoent` points only into that thread's storage; no pointee ownership is
+// transferred to another thread.
 unsafe impl Send for ProtoentTlsStorage {}
 
-#[cfg(feature = "owned-tls-cache")]
 static PROTOENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoentTlsStorage> =
     crate::owned_tls_cache::OwnedTlsCache::new(ProtoentTlsStorage::new);
 
@@ -4987,6 +5017,9 @@ fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> 
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return PROTOENT_OWNED_TLS.with(callback);
+        }
         PROTOENT_TLS.with(|cell| {
             let mut storage = cell.borrow_mut();
             callback(&mut storage)
@@ -6017,7 +6050,6 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
 // h_errno — thread-local resolver error variable
 // ===========================================================================
 
-#[cfg(feature = "owned-tls-cache")]
 static H_ERRNO_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
 
@@ -6034,6 +6066,9 @@ fn set_h_errno_tls(value: c_int) {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return H_ERRNO_OWNED_TLS.with(|slot| *slot = value);
+        }
         H_ERRNO_TLS.with(|cell| cell.set(value));
     }
 }
@@ -6046,6 +6081,9 @@ fn h_errno_location_ptr() -> *mut c_int {
 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return H_ERRNO_OWNED_TLS.with(|slot| slot as *mut c_int);
+        }
         H_ERRNO_TLS.with(|cell| cell.as_ptr())
     }
 }
@@ -6690,18 +6728,15 @@ pub unsafe extern "C" fn res_gethostbyaddr(
 // store them per-thread for any caller that registers and re-reads them
 // (some test harnesses do exactly this).
 
-#[cfg(feature = "owned-tls-cache")]
 struct ResSendHooks {
     qhook: *mut c_void,
     rhook: *mut c_void,
 }
 
-#[cfg(feature = "owned-tls-cache")]
 // SAFETY: `ResSendHooks` stores opaque callback pointer tokens for round-trip
 // ABI compatibility. The cache never dereferences or invokes the pointers.
 unsafe impl Send for ResSendHooks {}
 
-#[cfg(feature = "owned-tls-cache")]
 const fn empty_res_send_hooks() -> ResSendHooks {
     ResSendHooks {
         qhook: core::ptr::null_mut(),
@@ -6709,7 +6744,6 @@ const fn empty_res_send_hooks() -> ResSendHooks {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RES_SEND_HOOKS_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ResSendHooks> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_res_send_hooks);
 
@@ -6726,6 +6760,9 @@ fn current_res_send_qhook() -> *mut c_void {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook);
+        }
         RES_QHOOK.with(|c| c.get())
     }
 }
@@ -6737,6 +6774,9 @@ fn current_res_send_rhook() -> *mut c_void {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook);
+        }
         RES_RHOOK.with(|c| c.get())
     }
 }
@@ -6748,6 +6788,9 @@ fn set_res_send_qhook(qhook: *mut c_void) {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.qhook = qhook);
+        }
         RES_QHOOK.with(|c| c.set(qhook));
     }
 }
@@ -6759,6 +6802,9 @@ fn set_res_send_rhook(rhook: *mut c_void) {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return RES_SEND_HOOKS_OWNED_TLS.with(|hooks| hooks.rhook = rhook);
+        }
         RES_RHOOK.with(|c| c.set(rhook));
     }
 }
@@ -8261,12 +8307,10 @@ pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void)
 // variants parse enough DNS wire data to return the next cursor while
 // intentionally not rendering to FILE* streams.
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_p_fallback_buf() -> [u8; 16] {
     [0u8; 16]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static P_FALLBACK_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 16]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_p_fallback_buf);
 
@@ -8285,6 +8329,9 @@ fn with_p_fallback_buf<R>(f: impl FnOnce(&mut [u8; 16]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return P_FALLBACK_BUF_OWNED_TLS.with(f);
+        }
         P_FALLBACK_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8304,12 +8351,10 @@ unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
     })
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_p_option_buf() -> [u8; 24] {
     [0u8; 24]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static P_OPTION_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_p_option_buf);
 
@@ -8326,6 +8371,9 @@ fn with_p_option_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return P_OPTION_BUF_OWNED_TLS.with(f);
+        }
         P_OPTION_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8452,12 +8500,10 @@ pub unsafe extern "C" fn __p_rcode(rcode: c_int) -> *const c_char {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_secstodate_buf() -> [u8; 24] {
     [0u8; 24]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static SECSTODATE_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 24]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_secstodate_buf);
 
@@ -8474,6 +8520,9 @@ fn with_secstodate_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SECSTODATE_BUF_OWNED_TLS.with(f);
+        }
         SECSTODATE_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8482,12 +8531,10 @@ fn with_secstodate_buf<R>(f: impl FnOnce(&mut [u8; 24]) -> R) -> R {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_p_time_buf() -> [u8; 32] {
     [0u8; 32]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static P_TIME_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 32]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_p_time_buf);
 
@@ -8504,6 +8551,9 @@ fn with_p_time_buf<R>(f: impl FnOnce(&mut [u8; 32]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return P_TIME_BUF_OWNED_TLS.with(f);
+        }
         P_TIME_BUF.with(|cell| {
             let buf_ptr = cell.get();
             // SAFETY: thread-local; no aliasing across threads.
@@ -8664,12 +8714,10 @@ pub unsafe extern "C" fn __p_fqnname(
 
 const HOSTALIAS_BUF_LEN: usize = 1025;
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_hostalias_buf() -> [u8; HOSTALIAS_BUF_LEN] {
     [0u8; HOSTALIAS_BUF_LEN]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static HOSTALIAS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; HOSTALIAS_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_hostalias_buf);
 
@@ -8688,6 +8736,9 @@ fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTALIAS_BUF_OWNED_TLS.with(f);
+        }
         HOSTALIAS_BUF.with(|cell| f(&mut cell.borrow_mut()))
     }
 }
@@ -8819,12 +8870,10 @@ pub unsafe extern "C" fn __res_hostalias(
 
 const LOC_NTOA_BUF_LEN: usize = 96;
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_loc_ntoa_buf() -> [u8; LOC_NTOA_BUF_LEN] {
     [0u8; LOC_NTOA_BUF_LEN]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static LOC_NTOA_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; LOC_NTOA_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_loc_ntoa_buf);
 
@@ -8841,6 +8890,9 @@ fn with_loc_ntoa_buf<R>(f: impl FnOnce(&mut [u8; LOC_NTOA_BUF_LEN]) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return LOC_NTOA_BUF_OWNED_TLS.with(f);
+        }
         LOC_NTOA_BUF.with(|cell| f(&mut cell.borrow_mut()))
     }
 }
@@ -9336,15 +9388,12 @@ struct ResSym {
 
 const SYM_UNKNOWN_BUF_LEN: usize = 24;
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_sym_unknown_buf() -> [u8; SYM_UNKNOWN_BUF_LEN] {
     [0u8; SYM_UNKNOWN_BUF_LEN]
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static SYM_NTOP_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
-#[cfg(feature = "owned-tls-cache")]
 static SYM_NTOS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; SYM_UNKNOWN_BUF_LEN]> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_sym_unknown_buf);
 
@@ -9372,6 +9421,9 @@ fn write_decimal_to_sym_ntop_buf(value: c_int) -> *const c_char {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SYM_NTOP_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value));
+        }
         SYM_NTOP_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
     }
 }
@@ -9383,6 +9435,9 @@ fn write_decimal_to_sym_ntos_buf(value: c_int) -> *const c_char {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return SYM_NTOS_BUF_OWNED_TLS.with(|buf| write_decimal_to_sym_buf(buf, value));
+        }
         SYM_NTOS_BUF.with(|cell| write_decimal_to_sym_buf(&mut cell.borrow_mut(), value))
     }
 }
@@ -9686,7 +9741,6 @@ pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
 // reuse the same files-backend parser as the non-iterator lookup hooks and
 // expose IPv4 entries through the shared thread-local hostent storage.
 
-#[cfg(feature = "owned-tls-cache")]
 static HOSTS_ITER_LINE_OFFSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
     crate::owned_tls_cache::OwnedTlsCache::new(|| 0);
 
@@ -9702,6 +9756,9 @@ fn reset_hosts_iterator() {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(|offset| *offset = 0);
+        }
         HOSTS_ITER_LINE_OFFSET.with(|cell| *cell.borrow_mut() = 0);
     }
 }
@@ -9713,6 +9770,9 @@ fn with_hosts_iterator_offset<R>(callback: impl FnOnce(&mut usize) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if uses_owned_tls() {
+            return HOSTS_ITER_LINE_OFFSET_OWNED_TLS.with(callback);
+        }
         HOSTS_ITER_LINE_OFFSET.with(|cell| {
             let mut offset = cell.borrow_mut();
             callback(&mut offset)
