@@ -6,11 +6,12 @@
 //! textdomain, bindtextdomain, newlocale, uselocale, freelocale, duplocale,
 //! nl_langinfo_l, catopen/catgets/catclose.
 
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -54,6 +55,311 @@ impl Drop for LocaleStateGuard {
     fn drop(&mut self) {
         frankenlibc_abi::locale_abi::locale_reset_active_charset_for_tests();
     }
+}
+
+fn run_native_locale_test_in_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_NATIVE_LOCALE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return false;
+    }
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start isolated native locale test");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        !timed_out
+            && output.status.success()
+            && String::from_utf8_lossy(&output.stdout).contains("1 passed;"),
+        "native locale timeout={timed_out} status={}\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
+struct RestoreThreadBackend(bool);
+
+impl RestoreThreadBackend {
+    fn native() -> Self {
+        Self(frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests())
+    }
+}
+
+impl Drop for RestoreThreadBackend {
+    fn drop(&mut self) {
+        frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+    }
+}
+
+unsafe fn start_native_locale_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> libc::pthread_t {
+    let mut thread = 0;
+    // SAFETY: each test retains its argument storage until it joins the worker.
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::pthread_abi::pthread_create(
+                &mut thread,
+                ptr::null(),
+                Some(worker),
+                argument,
+            )
+        },
+        0
+    );
+    thread
+}
+
+fn join_native_locale_worker(thread: libc::pthread_t) -> usize {
+    let mut result = ptr::null_mut();
+    // SAFETY: the caller supplies its still-joinable native thread.
+    assert_eq!(
+        unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) },
+        0
+    );
+    result as usize
+}
+
+#[test]
+fn locale_native_tls_separates_selection_and_stable_ctype_slots() {
+    if run_native_locale_test_in_child(
+        "locale_native_tls_separates_selection_and_stable_ctype_slots",
+    ) {
+        return;
+    }
+    use frankenlibc_abi::ctype_abi::{__ctype_b_loc, __ctype_tolower_loc, __ctype_toupper_loc};
+
+    struct Worker {
+        locale: usize,
+        width: usize,
+        creator_slots: [usize; 3],
+        slots: [AtomicUsize; 3],
+        ready: AtomicBool,
+        release: AtomicBool,
+    }
+    unsafe extern "C" fn select(raw: *mut c_void) -> *mut c_void {
+        // SAFETY: this immutable context and its atomic cells outlive join.
+        let context = unsafe { &*raw.cast::<Worker>() };
+        let mut failures = 0usize;
+        // SAFETY: locale handles and all returned ctype slots stay live through
+        // this worker. Check scalar errors without unwinding across its C ABI.
+        unsafe {
+            if uselocale(ptr::null_mut()) as usize != usize::MAX || __ctype_get_mb_cur_max() != 1 {
+                failures |= 1;
+            }
+            let slots = [
+                __ctype_b_loc() as usize,
+                __ctype_toupper_loc() as usize,
+                __ctype_tolower_loc() as usize,
+            ];
+            for (i, slot) in slots.into_iter().enumerate() {
+                context.slots[i].store(slot, Ordering::Release);
+                if slot == 0 || slot == context.creator_slots[i] {
+                    failures |= 2;
+                }
+            }
+            if uselocale(context.locale as *mut c_void) as usize != usize::MAX {
+                failures |= 4;
+            }
+            // Revisit a heap-backed mixed-category handle through the MRU,
+            // after restoring the live global selection in between.
+            if uselocale(usize::MAX as *mut c_void) as usize != context.locale
+                || uselocale(context.locale as *mut c_void) as usize != usize::MAX
+            {
+                failures |= 16;
+            }
+            context.ready.store(true, Ordering::Release);
+            while !context.release.load(Ordering::Acquire) {
+                frankenlibc_core::syscall::sys_sched_yield();
+            }
+            if uselocale(ptr::null_mut()) as usize != context.locale
+                || __ctype_get_mb_cur_max() != context.width
+                || [
+                    __ctype_b_loc() as usize,
+                    __ctype_toupper_loc() as usize,
+                    __ctype_tolower_loc() as usize,
+                ] != slots
+            {
+                failures |= 8;
+            }
+            // Leave the selection installed: teardown must not alter the
+            // creator's selection or make a later native child inherit it.
+        }
+        failures as *mut c_void
+    }
+
+    let _locale = LocaleStateGuard::acquire();
+    let _backend = RestoreThreadBackend::native();
+    unsafe {
+        assert!(!setlocale(libc::LC_ALL, c"C".as_ptr()).is_null());
+        let c = newlocale(libc::LC_TIME_MASK, c"C.UTF-8".as_ptr(), ptr::null_mut());
+        let ctype_utf8 = newlocale(libc::LC_CTYPE_MASK, c"C.UTF-8".as_ptr(), ptr::null_mut());
+        let utf8 = newlocale(libc::LC_ALL_MASK, c"C.UTF-8".as_ptr(), ptr::null_mut());
+        assert!(!c.is_null() && !ctype_utf8.is_null() && !utf8.is_null());
+        assert_ne!(c, utf8);
+        assert_ne!(ctype_utf8, utf8);
+        assert_ne!(c, ctype_utf8);
+        assert_eq!(uselocale(utf8) as usize, usize::MAX);
+        let creator_slots = [
+            __ctype_b_loc() as usize,
+            __ctype_toupper_loc() as usize,
+            __ctype_tolower_loc() as usize,
+        ];
+        let creator_tables = [
+            *__ctype_b_loc() as usize,
+            *__ctype_toupper_loc() as usize,
+            *__ctype_tolower_loc() as usize,
+        ];
+        let workers = [(c, 1), (ctype_utf8, 6)].map(|(locale, width)| Worker {
+            locale: locale as usize,
+            width,
+            creator_slots,
+            slots: std::array::from_fn(|_| AtomicUsize::new(0)),
+            ready: AtomicBool::new(false),
+            release: AtomicBool::new(false),
+        });
+        let threads = workers.each_ref().map(|worker| {
+            start_native_locale_worker(select, ptr::from_ref(worker).cast_mut().cast())
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while workers
+            .iter()
+            .any(|worker| !worker.ready.load(Ordering::Acquire))
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        let ready = workers
+            .iter()
+            .all(|worker| worker.ready.load(Ordering::Acquire));
+        let retained_locale = uselocale(ptr::null_mut());
+        let retained_width = __ctype_get_mb_cur_max();
+        for worker in &workers {
+            worker.release.store(true, Ordering::Release);
+        }
+        let results = threads.map(join_native_locale_worker);
+        assert!(ready, "both native locale workers must execute");
+        assert_eq!(results, [0, 0]);
+        assert_eq!(retained_locale, utf8);
+        assert_eq!(retained_width, 6);
+        for i in 0..3 {
+            assert_ne!(
+                workers[0].slots[i].load(Ordering::Acquire),
+                workers[1].slots[i].load(Ordering::Acquire)
+            );
+        }
+        assert_eq!(
+            [
+                __ctype_b_loc() as usize,
+                __ctype_toupper_loc() as usize,
+                __ctype_tolower_loc() as usize
+            ],
+            creator_slots
+        );
+        assert_eq!(
+            [
+                *__ctype_b_loc() as usize,
+                *__ctype_toupper_loc() as usize,
+                *__ctype_tolower_loc() as usize
+            ],
+            creator_tables
+        );
+        assert_eq!(uselocale(usize::MAX as *mut c_void), utf8);
+        freelocale(c);
+        freelocale(ctype_utf8);
+        freelocale(utf8);
+    }
+}
+
+#[test]
+fn locale_native_tls_separates_numeric_formatting_and_render_errors() {
+    if run_native_locale_test_in_child(
+        "locale_native_tls_separates_numeric_formatting_and_render_errors",
+    ) {
+        return;
+    }
+    use frankenlibc_core::stdio::printf::{
+        clear_thread_numeric, note_render_failure, numeric_radix_byte, set_thread_numeric,
+        take_render_failure,
+    };
+    unsafe extern "C" fn format(_: *mut c_void) -> *mut c_void {
+        let mut failures = 0usize;
+        if numeric_radix_byte().is_some() || take_render_failure() != 0 {
+            failures |= 1;
+        }
+        set_thread_numeric(b";", b"_", &[3]);
+        let mut output = [0_i8; 64];
+        // SAFETY: writable output and arguments match the terminated format.
+        let count = unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(
+                output.as_mut_ptr(),
+                output.len(),
+                c"%'d %.1f".as_ptr(),
+                12345_i32,
+                1.5_f64,
+            )
+        };
+        if count != 10 || unsafe { CStr::from_ptr(output.as_ptr()) }.to_bytes() != b"12_345 1;5" {
+            failures |= 2;
+        }
+        clear_thread_numeric();
+        if numeric_radix_byte().is_some() {
+            failures |= 4;
+        }
+        note_render_failure(libc::EINVAL);
+        if take_render_failure() != libc::EINVAL || take_render_failure() != 0 {
+            failures |= 8;
+        }
+        failures as *mut c_void
+    }
+    let _locale = LocaleStateGuard::acquire();
+    let _backend = RestoreThreadBackend::native();
+    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
+    set_thread_numeric(b",", b".", &[3]);
+    note_render_failure(libc::ENOMEM);
+    // Repeat creation after teardown: a recycled native handle must start with
+    // fresh formatting state, while the hosted creator retains both settings.
+    for _ in 0..3 {
+        let thread = unsafe { start_native_locale_worker(format, ptr::null_mut()) };
+        assert_eq!(join_native_locale_worker(thread), 0);
+        assert_eq!(numeric_radix_byte(), Some(b','));
+    }
+    assert_eq!(take_render_failure(), libc::ENOMEM);
+    assert_eq!(take_render_failure(), 0);
+    let mut output = [0_i8; 64];
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(
+                output.as_mut_ptr(),
+                output.len(),
+                c"%'d %.1f".as_ptr(),
+                12345_i32,
+                1.5_f64,
+            )
+        },
+        10
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(output.as_ptr()) }.to_bytes(),
+        b"12.345 1,5"
+    );
+    clear_thread_numeric();
 }
 
 fn reset_gettext_state() {

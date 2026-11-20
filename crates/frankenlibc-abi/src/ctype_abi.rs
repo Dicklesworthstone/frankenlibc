@@ -163,19 +163,16 @@ pub(crate) unsafe fn toupper_table_ptr() -> *const i32 {
     unsafe { TOUPPER_TABLE.as_ptr().add(128) }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 struct CtypeLocPtrs {
     ctype_b: *const u16,
     toupper: *const i32,
     tolower: *const i32,
 }
 
-#[cfg(feature = "owned-tls-cache")]
 // SAFETY: the stored pointers are immutable references into static ctype
 // tables. The mutable per-thread pointer cells are protected by OwnedTlsCache.
 unsafe impl Send for CtypeLocPtrs {}
 
-#[cfg(feature = "owned-tls-cache")]
 const fn empty_ctype_loc_ptrs() -> CtypeLocPtrs {
     CtypeLocPtrs {
         ctype_b: std::ptr::null(),
@@ -184,7 +181,6 @@ const fn empty_ctype_loc_ptrs() -> CtypeLocPtrs {
     }
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static CTYPE_LOC_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<CtypeLocPtrs> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_ctype_loc_ptrs);
 
@@ -244,6 +240,12 @@ fn with_ctype_b_slot<R>(callback: impl FnOnce(*const *const u16) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return CTYPE_LOC_OWNED_TLS.with(|state| {
+                state.ctype_b = current;
+                callback(&state.ctype_b as *const *const u16)
+            });
+        }
         CTYPE_B_PTR.with(|cell| {
             cell.set(current);
             callback(cell.as_ptr() as *const *const u16)
@@ -263,6 +265,12 @@ fn with_ctype_toupper_slot<R>(callback: impl FnOnce(*const *const i32) -> R) -> 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return CTYPE_LOC_OWNED_TLS.with(|state| {
+                state.toupper = current;
+                callback(&state.toupper as *const *const i32)
+            });
+        }
         TOUPPER_PTR.with(|cell| {
             cell.set(current);
             callback(cell.as_ptr() as *const *const i32)
@@ -282,6 +290,12 @@ fn with_ctype_tolower_slot<R>(callback: impl FnOnce(*const *const i32) -> R) -> 
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return CTYPE_LOC_OWNED_TLS.with(|state| {
+                state.tolower = current;
+                callback(&state.tolower as *const *const i32)
+            });
+        }
         TOLOWER_PTR.with(|cell| {
             cell.set(current);
             callback(cell.as_ptr() as *const *const i32)

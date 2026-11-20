@@ -8,12 +8,15 @@ on:
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/fortify_abi.rs'
       - 'crates/frankenlibc-abi/src/wchar_abi.rs'
+      - 'crates/frankenlibc-abi/src/locale_abi.rs'
+      - 'crates/frankenlibc-abi/src/ctype_abi.rs'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/src/inet_abi.rs'
       - 'crates/frankenlibc-abi/src/owned_tls_cache.rs'
       - 'crates/frankenlibc-abi/src/isoc_abi.rs'
       - 'crates/frankenlibc-abi/tests/stdio_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/wchar_abi_test.rs'
+      - 'crates/frankenlibc-abi/tests/locale_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - 'crates/frankenlibc-abi/tests/io_internal_native_file_test.rs'
       - 'crates/frankenlibc-abi/tests/native_file_layout_test.rs'
@@ -160,6 +163,23 @@ jobs:
                 "${feature_args[@]}" --test wchar_abi_test wchar_native_tls_ \
                 -- --test-threads=1 --nocapture 2>&1 | tee "$log"
               grep -Eq '^test result: ok\. 3 passed; 0 failed; 0 ignored;' "$log"
+            done
+          done
+      - name: Isolate native locale selection and numeric formatting
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          for feature in default owned; do
+            feature_args=()
+            if [[ "$feature" == owned ]]; then
+              feature_args+=(--features owned-tls-cache)
+            fi
+            for mode in strict hardened; do
+              log="artifacts/stdio-layout/locale-native-tls-$feature-$mode.log"
+              FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+                "${feature_args[@]}" --test locale_abi_test locale_native_tls_ \
+                -- --test-threads=1 --nocapture 2>&1 | tee "$log"
+              grep -Eq '^test result: ok\. 2 passed; 0 failed; 0 ignored;' "$log"
             done
           done
       - name: Isolate native resolver caches and returned buffers

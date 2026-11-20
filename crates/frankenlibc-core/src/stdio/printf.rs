@@ -1642,12 +1642,20 @@ pub fn set_thread_numeric(decimal_point: &[u8], separator: &[u8], grouping: &[u8
     let (sep, rule) = pack_grouping(separator, grouping);
     let words = [pack_decimal_point(decimal_point), sep, rule];
     ANY_THREAD_NUMERIC.store(true, Ordering::Relaxed);
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if crate::pthread::thread::set_current_numeric_locale(Some(words)) {
+        return;
+    }
     let _ = THREAD_NUMERIC.try_with(|cell| cell.set(Some(words)));
 }
 
 /// Return this thread to the global locale's numeric formatting.
 pub fn clear_thread_numeric() {
     if ANY_THREAD_NUMERIC.load(Ordering::Relaxed) {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if crate::pthread::thread::set_current_numeric_locale(None) {
+            return;
+        }
         let _ = THREAD_NUMERIC.try_with(|cell| cell.set(None));
     }
 }
@@ -1656,10 +1664,21 @@ pub fn clear_thread_numeric() {
 /// separator, rule]`.
 #[inline]
 fn numeric_words() -> [u64; 3] {
-    if ANY_THREAD_NUMERIC.load(Ordering::Relaxed)
-        && let Ok(Some(words)) = THREAD_NUMERIC.try_with(core::cell::Cell::get)
-    {
-        return words;
+    if ANY_THREAD_NUMERIC.load(Ordering::Relaxed) {
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        let native = crate::pthread::thread::current_numeric_locale();
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let native: Option<Option<[u64; 3]>> = None;
+        let selected = match native {
+            Some(words) => words,
+            None => THREAD_NUMERIC
+                .try_with(core::cell::Cell::get)
+                .ok()
+                .flatten(),
+        };
+        if let Some(words) = selected {
+            return words;
+        }
     }
     [
         DECIMAL_POINT.load(Ordering::Relaxed),
@@ -2917,6 +2936,10 @@ static ANY_RENDER_FAILURE: core::sync::atomic::AtomicBool =
 #[cold]
 pub fn note_render_failure(errno: i32) {
     ANY_RENDER_FAILURE.store(true, Ordering::Relaxed);
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if crate::pthread::thread::set_current_render_failure(errno) {
+        return;
+    }
     RENDER_FAILURE.with(|failure| failure.set(errno));
 }
 
@@ -2931,6 +2954,10 @@ fn note_render_alloc_failure() {
 pub fn take_render_failure() -> i32 {
     if !ANY_RENDER_FAILURE.load(Ordering::Relaxed) {
         return 0;
+    }
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if let Some(errno) = crate::pthread::thread::take_current_render_failure() {
+        return errno;
     }
     RENDER_FAILURE.with(|failure| failure.replace(0))
 }

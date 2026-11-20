@@ -172,6 +172,12 @@ pub struct ThreadHandle {
     /// handlers access this cell; no inherited compiler TLS is involved.
     pub errno: core::cell::UnsafeCell<i32>,
 
+    /// Formatting state belongs to the native owner, including during key
+    /// destructors. A new thread starts on the global numeric locale and with
+    /// no pending render error, independently of its creator's compiler TLS.
+    numeric_locale: core::cell::UnsafeCell<Option<[u64; 3]>>,
+    render_failure: core::cell::UnsafeCell<i32>,
+
     /// POSIX cancellation settings, initialized independently of the creator.
     /// These settings do not imply native asynchronous cancellation delivery.
     pub cancel_state: AtomicI32,
@@ -239,7 +245,8 @@ pub struct ThreadHandle {
 
 // SAFETY: ThreadHandle is designed for cross-thread sharing via atomic fields.
 // The `retval` field is accessed only after synchronization (tid cleared to 0).
-// The errno cell is accessed only by its owning thread and its signal handlers.
+// The errno cell is accessed only by its owning thread and its signal handlers;
+// formatting cells are private to that owner and never exposed by reference.
 #[allow(unsafe_code)]
 unsafe impl Send for ThreadHandle {}
 #[allow(unsafe_code)]
@@ -795,9 +802,8 @@ unsafe fn free_thread_handle(handle: *mut ThreadHandle) {
     // drained and reclaimed before a native thread releases its identity.
     unsafe { core::ptr::drop_in_place(handle) };
     // SAFETY: mmap provided a page-aligned base and this exact extent.
-    let _ = unsafe {
-        syscall::sys_munmap(handle.cast::<u8>(), core::mem::size_of::<ThreadHandle>())
-    };
+    let _ =
+        unsafe { syscall::sys_munmap(handle.cast::<u8>(), core::mem::size_of::<ThreadHandle>()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,40 +1008,42 @@ pub unsafe fn prepare_thread_with_startup(
     };
     if mapping.is_null() {
         // A null pthread handle cannot be published, even if mmap succeeded.
-        let _ = unsafe {
-            syscall::sys_munmap(mapping, core::mem::size_of::<ThreadHandle>())
-        };
+        let _ = unsafe { syscall::sys_munmap(mapping, core::mem::size_of::<ThreadHandle>()) };
         free_thread_stack(stack_base, stack_total_size);
         return Err(12); // ENOMEM
     }
     let handle_ptr = mapping.cast::<ThreadHandle>();
     // SAFETY: the fresh mapping is aligned, writable, and exclusively owned.
-    unsafe { handle_ptr.write(ThreadHandle {
-        magic: THREAD_HANDLE_MAGIC,
-        tid: AtomicI32::new(0),
-        self_tid: AtomicI32::new(0),
-        state: AtomicU32::new(THREAD_STARTING),
-        started: AtomicU32::new(0),
-        entry_gate: AtomicU32::new(ENTRY_WAITING),
-        retval: core::cell::UnsafeCell::new(0),
-        errno: core::cell::UnsafeCell::new(0),
-        cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
-        cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
-        threading_policy_depth: AtomicU32::new(0),
-        cleanup_head: AtomicUsize::new(0),
-        exit_started: AtomicU32::new(0),
-        unwind_stack_boundary: AtomicUsize::new(0),
-        unwind_exception: core::cell::UnsafeCell::new([0; 2]),
-        cxa_eh_globals: core::cell::UnsafeCell::new([0; 2]),
-        runtime_tls: AtomicPtr::new(core::ptr::null_mut()),
-        stack_base,
-        stack_total_size,
-        stack_addr: stack.address,
-        stack_size: stack.size,
-        guard_size: stack.guard_size,
-        explicit_scheduling: startup.scheduling.is_some(),
-        tls_values: [super::tls::TlsEntry::default(); super::tls::TLS_KEY_SLOTS],
-    }) };
+    unsafe {
+        handle_ptr.write(ThreadHandle {
+            magic: THREAD_HANDLE_MAGIC,
+            tid: AtomicI32::new(0),
+            self_tid: AtomicI32::new(0),
+            state: AtomicU32::new(THREAD_STARTING),
+            started: AtomicU32::new(0),
+            entry_gate: AtomicU32::new(ENTRY_WAITING),
+            retval: core::cell::UnsafeCell::new(0),
+            errno: core::cell::UnsafeCell::new(0),
+            numeric_locale: core::cell::UnsafeCell::new(None),
+            render_failure: core::cell::UnsafeCell::new(0),
+            cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
+            cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
+            threading_policy_depth: AtomicU32::new(0),
+            cleanup_head: AtomicUsize::new(0),
+            exit_started: AtomicU32::new(0),
+            unwind_stack_boundary: AtomicUsize::new(0),
+            unwind_exception: core::cell::UnsafeCell::new([0; 2]),
+            cxa_eh_globals: core::cell::UnsafeCell::new([0; 2]),
+            runtime_tls: AtomicPtr::new(core::ptr::null_mut()),
+            stack_base,
+            stack_total_size,
+            stack_addr: stack.address,
+            stack_size: stack.size,
+            guard_size: stack.guard_size,
+            explicit_scheduling: startup.scheduling.is_some(),
+            tls_values: [super::tls::TlsEntry::default(); super::tls::TLS_KEY_SLOTS],
+        })
+    };
 
     // Prepare ThreadStartArgs on the child stack.
     // The args struct goes near the top of the stack, and the trampoline
@@ -1503,6 +1511,65 @@ pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
     handle_for_tid(syscall::sys_gettid())
 }
 
+/// Formatting must never interpret a failed owner lookup as permission to use
+/// compiler TLS, which a native child may share with its creator.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline]
+fn formatting_thread_handle() -> Option<*mut ThreadHandle> {
+    if !super::tls::native_threads_may_exist() {
+        return None;
+    }
+    let tid = syscall::sys_gettid();
+    if tid <= 0 {
+        std::process::abort();
+    }
+    handle_for_tid(tid)
+}
+
+/// `None` denotes a hosted caller; `Some(None)` is a native caller using the
+/// live global locale. Never confuse the latter with permission to read the
+/// creator's compiler TLS. Only copied values escape this ownership boundary.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn current_numeric_locale() -> Option<Option<[u64; 3]>> {
+    let handle = formatting_thread_handle()?;
+    // SAFETY: the current native owner keeps its handle live through every
+    // application destructor. Locale changes/formatting are not signal-safe;
+    // no reference or callback spans this scalar snapshot.
+    Some(unsafe { *(*handle).numeric_locale.get() })
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn set_current_numeric_locale(value: Option<[u64; 3]>) -> bool {
+    let Some(handle) = formatting_thread_handle() else {
+        return false;
+    };
+    // SAFETY: only the current owner accesses this private formatting cell.
+    unsafe { *(*handle).numeric_locale.get() = value };
+    true
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn set_current_render_failure(errno: i32) -> bool {
+    let Some(handle) = formatting_thread_handle() else {
+        return false;
+    };
+    // SAFETY: only the current owner accesses this private formatting cell.
+    unsafe { *(*handle).render_failure.get() = errno };
+    true
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+pub(crate) fn take_current_render_failure() -> Option<i32> {
+    let handle = formatting_thread_handle()?;
+    // SAFETY: no reference escapes, and no callback can reenter while replacing
+    // the current native owner's pending formatting error.
+    Some(unsafe { core::mem::replace(&mut *(*handle).render_failure.get(), 0) })
+}
+
 /// Run the current native owner's ABI TLS callbacks before withdrawing its
 /// identity. The callback itself removes entries before invoking user code.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -1536,7 +1603,9 @@ pub(crate) fn reclaim_native_runtime_tls(tid: i32) {
     // SAFETY: signals are blocked and this is the owner after all callbacks.
     // Withdrawal transfers the unique allocation to its reclaim hook.
     let state = unsafe {
-        (*handle).runtime_tls.swap(core::ptr::null_mut(), Ordering::AcqRel)
+        (*handle)
+            .runtime_tls
+            .swap(core::ptr::null_mut(), Ordering::AcqRel)
     };
     if !state.is_null() {
         // SAFETY: reclaim does not run application callbacks or consult TLS.

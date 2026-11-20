@@ -264,7 +264,8 @@ fn lc_all_report() -> *const c_char {
 /// cross-arm leakage it exists to prevent.
 #[doc(hidden)]
 pub fn locale_reset_active_charset_for_tests() {
-    THREAD_LOCALE.with(|selected| selected.set(None));
+    with_thread_locale(|selected| selected.set(None));
+    frankenlibc_core::stdio::printf::clear_thread_numeric();
     // EVERY category, not just LC_CTYPE. A reset that left one category on
     // C.UTF-8 would make the next arm's `setlocale(LC_ALL, NULL)` return a
     // composite string, which is exactly the cross-arm leak this exists to stop.
@@ -273,6 +274,7 @@ pub fn locale_reset_active_charset_for_tests() {
     }
     CTYPE_TABLES.store(std::ptr::null_mut(), Ordering::Release);
     set_category_charset(locale_core::LC_ALL, Charset::Ascii);
+    crate::ctype_abi::refresh_thread_ctype_slots();
 }
 
 /// The canonical name `setlocale` reports for `charset`.
@@ -2696,7 +2698,8 @@ struct LocaleObject {
 
 #[derive(Clone, Copy)]
 struct LocaleSelection {
-    handle: LocaleT,
+    // Opaque identity only; category snapshots do not dereference this value.
+    handle: usize,
     categories: LocaleCategories,
 }
 
@@ -2712,6 +2715,19 @@ static LOCALE_OBJECTS_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::A
 /// `thread_category` skips the per-call TLS lookup on `isw*`/`tow*`/`mbrtowc`.
 static THREAD_LOCALE_EVER_USED: AtomicBool = AtomicBool::new(false);
 
+struct LocaleThreadState {
+    selected: std::cell::Cell<Option<LocaleSelection>>,
+    handles: std::cell::Cell<[Option<CachedLocaleHandle>; 2]>,
+}
+
+static LOCALE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<LocaleThreadState> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| LocaleThreadState {
+        // POSIX pthread_create does not inherit the creator's thread locale.
+        selected: std::cell::Cell::new(None),
+        handles: std::cell::Cell::new([None, None]),
+    });
+
+#[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
     // Copy the immutable view when selecting a handle. Locale-sensitive hot
     // paths need neither a registry lock nor a dereference of a caller handle.
@@ -2729,12 +2745,44 @@ std::thread_local! {
 }
 
 #[inline]
+fn with_thread_locale<R>(f: impl FnOnce(&std::cell::Cell<Option<LocaleSelection>>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        LOCALE_OWNED_TLS.with(|state| f(&state.selected))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return LOCALE_OWNED_TLS.with(|state| f(&state.selected));
+        }
+        THREAD_LOCALE.with(f)
+    }
+}
+
+#[inline]
+fn with_thread_handle_cache<R>(
+    f: impl FnOnce(&std::cell::Cell<[Option<CachedLocaleHandle>; 2]>) -> R,
+) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        LOCALE_OWNED_TLS.with(|state| f(&state.handles))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if crate::owned_tls_cache::uses_owned_tls() {
+            return LOCALE_OWNED_TLS.with(|state| f(&state.handles));
+        }
+        THREAD_HANDLE_CACHE.with(f)
+    }
+}
+
+#[inline]
 fn thread_category(category: c_int) -> Option<Resolved> {
     if !THREAD_LOCALE_EVER_USED.load(Ordering::Relaxed) {
         return None;
     }
     let slot = locale_core::category_slot(category)?;
-    THREAD_LOCALE.with(|selected| selected.get().map(|view| view.categories[slot]))
+    with_thread_locale(|selected| selected.get().map(|view| view.categories[slot]))
 }
 
 /// Stable boxes are required: C callers retain addresses while the registry
@@ -2787,7 +2835,7 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
     }
     let key = handle as usize;
     let epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
-    if let Some(categories) = THREAD_HANDLE_CACHE.with(|cache| {
+    if let Some(categories) = with_thread_handle_cache(|cache| {
         let slots = cache.get();
         if let Some(entry) = slots[0]
             && entry.handle == key
@@ -2818,7 +2866,7 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
         (found, live_epoch)
     };
     if let Some(categories) = found {
-        THREAD_HANDLE_CACHE.with(|cache| {
+        with_thread_handle_cache(|cache| {
             let slots = cache.get();
             cache.set([
                 Some(CachedLocaleHandle {
@@ -3113,35 +3161,64 @@ pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
     } else if let Some(categories) = categories_for_handle(locale) {
         THREAD_LOCALE_EVER_USED.store(true, Ordering::Release);
         Some(LocaleSelection {
-            handle: locale,
+            handle: locale as usize,
             categories,
         })
     } else {
         unsafe { set_abi_errno(libc::EINVAL) };
         return f();
     };
-    let previous = THREAD_LOCALE.with(|selected| selected.replace(next));
-    let result = f();
-    THREAD_LOCALE.with(|selected| selected.set(previous));
-    result
+    struct RestoreLocale(Option<LocaleSelection>);
+    impl Drop for RestoreLocale {
+        fn drop(&mut self) {
+            install_thread_locale(self.0);
+        }
+    }
+    let previous = with_thread_locale(std::cell::Cell::get);
+    install_thread_locale(next);
+    let _restore = RestoreLocale(previous);
+    // No owned-cache borrow spans application code or unwinding. The guard
+    // restores numeric settings and stable ctype slots as well as selection.
+    f()
+}
+
+fn install_thread_locale(selection: Option<LocaleSelection>) {
+    with_thread_locale(|selected| selected.set(selection));
+    if let Some(selection) = selection {
+        // printf's radix and `'` grouping follow the same LC_NUMERIC snapshot
+        // used by the conversion and langinfo entrypoints.
+        if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
+            let field = |item: libc::nl_item| {
+                // SAFETY: resolved_langinfo returns a NUL-terminated static string.
+                unsafe { CStr::from_ptr(resolved_langinfo(item, selection.categories[slot])) }
+                    .to_bytes()
+            };
+            frankenlibc_core::stdio::printf::set_thread_numeric(
+                field(libc::RADIXCHAR),
+                field(libc::THOUSEP),
+                field(NL_GROUPING),
+            );
+        }
+    } else {
+        frankenlibc_core::stdio::printf::clear_thread_numeric();
+    }
+    crate::ctype_abi::refresh_thread_ctype_slots();
 }
 
 /// POSIX `uselocale`: null queries, LC_GLOBAL_LOCALE restores live global
 /// lookup, and an object selects an immutable view for this thread only.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
-    let previous = THREAD_LOCALE.with(|selected| {
+    let previous = with_thread_locale(|selected| {
         selected
             .get()
-            .map_or(GLOBAL_LOCALE_HANDLE, |view| view.handle)
+            .map_or(GLOBAL_LOCALE_HANDLE, |view| view.handle as LocaleT)
     });
     if newloc.is_null() {
         return previous;
     }
     if newloc == GLOBAL_LOCALE_HANDLE {
-        THREAD_LOCALE.with(|selected| selected.set(None));
-        frankenlibc_core::stdio::printf::clear_thread_numeric();
-        crate::ctype_abi::refresh_thread_ctype_slots();
+        install_thread_locale(None);
         return previous;
     }
     let Some(categories) = categories_for_handle(newloc) else {
@@ -3149,26 +3226,10 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
         return std::ptr::null_mut();
     };
     THREAD_LOCALE_EVER_USED.store(true, Ordering::Release);
-    THREAD_LOCALE.with(|selected| {
-        selected.set(Some(LocaleSelection {
-            handle: newloc,
-            categories,
-        }));
-    });
-    crate::ctype_abi::refresh_thread_ctype_slots();
-    // printf's radix and `'` grouping follow the thread's LC_NUMERIC.
-    if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
-        let field = |item: libc::nl_item| {
-            // SAFETY: resolved_langinfo returns a NUL-terminated static string.
-            unsafe { std::ffi::CStr::from_ptr(resolved_langinfo(item, categories[slot])) }
-                .to_bytes()
-        };
-        frankenlibc_core::stdio::printf::set_thread_numeric(
-            field(libc::RADIXCHAR),
-            field(libc::THOUSEP),
-            field(NL_GROUPING),
-        );
-    }
+    install_thread_locale(Some(LocaleSelection {
+        handle: newloc as usize,
+        categories,
+    }));
     previous
 }
 
@@ -3762,6 +3823,31 @@ mod tests {
         });
         worker.join().unwrap();
         assert_eq!(active_charset(), Charset::Utf8);
+        unsafe { uselocale(previous) };
+    }
+
+    #[test]
+    fn locale_objects_scoped_selection_restores_after_nested_unwind() {
+        let utf8 = locale_handle_for(Charset::Utf8);
+        let previous = unsafe { uselocale(utf8) };
+        let result = std::panic::catch_unwind(|| {
+            with_locale(c_locale_handle(), || {
+                assert_eq!(active_charset(), Charset::Ascii);
+                assert_eq!(
+                    unsafe { uselocale(std::ptr::null_mut()) },
+                    c_locale_handle()
+                );
+                with_locale(utf8, || {
+                    assert_eq!(active_charset(), Charset::Utf8);
+                    assert_eq!(unsafe { uselocale(std::ptr::null_mut()) }, utf8);
+                    panic!("unwind through nested locale scopes");
+                });
+            });
+        });
+        assert!(result.is_err());
+        assert_eq!(unsafe { uselocale(std::ptr::null_mut()) }, utf8);
+        assert_eq!(active_charset(), Charset::Utf8);
+        assert!(frankenlibc_core::stdio::printf::numeric_radix_is_dot());
         unsafe { uselocale(previous) };
     }
 
