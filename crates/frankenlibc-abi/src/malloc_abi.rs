@@ -6059,12 +6059,19 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         }
         return out;
     }
+    // Authoritative fallback provenance excludes arena ownership. Probing a
+    // known host block would unnecessarily initialize integrity keys, which
+    // can fail closed under the very mapping limit that realloc must report
+    // as an ordinary allocation/metadata failure while preserving this block.
+    let old_size = fallback_size(ptr);
     // A hardened-arena block (fl-internal state allocated outside the
     // allocator guard, e.g. a log ring, and grown inside it) is not a host
     // chunk either: its user pointer sits 32 bytes into one. Copy it out;
     // the old block stays allocated, since retiring it takes arena locks
     // this reentrant call may already be under.
-    if let Some(old_size) = arena_block_size_lockfree(ptr) {
+    if old_size.is_none()
+        && let Some(old_size) = arena_block_size_lockfree(ptr)
+    {
         let out = unsafe { bootstrap_malloc_passthrough(size) };
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
@@ -6078,7 +6085,6 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         }
         return out;
     }
-    let old_size = fallback_size(ptr);
     // SAFETY: native, arena and signal/table-held cases were handled above.
     // Registration must succeed before the old host block can be retired.
     let out = unsafe { realloc_tracked_fallback(ptr, size) };

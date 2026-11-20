@@ -2673,6 +2673,9 @@ fn fallback_realloc_metadata_failure_preserves_old_block() {
         return;
     }
 
+    // Keep allocation-integrity keys cold: a tracked host fallback must not
+    // attempt arena authentication when the mapping limit is in force. The
+    // replacement's provenance publication is the failure under test.
     frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
     let previous_depth = malloc_swap_reentry_depth_for_tests(1);
     let mut original = libc::rlimit {
