@@ -538,11 +538,22 @@ fn stdio_native_tls_wide_scope_isolated_across_first_clone_and_unwind() {
     use frankenlibc_abi::glibc_internal_abi::fwide;
     use frankenlibc_abi::stdio_abi::with_stdio_wide_scope_for_tests;
 
-    unsafe extern "C" fn byte_writer(stream: *mut c_void) -> *mut c_void {
-        // SAFETY: this independent, initially unoriented FILE lives until join.
+    struct ChildStreams {
+        byte: *mut c_void,
+        wide: *mut c_void,
+    }
+    unsafe extern "C" fn byte_writer(argument: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator retains this context and both FILEs until join.
+        let streams = unsafe { &*argument.cast::<ChildStreams>() };
         unsafe {
-            if fputc(b'X' as c_int, stream) != b'X' as c_int || fwide(stream, 0) >= 0 {
+            if fputc(b'X' as c_int, streams.byte) != b'X' as c_int || fwide(streams.byte, 0) >= 0 {
                 return 1usize as *mut c_void;
+            }
+            // A native child must start outside its creator's bridge scope.
+            // This wide stream makes inherited depth observable: it would
+            // wrongly allow the byte write instead of rejecting it.
+            if fputc(b'Y' as c_int, streams.wide) != libc::EOF || fwide(streams.wide, 0) <= 0 {
+                return 2usize as *mut c_void;
             }
         }
         std::ptr::null_mut()
@@ -551,37 +562,73 @@ fn stdio_native_tls_wide_scope_isolated_across_first_clone_and_unwind() {
     // SAFETY: the child and creator use independent, live FILE objects.
     unsafe {
         let child_stream = tmpfile();
+        let child_wide_stream = tmpfile();
         let bridge_stream = tmpfile();
-        assert!(!child_stream.is_null() && !bridge_stream.is_null());
+        let byte_stream = tmpfile();
+        assert!(
+            !child_stream.is_null()
+                && !child_wide_stream.is_null()
+                && !bridge_stream.is_null()
+                && !byte_stream.is_null()
+        );
         assert_eq!(fwide(child_stream, 0), 0);
-        assert_eq!(fwide(bridge_stream, 0), 0);
+        assert_eq!(fwide(byte_stream, 0), 0);
+        assert!(fwide(child_wide_stream, 1) > 0);
+        // Real wide operations select their orientation before entering the
+        // internal byte bridge. An unoriented stream would instead become
+        // effectively byte-oriented as soon as core buffering records I/O.
+        assert!(fwide(bridge_stream, 1) > 0);
+        let mut child_streams = ChildStreams {
+            byte: child_stream,
+            wide: child_wide_stream,
+        };
 
         with_stdio_wide_scope_for_tests(|| {
             with_stdio_wide_scope_for_tests(|| {
-                assert_eq!(run_native_stdio_worker(byte_writer, child_stream), 0);
+                assert_eq!(
+                    run_native_stdio_worker(
+                        byte_writer,
+                        std::ptr::addr_of_mut!(child_streams).cast()
+                    ),
+                    0
+                );
             });
             // The creator's outer bridge scope survives both native admission
-            // and the inner guard dropping. Its internal byte writes must not
-            // select a byte orientation on behalf of a wide operation.
+            // and the inner guard dropping. Its internal byte writes remain
+            // permitted on behalf of the wide operation.
             assert_eq!(fputc(b'A' as c_int, bridge_stream), b'A' as c_int);
-            assert_eq!(fwide(bridge_stream, 0), 0);
+            assert!(fwide(bridge_stream, 0) > 0);
             let unwind = std::panic::catch_unwind(|| {
                 with_stdio_wide_scope_for_tests(|| panic!("nested wide bridge unwind"));
             });
             assert!(unwind.is_err());
             assert_eq!(fputc(b'B' as c_int, bridge_stream), b'B' as c_int);
-            assert_eq!(fwide(bridge_stream, 0), 0);
+            assert!(fwide(bridge_stream, 0) > 0);
         });
 
-        // After the final guard drops, a normal byte write selects byte mode.
-        assert_eq!(fputc(b'C' as c_int, bridge_stream), b'C' as c_int);
-        assert!(fwide(bridge_stream, 0) < 0);
-        rewind(bridge_stream);
+        // After the final guard drops, an ordinary byte write must again be
+        // rejected on the wide stream and select byte mode on a fresh stream.
+        assert_eq!(fputc(b'C' as c_int, bridge_stream), libc::EOF);
+        assert!(fwide(bridge_stream, 0) > 0);
+        clearerr(bridge_stream);
+        assert_eq!(fflush(bridge_stream), 0);
         let mut bytes = [0u8; 3];
-        assert_eq!(fread(bytes.as_mut_ptr().cast(), 1, 3, bridge_stream), 3);
-        assert_eq!(&bytes, b"ABC");
+        let bridge_fd = fileno(bridge_stream);
+        assert!(bridge_fd >= 0);
+        assert_eq!(
+            libc::pread(bridge_fd, bytes.as_mut_ptr().cast(), bytes.len(), 0),
+            2
+        );
+        assert_eq!(&bytes[..2], b"AB");
+        assert_eq!(fputc(b'C' as c_int, byte_stream), b'C' as c_int);
+        assert!(fwide(byte_stream, 0) < 0);
+        rewind(byte_stream);
+        assert_eq!(fread(bytes.as_mut_ptr().cast(), 1, 1, byte_stream), 1);
+        assert_eq!(bytes[0], b'C');
         assert_eq!(fclose(child_stream), 0);
+        assert_eq!(fclose(child_wide_stream), 0);
         assert_eq!(fclose(bridge_stream), 0);
+        assert_eq!(fclose(byte_stream), 0);
     }
 }
 

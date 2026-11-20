@@ -304,7 +304,7 @@ fn locale_native_tls_separates_numeric_formatting_and_render_errors() {
             failures |= 1;
         }
         set_thread_numeric(b";", b"_", &[3]);
-        let mut output = [0_i8; 64];
+        let mut output = [0 as c_char; 64];
         // SAFETY: writable output and arguments match the terminated format.
         let count = unsafe {
             frankenlibc_abi::stdio_abi::snprintf(
@@ -342,7 +342,7 @@ fn locale_native_tls_separates_numeric_formatting_and_render_errors() {
     }
     assert_eq!(take_render_failure(), libc::ENOMEM);
     assert_eq!(take_render_failure(), 0);
-    let mut output = [0_i8; 64];
+    let mut output = [0 as c_char; 64];
     assert_eq!(
         unsafe {
             frankenlibc_abi::stdio_abi::snprintf(
