@@ -15,6 +15,9 @@ use std::collections::VecDeque;
 
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::lattice::SafetyState;
+use crate::runtime_math::allocator_telemetry::{
+    ArenaFragmentationCounters, ArenaFragmentationSnapshot,
+};
 use crate::tls_cache::bump_shard_epoch;
 
 /// Maximum quarantine size in bytes, across all shards.
@@ -344,6 +347,8 @@ struct ArenaShard {
     retire_pending: Vec<QuarantineEntry>,
     /// Total `total_size` of `retire_pending`.
     retire_pending_bytes: usize,
+    /// Actual successful transitions and live extents, protected by this shard.
+    fragmentation: ArenaFragmentationCounters,
 }
 
 /// Drained entries a batched free accumulates per shard before handing them
@@ -363,6 +368,7 @@ impl ArenaShard {
             quarantine_bytes: 0,
             retire_pending: Vec::with_capacity(8),
             retire_pending_bytes: 0,
+            fragmentation: ArenaFragmentationCounters::new(),
         }
     }
 }
@@ -413,6 +419,9 @@ pub struct AllocationArena {
     /// shards' own counts, maintained where frees enter and drains leave).
     quarantine_total_bytes: std::sync::atomic::AtomicUsize,
     quarantine_total_entries: std::sync::atomic::AtomicUsize,
+    /// Set once per 256 completed transitions in a shard. A contended sample
+    /// remains pending; ordinary allocations only read this flag.
+    fragmentation_pending: std::sync::atomic::AtomicBool,
 }
 
 /// Result of a successful allocation in the arena.
@@ -457,6 +466,7 @@ impl AllocationArena {
             next_generation: std::sync::atomic::AtomicU64::new(1),
             quarantine_total_bytes: std::sync::atomic::AtomicUsize::new(0),
             quarantine_total_entries: std::sync::atomic::AtomicUsize::new(0),
+            fragmentation_pending: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -555,6 +565,9 @@ impl AllocationArena {
             idx
         };
         shard.addr_to_slot.insert(user_base, slot_idx);
+        if shard.fragmentation.allocate(user_size, total_size) {
+            self.defer_fragmentation_observation();
+        }
         drop(shard);
         // The pointer is not returned yet, so no lookup can race this.
         if total_size > SMALL_EXTENT {
@@ -672,6 +685,10 @@ impl AllocationArena {
             let total_size = offset + slot.user_size + TRAILING_REDZONE_SIZE;
             let align = offset;
 
+            if shard.fragmentation.free(user_size, total_size) {
+                self.defer_fragmentation_observation();
+            }
+
             self.enqueue_quarantine(
                 &mut shard,
                 QuarantineEntry {
@@ -701,6 +718,49 @@ impl AllocationArena {
             CachedAllocationIntegrity::Stale => unreachable!("locked live slot cannot be stale"),
         };
         (result, user_size, drained)
+    }
+
+    /// Read coherent accounting without waiting for a busy arena. At most the
+    /// fixed shard count is visited; no allocation list or heap walk is needed.
+    /// Guards are dropped before returning and no controller is called locked.
+    #[must_use]
+    pub fn try_fragmentation_snapshot(&self) -> Option<ArenaFragmentationSnapshot> {
+        let mut guards: [Option<MutexGuard<'_, ArenaShard>>; NUM_SHARDS] =
+            std::array::from_fn(|_| None);
+        for (guard, shard) in guards.iter_mut().zip(self.shards.iter()) {
+            *guard = Some(shard.try_lock()?);
+        }
+        let mut counters = ArenaFragmentationCounters::new();
+        let mut retained = 0usize;
+        for guard in guards.iter().flatten() {
+            counters.add(&guard.fragmentation);
+            retained = retained
+                .saturating_add(guard.quarantine_bytes)
+                .saturating_add(guard.retire_pending_bytes);
+        }
+        drop(guards);
+        Some(counters.snapshot(retained))
+    }
+
+    /// Claim sampled feedback. Failure to acquire any shard preserves the
+    /// pending work for a later successful operation; it never blocks malloc.
+    pub(crate) fn take_fragmentation_observation(&self) -> Option<ArenaFragmentationSnapshot> {
+        use std::sync::atomic::Ordering;
+        if !self.fragmentation_pending.load(Ordering::Acquire)
+            || !self.fragmentation_pending.swap(false, Ordering::AcqRel)
+        {
+            return None;
+        }
+        let snapshot = self.try_fragmentation_snapshot();
+        if snapshot.is_none() {
+            self.defer_fragmentation_observation();
+        }
+        snapshot
+    }
+
+    pub(crate) fn defer_fragmentation_observation(&self) {
+        self.fragmentation_pending
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Recheck a cached allocation without dereferencing stale cached pointers.
@@ -1060,6 +1120,67 @@ mod tests {
         let local = 42u64;
         let (result, _) = arena.free(std::ptr::addr_of!(local) as *mut u8);
         assert_eq!(result, FreeResult::ForeignPointer);
+    }
+
+    #[test]
+    fn fragmentation_accounting_excludes_failed_operations_and_retains_quarantine() {
+        let arena = AllocationArena::new();
+        let small = arena.allocate(64).expect("small allocation");
+        let large = arena
+            .allocate_aligned(1024, 256)
+            .expect("aligned allocation");
+        let before = arena
+            .try_fragmentation_snapshot()
+            .expect("uncontended snapshot");
+        assert_eq!(before.successful_allocations, 2);
+        assert_eq!(before.successful_frees, 0);
+        assert_eq!(before.live_allocations, 2);
+        assert_eq!(before.live_requested_bytes, 1088);
+        assert_eq!(
+            before.retained_backing_bytes,
+            small.total_size + large.total_size
+        );
+        assert_eq!(before.size_class_dispersion_ppm, 500_000);
+
+        assert!(arena.allocate(usize::MAX).is_none());
+        assert!(arena.allocate_aligned(1024, 33).is_none());
+        let mut foreign = [0u8; 32];
+        assert_eq!(
+            arena.free(foreign.as_mut_ptr()).0,
+            FreeResult::ForeignPointer
+        );
+        assert_eq!(arena.try_fragmentation_snapshot(), Some(before));
+
+        assert_eq!(arena.free(small.ptr).0, FreeResult::Freed);
+        let freed = arena
+            .try_fragmentation_snapshot()
+            .expect("snapshot after free");
+        assert_eq!(freed.successful_frees, 1);
+        assert_eq!(freed.live_allocations, 1);
+        assert_eq!(freed.live_requested_bytes, 1024);
+        assert_eq!(freed.retained_backing_bytes, before.retained_backing_bytes);
+        assert!(freed.arena_utilization_ppm < before.arena_utilization_ppm);
+        assert_eq!(arena.free(small.ptr).0, FreeResult::DoubleFree);
+        assert_eq!(arena.try_fragmentation_snapshot(), Some(freed));
+    }
+
+    #[test]
+    fn fragmentation_sampling_retries_busy_shards_without_waiting() {
+        let arena = AllocationArena::new();
+        let _allocation = arena.allocate(64).expect("allocation");
+        arena.defer_fragmentation_observation();
+        let busy = arena.shards[NUM_SHARDS - 1].lock();
+        assert!(arena.take_fragmentation_observation().is_none());
+        assert!(
+            arena.shards[0].try_lock().is_some(),
+            "partial snapshot releases its guards"
+        );
+        drop(busy);
+        let sample = arena
+            .take_fragmentation_observation()
+            .expect("pending sample retained");
+        assert_eq!(sample.successful_allocations, 1);
+        assert!(arena.take_fragmentation_observation().is_none());
     }
 
     #[test]

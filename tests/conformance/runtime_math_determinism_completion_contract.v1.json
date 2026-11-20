@@ -143,7 +143,7 @@
         "frankenlibc_harness::runtime_math_determinism_proofs::run_and_write"
       ],
       "snapshot_schema_doc": [
-        "RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 2",
+        "RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 3",
         "schema_version",
         "decisions",
         "full_validation_trigger_ppm",

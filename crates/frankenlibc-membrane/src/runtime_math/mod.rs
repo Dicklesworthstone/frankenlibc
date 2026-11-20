@@ -659,7 +659,7 @@ pub trait RuntimeKernelFramework {
 /// - Additive-only changes are allowed without bumping the version.
 /// - Any rename/removal/semantic change requires bump + explicit migration plan
 ///   for fixtures and harness diff tooling.
-pub const RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+pub const RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// Runtime state snapshot useful for tests/telemetry export.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -848,10 +848,21 @@ pub struct RuntimeKernelSnapshot {
     pub sos_barrier_provenance_value: i64,
     /// SOS barrier quarantine certificate value (milli-units, negative = violation).
     pub sos_barrier_quarantine_value: i64,
-    /// SOS barrier fragmentation certificate value (milli-units, negative = violation).
+    /// Advisory resource-pressure score; not an observed result while
+    /// evaluations is zero. A negative score does not deny valid accesses.
     pub sos_barrier_fragmentation_value: i64,
-    /// SOS barrier thread-safety certificate value (milli-units, negative = violation).
+    /// Thread-safety score; not an observed result while evaluations is zero.
     pub sos_barrier_thread_safety_value: i64,
+    #[serde(default)]
+    pub sos_barrier_fragmentation_evaluations: u64,
+    #[serde(default)]
+    pub sos_barrier_fragmentation_pressure_events: u64,
+    #[serde(default)]
+    pub sos_barrier_thread_safety_evaluations: u64,
+    /// Actual hardened-arena counters behind the most recent measured score.
+    /// None means this kernel has received no arena sample.
+    #[serde(default)]
+    pub sos_barrier_arena_fragmentation: Option<allocator_telemetry::ArenaFragmentationSnapshot>,
     /// SOS barrier size-class certificate value (milli-units, negative = violation).
     pub sos_barrier_size_class_value: i64,
     /// SOS barrier total violation count.
@@ -3969,8 +3980,8 @@ impl RuntimeMathKernel {
             }
 
             // Feed SOS barrier certificate evaluator (cadence-gated).
-            // Evaluates provenance + quarantine + fragmentation + thread-safety
-            // barriers using cached runtime signals.
+            // Evaluates provenance + quarantine. Allocator geometry and
+            // thread ownership cannot be inferred from generic severity.
             {
                 {
                     let mut barrier = self.sos_barrier.lock();
@@ -3982,7 +3993,6 @@ impl RuntimeMathKernel {
                         0u32
                     };
                     let depth = current_depth() as u32;
-                    let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth);
                     let pressure_score_milli =
                         self.cached_pressure_score_milli.load(Ordering::Relaxed);
                     let pressure_raw_score_milli =
@@ -4003,48 +4013,15 @@ impl RuntimeMathKernel {
                         projected_pressure_ppm,
                         arena_pressure_ppm,
                     );
-                    if matches!(family, ApiFamily::Allocator) {
-                        barrier.note_allocator_observation(adverse, depth);
-                    }
                     // Quarantine barrier: evaluate on cadence.
                     if barrier.is_quarantine_cadence() {
                         let contention = crate::quarantine_controller::CONTENTION.current_peak();
                         let lambda_latency = crate::quarantine_controller::current_lambda_latency();
                         barrier.evaluate_quarantine(depth, contention, risk_ppm, lambda_latency);
                     }
-                    // Fragmentation barrier: allocator-family cadence check.
-                    if matches!(family, ApiFamily::Allocator) && barrier.is_fragmentation_cadence()
-                    {
-                        let sparse_state =
-                            u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
-                        let size_dispersion_ppm = sparse_state.saturating_mul(250_000);
-                        barrier.evaluate_fragmentation(size_dispersion_ppm, arena_utilization_ppm);
-                    }
-                    if matches!(family, ApiFamily::Allocator | ApiFamily::Threading) {
-                        let sparse_state =
-                            u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
-                        let mfg_state =
-                            u32::from(self.cached_mfg_state.load(Ordering::Relaxed)).min(3);
-                        let thread_count = 32u32.saturating_add(mfg_state.saturating_mul(128));
-                        let live_contention =
-                            crate::quarantine_controller::CONTENTION.current_peak();
-                        let concurrent_writers = 1u32
-                            .saturating_add(u32::from(adverse))
-                            .saturating_add(mfg_state / 2)
-                            .max(live_contention);
-                        let owner_conflict =
-                            adverse && !profile.requires_full() && risk_ppm > 300_000;
-                        let free_list_skew_ppm =
-                            sparse_state.saturating_mul(200_000).min(1_000_000);
-                        let allocation_epoch_lag_ppm = risk_ppm.min(1_000_000);
-                        barrier.evaluate_thread_safety(
-                            thread_count,
-                            concurrent_writers,
-                            owner_conflict,
-                            free_list_skew_ppm,
-                            allocation_epoch_lag_ppm,
-                        );
-                    }
+                    // Fragmentation is supplied by completed arena operations
+                    // through observe_allocator_fragmentation. Thread-safety
+                    // inputs have no live producer yet and remain unobserved.
                     let barrier_code = match barrier.state() {
                         SosBarrierState::Calibrating => 0u8,
                         SosBarrierState::Safe => 1u8,
@@ -4838,6 +4815,28 @@ impl RuntimeMathKernel {
         self.quarantine.lock().snapshot()
     }
 
+    /// Apply a measured hardened-arena sample after releasing allocator locks.
+    /// Busy or reentrant observers never wait for the SOS controller; the
+    /// producer retains pending work and retries on a later completed operation.
+    /// Integer arithmetic only: no allocation, TLS, errno or fenv side effects.
+    /// Samples must belong to one arena's cumulative history; the production
+    /// pipeline owns a matching arena/kernel pair. Mixing arenas is unsupported.
+    pub fn observe_allocator_fragmentation(
+        &self,
+        sample: allocator_telemetry::ArenaFragmentationSnapshot,
+    ) -> bool {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED || !self.validation_feedback_enabled() {
+            return true;
+        }
+        let Some(mut barrier) = self.sos_barrier.try_lock() else {
+            return false;
+        };
+        barrier.evaluate_arena_fragmentation(sample);
+        self.cached_sos_barrier_state
+            .store(barrier.state() as u8, Ordering::Relaxed);
+        true
+    }
+
     /// Record overlap information for cross-shard consistency checks.
     ///
     /// Returns true when overlap is consistent, false when a cocycle fault is detected.
@@ -5106,10 +5105,13 @@ impl RuntimeMathKernel {
             sos_barrier_quarantine_value: sos_barrier_summary.quarantine_value,
             sos_barrier_fragmentation_value: sos_barrier_summary.fragmentation_value,
             sos_barrier_thread_safety_value: sos_barrier_summary.thread_safety_value,
+            sos_barrier_fragmentation_evaluations: sos_barrier_summary.fragmentation_evaluations,
+            sos_barrier_fragmentation_pressure_events: sos_barrier_summary.fragmentation_violations,
+            sos_barrier_thread_safety_evaluations: sos_barrier_summary.thread_safety_evaluations,
+            sos_barrier_arena_fragmentation: sos_barrier_summary.last_arena_fragmentation,
             sos_barrier_size_class_value: sos_barrier_summary.size_class_value,
             sos_barrier_violations: sos_barrier_summary.provenance_violations
                 + sos_barrier_summary.quarantine_violations
-                + sos_barrier_summary.fragmentation_violations
                 + sos_barrier_summary.thread_safety_violations
                 + sos_barrier_summary.size_class_violations
                 + if sos_barrier_summary.fragmentation_hash_valid {
@@ -6268,6 +6270,35 @@ mod tests {
         assert_eq!(kernel.observe_pending_allocator_size_classes(&telemetry), 1);
         assert!(!telemetry.has_pending());
         assert_eq!(kernel.cached_sos_barrier_state.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn arena_fragmentation_feedback_defers_and_rejects_stale_snapshots() {
+        let arena = crate::arena::AllocationArena::new();
+        let first = arena.allocate(64).expect("first allocation");
+        let older = arena.try_fragmentation_snapshot().expect("first snapshot");
+        let _second = arena.allocate(1024).expect("second allocation");
+        let newer = arena.try_fragmentation_snapshot().expect("second snapshot");
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let controller = kernel.sos_barrier.lock();
+        assert!(!kernel.observe_allocator_fragmentation(newer));
+        assert_eq!(controller.summary().fragmentation_evaluations, 0);
+        drop(controller);
+        assert!(kernel.observe_allocator_fragmentation(newer));
+        assert!(kernel.observe_allocator_fragmentation(older));
+        let summary = kernel.sos_barrier.lock().summary();
+        assert_eq!(summary.fragmentation_evaluations, 1);
+        assert_eq!(summary.last_arena_fragmentation, Some(newer));
+        assert_eq!(summary.thread_safety_evaluations, 0);
+
+        assert_eq!(arena.free(first.ptr).0, crate::arena::FreeResult::Freed);
+        let retired = arena
+            .try_fragmentation_snapshot()
+            .expect("retirement snapshot");
+        assert!(kernel.observe_allocator_fragmentation(retired));
+        let summary = kernel.sos_barrier.lock().summary();
+        assert_eq!(summary.fragmentation_evaluations, 2);
+        assert_eq!(summary.last_arena_fragmentation, Some(retired));
     }
 
     fn snapshot_struct_field_names(source: &str) -> Vec<String> {

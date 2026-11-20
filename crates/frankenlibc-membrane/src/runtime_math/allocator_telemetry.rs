@@ -9,6 +9,142 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::sos_barrier::size_class_mapping_requires_immediate_evaluation;
 
+/// A coherent observation of the hardened arena, taken while all its shard
+/// locks are held. This describes that arena only, not the process heap or RSS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ArenaFragmentationSnapshot {
+    pub successful_allocations: u64,
+    pub successful_frees: u64,
+    pub live_allocations: u64,
+    pub live_requested_bytes: usize,
+    /// Live raw extents plus quarantined and parked-retirement extents. Drained
+    /// batches are excluded as soon as they leave arena ownership, including
+    /// the caller-owned interval before epoch retirement.
+    pub retained_backing_bytes: usize,
+    /// Gini-Simpson dispersion of live allocations in floor(log2(size)) bins.
+    /// Zero-byte allocations share the first bin with one-byte allocations.
+    /// Integer proportions make the result deterministic to ppm precision.
+    pub size_class_dispersion_ppm: u32,
+    /// Live requested bytes divided by backing extents retained by this arena.
+    /// Includes header/alignment/redzone overhead in the denominator.
+    pub arena_utilization_ppm: u32,
+}
+
+impl ArenaFragmentationSnapshot {
+    /// Preserve the allocation/free ratio when a long-running process exceeds
+    /// the certificate's u32 count interface, instead of clipping both to MAX.
+    pub(crate) fn certificate_counts(self) -> (u32, u32) {
+        let largest = self.successful_allocations.max(self.successful_frees);
+        let scale = largest.div_ceil(u64::from(u32::MAX)).max(1);
+        (
+            (self.successful_allocations / scale) as u32,
+            (self.successful_frees / scale) as u32,
+        )
+    }
+}
+
+/// Updated under an arena shard's existing lock: no additional atomic updates,
+/// allocation, TLS, floating arithmetic, or controller lock on the hot path.
+pub(crate) struct ArenaFragmentationCounters {
+    successful_allocations: u64,
+    successful_frees: u64,
+    live_requested_bytes: usize,
+    live_backing_bytes: usize,
+    live_size_bins: [u64; usize::BITS as usize],
+    mutations: u8,
+}
+
+impl ArenaFragmentationCounters {
+    pub(crate) const fn new() -> Self {
+        Self {
+            successful_allocations: 0,
+            successful_frees: 0,
+            live_requested_bytes: 0,
+            live_backing_bytes: 0,
+            live_size_bins: [0; usize::BITS as usize],
+            mutations: 0,
+        }
+    }
+
+    fn note_mutation(&mut self) -> bool {
+        self.mutations = self.mutations.wrapping_add(1);
+        self.mutations == 0
+    }
+
+    pub(crate) fn allocate(&mut self, requested: usize, backing: usize) -> bool {
+        self.successful_allocations = self.successful_allocations.saturating_add(1);
+        self.live_requested_bytes = self.live_requested_bytes.saturating_add(requested);
+        self.live_backing_bytes = self.live_backing_bytes.saturating_add(backing);
+        let bin = &mut self.live_size_bins[requested.max(1).ilog2() as usize];
+        *bin = bin.saturating_add(1);
+        self.note_mutation()
+    }
+
+    pub(crate) fn free(&mut self, requested: usize, backing: usize) -> bool {
+        self.successful_frees = self.successful_frees.saturating_add(1);
+        self.live_requested_bytes = self.live_requested_bytes.saturating_sub(requested);
+        self.live_backing_bytes = self.live_backing_bytes.saturating_sub(backing);
+        let bin = &mut self.live_size_bins[requested.max(1).ilog2() as usize];
+        *bin = bin.saturating_sub(1);
+        self.note_mutation()
+    }
+
+    pub(crate) fn add(&mut self, other: &Self) {
+        self.successful_allocations = self
+            .successful_allocations
+            .saturating_add(other.successful_allocations);
+        self.successful_frees = self.successful_frees.saturating_add(other.successful_frees);
+        self.live_requested_bytes = self
+            .live_requested_bytes
+            .saturating_add(other.live_requested_bytes);
+        self.live_backing_bytes = self
+            .live_backing_bytes
+            .saturating_add(other.live_backing_bytes);
+        for (count, other_count) in self.live_size_bins.iter_mut().zip(&other.live_size_bins) {
+            *count = count.saturating_add(*other_count);
+        }
+    }
+
+    pub(crate) fn snapshot(&self, retired_backing_bytes: usize) -> ArenaFragmentationSnapshot {
+        let live_allocations = self
+            .live_size_bins
+            .iter()
+            .copied()
+            .fold(0u64, u64::saturating_add);
+        let concentration_ppm = if live_allocations == 0 {
+            1_000_000
+        } else {
+            self.live_size_bins
+                .iter()
+                .map(|&count| {
+                    let proportion =
+                        (u128::from(count) * 1_000_000 / u128::from(live_allocations)) as u64;
+                    proportion * proportion
+                })
+                .sum::<u64>()
+                / 1_000_000
+        };
+        let retained_backing_bytes = self
+            .live_backing_bytes
+            .saturating_add(retired_backing_bytes);
+        let utilization = if retained_backing_bytes == 0 {
+            0
+        } else {
+            ((self.live_requested_bytes as u128) * 1_000_000 / retained_backing_bytes as u128)
+                .min(1_000_000) as u32
+        };
+        ArenaFragmentationSnapshot {
+            successful_allocations: self.successful_allocations,
+            successful_frees: self.successful_frees,
+            live_allocations,
+            live_requested_bytes: self.live_requested_bytes,
+            retained_backing_bytes,
+            size_class_dispersion_ppm: 1_000_000u32.saturating_sub(concentration_ppm as u32),
+            arena_utilization_ppm: utilization,
+        }
+    }
+}
+
 /// Ordinary mappings select one observation per 256 class selections.
 pub const SEGMENT_SIZE_CLASS_SAMPLE_STRIDE: u64 = 256;
 
@@ -180,5 +316,95 @@ impl SegmentSizeClassTelemetry {
 impl Default for SegmentSizeClassTelemetry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod fragmentation_tests {
+    use super::*;
+
+    #[test]
+    fn fragmentation_counts_backing_retained_after_free() {
+        let mut counts = ArenaFragmentationCounters::new();
+        counts.allocate(64, 128);
+        counts.allocate(64, 128);
+        let active = counts.snapshot(0);
+        assert_eq!(
+            (active.successful_allocations, active.successful_frees),
+            (2, 0)
+        );
+        assert_eq!(active.live_allocations, 2);
+        assert_eq!(active.live_requested_bytes, 128);
+        assert_eq!(active.retained_backing_bytes, 256);
+        assert_eq!(active.size_class_dispersion_ppm, 0);
+        assert_eq!(active.arena_utilization_ppm, 500_000);
+
+        counts.free(64, 128);
+        let one_left = counts.snapshot(128);
+        assert_eq!(one_left.live_allocations, 1);
+        assert_eq!(
+            one_left.retained_backing_bytes,
+            active.retained_backing_bytes
+        );
+        assert_eq!(one_left.arena_utilization_ppm, 250_000);
+        counts.free(64, 128);
+        let retired = counts.snapshot(256);
+        assert_eq!(
+            (retired.successful_allocations, retired.successful_frees),
+            (2, 2)
+        );
+        assert_eq!(retired.live_allocations, 0);
+        assert_eq!(retired.retained_backing_bytes, 256);
+        assert_eq!(retired.arena_utilization_ppm, 0);
+        assert_eq!(retired.size_class_dispersion_ppm, 0);
+    }
+
+    #[test]
+    fn fragmentation_distinguishes_size_distribution_from_byte_volume() {
+        let mut uniform = ArenaFragmentationCounters::new();
+        uniform.allocate(544, 608);
+        uniform.allocate(544, 608);
+        let mut small = ArenaFragmentationCounters::new();
+        small.allocate(64, 128);
+        let mut large = ArenaFragmentationCounters::new();
+        large.allocate(1024, 1088);
+        small.add(&large);
+        let uniform = uniform.snapshot(0);
+        let mixed = small.snapshot(0);
+        assert_eq!(uniform.live_requested_bytes, mixed.live_requested_bytes);
+        assert_eq!(uniform.retained_backing_bytes, mixed.retained_backing_bytes);
+        assert_eq!(uniform.arena_utilization_ppm, mixed.arena_utilization_ppm);
+        assert_eq!(uniform.size_class_dispersion_ppm, 0);
+        assert_eq!(mixed.size_class_dispersion_ppm, 500_000);
+    }
+
+    #[test]
+    fn fragmentation_sampling_counts_zero_size_and_actual_transitions() {
+        let mut counts = ArenaFragmentationCounters::new();
+        for cycle in 0..128 {
+            assert!(!counts.allocate(0, 64));
+            assert_eq!(counts.free(0, 64), cycle == 127);
+        }
+        let sample = counts.snapshot(128 * 64);
+        assert_eq!(
+            (sample.successful_allocations, sample.successful_frees),
+            (128, 128)
+        );
+        assert_eq!(sample.live_requested_bytes, 0);
+        assert_eq!(sample.retained_backing_bytes, 128 * 64);
+        assert_eq!(sample.arena_utilization_ppm, 0);
+    }
+
+    #[test]
+    fn fragmentation_normalizes_large_counters_without_losing_imbalance() {
+        let mut counts = ArenaFragmentationCounters::new();
+        counts.successful_allocations = u64::from(u32::MAX) * 8;
+        counts.successful_frees = u64::from(u32::MAX) * 2;
+        assert_eq!(
+            counts.snapshot(0).certificate_counts(),
+            (u32::MAX, u32::MAX / 4)
+        );
+        counts.allocate(usize::MAX, usize::MAX);
+        assert_eq!(counts.snapshot(0).arena_utilization_ppm, 1_000_000);
     }
 }

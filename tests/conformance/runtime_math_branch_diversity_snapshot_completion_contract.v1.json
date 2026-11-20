@@ -152,7 +152,7 @@
       ]
     },
     "snapshot_capture": {
-      "snapshot_schema_version": 2,
+      "snapshot_schema_version": 3,
       "minimum_snapshot_tests": 5,
       "minimum_snapshot_fields": 16,
       "required_source_tokens": [

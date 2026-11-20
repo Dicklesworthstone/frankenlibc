@@ -122,6 +122,40 @@ fn e2e_cold_sos_violation_enforces_both_modes_and_recovers() {
 }
 
 #[test]
+fn e2e_real_allocation_pressure_remains_advisory_in_both_modes() {
+    let arena = frankenlibc_membrane::arena::AllocationArena::new();
+    let allocation = arena.allocate(4096).expect("valid allocation");
+    let sample = arena
+        .try_fragmentation_snapshot()
+        .expect("uncontended arena");
+    for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+        let kernel = RuntimeMathKernel::new_for_mode(mode);
+        assert!(kernel.observe_allocator_fragmentation(sample));
+        let snapshot = kernel.snapshot(mode);
+        assert_eq!(snapshot.sos_barrier_fragmentation_evaluations, 1);
+        assert_eq!(snapshot.sos_barrier_arena_fragmentation, Some(sample));
+        assert!(snapshot.sos_barrier_fragmentation_value < 0);
+        assert_eq!(snapshot.sos_barrier_fragmentation_pressure_events, 1);
+        assert_eq!(snapshot.sos_barrier_violations, 0);
+        assert_eq!(snapshot.sos_barrier_thread_safety_evaluations, 0);
+        let ctx = RuntimeContext::pointer_validation(allocation.user_base, false);
+        assert!(!matches!(
+            kernel.decide(mode, ctx).action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+
+        // A genuine mapping violation still changes admission in both modes;
+        // making utilization advisory must not bypass independent safety checks.
+        kernel.observe_size_class_mapping(64, 32, true);
+        let decision = kernel.decide(mode, ctx);
+        assert!(matches!(
+            decision.action,
+            MembraneAction::Deny | MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        ));
+    }
+}
+
+#[test]
 fn e2e_segment_class_samples_retain_cold_faults_and_recover() {
     assert!(RUNTIME_MATH_PRODUCTION_ENABLED);
     let healthy = SegmentSizeClassMapping {

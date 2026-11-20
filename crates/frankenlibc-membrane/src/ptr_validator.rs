@@ -2758,6 +2758,7 @@ impl ValidationPipeline {
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
         let res = self.arena.allocate(size)?;
         self.register_allocation(res.user_base, res.raw_base, res.total_size);
+        self.observe_arena_fragmentation();
         Some(res.ptr)
     }
 
@@ -2765,6 +2766,7 @@ impl ValidationPipeline {
     pub fn allocate_aligned(&self, size: usize, align: usize) -> Option<*mut u8> {
         let res = self.arena.allocate_aligned(size, align)?;
         self.register_allocation(res.user_base, res.raw_base, res.total_size);
+        self.observe_arena_fragmentation();
         Some(res.ptr)
     }
 
@@ -2818,8 +2820,22 @@ impl ValidationPipeline {
         // retirement counts, quarantine hits and contention are live signals.
         self.runtime_math
             .observe_allocator_free(safety_level(), result, 20);
+        self.observe_arena_fragmentation();
 
         (result, user_size)
+    }
+
+    /// Completed arena transitions supply their own sampled feedback. Generic
+    /// ABI observations cannot identify allocations/frees or measure the heap.
+    fn observe_arena_fragmentation(&self) {
+        if !safety_level().heals_enabled() || !self.runtime_math.validation_feedback_enabled() {
+            return;
+        }
+        if let Some(sample) = self.arena.take_fragmentation_observation()
+            && !self.runtime_math.observe_allocator_fragmentation(sample)
+        {
+            self.arena.defer_fragmentation_observation();
+        }
     }
 
     /// Deterministically corrupt the trailing canary for a user allocation.

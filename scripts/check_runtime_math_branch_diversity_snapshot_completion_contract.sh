@@ -280,8 +280,8 @@ def validate_contract(manifest: dict[str, Any], artifacts: dict[str, str]) -> di
     if not isinstance(snapshot, dict):
         err("snapshot_capture contract must be an object")
         snapshot = {}
-    require(int(snapshot.get("snapshot_schema_version", 0)) == 2, "snapshot schema version must be 2")
-    require("pub const RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION: u32 = 2;" in runtime_text, "runtime snapshot schema constant must remain 2")
+    require(int(snapshot.get("snapshot_schema_version", 0)) == 3, "current snapshot schema version must be 3")
+    require("pub const RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION: u32 = 3;" in runtime_text, "current runtime snapshot schema constant must be 3")
     require(int(snapshot.get("minimum_snapshot_tests", 0)) >= 5, "snapshot contract must require at least 5 snapshot tests")
     require(int(snapshot.get("minimum_snapshot_fields", 0)) >= 16, "snapshot contract must require core field coverage")
     for token in as_string_list(snapshot.get("required_source_tokens"), "snapshot_capture.required_source_tokens"):

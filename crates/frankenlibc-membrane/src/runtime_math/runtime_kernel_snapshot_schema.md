@@ -2,13 +2,28 @@
 
 This document defines the stable schema for `RuntimeKernelSnapshot` as emitted by `RuntimeMathKernel::snapshot(...)`.
 
-- Schema version constant: `RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 2`
+- Schema version constant: `RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 3`
 
 ## Stability Policy
 
 - Additive-only changes (adding new fields) are allowed without bumping the schema version.
 - Any rename/removal/semantic change requires bumping the schema version and providing a fixture migration plan.
 - Field names are treated as stable identifiers for harness diffing and golden snapshot regression gates.
+
+### Version 3 allocator observations
+
+Version 3 replaces inferred allocator fragmentation inputs with coherent samples of the
+hardened arena. `sos_barrier_fragmentation_pressure_events` counts negative resource
+scores separately from `sos_barrier_violations`, which now counts admission failures
+and certificate-integrity failures only. High utilization and allocation/free imbalance
+do not establish unsafe pointer access, so they cannot deny or repair valid operations.
+
+Consumers migrating version 2 fixtures must retain the old schema version when replaying
+historical evidence. Missing evaluation counters deserialize as zero and a missing arena
+sample as `null`: neither is evidence of a successful evaluation. Do not infer real heap
+observations from old positive default scores. Regenerate workload fixtures from execution
+when version 3 measured observations are required. Thread-safety inputs still have no real
+producer and remain explicitly unobserved.
 
 ## Fields
 
@@ -17,6 +32,13 @@ This document defines the stable schema for `RuntimeKernelSnapshot` as emitted b
 | `schema_version` | `u32` | count | >=0 | Snapshot schema version (see `RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION`). |
 | `decisions` | `u64` | count | >=0 | Total number of `decide(...)` decisions produced by this kernel instance. |
 | `consistency_faults` | `u64` | count | >=0 | Total overlap-consistency (cocycle) faults observed by the cohomology monitor. |
+| `sos_barrier_fragmentation_value` | `i64` | milli-units | signed | Advisory resource-pressure score; meaningful only when fragmentation evaluations is nonzero. |
+| `sos_barrier_fragmentation_evaluations` | `u64` | count | >=0 | Evaluations from measured allocator samples; zero means unobserved. |
+| `sos_barrier_fragmentation_pressure_events` | `u64` | count | >=0 | Negative resource-pressure scores, without pointer admission effects. |
+| `sos_barrier_thread_safety_value` | `i64` | milli-units | signed | Thread-safety score; meaningful only when thread-safety evaluations is nonzero. |
+| `sos_barrier_thread_safety_evaluations` | `u64` | count | >=0 | Evaluated thread-safety observations; zero means unobserved. |
+| `sos_barrier_arena_fragmentation` | `Option<ArenaFragmentationSnapshot>` | observation | object or null | Latest coherent hardened-arena allocation/free counts, live requested bytes, retained backing bytes, measured size dispersion and utilization. Excludes strict segment allocations, backing already handed to EBR, and process-wide RSS. |
+| `sos_barrier_violations` | `u64` | count | >=0 | Admission and certificate-integrity failures; excludes advisory resource-pressure events. |
 | `full_validation_trigger_ppm` | `u32` | ppm (1e-6) | 0..=1_000_000 | Controller threshold: risk ppm at/above which full validation is forced.  Units: ppm (0..=1_000_000). |
 | `repair_trigger_ppm` | `u32` | ppm (1e-6) | 0..=1_000_000 | Controller threshold: risk ppm at/above which repair actions are allowed/forced.  Units: ppm (0..=1_000_000). |
 | `sampled_risk_bonus_ppm` | `u32` | ppm (1e-6) | 0..=1_000_000 | Sampled high-order risk bonus (ppm) currently applied from `risk_engine`. |

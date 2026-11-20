@@ -106,7 +106,8 @@
   },
   "required_snapshot_contract": {
     "minimum_snapshot_fields": 154,
-    "current_snapshot_fields": 188,
+    "current_snapshot_fields": 195,
+    "golden_snapshot_fields": 188,
     "snapshot_schema_version": 2,
     "scenario": {
       "id": "runtime_math_kernel_snapshot_smoke",

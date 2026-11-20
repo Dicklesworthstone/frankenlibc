@@ -10,8 +10,8 @@ use frankenlibc_membrane::fingerprint::FINGERPRINT_SIZE;
 use frankenlibc_membrane::lattice::SafetyState;
 use frankenlibc_membrane::quarantine_controller::{DEFAULT_DEPTH, MAX_DEPTH, current_depth};
 use frankenlibc_membrane::runtime_math::{
-    ApiFamily, RUNTIME_MATH_PRODUCTION_ENABLED, RuntimeMathEnvironmentGuard, RuntimeMathKernel,
-    ValidationProfile,
+    ApiFamily, MembraneAction, RUNTIME_MATH_PRODUCTION_ENABLED, RuntimeContext,
+    RuntimeMathEnvironmentGuard, RuntimeMathKernel, ValidationProfile,
 };
 use frankenlibc_membrane::tls_cache::{NUM_TLS_CACHE_SHARDS, tls_cache_shard_for};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -356,6 +356,91 @@ fn disabled_case(enabled: bool) {
     }
     assert_eq!(pipeline.runtime_math.quarantine_snapshot(), before);
     assert_eq!(current_depth(), DEFAULT_DEPTH);
+    assert_eq!(
+        pipeline
+            .runtime_math
+            .snapshot(safety_level())
+            .sos_barrier_fragmentation_evaluations,
+        0,
+    );
+}
+
+fn fragmentation_case() {
+    let pipeline = ValidationPipeline::with_runtime_math(true);
+    let before = pipeline.runtime_math.snapshot(SafetyLevel::Hardened);
+    assert_eq!(before.sos_barrier_fragmentation_evaluations, 0);
+    assert_eq!(before.sos_barrier_thread_safety_evaluations, 0);
+    assert_eq!(before.sos_barrier_arena_fragmentation, None);
+
+    // More than 255 live allocations per shard in aggregate guarantees a
+    // real producer sample regardless of the host allocator's page placement.
+    let pointers: Vec<_> = (0..4096)
+        .map(|_| pipeline.allocate(4096).expect("growing ordinary heap"))
+        .collect();
+    let routed = pipeline.runtime_math.snapshot(SafetyLevel::Hardened);
+    assert!(routed.sos_barrier_fragmentation_evaluations > 0);
+    assert!(routed.sos_barrier_fragmentation_value < 0);
+    assert!(routed.sos_barrier_fragmentation_pressure_events > 0);
+    assert_eq!(routed.sos_barrier_thread_safety_evaluations, 0);
+    let sample = routed
+        .sos_barrier_arena_fragmentation
+        .expect("actual arena sample");
+    assert!(sample.successful_allocations >= 256);
+    assert_eq!(sample.successful_frees, 0);
+    assert_eq!(sample.live_allocations, sample.successful_allocations);
+    assert_eq!(
+        sample.live_requested_bytes,
+        sample.live_allocations as usize * 4096
+    );
+    assert_eq!(
+        sample.retained_backing_bytes,
+        sample.live_allocations as usize * 4160
+    );
+    assert_eq!(sample.size_class_dispersion_ppm, 0);
+    assert_eq!(
+        sample.arena_utilization_ppm,
+        (4096u64 * 1_000_000 / 4160) as u32
+    );
+
+    // An allocation-only workload can exceed the polynomial's resource
+    // envelope. It must remain able to access its valid allocations.
+    let decision = pipeline.runtime_math.decide(
+        SafetyLevel::Hardened,
+        RuntimeContext::pointer_validation(pointers[0] as usize, false),
+    );
+    assert!(!matches!(
+        decision.action,
+        MembraneAction::Deny
+            | MembraneAction::Repair(frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault)
+    ));
+    assert!(pipeline.validate(pointers[0] as usize).can_read());
+
+    for &ptr in &pointers[..2048] {
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+    }
+    let retained = pipeline
+        .arena
+        .try_fragmentation_snapshot()
+        .expect("quiescent arena");
+    assert_eq!(retained.successful_allocations, 4096);
+    assert_eq!(retained.successful_frees, 2048);
+    assert_eq!(retained.live_allocations, 2048);
+    assert_eq!(retained.live_requested_bytes, 2048 * 4096);
+    assert_eq!(retained.retained_backing_bytes, 4096 * 4160);
+    assert_eq!(pipeline.free(pointers[0]), FreeResult::DoubleFree);
+    assert!(pipeline.allocate(usize::MAX).is_none());
+    assert_eq!(pipeline.arena.try_fragmentation_snapshot(), Some(retained));
+
+    let json = serde_json::to_value(routed).expect("serialize measured runtime state");
+    assert_eq!(json["sos_barrier_thread_safety_evaluations"], 0);
+    assert_eq!(
+        json["sos_barrier_arena_fragmentation"]["successful_frees"],
+        0
+    );
+    println!(
+        "fragmentation sample: {}",
+        serde_json::to_string(&sample).expect("serialize compact arena sample")
+    );
 }
 
 fn run_child(case: &str, mode: &str) {
@@ -398,6 +483,7 @@ fn completed_arena_frees_drive_quarantine() {
                 "classification" => classification_case(),
                 "allocation-environment" => allocation_and_environment_case(),
                 "concurrent" => concurrent_case(),
+                "fragmentation" => fragmentation_case(),
                 "retention-enabled" => retention_case(true),
                 "retention-disabled" => retention_case(false),
                 "strict" => disabled_case(true),
@@ -411,6 +497,7 @@ fn completed_arena_frees_drive_quarantine() {
         "classification",
         "allocation-environment",
         "concurrent",
+        "fragmentation",
         "retention-enabled",
         "retention-disabled",
     ] {

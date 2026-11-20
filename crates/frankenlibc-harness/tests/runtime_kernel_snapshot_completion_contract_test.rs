@@ -132,7 +132,8 @@ fn manifest_binds_runtime_kernel_snapshot_unit_and_e2e_items() -> TestResult {
 
     let contract = &manifest["required_snapshot_contract"];
     assert_eq!(contract["minimum_snapshot_fields"].as_u64(), Some(154));
-    assert_eq!(contract["current_snapshot_fields"].as_u64(), Some(188));
+    assert_eq!(contract["current_snapshot_fields"].as_u64(), Some(195));
+    assert_eq!(contract["golden_snapshot_fields"].as_u64(), Some(188));
     assert_eq!(contract["snapshot_schema_version"].as_u64(), Some(2));
     assert_eq!(
         contract["scenario"]["id"].as_str(),
