@@ -417,8 +417,11 @@ pub(crate) fn pthread_tls_access_active() -> bool {
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static PTHREAD_TLS: RefCell<PthreadTlsState> = const { RefCell::new(PthreadTlsState::new()) };
-    static PTHREAD_SELF_FAST: Cell<libc::pthread_t> = const { Cell::new(0) };
 }
+
+#[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+#[thread_local]
+static PTHREAD_SELF_FAST_RAW: Cell<libc::pthread_t> = Cell::new(0);
 
 // Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
 //
@@ -518,12 +521,12 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
         {
             return None;
         }
-        if let Some(cached_self) = PTHREAD_SELF_FAST
-            .try_with(|cell| (cell.get() != 0).then_some(cell.get()))
-            .ok()
-            .flatten()
+        #[cfg(not(feature = "standalone"))]
         {
-            return Some(cached_self);
+            let cached_self = PTHREAD_SELF_FAST_RAW.get();
+            if cached_self != 0 {
+                return Some(cached_self);
+            }
         }
 
         if force_native_threading_enabled() {
@@ -533,16 +536,20 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
             (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
         })
         .flatten()?;
-        let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(cached_self));
+        #[cfg(not(feature = "standalone"))]
+        PTHREAD_SELF_FAST_RAW.set(cached_self);
         Some(cached_self)
     }
 }
 
 #[inline]
 fn remember_current_pthread_self(value: libc::pthread_t) {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    if !crate::malloc_abi::native_thread_backend_active() && !force_native_threading_enabled() {
-        let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(value));
+    #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+    if !frankenlibc_core::pthread::tls::native_threads_may_exist()
+        && !crate::malloc_abi::native_thread_backend_active()
+        && !force_native_threading_enabled()
+    {
+        PTHREAD_SELF_FAST_RAW.set(value);
     }
     let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = value);
 }
@@ -1040,6 +1047,18 @@ pub(crate) fn in_threading_policy_context() -> bool {
 pub(crate) fn reset_threading_policy_in_fork_child() -> u64 {
     NATIVE_LAST_THREAD_EXITING.store(false, Ordering::Release);
     PTHREAD_TLS_ACCESS_DEPTH.store(0, Ordering::Release);
+    #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+    PTHREAD_SELF_FAST_RAW.set(0);
+    #[cfg(not(feature = "owned-tls-cache"))]
+    if !crate::malloc_abi::native_thread_backend_active()
+        && !global_force_native_threading_enabled()
+    {
+        let _ = PTHREAD_TLS.try_with(|tls| {
+            if let Ok(mut tls) = tls.try_borrow_mut() {
+                tls.current_pthread_self_cache = 0;
+            }
+        });
+    }
     crate::signal_abi::reset_native_sigcancel_state_in_fork_child();
     let active = if let Some(handle) = core_current_thread_handle() {
         // SAFETY: surviving native thread owns its handle across fork.
@@ -1489,8 +1508,9 @@ fn adopt_static_condvar(condvar: &CondvarData) -> bool {
     }
 }
 
-#[inline(always)]
-pub(crate) fn native_pthread_self() -> libc::pthread_t {
+#[cold]
+#[inline(never)]
+extern "C" fn native_pthread_self_slow() -> libc::pthread_t {
     // Native clone workers can inherit the creator's compiler TLS. Consult
     // the registered owner before either pthread_self cache, even when only
     // the creator selected native threading through a scoped override.
@@ -1529,6 +1549,20 @@ pub(crate) fn native_pthread_self() -> libc::pthread_t {
     };
     remember_current_pthread_self(result);
     result
+}
+
+#[inline(always)]
+pub(crate) fn native_pthread_self() -> libc::pthread_t {
+    #[cfg(not(any(feature = "owned-tls-cache", feature = "standalone")))]
+    {
+        if !frankenlibc_core::pthread::tls::native_threads_may_exist() {
+            let cached = PTHREAD_SELF_FAST_RAW.get();
+            if cached != 0 {
+                return cached;
+            }
+        }
+    }
+    native_pthread_self_slow()
 }
 
 #[inline]

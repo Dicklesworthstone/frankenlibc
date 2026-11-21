@@ -1306,8 +1306,8 @@ pub fn disable_tid_cache() {
 }
 
 /// Whether a native thread may share the caller's inherited compiler TLS.
-#[inline]
-pub(crate) fn native_threads_may_exist() -> bool {
+#[inline(always)]
+pub fn native_threads_may_exist() -> bool {
     TID_CACHE_DISABLED.load(Ordering::Relaxed)
 }
 
@@ -1674,7 +1674,7 @@ pub(crate) fn run_native_post_handle_drop_hook(tid: i32) {
     if let Some(hook) = NATIVE_POST_HANDLE_DROP_HOOK.get() {
         hook(tid);
     }
-    }
+}
 
 /// Withdraw a prepared native thread that never entered application code.
 /// Its application signals are still blocked and no key/runtime destructor
