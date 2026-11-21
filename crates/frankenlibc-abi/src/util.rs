@@ -103,10 +103,12 @@ impl<T> AbiReentrantMutex<T, true> {
     /// Stable kernel identity even when creating the first native thread
     /// changes the allocator's fast owner-key strategy inside a held lock.
     pub(crate) const fn new_kernel_tid(value: T) -> Self {
-        assert!(
-            usize::BITS == 64,
-            "native loader locking requires a 64-bit target"
-        );
+        const {
+            assert!(
+                usize::BITS == 64,
+                "native loader locking requires a 64-bit target"
+            );
+        }
         Self {
             owner_tid: AtomicUsize::new(0),
             recursion_depth: AtomicU32::new(0),

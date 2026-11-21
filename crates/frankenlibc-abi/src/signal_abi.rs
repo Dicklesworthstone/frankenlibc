@@ -215,7 +215,7 @@ pub(crate) unsafe fn filter_reserved_sigset_for_wait(
             // user-space address, read it directly (the kernel syscall will read it
             // immediately anyway) so reserved signal 32 (`NATIVE_SIGCANCEL`) is still stripped.
             let addr = set as usize;
-            let user_canonical = addr >= 4096 && addr < (1usize << 56);
+            let user_canonical = (4096..(1usize << 56)).contains(&addr);
             if user_canonical {
                 // SAFETY: non-null canonical user address that the kernel will read next.
                 word0 = unsafe { core::ptr::read_unaligned(set.cast::<libc::c_ulong>()) };

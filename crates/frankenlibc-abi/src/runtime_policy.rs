@@ -248,7 +248,7 @@ fn parse_mode_from_environ() -> Result<Option<SafetyLevel>, ()> {
         }
         // `ENVIRON_LOCK` is contended by a concurrent `setenv`/`unsetenv`;
         // skip the scan cleanly rather than racing a `realloc`'d `environ`.
-        return Err(());
+        Err(())
     }
     #[cfg(test)]
     {

@@ -2284,9 +2284,7 @@ impl NativeStreamRegistry {
                 // checks the RefCell flag without reading an active borrow's
                 // data; its temporary guard is dropped before lock recovery.
                 unsafe {
-                    lock.recover_in_fork_child(parent_tid, |state| {
-                        state.try_borrow_mut().is_ok()
-                    });
+                    lock.recover_in_fork_child(parent_tid, |state| state.try_borrow_mut().is_ok());
                 }
             }
         }
@@ -2730,9 +2728,9 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
 
     if !STD_STREAMS_INSTALLED.load(std::sync::atomic::Ordering::Acquire) {
         guard.install_std_streams();
-        for index in 0..3 {
+        for (index, slot) in guard.slots.iter_mut().enumerate().take(3) {
             let object = stdio_abi::standard_stdio_object(index as c_int);
-            guard.slots[index].file.publish_standard_object(object);
+            slot.file.publish_standard_object(object);
         }
         STD_STREAMS_INSTALLED.store(true, std::sync::atomic::Ordering::Release);
     }

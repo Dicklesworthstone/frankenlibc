@@ -34,10 +34,16 @@ use crate::tls_cache::{
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
 use serde::Serialize;
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 use std::cell::Cell;
 use std::collections::VecDeque;
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -345,15 +351,24 @@ thread_local! {
     static EBR_HANDLE: std::cell::RefCell<Option<(std::sync::Arc<crate::ebr::QuarantineEbr>, crate::ebr::EbrHandle<'static>)>> = const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub(crate) fn reset_validation_context_in_fork_child() {
     kernel_validation_context::reset_validation_context_in_fork_child();
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 pub(crate) fn reset_validation_context_in_fork_child() {}
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 impl ValidationExecutionGuard {
     fn adopt_in_fork_child(&mut self) {}
 }
@@ -368,16 +383,27 @@ struct PinnedEpochGuard<'a> {
 // must therefore follow the kernel TID in both cache configurations.
 // Admission uses per-tid native slots: fork-child reset and saturating depth.
 // The probe table remains so its remote-ordering and tombstone-reuse tests stay live.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod kernel_validation_context {
+    #[cfg(not(feature = "owned-tls-cache"))]
     use std::cell::Cell;
+    #[cfg(test)]
     use std::marker::PhantomData;
-    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+    #[cfg(test)]
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+    #[cfg(test)]
     const CONTEXT_SLOTS: usize = 4096;
+    #[cfg(test)]
     const CONTEXT_PROBES: usize = 16;
+    #[cfg(test)]
     const DEPTH_MASK: u64 = u32::MAX as u64;
 
+    #[cfg(test)]
     struct ContextTable<const N: usize> {
         slots: [AtomicU64; N],
         // A credit is reserved BEFORE publishing a slot. Fork children retain
@@ -390,6 +416,7 @@ mod kernel_validation_context {
         identity_unavailable: AtomicBool,
     }
 
+    #[cfg(test)]
     impl<const N: usize> ContextTable<N> {
         const fn new() -> Self {
             Self {
@@ -433,9 +460,9 @@ mod kernel_validation_context {
                 }
                 // Same-thread signal entries finish before this scan resumes.
                 // A nested fork changes the tag, so this cannot erase its alias.
-                let _ = self.alias_owner.compare_exchange(
-                    tid, 0, Ordering::AcqRel, Ordering::Acquire,
-                );
+                let _ =
+                    self.alias_owner
+                        .compare_exchange(tid, 0, Ordering::AcqRel, Ordering::Acquire);
                 return false;
             }
             let start = Self::probe_start(tid);
@@ -467,19 +494,14 @@ mod kernel_validation_context {
                 if Self::owner(word) == tid && Self::depth(word) != 0 {
                     return Some((index, word));
                 }
-                if Self::depth(word) == 0
-                    && (candidate.is_none() || Self::owner(word) == tid)
-                {
+                if Self::depth(word) == 0 && (candidate.is_none() || Self::owner(word) == tid) {
                     candidate = Some((index, word));
                 }
             }
             candidate
         }
 
-        fn enter(
-            &self,
-            mut current_tid: impl FnMut() -> u32,
-        ) -> Option<ContextGuard<'_, N>> {
+        fn enter(&self, mut current_tid: impl FnMut() -> u32) -> Option<ContextGuard<'_, N>> {
             if self.identity_unavailable.load(Ordering::Acquire) {
                 return None;
             }
@@ -512,9 +534,15 @@ mod kernel_validation_context {
                 }
                 let (index, word) = self.candidate(tid)?;
                 let depth = Self::depth(word).checked_add(1)?;
-                if self.slots[index].compare_exchange(
-                    word, Self::pack(tid, depth), Ordering::AcqRel, Ordering::Acquire,
-                ).is_err() {
+                if self.slots[index]
+                    .compare_exchange(
+                        word,
+                        Self::pack(tid, depth),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
                     continue;
                 }
                 return self.reconcile(index, tid, current_tid);
@@ -542,10 +570,14 @@ mod kernel_validation_context {
                         return None;
                     }
                     if owner == claimed_tid
-                        && self.slots[index].compare_exchange(
-                            word, Self::pack(owner, Self::depth(word) - 1),
-                            Ordering::AcqRel, Ordering::Acquire,
-                        ).is_ok()
+                        && self.slots[index]
+                            .compare_exchange(
+                                word,
+                                Self::pack(owner, Self::depth(word) - 1),
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_ok()
                     {
                         return None;
                     }
@@ -564,10 +596,15 @@ mod kernel_validation_context {
                         }
                         return None;
                     }
-                    if self.slots[index].compare_exchange(
-                        word, Self::pack(tid, Self::depth(word)),
-                        Ordering::AcqRel, Ordering::Acquire,
-                    ).is_err() {
+                    if self.slots[index]
+                        .compare_exchange(
+                            word,
+                            Self::pack(tid, Self::depth(word)),
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_err()
+                    {
                         continue;
                     }
                     claimed_tid = tid;
@@ -582,9 +619,11 @@ mod kernel_validation_context {
                         }
                         // Never overwrite an alias published by a signal-side
                         // child repair after this entry captured its TID.
-                        if self.alias_owner.compare_exchange(
-                            alias, tid, Ordering::AcqRel, Ordering::Acquire,
-                        ).is_err() {
+                        if self
+                            .alias_owner
+                            .compare_exchange(alias, tid, Ordering::AcqRel, Ordering::Acquire)
+                            .is_err()
+                        {
                             continue;
                         }
                     }
@@ -606,8 +645,10 @@ mod kernel_validation_context {
                 // Preserve the observed owner: child repair can retag a live
                 // guard between the load and CAS, in which case retry.
                 match slot.compare_exchange(
-                    word, Self::pack(Self::owner(word), depth - 1),
-                    Ordering::AcqRel, Ordering::Acquire,
+                    word,
+                    Self::pack(Self::owner(word), depth - 1),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
                 ) {
                     Ok(_) => return,
                     Err(observed) => word = observed,
@@ -659,19 +700,20 @@ mod kernel_validation_context {
         }
     }
 
+    #[cfg(test)]
     struct ContextGuard<'a, const N: usize> {
         table: &'a ContextTable<N>,
         index: usize,
         _not_send_sync: PhantomData<*mut ()>,
     }
 
+    #[cfg(test)]
     impl<const N: usize> Drop for ContextGuard<'_, N> {
         fn drop(&mut self) {
             self.table.release_slot(self.index);
             self.table.active_hint.fetch_sub(1, Ordering::Release);
         }
     }
-
 
     #[cfg(test)]
     pub(super) fn test_probe_exhaustion_and_reclamation() {
@@ -684,10 +726,15 @@ mod kernel_validation_context {
                 Ordering::Relaxed,
             );
         }
-        table.active_hint.store(CONTEXT_PROBES as u32, Ordering::Relaxed);
+        table
+            .active_hint
+            .store(CONTEXT_PROBES as u32, Ordering::Relaxed);
         assert!(table.enter(|| tid).is_none());
         assert!(!table.contains(|| tid));
-        assert_eq!(table.active_hint.load(Ordering::Relaxed), CONTEXT_PROBES as u32);
+        assert_eq!(
+            table.active_hint.load(Ordering::Relaxed),
+            CONTEXT_PROBES as u32
+        );
         // A released owner leaves a reusable tag, not a lifetime reservation.
         table.slots[start].store(ContextTable::<64>::pack(100, 0), Ordering::Relaxed);
         let guard = table.enter(|| tid).expect("inactive collision is reusable");
@@ -707,12 +754,17 @@ mod kernel_validation_context {
         table.slots[live].store(ContextTable::<4>::pack(tid, 1), Ordering::Relaxed);
         table.active_hint.store(1, Ordering::Relaxed);
         let outer = ContextGuard {
-            table: &table, index: live, _not_send_sync: PhantomData,
+            table: &table,
+            index: live,
+            _not_send_sync: PhantomData,
         };
         assert!(table.contains(|| tid));
         let inner = table.enter(|| tid).expect("live duplicate is nested");
         assert_eq!(inner.index, live);
-        assert_eq!(ContextTable::<4>::depth(table.slots[live].load(Ordering::Relaxed)), 2);
+        assert_eq!(
+            ContextTable::<4>::depth(table.slots[live].load(Ordering::Relaxed)),
+            2
+        );
         drop(inner);
         assert!(table.contains(|| tid));
         drop(outer);
@@ -729,14 +781,20 @@ mod kernel_validation_context {
         assert!(!ContextTable::<64>::in_probe_range(start, child_tid));
         assert!(!ContextTable::<64>::in_probe_range(start + 1, child_tid));
         for index in [start, start + 1] {
-            table.slots[index].store(
-                ContextTable::<64>::pack(parent_tid, 1), Ordering::Relaxed,
-            );
+            table.slots[index].store(ContextTable::<64>::pack(parent_tid, 1), Ordering::Relaxed);
         }
         table.slots[0].store(ContextTable::<64>::pack(99, 1), Ordering::Relaxed);
         table.active_hint.store(3, Ordering::Relaxed);
-        let first = ContextGuard { table: &table, index: start, _not_send_sync: PhantomData };
-        let second = ContextGuard { table: &table, index: start + 1, _not_send_sync: PhantomData };
+        let first = ContextGuard {
+            table: &table,
+            index: start,
+            _not_send_sync: PhantomData,
+        };
+        let second = ContextGuard {
+            table: &table,
+            index: start + 1,
+            _not_send_sync: PhantomData,
+        };
         table.repair_child(parent_tid, child_tid);
         assert!(!table.contains(|| parent_tid));
         assert!(!table.contains(|| 99));
@@ -760,19 +818,21 @@ mod kernel_validation_context {
         let parent_tid = 2;
         let child_tid = 1;
         let mut reads = 0;
-        let guard = table.enter(|| {
-            reads += 1;
-            if reads == 1 {
-                // The entry credit exists, but no slot has been published.
-                table.repair_child(parent_tid, child_tid);
-                assert!(!table.contains(|| child_tid));
-                assert_eq!(table.alias_owner.load(Ordering::Relaxed), 0);
-                // Simulate resuming an entry with the pre-signal TID value.
-                parent_tid
-            } else {
-                child_tid
-            }
-        }).expect("pending entry reconciles its inherited identity");
+        let guard = table
+            .enter(|| {
+                reads += 1;
+                if reads == 1 {
+                    // The entry credit exists, but no slot has been published.
+                    table.repair_child(parent_tid, child_tid);
+                    assert!(!table.contains(|| child_tid));
+                    assert_eq!(table.alias_owner.load(Ordering::Relaxed), 0);
+                    // Simulate resuming an entry with the pre-signal TID value.
+                    parent_tid
+                } else {
+                    child_tid
+                }
+            })
+            .expect("pending entry reconciles its inherited identity");
         assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
         assert_eq!(table.alias_owner.load(Ordering::Relaxed), child_tid);
         assert!(table.contains(|| child_tid));
@@ -788,17 +848,19 @@ mod kernel_validation_context {
         let parent_tid = 2;
         let child_tid = 1;
         let mut reads = 0;
-        let guard = table.enter(|| {
-            reads += 1;
-            if reads == 1 {
-                parent_tid
-            } else {
-                if reads == 2 {
-                    table.repair_child(parent_tid, child_tid);
+        let guard = table
+            .enter(|| {
+                reads += 1;
+                if reads == 1 {
+                    parent_tid
+                } else {
+                    if reads == 2 {
+                        table.repair_child(parent_tid, child_tid);
+                    }
+                    child_tid
                 }
-                child_tid
-            }
-        }).expect("published claim survives child repair");
+            })
+            .expect("published claim survives child repair");
         assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
         assert!(table.contains(|| child_tid));
         assert!(!table.contains(|| parent_tid));
@@ -810,22 +872,24 @@ mod kernel_validation_context {
     pub(super) fn test_fork_repeated_during_reconciliation() {
         let table = ContextTable::<64>::new();
         let mut reads = 0;
-        let guard = table.enter(|| {
-            reads += 1;
-            match reads {
-                1 => {
-                    table.repair_child(2, 1);
-                    2
+        let guard = table
+            .enter(|| {
+                reads += 1;
+                match reads {
+                    1 => {
+                        table.repair_child(2, 1);
+                        2
+                    }
+                    2 => 1,
+                    3 => {
+                        // A second child starts after the stale claim was retagged.
+                        table.repair_child(1, 3);
+                        3
+                    }
+                    _ => 3,
                 }
-                2 => 1,
-                3 => {
-                    // A second child starts after the stale claim was retagged.
-                    table.repair_child(1, 3);
-                    3
-                }
-                _ => 3,
-            }
-        }).expect("every retag is followed by a fresh identity check");
+            })
+            .expect("every retag is followed by a fresh identity check");
         assert!(table.contains(|| 3));
         assert!(!table.contains(|| 1));
         assert!(!table.contains(|| 2));
@@ -864,7 +928,10 @@ mod kernel_validation_context {
         assert!(table.enter(|| 7).is_none());
         assert!(table.contains(|| 7));
         assert_eq!(table.active_hint.load(Ordering::Relaxed), 1);
-        assert_eq!(ContextTable::<1>::depth(table.slots[0].load(Ordering::Relaxed)), u32::MAX);
+        assert_eq!(
+            ContextTable::<1>::depth(table.slots[0].load(Ordering::Relaxed)),
+            u32::MAX
+        );
 
         table.repair_child(7, 0);
         assert!(!table.contains(|| 7));
@@ -875,149 +942,178 @@ mod kernel_validation_context {
     pub(super) fn test_identity_failure_rolls_back_published_claim() {
         let table = ContextTable::<4>::new();
         let mut reads = 0;
-        assert!(table.enter(|| {
-            reads += 1;
-            if reads == 1 { 7 } else { 0 }
-        }).is_none());
+        assert!(
+            table
+                .enter(|| {
+                    reads += 1;
+                    if reads == 1 { 7 } else { 0 }
+                })
+                .is_none()
+        );
         assert_eq!(table.active_hint.load(Ordering::Relaxed), 0);
         assert!(!table.contains(|| 7));
-        let later = table.enter(|| 9).expect("another owner still has admission");
+        let later = table
+            .enter(|| 9)
+            .expect("another owner still has admission");
         assert!(!table.contains(|| 7));
         drop(later);
     }
 
-#[cfg(not(feature = "owned-tls-cache"))]
-thread_local! {
-    static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
-}
-
-static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
-
-const NATIVE_VALIDATION_TID_SLOTS: usize = 256;
-const NATIVE_VALIDATION_EMPTY: u64 = 0;
-const NATIVE_VALIDATION_TOMBSTONE: u64 = u64::MAX;
-static NATIVE_VALIDATION_ENTRIES: [AtomicU64; NATIVE_VALIDATION_TID_SLOTS] =
-    [const { AtomicU64::new(0) }; NATIVE_VALIDATION_TID_SLOTS];
-static NATIVE_VALIDATION_OVERFLOW_ACTIVE: AtomicU32 = AtomicU32::new(0);
-
-#[derive(Clone, Copy)]
-enum NativeValidationSlot {
     #[cfg(not(feature = "owned-tls-cache"))]
-    None,
-    Slot {
-        idx: usize,
-        tid: u32,
-    },
-    Overflow,
-}
+    thread_local! {
+        static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
+    }
 
-#[inline]
-const fn pack_native_validation(tid: u32, depth: u32) -> u64 {
-    ((tid as u64) << 32) | (depth as u64)
-}
+    static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
 
-#[inline]
-fn dec_active_validation_contexts() {
-    let mut prev = ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire);
-    while prev > 0 {
-        match ACTIVE_VALIDATION_CONTEXTS.compare_exchange_weak(
-            prev,
-            prev - 1,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => return,
-            Err(observed) => prev = observed,
+    const NATIVE_VALIDATION_TID_SLOTS: usize = 256;
+    const NATIVE_VALIDATION_EMPTY: u64 = 0;
+    const NATIVE_VALIDATION_TOMBSTONE: u64 = u64::MAX;
+    static NATIVE_VALIDATION_ENTRIES: [AtomicU64; NATIVE_VALIDATION_TID_SLOTS] =
+        [const { AtomicU64::new(0) }; NATIVE_VALIDATION_TID_SLOTS];
+    static NATIVE_VALIDATION_OVERFLOW_ACTIVE: AtomicU32 = AtomicU32::new(0);
+
+    #[derive(Clone, Copy)]
+    enum NativeValidationSlot {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        None,
+        Slot {
+            idx: usize,
+            tid: u32,
+        },
+        Overflow,
+    }
+
+    #[inline]
+    const fn pack_native_validation(tid: u32, depth: u32) -> u64 {
+        ((tid as u64) << 32) | (depth as u64)
+    }
+
+    #[inline]
+    fn dec_active_validation_contexts() {
+        let mut prev = ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire);
+        while prev > 0 {
+            match ACTIVE_VALIDATION_CONTEXTS.compare_exchange_weak(
+                prev,
+                prev - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(observed) => prev = observed,
+            }
         }
     }
-}
 
-fn enter_native_validation_tid() -> NativeValidationSlot {
-    let tid = crate::heal::raw_native_tid().max(1) as u32;
-    let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-    'retry: for _ in 0..16 {
-        let mut first_tombstone: Option<usize> = None;
-        for i in 0..NATIVE_VALIDATION_TID_SLOTS {
-            let idx = (start + i) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-            let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
-            while cur != NATIVE_VALIDATION_TOMBSTONE && (cur >> 32) as u32 == tid {
-                let next_depth = (cur as u32).saturating_add(1);
-                match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
-                    cur,
-                    pack_native_validation(tid, next_depth),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => return NativeValidationSlot::Slot { idx, tid },
-                    Err(observed) => cur = observed,
+    fn enter_native_validation_tid() -> NativeValidationSlot {
+        let tid = crate::heal::raw_native_tid().max(1) as u32;
+        let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+        'retry: for _ in 0..16 {
+            let mut first_tombstone: Option<usize> = None;
+            for i in 0..NATIVE_VALIDATION_TID_SLOTS {
+                let idx = (start + i) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+                let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+                while cur != NATIVE_VALIDATION_TOMBSTONE && (cur >> 32) as u32 == tid {
+                    let next_depth = (cur as u32).saturating_add(1);
+                    match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
+                        cur,
+                        pack_native_validation(tid, next_depth),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => return NativeValidationSlot::Slot { idx, tid },
+                        Err(observed) => cur = observed,
+                    }
+                }
+                if cur == NATIVE_VALIDATION_TOMBSTONE && first_tombstone.is_none() {
+                    first_tombstone = Some(idx);
+                    continue;
+                }
+                if cur == NATIVE_VALIDATION_EMPTY {
+                    let (target, expected) = match first_tombstone {
+                        Some(tomb) => (tomb, NATIVE_VALIDATION_TOMBSTONE),
+                        None => (idx, NATIVE_VALIDATION_EMPTY),
+                    };
+                    // Publish ACTIVE_VALIDATION_CONTEXTS >= 1 BEFORE depth 0 -> 1
+                    // so a signal handler arriving mid-entry always observes it.
+                    ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
+                    if NATIVE_VALIDATION_ENTRIES[target]
+                        .compare_exchange(
+                            expected,
+                            pack_native_validation(tid, 1),
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return NativeValidationSlot::Slot { idx: target, tid };
+                    }
+                    dec_active_validation_contexts();
+                    continue 'retry;
                 }
             }
-            if cur == NATIVE_VALIDATION_TOMBSTONE && first_tombstone.is_none() {
-                first_tombstone = Some(idx);
-                continue;
-            }
-            if cur == NATIVE_VALIDATION_EMPTY {
-                let (target, expected) = match first_tombstone {
-                    Some(tomb) => (tomb, NATIVE_VALIDATION_TOMBSTONE),
-                    None => (idx, NATIVE_VALIDATION_EMPTY),
-                };
-                // Publish ACTIVE_VALIDATION_CONTEXTS >= 1 BEFORE depth 0 -> 1
-                // so a signal handler arriving mid-entry always observes it.
+            if let Some(tomb) = first_tombstone {
                 ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
-                if NATIVE_VALIDATION_ENTRIES[target]
+                if NATIVE_VALIDATION_ENTRIES[tomb]
                     .compare_exchange(
-                        expected,
+                        NATIVE_VALIDATION_TOMBSTONE,
                         pack_native_validation(tid, 1),
                         Ordering::AcqRel,
                         Ordering::Acquire,
                     )
                     .is_ok()
                 {
-                    return NativeValidationSlot::Slot { idx: target, tid };
+                    return NativeValidationSlot::Slot { idx: tomb, tid };
                 }
                 dec_active_validation_contexts();
-                continue 'retry;
             }
         }
-        if let Some(tomb) = first_tombstone {
-            ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
-            if NATIVE_VALIDATION_ENTRIES[tomb]
-                .compare_exchange(
-                    NATIVE_VALIDATION_TOMBSTONE,
-                    pack_native_validation(tid, 1),
+        ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
+        NATIVE_VALIDATION_OVERFLOW_ACTIVE.fetch_add(1, Ordering::AcqRel);
+        NativeValidationSlot::Overflow
+    }
+
+    #[inline]
+    fn leave_native_validation_tid(idx: usize, tid: u32) -> bool {
+        let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+        loop {
+            if cur == NATIVE_VALIDATION_TOMBSTONE || cur == NATIVE_VALIDATION_EMPTY {
+                return false;
+            }
+            // A fork retag can change the owner between the load and the CAS.
+            // Release the observed word (AcqRel) instead of dropping the update.
+            // Depth zero still retires ACTIVE; a nested depth must not drop it.
+            // Tombstones keep probe chains intact.
+            let owner = (cur >> 32) as u32;
+            if owner != tid {
+                let depth = cur as u32;
+                let next = if depth <= 1 {
+                    NATIVE_VALIDATION_TOMBSTONE
+                } else {
+                    pack_native_validation(owner, depth - 1)
+                };
+                match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
+                    cur,
+                    next,
                     Ordering::AcqRel,
                     Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                return NativeValidationSlot::Slot { idx: tomb, tid };
+                ) {
+                    Ok(_) => return depth <= 1,
+                    Err(observed) => {
+                        cur = observed;
+                        continue;
+                    }
+                }
             }
-            dec_active_validation_contexts();
-        }
-    }
-    ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
-    NATIVE_VALIDATION_OVERFLOW_ACTIVE.fetch_add(1, Ordering::AcqRel);
-    NativeValidationSlot::Overflow
-}
-
-#[inline]
-fn leave_native_validation_tid(idx: usize, tid: u32) -> bool {
-    let mut cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
-    loop {
-        if cur == NATIVE_VALIDATION_TOMBSTONE || cur == NATIVE_VALIDATION_EMPTY {
-            return false;
-        }
-        // A fork retag can change the owner between the load and the CAS.
-        // Release the observed word (AcqRel) instead of dropping the update.
-        // Depth zero still retires ACTIVE; a nested depth must not drop it.
-        // Tombstones keep probe chains intact.
-        let owner = (cur >> 32) as u32;
-        if owner != tid {
             let depth = cur as u32;
-            let next = if depth <= 1 {
-                NATIVE_VALIDATION_TOMBSTONE
+            let (next, zeroed) = if depth <= 1 {
+                // Always retire to `NATIVE_VALIDATION_TOMBSTONE` rather than `EMPTY`
+                // so concurrent linear-probing chains past `idx` are never truncated.
+                // `enter_native_validation_tid` unconditionally reuses tombstones and
+                // `fork()` resets the table to `EMPTY`.
+                (NATIVE_VALIDATION_TOMBSTONE, true)
             } else {
-                pack_native_validation(owner, depth - 1)
+                (pack_native_validation(tid, depth - 1), false)
             };
             match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
                 cur,
@@ -1025,278 +1121,266 @@ fn leave_native_validation_tid(idx: usize, tid: u32) -> bool {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
-                Ok(_) => return depth <= 1,
-                Err(observed) => {
-                    cur = observed;
-                    continue;
-                }
-            }
-        }
-        let depth = cur as u32;
-        let (next, zeroed) = if depth <= 1 {
-            // Always retire to `NATIVE_VALIDATION_TOMBSTONE` rather than `EMPTY`
-            // so concurrent linear-probing chains past `idx` are never truncated.
-            // `enter_native_validation_tid` unconditionally reuses tombstones and
-            // `fork()` resets the table to `EMPTY`.
-            (NATIVE_VALIDATION_TOMBSTONE, true)
-        } else {
-            (pack_native_validation(tid, depth - 1), false)
-        };
-        match NATIVE_VALIDATION_ENTRIES[idx].compare_exchange_weak(
-            cur,
-            next,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => return zeroed,
-            Err(observed) => cur = observed,
-        }
-    }
-}
-
-#[inline]
-fn in_native_validation_tid() -> bool {
-    if NATIVE_VALIDATION_OVERFLOW_ACTIVE.load(Ordering::Acquire) != 0 {
-        return true;
-    }
-    let tid = crate::heal::raw_native_tid().max(1) as u32;
-    let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-    for i in 0..NATIVE_VALIDATION_TID_SLOTS {
-        let idx = (start + i) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-        let cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
-        if cur != NATIVE_VALIDATION_TOMBSTONE && (cur >> 32) as u32 == tid {
-            return (cur as u32) > 0;
-        }
-        if cur == NATIVE_VALIDATION_EMPTY {
-            return false;
-        }
-    }
-    false
-}
-
-/// Clear dead sibling threads' validation-context slots in a forked child while
-/// preserving any active validation entry owned by the surviving child TID.
-pub(crate) fn reset_validation_context_in_fork_child() {
-    reset_validation_slots(None);
-}
-
-fn reset_validation_slots(also_owner: Option<u32>) {
-    let child_tid = crate::heal::raw_native_tid().max(1) as u32;
-    let mut survivor_depth = 0u32;
-    for entry in &NATIVE_VALIDATION_ENTRIES {
-        let cur = entry.swap(NATIVE_VALIDATION_EMPTY, Ordering::AcqRel);
-        if cur != NATIVE_VALIDATION_EMPTY && cur != NATIVE_VALIDATION_TOMBSTONE {
-            let owner = (cur >> 32) as u32;
-            // `also_owner` is the pre-clone parent TID. Slots are still tagged
-            // with that TID until this reset retags them onto the child.
-            if owner == child_tid || Some(owner) == also_owner {
-                survivor_depth = survivor_depth.saturating_add(cur as u32);
+                Ok(_) => return zeroed,
+                Err(observed) => cur = observed,
             }
         }
     }
-    NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
-    if survivor_depth > 0 {
-        let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-        NATIVE_VALIDATION_ENTRIES[dst].store(
-            pack_native_validation(child_tid, survivor_depth),
-            Ordering::Release,
-        );
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    let tls_active = !crate::tls_cache::compiler_tls_disabled()
-        && VALIDATION_DEPTH
-            .try_with(|depth| depth.get() > 0)
-            .unwrap_or(false);
-    #[cfg(feature = "owned-tls-cache")]
-    let tls_active = false;
-    let active = u32::from(survivor_depth > 0) + u32::from(tls_active);
-    ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
-}
 
-pub(super) struct ValidationExecutionGuard {
-    native_slot: NativeValidationSlot,
-}
-
-impl ValidationExecutionGuard {
-    pub(super) fn adopt_in_fork_child(&mut self) {
-        let child_tid = crate::heal::raw_native_tid().max(1) as u32;
-        match self.native_slot {
-            NativeValidationSlot::Slot {
-                idx,
-                tid: parent_tid,
-            } => {
-                let mut depth = 1u32;
-                let cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
-                if cur != NATIVE_VALIDATION_EMPTY
-                    && cur != NATIVE_VALIDATION_TOMBSTONE
-                    && (cur >> 32) as u32 == parent_tid
-                {
-                    depth = (cur as u32).max(1);
-                }
-                for entry in &NATIVE_VALIDATION_ENTRIES {
-                    entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
-                }
-                NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
-                let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-                NATIVE_VALIDATION_ENTRIES[dst]
-                    .store(pack_native_validation(child_tid, depth), Ordering::Release);
-                ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
-                self.native_slot = NativeValidationSlot::Slot {
-                    idx: dst,
-                    tid: child_tid,
-                };
-            }
-            NativeValidationSlot::Overflow => {
-                for entry in &NATIVE_VALIDATION_ENTRIES {
-                    entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
-                }
-                NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
-                let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
-                NATIVE_VALIDATION_ENTRIES[dst]
-                    .store(pack_native_validation(child_tid, 1), Ordering::Release);
-                ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
-                self.native_slot = NativeValidationSlot::Slot {
-                    idx: dst,
-                    tid: child_tid,
-                };
-            }
-            #[cfg(not(feature = "owned-tls-cache"))]
-            NativeValidationSlot::None => {
-                for entry in &NATIVE_VALIDATION_ENTRIES {
-                    entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
-                }
-                NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
-                let active = u32::from(
-                    VALIDATION_DEPTH
-                        .try_with(|depth| depth.get() > 0)
-                        .unwrap_or(false),
-                );
-                ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
-            }
-        }
-    }
-}
-
-impl Drop for ValidationExecutionGuard {
-    fn drop(&mut self) {
-        let decremented_to_zero = match self.native_slot {
-            NativeValidationSlot::Slot { idx, tid } => leave_native_validation_tid(idx, tid),
-            NativeValidationSlot::Overflow => {
-                let mut prev = NATIVE_VALIDATION_OVERFLOW_ACTIVE.load(Ordering::Acquire);
-                while prev > 0 {
-                    match NATIVE_VALIDATION_OVERFLOW_ACTIVE.compare_exchange_weak(
-                        prev,
-                        prev - 1,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ) {
-                        Ok(_) => break,
-                        Err(observed) => prev = observed,
-                    }
-                }
-                prev > 0
-            }
-            #[cfg(not(feature = "owned-tls-cache"))]
-            NativeValidationSlot::None => VALIDATION_DEPTH
-                .try_with(|depth| {
-                    let prev = depth.get();
-                    let next = prev.saturating_sub(1);
-                    depth.set(next);
-                    prev > 0 && next == 0
-                })
-                .unwrap_or(false),
-        };
-        if decremented_to_zero {
-            dec_active_validation_contexts();
-        }
-    }
-}
-
-pub(super) fn enter_validation_execution_context() -> Option<ValidationExecutionGuard> {
-    #[cfg(not(feature = "owned-tls-cache"))]
-    if !crate::tls_cache::compiler_tls_disabled()
-        && !crate::tls_cache::native_threads_may_share_compiler_tls()
-    {
-        let _ = VALIDATION_DEPTH.try_with(|depth| {
-            let prev = depth.get();
-            if prev == 0 {
-                // Publish ACTIVE_VALIDATION_CONTEXTS >= 1 BEFORE setting depth = 1
-                // so a signal interrupting immediately sees ACTIVE_VALIDATION_CONTEXTS >= 1.
-                ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
-            }
-            depth.set(prev.saturating_add(1));
-        });
-        return Some(ValidationExecutionGuard {
-            native_slot: NativeValidationSlot::None,
-        });
-    }
-    let native_slot = enter_native_validation_tid();
-    Some(ValidationExecutionGuard { native_slot })
-}
-
-#[cold]
-#[inline(never)]
-fn in_validation_context_slow() -> bool {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        in_native_validation_tid()
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        if in_native_validation_tid() {
+    #[inline]
+    fn in_native_validation_tid() -> bool {
+        if NATIVE_VALIDATION_OVERFLOW_ACTIVE.load(Ordering::Acquire) != 0 {
             return true;
         }
-        if !crate::tls_cache::compiler_tls_disabled()
-            && !crate::tls_cache::native_threads_may_share_compiler_tls()
-        {
-            return VALIDATION_DEPTH
-                .try_with(|depth| depth.get() > 0)
-                .unwrap_or(false);
+        let tid = crate::heal::raw_native_tid().max(1) as u32;
+        let start = (tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+        for i in 0..NATIVE_VALIDATION_TID_SLOTS {
+            let idx = (start + i) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+            let cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+            if cur != NATIVE_VALIDATION_TOMBSTONE && (cur >> 32) as u32 == tid {
+                return (cur as u32) > 0;
+            }
+            if cur == NATIVE_VALIDATION_EMPTY {
+                return false;
+            }
         }
         false
     }
-}
 
-
-/// Retain validation recursion ownership in a newly forked child.
-///
-/// # Safety
-/// Call before any potentially interposed memory operation, as the sole
-/// surviving thread, with blockable signals masked. `parent_tid` is the
-/// positive raw kernel TID captured before clone.
-pub unsafe fn note_validation_fork_child(parent_tid: i32) {
-    match u32::try_from(parent_tid) {
-        Ok(parent) if parent != 0 => reset_validation_slots(Some(parent)),
-        _ => reset_validation_slots(None),
+    /// Clear dead sibling threads' validation-context slots in a forked child while
+    /// preserving any active validation entry owned by the surviving child TID.
+    pub(crate) fn reset_validation_context_in_fork_child() {
+        reset_validation_slots(None);
     }
-}
 
-#[inline(always)]
-#[must_use]
-pub fn in_validation_context() -> bool {
-    if ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) == 0 {
-        return false;
+    fn reset_validation_slots(also_owner: Option<u32>) {
+        let child_tid = crate::heal::raw_native_tid().max(1) as u32;
+        let mut survivor_depth = 0u32;
+        for entry in &NATIVE_VALIDATION_ENTRIES {
+            let cur = entry.swap(NATIVE_VALIDATION_EMPTY, Ordering::AcqRel);
+            if cur != NATIVE_VALIDATION_EMPTY && cur != NATIVE_VALIDATION_TOMBSTONE {
+                let owner = (cur >> 32) as u32;
+                // `also_owner` is the pre-clone parent TID. Slots are still tagged
+                // with that TID until this reset retags them onto the child.
+                if owner == child_tid || Some(owner) == also_owner {
+                    survivor_depth = survivor_depth.saturating_add(cur as u32);
+                }
+            }
+        }
+        NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+        if survivor_depth > 0 {
+            let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+            NATIVE_VALIDATION_ENTRIES[dst].store(
+                pack_native_validation(child_tid, survivor_depth),
+                Ordering::Release,
+            );
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
+        let tls_active = !crate::tls_cache::compiler_tls_disabled()
+            && VALIDATION_DEPTH
+                .try_with(|depth| depth.get() > 0)
+                .unwrap_or(false);
+        #[cfg(feature = "owned-tls-cache")]
+        let tls_active = false;
+        let active = u32::from(survivor_depth > 0) + u32::from(tls_active);
+        ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
     }
-    in_validation_context_slow()
-}
+
+    pub(super) struct ValidationExecutionGuard {
+        native_slot: NativeValidationSlot,
+    }
+
+    impl ValidationExecutionGuard {
+        pub(super) fn adopt_in_fork_child(&mut self) {
+            let child_tid = crate::heal::raw_native_tid().max(1) as u32;
+            match self.native_slot {
+                NativeValidationSlot::Slot {
+                    idx,
+                    tid: parent_tid,
+                } => {
+                    let mut depth = 1u32;
+                    let cur = NATIVE_VALIDATION_ENTRIES[idx].load(Ordering::Acquire);
+                    if cur != NATIVE_VALIDATION_EMPTY
+                        && cur != NATIVE_VALIDATION_TOMBSTONE
+                        && (cur >> 32) as u32 == parent_tid
+                    {
+                        depth = (cur as u32).max(1);
+                    }
+                    for entry in &NATIVE_VALIDATION_ENTRIES {
+                        entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+                    }
+                    NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+                    let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+                    NATIVE_VALIDATION_ENTRIES[dst]
+                        .store(pack_native_validation(child_tid, depth), Ordering::Release);
+                    ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
+                    self.native_slot = NativeValidationSlot::Slot {
+                        idx: dst,
+                        tid: child_tid,
+                    };
+                }
+                NativeValidationSlot::Overflow => {
+                    for entry in &NATIVE_VALIDATION_ENTRIES {
+                        entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+                    }
+                    NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+                    let dst = (child_tid as usize) & (NATIVE_VALIDATION_TID_SLOTS - 1);
+                    NATIVE_VALIDATION_ENTRIES[dst]
+                        .store(pack_native_validation(child_tid, 1), Ordering::Release);
+                    ACTIVE_VALIDATION_CONTEXTS.store(1, Ordering::Release);
+                    self.native_slot = NativeValidationSlot::Slot {
+                        idx: dst,
+                        tid: child_tid,
+                    };
+                }
+                #[cfg(not(feature = "owned-tls-cache"))]
+                NativeValidationSlot::None => {
+                    for entry in &NATIVE_VALIDATION_ENTRIES {
+                        entry.store(NATIVE_VALIDATION_EMPTY, Ordering::Release);
+                    }
+                    NATIVE_VALIDATION_OVERFLOW_ACTIVE.store(0, Ordering::Release);
+                    let active = u32::from(
+                        VALIDATION_DEPTH
+                            .try_with(|depth| depth.get() > 0)
+                            .unwrap_or(false),
+                    );
+                    ACTIVE_VALIDATION_CONTEXTS.store(active, Ordering::Release);
+                }
+            }
+        }
+    }
+
+    impl Drop for ValidationExecutionGuard {
+        fn drop(&mut self) {
+            let decremented_to_zero = match self.native_slot {
+                NativeValidationSlot::Slot { idx, tid } => leave_native_validation_tid(idx, tid),
+                NativeValidationSlot::Overflow => {
+                    let mut prev = NATIVE_VALIDATION_OVERFLOW_ACTIVE.load(Ordering::Acquire);
+                    while prev > 0 {
+                        match NATIVE_VALIDATION_OVERFLOW_ACTIVE.compare_exchange_weak(
+                            prev,
+                            prev - 1,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        ) {
+                            Ok(_) => break,
+                            Err(observed) => prev = observed,
+                        }
+                    }
+                    prev > 0
+                }
+                #[cfg(not(feature = "owned-tls-cache"))]
+                NativeValidationSlot::None => VALIDATION_DEPTH
+                    .try_with(|depth| {
+                        let prev = depth.get();
+                        let next = prev.saturating_sub(1);
+                        depth.set(next);
+                        prev > 0 && next == 0
+                    })
+                    .unwrap_or(false),
+            };
+            if decremented_to_zero {
+                dec_active_validation_contexts();
+            }
+        }
+    }
+
+    pub(super) fn enter_validation_execution_context() -> Option<ValidationExecutionGuard> {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        if !crate::tls_cache::compiler_tls_disabled()
+            && !crate::tls_cache::native_threads_may_share_compiler_tls()
+        {
+            let _ = VALIDATION_DEPTH.try_with(|depth| {
+                let prev = depth.get();
+                if prev == 0 {
+                    // Publish ACTIVE_VALIDATION_CONTEXTS >= 1 BEFORE setting depth = 1
+                    // so a signal interrupting immediately sees ACTIVE_VALIDATION_CONTEXTS >= 1.
+                    ACTIVE_VALIDATION_CONTEXTS.fetch_add(1, Ordering::AcqRel);
+                }
+                depth.set(prev.saturating_add(1));
+            });
+            return Some(ValidationExecutionGuard {
+                native_slot: NativeValidationSlot::None,
+            });
+        }
+        let native_slot = enter_native_validation_tid();
+        Some(ValidationExecutionGuard { native_slot })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn in_validation_context_slow() -> bool {
+        #[cfg(feature = "owned-tls-cache")]
+        {
+            in_native_validation_tid()
+        }
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            if in_native_validation_tid() {
+                return true;
+            }
+            if !crate::tls_cache::compiler_tls_disabled()
+                && !crate::tls_cache::native_threads_may_share_compiler_tls()
+            {
+                return VALIDATION_DEPTH
+                    .try_with(|depth| depth.get() > 0)
+                    .unwrap_or(false);
+            }
+            false
+        }
+    }
+
+    /// Retain validation recursion ownership in a newly forked child.
+    ///
+    /// # Safety
+    /// Call before any potentially interposed memory operation, as the sole
+    /// surviving thread, with blockable signals masked. `parent_tid` is the
+    /// positive raw kernel TID captured before clone.
+    pub unsafe fn note_validation_fork_child(parent_tid: i32) {
+        match u32::try_from(parent_tid) {
+            Ok(parent) if parent != 0 => reset_validation_slots(Some(parent)),
+            _ => reset_validation_slots(None),
+        }
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn in_validation_context() -> bool {
+        if ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) == 0 {
+            return false;
+        }
+        in_validation_context_slow()
+    }
 }
 
 // Other targets do not use the native clone backend. Keep their full-width
 // Rust thread identity implicit in compiler TLS rather than truncating a hash.
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 thread_local! {
     static VALIDATION_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 static ACTIVE_VALIDATION_CONTEXTS: AtomicU32 = AtomicU32::new(0);
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 struct ValidationExecutionGuard {
     _not_send_sync: std::marker::PhantomData<*mut ()>,
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 impl Drop for ValidationExecutionGuard {
     fn drop(&mut self) {
         let _ = VALIDATION_DEPTH.try_with(|depth| depth.set(depth.get().saturating_sub(1)));
@@ -1304,29 +1388,44 @@ impl Drop for ValidationExecutionGuard {
     }
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 fn enter_validation_execution_context() -> Option<ValidationExecutionGuard> {
-    ACTIVE_VALIDATION_CONTEXTS.fetch_update(
-        Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1),
-    ).ok()?;
-    let entered = VALIDATION_DEPTH.try_with(|depth| {
-        let next = depth.get().checked_add(1)?;
-        depth.set(next);
-        Some(())
-    }).ok().flatten();
+    ACTIVE_VALIDATION_CONTEXTS
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            count.checked_add(1)
+        })
+        .ok()?;
+    let entered = VALIDATION_DEPTH
+        .try_with(|depth| {
+            let next = depth.get().checked_add(1)?;
+            depth.set(next);
+            Some(())
+        })
+        .ok()
+        .flatten();
     if entered.is_none() {
         ACTIVE_VALIDATION_CONTEXTS.fetch_sub(1, Ordering::Release);
         return None;
     }
-    Some(ValidationExecutionGuard { _not_send_sync: std::marker::PhantomData })
+    Some(ValidationExecutionGuard {
+        _not_send_sync: std::marker::PhantomData,
+    })
 }
 
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 #[inline(always)]
 #[must_use]
 pub fn in_validation_context() -> bool {
     ACTIVE_VALIDATION_CONTEXTS.load(Ordering::Acquire) != 0
-        && VALIDATION_DEPTH.try_with(|depth| depth.get() != 0).unwrap_or(false)
+        && VALIDATION_DEPTH
+            .try_with(|depth| depth.get() != 0)
+            .unwrap_or(false)
 }
 
 /// Retain validation recursion ownership in a newly forked child.
@@ -1336,13 +1435,22 @@ pub fn in_validation_context() -> bool {
 /// any operation that may enter the membrane. parent_tid was captured raw
 /// before clone. A syscall policy that changes gettid availability across
 /// clone is not a supported recovery path; ambiguous ownership fails closed.
-#[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
 pub unsafe fn note_validation_fork_child(_parent_tid: i32) {}
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 use kernel_validation_context::{ValidationExecutionGuard, enter_validation_execution_context};
 
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub use kernel_validation_context::{in_validation_context, note_validation_fork_child};
 
 impl ValidationPipeline {
@@ -2118,9 +2226,8 @@ impl ValidationPipeline {
                 let mut right = current.1;
                 let left_due =
                     !l_corrupt && left.is_known_bound() && cache.integrity_recheck_due(lhs);
-                let right_due = !r_corrupt
-                    && right.is_known_bound()
-                    && cache.integrity_recheck_due(rhs);
+                let right_due =
+                    !r_corrupt && right.is_known_bound() && cache.integrity_recheck_due(rhs);
                 if left_due || right_due {
                     if left_due {
                         left = self.recheck_cached_remaining(cache, lhs);
@@ -3566,13 +3673,22 @@ mod tests {
         let outer = enter_validation_execution_context().expect("outer context");
         assert!(in_validation_context());
         std::thread::scope(|scope| {
-            scope.spawn(|| {
-                assert!(!in_validation_context(), "another thread must still validate");
-                let inner = enter_validation_execution_context().expect("independent context");
-                assert!(in_validation_context());
-                drop(inner);
-                assert!(!in_validation_context(), "the parent's live guard grants no bypass");
-            }).join().expect("independent validation thread");
+            scope
+                .spawn(|| {
+                    assert!(
+                        !in_validation_context(),
+                        "another thread must still validate"
+                    );
+                    let inner = enter_validation_execution_context().expect("independent context");
+                    assert!(in_validation_context());
+                    drop(inner);
+                    assert!(
+                        !in_validation_context(),
+                        "the parent's live guard grants no bypass"
+                    );
+                })
+                .join()
+                .expect("independent validation thread");
             assert!(in_validation_context());
         });
         drop(outer);
@@ -3589,7 +3705,10 @@ mod tests {
             panic!("exercise validation guard unwind");
         });
         assert!(result.is_err());
-        assert!(in_validation_context(), "unwind retains the enclosing guard");
+        assert!(
+            in_validation_context(),
+            "unwind retains the enclosing guard"
+        );
         drop(outer);
         assert!(!in_validation_context());
         let result = std::panic::catch_unwind(|| {
@@ -3600,55 +3719,82 @@ mod tests {
         assert!(!in_validation_context());
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_probe_exhaustion_and_reclamation() {
         kernel_validation_context::test_probe_exhaustion_and_reclamation();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_inactive_duplicate_does_not_hide_live_depth() {
         kernel_validation_context::test_inactive_duplicate_does_not_hide_live_depth();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_fork_preserves_all_exact_slot_guards() {
         kernel_validation_context::test_fork_preserves_all_exact_slot_guards();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_fork_between_identity_and_slot_publication() {
         kernel_validation_context::test_fork_between_identity_and_slot_publication();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_fork_after_slot_publication() {
         kernel_validation_context::test_fork_after_slot_publication();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_fork_repeated_during_reconciliation() {
         kernel_validation_context::test_fork_repeated_during_reconciliation();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_fork_during_negative_lookup() {
         kernel_validation_context::test_fork_during_negative_lookup();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_missing_identity_and_depth_overflow() {
         kernel_validation_context::test_missing_identity_and_depth_overflow();
     }
 
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     #[test]
     fn validation_context_identity_failure_rolls_back_published_claim() {
         kernel_validation_context::test_identity_failure_rolls_back_published_claim();

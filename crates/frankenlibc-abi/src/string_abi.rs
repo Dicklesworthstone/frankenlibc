@@ -2318,6 +2318,7 @@ enum PrimaryAccess {
     Write,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn maybe_clamp_copy_len_fast(
     symbol: &'static str,
@@ -2399,6 +2400,7 @@ fn recheck_write_boundary(
     Some(checked.map_or(bound, |current| current.min(bound)))
 }
 
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn maybe_clamp_copy_len(
     symbol: &'static str,

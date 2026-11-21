@@ -7,9 +7,9 @@
 //! Hosted threads retain their existing exit hooks; native clones keep their
 //! state and exit hooks in ThreadHandle, outside inherited compiler TLS.
 
+use std::alloc::Layout;
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::Cell;
-use std::alloc::Layout;
 use std::cell::RefCell;
 use std::ffi::{c_int, c_void};
 use std::mem::ManuallyDrop;
@@ -48,7 +48,11 @@ impl ProcessImage {
     fn from_phdrs(base: usize, phdrs: &[libc::Elf64_Phdr]) -> Option<Self> {
         let mut image = Self {
             base,
-            segments: [ProcessImageSegment { start: 0, end: 0, flags: 0 }; 16],
+            segments: [ProcessImageSegment {
+                start: 0,
+                end: 0,
+                flags: 0,
+            }; 16],
             len: 0,
         };
         for header in phdrs {
@@ -72,7 +76,8 @@ impl ProcessImage {
 
     fn contains(&self, address: usize, executable: bool) -> bool {
         self.segments[..self.len].iter().any(|segment| {
-            segment.start <= address && address < segment.end
+            segment.start <= address
+                && address < segment.end
                 && (!executable || segment.flags & libc::PF_X != 0)
         })
     }
@@ -94,7 +99,9 @@ fn executable_image() -> Option<ProcessImage> {
     let phdr = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHDR) } as usize;
     let count = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHNUM) } as usize;
     let entry = unsafe { crate::stdlib_abi::getauxval(libc::AT_PHENT) } as usize;
-    if phdr == 0 || count == 0 || count > 4096
+    if phdr == 0
+        || count == 0
+        || count > 4096
         || entry != std::mem::size_of::<libc::Elf64_Phdr>()
         || !phdr.is_multiple_of(std::mem::align_of::<libc::Elf64_Phdr>())
     {
@@ -103,7 +110,9 @@ fn executable_image() -> Option<ProcessImage> {
     // SAFETY: these bounded, aligned program headers come from kernel auxv;
     // the executable and its header table remain mapped for process lifetime.
     let headers = unsafe { std::slice::from_raw_parts(phdr as *const libc::Elf64_Phdr, count) };
-    let table = headers.iter().find(|header| header.p_type == libc::PT_PHDR)?;
+    let table = headers
+        .iter()
+        .find(|header| header.p_type == libc::PT_PHDR)?;
     let base = phdr.checked_sub(usize::try_from(table.p_vaddr).ok()?)?;
     ProcessImage::from_phdrs(base, headers)
 }
@@ -128,9 +137,11 @@ fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
         size: usize,
         data: *mut c_void,
     ) -> c_int {
-        if info.is_null() || data.is_null()
-            || size < std::mem::offset_of!(libc::dl_phdr_info, dlpi_phnum)
-                + std::mem::size_of::<libc::Elf64_Half>()
+        if info.is_null()
+            || data.is_null()
+            || size
+                < std::mem::offset_of!(libc::dl_phdr_info, dlpi_phnum)
+                    + std::mem::size_of::<libc::Elf64_Half>()
         {
             return 0;
         }
@@ -169,9 +180,13 @@ fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
     let close = crate::host_resolve::resolve_host_symbol_raw("dlclose")?;
     // SAFETY: these addresses are host-owned entry points with the documented
     // C signatures. This entire preparation runs before cloning, on real host TLS.
-    let (iterate, open, info, close): (Iterate, Open, Info, Close) = unsafe {
-        (std::mem::transmute(iterate), std::mem::transmute(open),
-         std::mem::transmute(info), std::mem::transmute(close))
+    let (iterate, open, info, close) = unsafe {
+        (
+            std::mem::transmute::<usize, Iterate>(iterate),
+            std::mem::transmute::<usize, Open>(open),
+            std::mem::transmute::<usize, Info>(info),
+            std::mem::transmute::<usize, Close>(close),
+        )
     };
     let mut scan = Scan {
         address: prepare_native_public_tls_destructors as *const () as usize,
@@ -180,13 +195,22 @@ fn pin_runtime_image() -> Option<(ProcessImage, usize)> {
     };
     unsafe { iterate(Some(collect), std::ptr::from_mut(&mut scan).cast()) };
     let image = scan.image?;
-    let handle = unsafe { open(scan.name.as_ptr().cast(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+    let handle = unsafe {
+        open(
+            scan.name.as_ptr().cast(),
+            libc::RTLD_NOW | libc::RTLD_NOLOAD,
+        )
+    };
     if handle.is_null() {
         return None;
     }
     let mut map: *mut c_void = std::ptr::null_mut();
     let result = unsafe {
-        info(handle, libc::RTLD_DI_LINKMAP, std::ptr::from_mut(&mut map).cast())
+        info(
+            handle,
+            libc::RTLD_DI_LINKMAP,
+            std::ptr::from_mut(&mut map).cast(),
+        )
     };
     // The public link_map prefix starts with l_addr. Verify the retained
     // object is the runtime we inspected, not another object with that name.
@@ -206,8 +230,15 @@ pub(crate) fn prepare_native_public_tls_destructors() {
     PROCESS_TLS_OWNERS.get_or_init(|| {
         let main = executable_image();
         let runtime_address = prepare_native_public_tls_destructors as *const () as usize;
-        let mut owners = ProcessTlsOwners { main, runtime: None, _runtime_pin: 0 };
-        if main.as_ref().is_some_and(|image| image.contains(runtime_address, true)) {
+        let mut owners = ProcessTlsOwners {
+            main,
+            runtime: None,
+            _runtime_pin: 0,
+        };
+        if main
+            .as_ref()
+            .is_some_and(|image| image.contains(runtime_address, true))
+        {
             return owners;
         }
         #[cfg(not(feature = "standalone"))]
@@ -224,8 +255,14 @@ fn process_lifetime_address(address: usize, executable: bool) -> bool {
         // GNU accepts a null owner for an executable callback. The callback's
         // own executable mapping still needs an independent lifetime proof.
         (!executable && address == 0 && owners.main.is_some())
-            || owners.main.as_ref().is_some_and(|image| image.contains(address, executable))
-            || owners.runtime.as_ref().is_some_and(|image| image.contains(address, executable))
+            || owners
+                .main
+                .as_ref()
+                .is_some_and(|image| image.contains(address, executable))
+            || owners
+                .runtime
+                .as_ref()
+                .is_some_and(|image| image.contains(address, executable))
     })
 }
 
@@ -288,7 +325,12 @@ struct MappedVec<T> {
 
 impl<T> MappedVec<T> {
     fn new() -> Self {
-        Self { allocation: None, len: 0, capacity: 0, element: std::marker::PhantomData }
+        Self {
+            allocation: None,
+            len: 0,
+            capacity: 0,
+            element: std::marker::PhantomData,
+        }
     }
 
     fn as_ptr(&self) -> *mut T {
@@ -303,7 +345,12 @@ impl<T> MappedVec<T> {
         if needed <= self.capacity {
             return Some(());
         }
-        let capacity = self.capacity.checked_mul(2).unwrap_or(needed).max(needed).max(4);
+        let capacity = self
+            .capacity
+            .checked_mul(2)
+            .unwrap_or(needed)
+            .max(needed)
+            .max(4);
         let allocation = MappedAllocation::new(Layout::array::<T>(capacity).ok()?)?;
         // SAFETY: aligned, nonoverlapping allocations; exactly len initialized
         // elements move to the new map. The old map contains no owned values.
@@ -341,7 +388,11 @@ impl<T> MappedVec<T> {
             // len excludes the duplicate bytes beyond the initialized prefix.
             let removed = unsafe { self.as_ptr().add(index).read() };
             unsafe {
-                std::ptr::copy(self.as_ptr().add(index + 1), self.as_ptr().add(index), self.len - index - 1)
+                std::ptr::copy(
+                    self.as_ptr().add(index + 1),
+                    self.as_ptr().add(index),
+                    self.len - index - 1,
+                )
             };
             self.len -= 1;
             drop(removed);
@@ -375,13 +426,19 @@ pub(super) struct ThreadStorage<T> {
 
 impl<T> Default for ThreadStorage<T> {
     fn default() -> Self {
-        Self { hosted: Vec::new(), native: None }
+        Self {
+            hosted: Vec::new(),
+            native: None,
+        }
     }
 }
 
 impl<T> ThreadStorage<T> {
     fn native() -> Self {
-        Self { hosted: Vec::new(), native: Some(MappedVec::new()) }
+        Self {
+            hosted: Vec::new(),
+            native: Some(MappedVec::new()),
+        }
     }
 
     pub(super) fn try_reserve(&mut self, additional: usize) -> Option<()> {
@@ -450,7 +507,10 @@ fn native_state(handle: *mut ThreadHandle, initialize: bool) -> Option<*mut Thre
         // observe the header/payload until the release publication below.
         unsafe {
             initialized.write(NativeThreadState {
-                header: RuntimeTlsState { drain: drain_native, reclaim: reclaim_native },
+                header: RuntimeTlsState {
+                    drain: drain_native,
+                    reclaim: reclaim_native,
+                },
                 state: ThreadState {
                     blocks: RefCell::new(ThreadStorage::native()),
                     destructors: RefCell::new(ThreadStorage::native()),
@@ -461,7 +521,10 @@ fn native_state(handle: *mut ThreadHandle, initialize: bool) -> Option<*mut Thre
             })
         };
         state = match slot.compare_exchange(
-            std::ptr::null_mut(), initialized.cast(), Ordering::AcqRel, Ordering::Acquire,
+            std::ptr::null_mut(),
+            initialized.cast(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
         ) {
             Ok(_) => initialized,
             Err(existing) => {
@@ -707,11 +770,11 @@ fn drain_current() {
     }
     if use_tid_keyed_thread_exit() {
         drain_state(lookup_native_state(current_exit_tid()));
-        return;
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        let _ = STATE.try_with(|slot| drain_state(slot.get()));
+    } else {
+        #[cfg(not(feature = "owned-tls-cache"))]
+        {
+            let _ = STATE.try_with(|slot| drain_state(slot.get()));
+        }
     }
 }
 
@@ -734,10 +797,14 @@ fn drain(state: &ThreadState, final_drain: bool) {
             // after every callback: application code may have unblocked them.
             if unsafe {
                 syscall::sys_rt_sigprocmask(
-                    2, std::ptr::from_ref(&blocked).cast(), std::ptr::null_mut(),
+                    2,
+                    std::ptr::from_ref(&blocked).cast(),
+                    std::ptr::null_mut(),
                     std::mem::size_of::<u64>(),
                 )
-            }.is_err() {
+            }
+            .is_err()
+            {
                 syscall::sys_exit_group(127);
             }
         }
@@ -897,11 +964,13 @@ pub(crate) fn register_native_public_tls_destructor(
     dso_handle: *mut c_void,
 ) -> Option<c_int> {
     current_thread_handle()?;
-    Some(if register_with_owner_policy(destructor, argument, dso_handle, true).is_some() {
-        0
-    } else {
-        -1
-    })
+    Some(
+        if register_with_owner_policy(destructor, argument, dso_handle, true).is_some() {
+            0
+        } else {
+            -1
+        },
+    )
 }
 
 fn registration_owner(
@@ -911,11 +980,12 @@ fn registration_owner(
     allow_process_images: bool,
 ) -> Option<Option<usize>> {
     if let Some(dso) = dsos.iter().find(|dso| {
-        !dso.retiring && if executable {
-            lifecycle::executable_address(dso, address)
-        } else {
-            contains_address(dso, address)
-        }
+        !dso.retiring
+            && if executable {
+                lifecycle::executable_address(dso, address)
+            } else {
+                contains_address(dso, address)
+            }
     }) {
         return Some(Some(dso.id));
     }
@@ -935,7 +1005,10 @@ fn register_with_owner_policy(
         let mut dsos = registry().lock().ok()?;
         let owner = registration_owner(&dsos, dso_handle as usize, false, allow_process_images)?;
         let provider = registration_owner(
-            &dsos, destructor as *const () as usize, true, allow_process_images,
+            &dsos,
+            destructor as *const () as usize,
+            true,
+            allow_process_images,
         )?;
         let mut owners = [0; 2];
         let mut owner_count = 0;
@@ -953,7 +1026,10 @@ fn register_with_owner_policy(
                 .thread_exit_pins
                 .checked_add(1)?;
         }
-        for dso in dsos.iter_mut().filter(|dso| owners[..owner_count].contains(&dso.id)) {
+        for dso in dsos
+            .iter_mut()
+            .filter(|dso| owners[..owner_count].contains(&dso.id))
+        {
             dso.thread_exit_pins += 1;
         }
         entries.push_reserved(Entry {

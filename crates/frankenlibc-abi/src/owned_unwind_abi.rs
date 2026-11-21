@@ -1162,7 +1162,13 @@ unsafe extern "C" fn __frankenlibc_owned_forced_from_cursor(
         (*exception).private_2 = argument as usize;
     }
     let cursor = UnwindCursor::captured(capture);
-    emit_owned_unwind_jsonl("forced_unwind_enter", 0, cursor.ip, cursor.stack_pointer(), 0);
+    emit_owned_unwind_jsonl(
+        "forced_unwind_enter",
+        0,
+        cursor.ip,
+        cursor.stack_pointer(),
+        0,
+    );
     owned_phase2_cleanup(exception, cursor)
 }
 
@@ -3279,8 +3285,6 @@ fn parse_cie_record_with_bases(
     let mut lsda_encoding = None;
     let mut personality = None;
     let mut signal_frame = false;
-    let text_rel_base = 0usize;
-    let data_rel_base = 0usize;
     if augmentation.first() == Some(&b'z') {
         let (augmentation_data_len, augmentation_data) = decode_uleb128(eh_frame, cursor)?;
         let augmentation_end = augmentation_data

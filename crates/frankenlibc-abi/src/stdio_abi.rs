@@ -9339,8 +9339,6 @@ unsafe fn extension_plan<'a>(
             .get(specifier as usize)
             .copied()
             .flatten();
-        let first_arg = value_position.unwrap_or(next);
-        let mut arg_count = 0usize;
         let mut kinds = Vec::new();
         let mut arg_count = 0usize;
         if let Some(callback) = conversion.filter(|c| c.arginfo != 0) {
