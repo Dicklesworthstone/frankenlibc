@@ -1376,7 +1376,7 @@ These catch failures that escape direct fixture comparison because the metamorph
 
 ### Build-Time SOS-Task Consistency Checks
 
-`crates/frankenlibc-membrane/build.rs` (1,244 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
+`crates/frankenlibc-membrane/build.rs` (1,245 lines at this snapshot) parses three pre-supplied task files and checks their exact algebraic consistency:
 
 | Task label | What the build actually checks |
 |---|---|
@@ -2966,7 +2966,7 @@ Each runtime decision can emit a structured evidence record. The on-disk format 
 
 ## The Membrane Build Script: A Closer Look
 
-`crates/frankenlibc-membrane/build.rs` is 1,244 lines at this snapshot. It performs three jobs at compile time:
+`crates/frankenlibc-membrane/build.rs` is 1,245 lines at this snapshot. It performs three jobs at compile time:
 
 ### Job 1: Supplied SOS-Task Consistency
 
@@ -3968,8 +3968,8 @@ Selected project health snapshot:
 | Classified ABI surface | 4,119 symbols; 2,953 native/direct-syscall rows (71.7%), 1,166 host-backed wrapper rows (28.3%), and 0 explicit stub classifications (0%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
 | Tracked Rust files in `crates/` | 2,909 |
-| `crates/frankenlibc-abi/src/` | 125 Rust files, 252,887 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,488 lines |
+| `crates/frankenlibc-abi/src/` | 125 Rust files, 253,341 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 87,467 lines |
 | `crates/frankenlibc-core/src/` | 204 Rust files, 1,178,398 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
