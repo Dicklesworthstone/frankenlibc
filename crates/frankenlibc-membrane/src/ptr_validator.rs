@@ -4185,23 +4185,32 @@ mod tests {
                     let before = MembraneMetrics::get(failures);
                     let mut detected = false;
                     for _ in 0..INTEGRITY_RECHECK_INTERVAL {
-                        let remaining = match route {
-                            1 => pipeline.try_validate_cached_remaining(addr).flatten(),
+                        let cached = match route {
+                            1 => pipeline.try_validate_cached_remaining(addr),
                             2 => pipeline
                                 .try_validate_cached_remaining_pair(addr, peer_addr)
                                 .0
-                                .decode()
-                                .flatten(),
+                                .decode(),
                             3 => pipeline
                                 .try_validate_cached_remaining_pair(peer_addr, addr)
                                 .1
-                                .decode()
-                                .flatten(),
-                            _ => pipeline
-                                .validate(addr)
-                                .access_abstraction()
-                                .and_then(|a| a.remaining),
+                                .decode(),
+                            _ => Some(
+                                pipeline
+                                    .validate(addr)
+                                    .access_abstraction()
+                                    .and_then(|a| a.remaining),
+                            ),
                         };
+                        // Strict cache probes report detected corruption as a miss.
+                        // Follow the ABI consumer's slow path on outer None only;
+                        // Some(None) still means unknown bounds, not rejection.
+                        let remaining = cached.unwrap_or_else(|| {
+                            pipeline
+                                .validate_after_tls_cache_miss(addr)
+                                .access_abstraction()
+                                .and_then(|a| a.remaining)
+                        });
                         if remaining == Some(0) {
                             detected = true;
                             break;
@@ -4289,9 +4298,18 @@ mod tests {
             let mut detected = false;
             for hit in 0..crate::tls_cache::INTEGRITY_RECHECK_INTERVAL {
                 // Vary the interior address as well: aliases must share a budget.
-                if pipeline.try_validate_cached_remaining(ptr as usize + usize::from(hit))
-                    == Some(Some(0))
-                {
+                let addr = ptr as usize + usize::from(hit);
+                // Match the guarded ABI consumer: a cache miss requires full
+                // validation, while a hit with unknown bounds remains unknown.
+                let remaining = pipeline
+                    .try_validate_cached_remaining(addr)
+                    .unwrap_or_else(|| {
+                        pipeline
+                            .validate_after_tls_cache_miss(addr)
+                            .access_abstraction()
+                            .and_then(|a| a.remaining)
+                    });
+                if remaining == Some(0) {
                     detected = true;
                     break;
                 }

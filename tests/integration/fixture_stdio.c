@@ -1042,6 +1042,98 @@ static int test_cookie_flush_error(int error_number) {
     return failed;
 }
 
+/* A write hook reports a single transfer. Positive short counts and zero
+ * errors must reach fwrite unchanged, and rejected bytes must not reappear
+ * after clearerr, a later write, fflush, or fclose. The negative/EINTR case
+ * is deliberately kept outside GNU parity: negative write-hook returns
+ * violate the documented fopencookie contract. */
+enum write_result_kind {
+    COOKIE_RESULT_SHORT,
+    COOKIE_RESULT_ZERO,
+    COOKIE_RESULT_ZERO_ONCE,
+    COOKIE_RESULT_NEGATIVE,
+    COOKIE_RESULT_FULL
+};
+
+struct write_result_cookie {
+    char bytes[64];
+    size_t length;
+    int calls;
+    enum write_result_kind kind;
+};
+
+static ssize_t write_cookie_result(void *opaque, const char *bytes, size_t count) {
+    struct write_result_cookie *cookie = opaque;
+    ++cookie->calls;
+    if (cookie->kind == COOKIE_RESULT_NEGATIVE) {
+        errno = EINTR;
+        return -1;
+    }
+    if (cookie->kind == COOKIE_RESULT_ZERO ||
+        (cookie->kind == COOKIE_RESULT_ZERO_ONCE && cookie->calls == 1)) {
+        errno = EINTR;
+        return 0;
+    }
+    size_t accepted = cookie->kind == COOKIE_RESULT_SHORT && count > 2 ? 2 : count;
+    if (accepted > sizeof(cookie->bytes) - cookie->length) {
+        errno = ENOSPC;
+        return 0;
+    }
+    memcpy(cookie->bytes + cookie->length, bytes, accepted);
+    cookie->length += accepted;
+    return (ssize_t)accepted;
+}
+
+static int test_cookie_write_result(int buffering, enum write_result_kind kind) {
+    const int modes[] = {_IONBF, _IOFBF, _IOLBF};
+    const char *names[] = {"none", "full", "line"};
+    const char *payload = buffering == 2 ? "AB\nCDEFGHIJ" : "ABCDEFGHIJK";
+    struct write_result_cookie cookie = {.kind = kind};
+    FILE *stream = fopencookie(&cookie, "w", (cookie_io_functions_t){.write = write_cookie_result});
+    char storage[8];
+    if (!stream) return 1;
+    if (setvbuf(stream, buffering ? storage : NULL, modes[buffering],
+                buffering ? sizeof(storage) : 0)) {
+        (void)fclose(stream);
+        return 1;
+    }
+    errno = 0;
+    size_t written = fwrite(payload, 1, 11, stream);
+    int saved_errno = errno, error = ferror(stream) != 0;
+    size_t pending = __fpending(stream), accepted = cookie.length;
+    int calls = cookie.calls;
+    const size_t expected = kind == COOKIE_RESULT_SHORT ? 2 : 0;
+    int bad = written != expected || saved_errno != (expected ? 0 : EINTR) ||
+              !error || pending != 0 || calls != 1 || accepted != expected ||
+              memcmp(cookie.bytes, payload, expected) != 0;
+
+    /* Recovery must emit only the new byte, never the rejected old suffix.
+     * Changing the hook to success also makes an accidental retry observable. */
+    clearerr(stream);
+    cookie.kind = COOKIE_RESULT_FULL;
+    size_t recovery = fwrite("!", 1, 1, stream);
+    int recovery_error = ferror(stream) != 0;
+    int flushed = fflush(stream), flush_error = ferror(stream) != 0;
+    int retry = fflush(stream);
+    int closed = fclose(stream);
+    bad |= recovery != 1 || recovery_error || flushed || flush_error || retry || closed ||
+           cookie.calls != 2 || cookie.length != expected + 1 ||
+           memcmp(cookie.bytes, payload, expected) != 0 || cookie.bytes[expected] != '!';
+    printf("cookie-result:mode=%s kind=%d written=%zu errno=%d error=%d pending=%zu calls=%d accepted=%zu recovery=%zu flush=%d retry=%d close=%d total_calls=%d total=%zu result=%s\n",
+           names[buffering], (int)kind, written, saved_errno, error, pending, calls, accepted,
+           recovery, flushed, retry, closed, cookie.calls, cookie.length, bad ? "FAIL" : "PASS");
+    if (bad) fprintf(stderr, "FAIL: cookie write result mode=%d kind=%d\n", buffering, (int)kind);
+    return bad != 0;
+}
+
+static int test_cookie_write_results(void) {
+    int failed = 0;
+    for (int buffering = 0; buffering < 3; ++buffering)
+        for (int kind = COOKIE_RESULT_SHORT; kind <= COOKIE_RESULT_ZERO_ONCE; ++kind)
+            failed += test_cookie_write_result(buffering, (enum write_result_kind)kind);
+    return failed;
+}
+
 /* A failed reposition must not consume the ordinary read-ahead buffer or
  * clear an existing EOF indicator. Invalid whence must also leave pushback
  * untouched. Check both the regular and LP64 large-file frontends against
@@ -1227,6 +1319,8 @@ static int test_fd_write_errors(void) {
     cases += 2;
     failed += test_cookie_buffered_suffixes();
     cases += 16;
+    failed += test_cookie_write_results();
+    cases += 9;
     for (int api = 0; api < 2; ++api)
         for (int kind = 0; kind < 3; ++kind)
             for (int at_eof = 0; at_eof < 2; ++at_eof) {
@@ -2767,9 +2861,19 @@ int main(int argc, char **argv) {
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_fd_read_errors();
     }
+    if (argc >= 2 && strcmp(argv[1], "cookie-write-invalid") == 0) {
+        const char *symbols[] = {"fopencookie", "fwrite", "setvbuf", "ferror", "__fpending",
+                                 "clearerr", "fflush", "fclose"};
+        if (argc != 3 || check_stdio_providers(argv[2], symbols,
+                                              sizeof(symbols) / sizeof(symbols[0]))) return 2;
+        int failed = test_cookie_write_result(0, COOKIE_RESULT_NEGATIVE);
+        printf("fixture_stdio cookie-write-invalid: %s (1 case, %d failed)\n",
+               failed ? "FAIL" : "PASS", failed);
+        return failed != 0;
+    }
     if (argc >= 2 && strcmp(argv[1], "write-errors") == 0) {
         const char *symbols[] = {"fdopen", "fwrite", "fputs", "fprintf", "vfprintf", "fflush", "ftell", "fseek", "fseeko", "setvbuf",
-                                 "fread", "fgetc", "ungetc", "clearerr", "ferror", "feof", "fclose", "fopencookie"};
+                                 "fread", "fgetc", "ungetc", "clearerr", "ferror", "feof", "fclose", "fopencookie", "__fpending"};
         if (argc == 3 && check_stdio_providers(argv[2], symbols,
                                               sizeof(symbols) / sizeof(symbols[0]))) return 2;
         return test_fd_write_errors();
