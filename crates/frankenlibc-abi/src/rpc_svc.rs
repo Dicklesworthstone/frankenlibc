@@ -538,10 +538,8 @@ std::thread_local! {
     static POLL_SNAPSHOT: crate::util::TlsHeapCell<UnsafeCell<PollSnapshot>> =
         const { crate::util::TlsHeapCell::new() };
 }
-#[cfg(feature = "owned-tls-cache")]
-static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
+static POLL_SNAPSHOT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_snapshot);
-#[cfg(feature = "owned-tls-cache")]
 fn empty_snapshot() -> PollSnapshot {
     PollSnapshot {
         entries: Vec::new(),
@@ -554,18 +552,18 @@ fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
             .unwrap_or_else(|p| p.into_inner());
         return f(&mut snapshot);
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        POLL_SNAPSHOT.with(f)
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        POLL_SNAPSHOT.with(|slot| {
+    if !crate::owned_tls_cache::uses_owned_tls() {
+        return POLL_SNAPSHOT.with(|slot| {
             slot.with_zeroed(Some(clear_rpc_svc_pollfd_tls), |s| {
                 f(unsafe { &mut *s.get() })
             })
-        })
+        });
     }
+    // Reclaim native backing in the same private-key phase as its ABI slots.
+    // The later heap-cell clear callback would recreate those slots after
+    // their destructors have run. Dropping this Vec needs no RPC callback.
+    POLL_SNAPSHOT_OWNED_TLS.with(f)
 }
 
 /// Refresh the calling thread's ABI slots. The first owner's globals and poll

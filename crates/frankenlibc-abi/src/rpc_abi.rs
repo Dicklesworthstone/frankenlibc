@@ -18,6 +18,8 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
+#[cfg(not(feature = "owned-tls-cache"))]
+use crate::owned_tls_cache::uses_owned_tls;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
@@ -1517,11 +1519,9 @@ pub unsafe extern "C" fn xdr_vector(
 // deadlock class).
 const XDR_REFERENCE_DEPTH_LIMIT: u32 = 256;
 
-#[cfg(feature = "owned-tls-cache")]
 static XDR_REFERENCE_DEPTH_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<u32> =
     crate::owned_tls_cache::OwnedTlsCache::new(zero_u32);
 
-#[cfg(feature = "owned-tls-cache")]
 fn zero_u32() -> u32 {
     0
 }
@@ -1535,20 +1535,9 @@ std::thread_local! {
 
 #[inline]
 fn try_enter_xdr_reference_depth() -> bool {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
-            if *depth >= XDR_REFERENCE_DEPTH_LIMIT {
-                false
-            } else {
-                *depth += 1;
-                true
-            }
-        })
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        XDR_REFERENCE_DEPTH
+    if !uses_owned_tls() {
+        return XDR_REFERENCE_DEPTH
             .try_with(|cell| {
                 let current = cell.get();
                 if current >= XDR_REFERENCE_DEPTH_LIMIT {
@@ -1558,22 +1547,28 @@ fn try_enter_xdr_reference_depth() -> bool {
                     true
                 }
             })
-            .unwrap_or(false)
+            .unwrap_or(false);
     }
+    XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
+        if *depth >= XDR_REFERENCE_DEPTH_LIMIT {
+            false
+        } else {
+            *depth += 1;
+            true
+        }
+    })
 }
 
 #[inline]
 fn leave_xdr_reference_depth() {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
-            *depth = depth.saturating_sub(1);
-        });
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
+    if !uses_owned_tls() {
         let _ = XDR_REFERENCE_DEPTH.try_with(|cell| cell.set(cell.get() - 1));
+        return;
     }
+    XDR_REFERENCE_DEPTH_OWNED_TLS.with(|depth| {
+        *depth = depth.saturating_sub(1);
+    });
 }
 
 /// Serialize a non-null pointer to an object (allocate on decode).
@@ -2819,8 +2814,7 @@ fn claim_rpc_global_state() -> bool {
     !RPC_GLOBAL_STATE_CLAIMED.swap(true, std::sync::atomic::Ordering::AcqRel)
 }
 
-#[cfg(feature = "owned-tls-cache")]
-static RPC_GLOBAL_STATE_OWNER: crate::owned_tls_cache::OwnedTlsCache<bool> =
+static RPC_GLOBAL_STATE_OWNER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<bool> =
     crate::owned_tls_cache::OwnedTlsCache::new(claim_rpc_global_state);
 
 #[cfg(not(feature = "owned-tls-cache"))]
@@ -2830,7 +2824,13 @@ std::thread_local! {
 
 #[inline]
 pub(super) fn rpc_uses_global_svc_state() -> bool {
-    RPC_GLOBAL_STATE_OWNER.with(|owner| *owner)
+    // A native clone can inherit its creator's compiler TLS. Resolve its own
+    // claim without changing the hosted creator's established ownership.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    if !uses_owned_tls() {
+        return RPC_GLOBAL_STATE_OWNER.with(|owner| *owner);
+    }
+    RPC_GLOBAL_STATE_OWNER_OWNED_TLS.with(|owner| *owner)
 }
 
 // rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
@@ -2843,11 +2843,9 @@ pub(super) fn rpc_uses_global_svc_state() -> bool {
 #[repr(C, align(8))]
 struct RpcCreateErrBuf([u8; 32]);
 
-#[cfg(feature = "owned-tls-cache")]
 static RPC_CREATEERR_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcCreateErrBuf> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_createerr);
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_rpc_createerr() -> RpcCreateErrBuf {
     RpcCreateErrBuf([0u8; 32])
 }
@@ -2863,14 +2861,11 @@ fn rpc_createerr_ptr() -> *mut c_void {
     if rpc_uses_global_svc_state() {
         return std::ptr::addr_of_mut!(crate::glibc_internal_abi::rpc_createerr).cast();
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        RPC_CREATEERR_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RPC_CREATEERR_TLS.with(|cell| cell.get().cast::<u8>().cast())
+    if !uses_owned_tls() {
+        return RPC_CREATEERR_TLS.with(|cell| cell.get().cast::<u8>().cast());
     }
+    RPC_CREATEERR_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
 }
 
 /// Returns the calling thread's rpc_createerr, backed by the exported global
@@ -2896,11 +2891,9 @@ const RPC_FD_SET_BYTES: usize = libc::FD_SETSIZE / 8;
 #[repr(C, align(8))]
 struct RpcSvcFdSetBuf([u8; RPC_FD_SET_BYTES]);
 
-#[cfg(feature = "owned-tls-cache")]
 static RPC_SVC_FDSET_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcSvcFdSetBuf> =
     crate::owned_tls_cache::OwnedTlsCache::new(empty_rpc_svc_fdset);
 
-#[cfg(feature = "owned-tls-cache")]
 fn empty_rpc_svc_fdset() -> RpcSvcFdSetBuf {
     RpcSvcFdSetBuf([0u8; RPC_FD_SET_BYTES])
 }
@@ -2918,14 +2911,12 @@ fn rpc_svc_fdset_ptr() -> *mut c_void {
         // authoritative; never shadow it with a separate internal fd_set.
         return std::ptr::addr_of_mut!(crate::glibc_internal_abi::svc_fdset).cast();
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RPC_SVC_FDSET_TLS.with(|slot| slot.with_zeroed(None, |cell| cell.get().cast::<u8>().cast()))
+    if !uses_owned_tls() {
+        return RPC_SVC_FDSET_TLS
+            .with(|slot| slot.with_zeroed(None, |cell| cell.get().cast::<u8>().cast()));
     }
+    RPC_SVC_FDSET_OWNED_TLS.with(|buf| buf.0.as_mut_ptr().cast())
 }
 
 /// Returns the calling thread's svc_fdset (fd_set), using the exported global
@@ -2939,11 +2930,9 @@ pub unsafe extern "C" fn __rpc_thread_svc_fdset() -> *mut c_void {
     rpc_svc_fdset_ptr()
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RPC_SVC_MAX_POLLFD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<c_int> =
     crate::owned_tls_cache::OwnedTlsCache::new(zero_c_int);
 
-#[cfg(feature = "owned-tls-cache")]
 fn zero_c_int() -> c_int {
     0
 }
@@ -2959,14 +2948,11 @@ fn rpc_svc_max_pollfd_ptr() -> *mut c_void {
     if rpc_uses_global_svc_state() {
         return std::ptr::addr_of_mut!(crate::glibc_internal_abi::svc_max_pollfd).cast();
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        RPC_SVC_MAX_POLLFD_OWNED_TLS.with(|value| (value as *mut c_int).cast())
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RPC_SVC_MAX_POLLFD_TLS.with(|cell| cell.get().cast())
+    if !uses_owned_tls() {
+        return RPC_SVC_MAX_POLLFD_TLS.with(|cell| cell.get().cast());
     }
+    RPC_SVC_MAX_POLLFD_OWNED_TLS.with(|value| (value as *mut c_int).cast())
 }
 
 /// Returns the calling thread's svc_max_pollfd (int), backed by the exported
@@ -2980,11 +2966,9 @@ pub unsafe extern "C" fn __rpc_thread_svc_max_pollfd() -> *mut c_void {
     rpc_svc_max_pollfd_ptr()
 }
 
-#[cfg(feature = "owned-tls-cache")]
 static RPC_SVC_POLLFD_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<usize> =
     crate::owned_tls_cache::OwnedTlsCache::new(zero_usize);
 
-#[cfg(feature = "owned-tls-cache")]
 fn zero_usize() -> usize {
     0
 }
@@ -3000,14 +2984,11 @@ fn rpc_svc_pollfd_ptr() -> *mut c_void {
     if rpc_uses_global_svc_state() {
         return std::ptr::addr_of_mut!(crate::glibc_internal_abi::svc_pollfd).cast();
     }
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        RPC_SVC_POLLFD_OWNED_TLS.with(|value| (value as *mut usize).cast())
-    }
     #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        RPC_SVC_POLLFD_TLS.with(|cell| cell.get().cast())
+    if !uses_owned_tls() {
+        return RPC_SVC_POLLFD_TLS.with(|cell| cell.get().cast());
     }
+    RPC_SVC_POLLFD_OWNED_TLS.with(|value| (value as *mut usize).cast())
 }
 
 /// Returns the calling thread's svc_pollfd (struct pollfd *), backed by the

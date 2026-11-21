@@ -286,6 +286,335 @@ fn rpc_dtablesize_returns_reasonable_value() {
 // Thread-local RPC state
 // ===========================================================================
 
+fn run_native_rpc_test_in_child(name: &str) -> bool {
+    const CHILD: &str = "FRANKENLIBC_NATIVE_RPC_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        return false;
+    }
+    // Native admission is process-wide; isolate it from hosted RPC tests.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("start native RPC child");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out && output.status.success() && stdout.contains("1 passed;"),
+        "native RPC child timeout={timed_out} status={}\n{stdout}\n{stderr}",
+        output.status
+    );
+    true
+}
+
+fn run_native_rpc_worker(
+    worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    argument: *mut c_void,
+) -> Result<usize, c_int> {
+    struct RestoreBackend(bool);
+    impl Drop for RestoreBackend {
+        fn drop(&mut self) {
+            frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.0);
+        }
+    }
+    struct Call {
+        worker: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        argument: *mut c_void,
+    }
+    unsafe extern "C" fn entry(raw: *mut c_void) -> *mut c_void {
+        if frankenlibc_core::pthread::thread::current_thread_handle().is_none() {
+            return 255usize as *mut c_void;
+        }
+        // SAFETY: the creator keeps Call and its argument alive through join.
+        let call = unsafe { &*raw.cast::<Call>() };
+        unsafe { (call.worker)(call.argument) }
+    }
+    let _restore = RestoreBackend(
+        frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests(),
+    );
+    let mut call = Call { worker, argument };
+    let mut thread = 0;
+    // SAFETY: the stack context remains live until the native worker is joined.
+    let rc = unsafe {
+        frankenlibc_abi::pthread_abi::pthread_create(
+            &mut thread,
+            std::ptr::null(),
+            Some(entry),
+            (&raw mut call).cast(),
+        )
+    };
+    if rc != 0 {
+        return Err(rc);
+    }
+    let mut result = std::ptr::null_mut();
+    // SAFETY: thread is the live joinable native worker returned above.
+    let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut result) };
+    if rc != 0 {
+        // Returning would invalidate Call while a worker could still use it.
+        std::process::abort();
+    }
+    Ok(result as usize)
+}
+
+unsafe fn rpc_state_addresses() -> [usize; 5] {
+    // SAFETY: these ABI accessors return live, aligned caller-thread storage.
+    unsafe {
+        let error = __rpc_thread_createerr();
+        let fdset = __rpc_thread_svc_fdset();
+        let count = __rpc_thread_svc_max_pollfd();
+        let poll = __rpc_thread_svc_pollfd();
+        [
+            error as usize,
+            fdset as usize,
+            count as usize,
+            poll as usize,
+            poll.cast::<*mut libc::pollfd>().read() as usize,
+        ]
+    }
+}
+
+unsafe extern "C" fn rpc_isolated_state_worker(raw: *mut c_void) -> *mut c_void {
+    // SAFETY: the creator's address array remains live through join. Only the
+    // worker's own returned storage is dereferenced here.
+    unsafe {
+        let creator = &*raw.cast::<[usize; 5]>();
+        let own = rpc_state_addresses();
+        let mut shared = 0usize;
+        for index in 0..own.len() {
+            if own[index] == 0 || own[index] == creator[index] {
+                shared |= 1 << index;
+            }
+        }
+        if shared != 0 {
+            return shared as *mut c_void;
+        }
+        if *(own[0] as *const [u8; 32]) != [0; 32]
+            || *(own[1] as *const [u8; 128]) != [0; 128]
+            || *(own[2] as *const c_int) != 0
+            || (*(own[4] as *const libc::pollfd)).fd != -1
+        {
+            return 32usize as *mut c_void;
+        }
+        (own[0] as *mut [u8; 32]).write([0xa5; 32]);
+        if rpc_state_addresses() != own || *(own[0] as *const [u8; 32]) != [0xa5; 32] {
+            return 64usize as *mut c_void;
+        }
+        // Leave published state dirty so exit reclamation and the next worker
+        // must not reuse it or clear the creator's independently retained view.
+        (own[1] as *mut [u8; 128]).write([0x3c; 128]);
+        (own[2] as *mut c_int).write(17);
+        (*(own[4] as *mut libc::pollfd)).fd = 123;
+    }
+    std::ptr::null_mut()
+}
+
+fn check_native_rpc_preserves_creator() {
+    // Retain actual ABI addresses, not copies that hide writes by the worker.
+    let mut creator = unsafe { rpc_state_addresses() };
+    for _ in 0..3 {
+        // SAFETY: all addresses belong to this live hosted caller.
+        unsafe {
+            (creator[0] as *mut [u8; 32]).write([0x37; 32]);
+            (creator[1] as *mut [u8; 128]).write([0x6d; 128]);
+            (creator[2] as *mut c_int).write(23);
+            (*(creator[4] as *mut libc::pollfd)).fd = 67;
+        }
+        assert_eq!(
+            run_native_rpc_worker(rpc_isolated_state_worker, (&raw mut creator).cast()),
+            Ok(0)
+        );
+        // Inspect before another accessor refresh could conceal corruption.
+        unsafe {
+            assert_eq!(*(creator[0] as *const [u8; 32]), [0x37; 32]);
+            assert_eq!(*(creator[1] as *const [u8; 128]), [0x6d; 128]);
+            assert_eq!(*(creator[2] as *const c_int), 23);
+            assert_eq!(*(creator[3] as *const usize), creator[4]);
+            assert_eq!((*(creator[4] as *const libc::pollfd)).fd, 67);
+            assert_eq!(rpc_state_addresses(), creator);
+        }
+    }
+}
+
+#[test]
+fn rpc_native_tls_preserves_the_global_owner() {
+    if run_native_rpc_test_in_child("rpc_native_tls_preserves_the_global_owner") {
+        return;
+    }
+    assert_eq!(
+        unsafe { __rpc_thread_createerr() } as usize,
+        (&raw mut frankenlibc_abi::glibc_internal_abi::rpc_createerr) as usize
+    );
+    check_native_rpc_preserves_creator();
+}
+
+#[test]
+fn rpc_native_tls_preserves_a_private_creator() {
+    if run_native_rpc_test_in_child("rpc_native_tls_preserves_a_private_creator") {
+        return;
+    }
+    let first_owner = std::thread::spawn(|| unsafe { __rpc_thread_createerr() } as usize)
+        .join()
+        .unwrap();
+    assert_eq!(
+        first_owner,
+        (&raw mut frankenlibc_abi::glibc_internal_abi::rpc_createerr) as usize
+    );
+    assert_ne!(unsafe { __rpc_thread_createerr() } as usize, first_owner);
+    check_native_rpc_preserves_creator();
+}
+
+#[test]
+fn rpc_native_tls_first_worker_owns_globals_without_transferring_them() {
+    if run_native_rpc_test_in_child(
+        "rpc_native_tls_first_worker_owns_globals_without_transferring_them",
+    ) {
+        return;
+    }
+    unsafe extern "C" fn first_owner(raw: *mut c_void) -> *mut c_void {
+        // SAFETY: the creator lends the output array through the matching join.
+        unsafe { raw.cast::<[usize; 5]>().write(rpc_state_addresses()) };
+        std::ptr::null_mut()
+    }
+    let mut first = [0usize; 5];
+    assert_eq!(
+        run_native_rpc_worker(first_owner, (&raw mut first).cast()),
+        Ok(0)
+    );
+    assert_eq!(
+        &first[..4],
+        &[
+            (&raw mut frankenlibc_abi::glibc_internal_abi::rpc_createerr) as usize,
+            (&raw mut frankenlibc_abi::glibc_internal_abi::svc_fdset) as usize,
+            (&raw mut frankenlibc_abi::glibc_internal_abi::svc_max_pollfd) as usize,
+            (&raw mut frankenlibc_abi::glibc_internal_abi::svc_pollfd) as usize,
+        ]
+    );
+    assert_ne!(first[4], 0);
+    // The global backing has process lifetime after its first owner exits.
+    assert_eq!(unsafe { (*(first[4] as *const libc::pollfd)).fd }, -1);
+    let creator = unsafe { rpc_state_addresses() };
+    for index in 0..creator.len() {
+        assert_ne!(creator[index], first[index]);
+    }
+    check_native_rpc_preserves_creator();
+}
+
+#[repr(C)]
+struct NativeXdrDepthProbe {
+    remaining: u32,
+    visits: u32,
+    spawn_worker: bool,
+    worker_result: usize,
+}
+
+fn run_rpc_depth_probe(depth: u32, spawn_worker: bool) -> (c_int, u32, usize, [u8; 4]) {
+    #[repr(C, align(8))]
+    struct XdrStorage([u8; 48]);
+    let mut stream = XdrStorage([0; 48]);
+    let mut bytes = [0u8; 4];
+    let mut probe = NativeXdrDepthProbe {
+        remaining: depth,
+        visits: 0,
+        spawn_worker,
+        worker_result: 0,
+    };
+    let mut pointer = (&raw mut probe).cast::<c_char>();
+    // SAFETY: the aligned LP64 XDR handle, byte buffer and probe remain live
+    // through the recursive encode. Encode never frees the borrowed probe.
+    let result = unsafe {
+        xdrmem_create(
+            (&raw mut stream).cast(),
+            bytes.as_mut_ptr().cast(),
+            bytes.len() as u32,
+            0,
+        );
+        xdr_reference(
+            (&raw mut stream).cast(),
+            &mut pointer,
+            std::mem::size_of::<NativeXdrDepthProbe>() as u32,
+            rpc_depth_probe_callback as *mut c_void,
+        )
+    };
+    (result, probe.visits, probe.worker_result, bytes)
+}
+
+unsafe extern "C" fn rpc_depth_probe_worker(_: *mut c_void) -> *mut c_void {
+    if run_rpc_depth_probe(256, false) != (1, 256, 0, [0, 0, 0, 42]) {
+        return 1usize as *mut c_void;
+    }
+    if run_rpc_depth_probe(257, false) != (0, 256, 0, [0; 4]) {
+        return 2usize as *mut c_void;
+    }
+    // Refusing the over-deep traversal must unwind every admitted depth.
+    if run_rpc_depth_probe(256, false) != (1, 256, 0, [0, 0, 0, 42]) {
+        return 4usize as *mut c_void;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe extern "C" fn rpc_depth_probe_callback(stream: *mut c_void, raw: *mut c_void) -> c_int {
+    // SAFETY: xdr_reference forwards the live caller-owned probe unchanged.
+    let probe = unsafe { &mut *raw.cast::<NativeXdrDepthProbe>() };
+    probe.visits += 1;
+    if probe.remaining > 1 {
+        probe.remaining -= 1;
+        let mut pointer = raw.cast::<c_char>();
+        // SAFETY: the same probe and encode stream remain live for this child
+        // frame. No access through this frame's borrow follows the call.
+        return unsafe {
+            xdr_reference(
+                stream,
+                &mut pointer,
+                std::mem::size_of::<NativeXdrDepthProbe>() as u32,
+                rpc_depth_probe_callback as *mut c_void,
+            )
+        };
+    }
+    if probe.spawn_worker {
+        for _ in 0..2 {
+            match run_native_rpc_worker(rpc_depth_probe_worker, std::ptr::null_mut()) {
+                Ok(0) => {}
+                Ok(error) => {
+                    probe.worker_result = error;
+                    return 0;
+                }
+                Err(error) => {
+                    probe.worker_result = 256 + error as usize;
+                    return 0;
+                }
+            }
+        }
+    }
+    let mut value = 42;
+    // SAFETY: the stream retains its four writable output bytes.
+    unsafe { xdr_int(stream, &mut value) }
+}
+
+#[test]
+fn rpc_native_tls_keeps_independent_xdr_recursion_budgets() {
+    if run_native_rpc_test_in_child("rpc_native_tls_keeps_independent_xdr_recursion_budgets") {
+        return;
+    }
+    // Spawn native workers while all 256 creator frames remain live. Each
+    // worker must still encode its own 256 frames and reject the 257th.
+    assert_eq!(run_rpc_depth_probe(256, true), (1, 256, 0, [0, 0, 0, 42]));
+    assert_eq!(run_rpc_depth_probe(256, false), (1, 256, 0, [0, 0, 0, 42]));
+    assert_eq!(run_rpc_depth_probe(257, false), (0, 256, 0, [0; 4]));
+}
+
 #[test]
 fn rpc_thread_createerr_returns_non_null() {
     let ptr = unsafe { __rpc_thread_createerr() };
