@@ -84,19 +84,33 @@ pub(crate) unsafe fn getvalue(semaphore: *mut c_void, output: *mut c_int) -> c_i
     0
 }
 
+#[cold]
+#[inline(never)]
+extern "C" fn set_errno_fail(err: c_int) -> c_int {
+    unsafe { crate::errno_abi::set_abi_errno(err) };
+    -1
+}
+
+#[cold]
+#[inline(never)]
+unsafe extern "C" fn wake_one_slow(semaphore: *mut c_void, private: c_int) -> c_int {
+    // SAFETY: the kernel validates the address; an already unmapped word is
+    // a harmless failed wake. No user-space dereference occurs after publish.
+    let _ = unsafe { syscall::sys_futex(semaphore.cast(), libc::FUTEX_WAKE | private, 1, 0, 0, 0) };
+    0
+}
+
 /// # Safety
 /// semaphore is initialized. This nonblocking operation is not a cancellation point.
 #[inline(always)]
 pub(crate) unsafe fn trywait(semaphore: *mut c_void) -> c_int {
     if semaphore.is_null() {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
+        return set_errno_fail(libc::EINVAL);
     }
     if unsafe { state(semaphore) }.try_acquire() {
         0
     } else {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EAGAIN) };
-        -1
+        set_errno_fail(libc::EAGAIN)
     }
 }
 
@@ -106,22 +120,17 @@ pub(crate) unsafe fn trywait(semaphore: *mut c_void) -> c_int {
 #[inline(always)]
 pub(crate) unsafe fn post_inline(semaphore: *mut c_void) -> c_int {
     if semaphore.is_null() {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
+        return set_errno_fail(libc::EINVAL);
     }
     // SAFETY: cache the selector while the caller must still own live storage.
     let private = unsafe { private_flag(semaphore) };
     let Some(wake) = unsafe { state(semaphore) }.post() else {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EOVERFLOW) };
-        return -1;
+        return set_errno_fail(libc::EOVERFLOW);
     };
     // A last waiter may already have destroyed/unmapped the object. The packed
     // publication carries the wake decision, so do not load sem_t again here.
     if wake {
-        // SAFETY: the kernel validates the address; an already unmapped word is
-        // a harmless failed wake. No user-space dereference occurs after publish.
-        let _ =
-            unsafe { syscall::sys_futex(semaphore.cast(), libc::FUTEX_WAKE | private, 1, 0, 0, 0) };
+        return unsafe { wake_one_slow(semaphore, private) };
     }
     0
 }

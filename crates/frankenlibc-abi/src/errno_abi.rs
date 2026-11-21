@@ -136,7 +136,8 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 /// use FrankenLibC's owned TLS slot.
 ///
 /// Uses volatile write to prevent the LTO optimizer from eliminating the store.
-#[inline]
+#[cold]
+#[inline(never)]
 pub unsafe fn set_abi_errno(val: c_int) {
     unsafe { set_abi_errno_local(val) };
 }
@@ -146,7 +147,8 @@ pub unsafe fn set_abi_errno(val: c_int) {
 /// This is the errno path used by async-signal-safe ABI entries such as
 /// `_Fork`. Native ownership lookup uses only a raw TID syscall and atomic
 /// table reads; the fallback assembly leaf is initial-exec TLS in both modes.
-#[inline]
+#[cold]
+#[inline(never)]
 pub(crate) unsafe fn set_abi_errno_local(val: c_int) {
     let p = errno_location();
     unsafe { std::ptr::write_volatile(p, val) };
