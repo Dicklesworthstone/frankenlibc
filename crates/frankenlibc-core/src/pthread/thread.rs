@@ -218,12 +218,6 @@ pub struct ThreadHandle {
     /// handlers access this cell; no inherited compiler TLS is involved.
     pub errno: core::cell::UnsafeCell<i32>,
 
-    /// Formatting state belongs to the native owner, including during key
-    /// destructors. A new thread starts on the global numeric locale and with
-    /// no pending render error, independently of its creator's compiler TLS.
-    numeric_locale: core::cell::UnsafeCell<Option<[u64; 3]>>,
-    render_failure: core::cell::UnsafeCell<i32>,
-
     /// POSIX cancellation settings, initialized independently of the creator.
     /// These settings do not imply native asynchronous cancellation delivery.
     pub cancel_state: AtomicI32,
@@ -1080,8 +1074,6 @@ pub unsafe fn prepare_thread_with_startup(
             entry_gate: AtomicU32::new(ENTRY_WAITING),
             retval: core::cell::UnsafeCell::new(0),
             errno: core::cell::UnsafeCell::new(0),
-            numeric_locale: core::cell::UnsafeCell::new(None),
-            render_failure: core::cell::UnsafeCell::new(0),
             cancel_state: AtomicI32::new(0), // PTHREAD_CANCEL_ENABLE
             cancel_type: AtomicI32::new(0),  // PTHREAD_CANCEL_DEFERRED
             threading_policy_depth: AtomicU32::new(0),
@@ -1568,65 +1560,6 @@ pub fn current_thread_handle() -> Option<*mut ThreadHandle> {
         return None;
     }
     handle_for_tid(syscall::sys_gettid())
-}
-
-/// Formatting must never interpret a failed owner lookup as permission to use
-/// compiler TLS, which a native child may share with its creator.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[inline]
-fn formatting_thread_handle() -> Option<*mut ThreadHandle> {
-    if !super::tls::native_threads_may_exist() {
-        return None;
-    }
-    let tid = syscall::sys_gettid();
-    if tid <= 0 {
-        std::process::abort();
-    }
-    handle_for_tid(tid)
-}
-
-/// `None` denotes a hosted caller; `Some(None)` is a native caller using the
-/// live global locale. Never confuse the latter with permission to read the
-/// creator's compiler TLS. Only copied values escape this ownership boundary.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[allow(unsafe_code)]
-pub(crate) fn current_numeric_locale() -> Option<Option<[u64; 3]>> {
-    let handle = formatting_thread_handle()?;
-    // SAFETY: the current native owner keeps its handle live through every
-    // application destructor. Locale changes/formatting are not signal-safe;
-    // no reference or callback spans this scalar snapshot.
-    Some(unsafe { *(*handle).numeric_locale.get() })
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[allow(unsafe_code)]
-pub(crate) fn set_current_numeric_locale(value: Option<[u64; 3]>) -> bool {
-    let Some(handle) = formatting_thread_handle() else {
-        return false;
-    };
-    // SAFETY: only the current owner accesses this private formatting cell.
-    unsafe { *(*handle).numeric_locale.get() = value };
-    true
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[allow(unsafe_code)]
-pub(crate) fn set_current_render_failure(errno: i32) -> bool {
-    let Some(handle) = formatting_thread_handle() else {
-        return false;
-    };
-    // SAFETY: only the current owner accesses this private formatting cell.
-    unsafe { *(*handle).render_failure.get() = errno };
-    true
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[allow(unsafe_code)]
-pub(crate) fn take_current_render_failure() -> Option<i32> {
-    let handle = formatting_thread_handle()?;
-    // SAFETY: no reference escapes, and no callback can reenter while replacing
-    // the current native owner's pending formatting error.
-    Some(unsafe { core::mem::replace(&mut *(*handle).render_failure.get(), 0) })
 }
 
 /// Run the current native owner's ABI TLS callbacks before withdrawing its

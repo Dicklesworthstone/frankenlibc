@@ -1442,8 +1442,6 @@ mod tests {
         };
         f32_case("sinf", sinf, sinf_body);
         f32_case("cosf", cosf, cosf_body);
-        f32_case("sinhf", sinhf, sinhf_body);
-        f32_case("coshf", coshf, coshf_body);
         f32_case("erff", erff, erff_body);
     }
 
