@@ -5212,7 +5212,7 @@ pub unsafe extern "C" fn _dl_mcount_wrapper_check(_selfpc: c_ulong) {}
 // _flushlbf: native — flush all line-buffered streams
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _flushlbf() {
-    let _ = unsafe { crate::stdio_abi::fflush(std::ptr::null_mut()) };
+    unsafe { crate::stdio_abi::flush_line_buffered_streams() };
 }
 
 // _libc_intl_domainname

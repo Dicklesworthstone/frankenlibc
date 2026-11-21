@@ -4650,13 +4650,9 @@ pub unsafe extern "C" fn _IO_flush_all() -> c_int {
 }
 
 /// `_IO_flush_all_linebuffered` — flush all line-buffered streams.
-///
-/// In glibc this only flushes line-buffered streams. Our best-effort native
-/// approximation flushes all open streams via `fflush(NULL)`, which is a
-/// safe superset of the intended behavior.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_flush_all_linebuffered() {
-    let _ = unsafe { stdio_abi::fflush(std::ptr::null_mut()) };
+    unsafe { stdio_abi::flush_line_buffered_streams() };
 }
 
 // ---------------------------------------------------------------------------
