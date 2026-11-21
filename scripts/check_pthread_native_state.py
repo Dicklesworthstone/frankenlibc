@@ -38,6 +38,10 @@ PUBLICATION_CASES = (
 DLERROR_CASES = (
     "dlerror-first-child", "dlerror-siblings", "dlerror-return", "dlerror-exit",
 )
+UNWIND_CASES = (
+    "native-exit", "native-cancel", "native-cancel-catch-all",
+    "native-mixed-cancel", "native-legacy-mixed-cancel",
+)
 CPP_CASES = (
     "native-exit", "native-cancel", "native-exit-catch-all", "native-cancel-catch-all",
     "native-mixed-exit", "native-mixed-cancel", "native-mixed-cancel-siblings",
@@ -117,6 +121,8 @@ def main():
                         help="Run early self-detach, detached entry, exit and creator publication cases")
     parser.add_argument("--dlerror-only", action="store_true",
                         help="Run loader-error thread isolation, consumption and teardown cases")
+    parser.add_argument("--unwind-only", action="store_true",
+                        help="Check interpose unwind exports and C/C++ exit/cancellation cleanup")
     args = parser.parse_args()
     library = args.library.resolve(strict=True)
     output = args.out_dir.resolve()
@@ -163,6 +169,32 @@ def main():
     records = []
     failures = []
     explicit_skips = []
+    symbol_ownership = None
+    if args.unwind_only:
+        # The interpose artifact must leave the complete opaque unwind protocol
+        # with the resident platform provider. A partial owned export surface can
+        # run one destructor and silently skip every remaining language cleanup.
+        command = ["nm", "-D", "--defined-only", str(library)]
+        try:
+            symbols = subprocess.run(command, env=environment, capture_output=True,
+                                     text=True, timeout=15)
+            code, stdout, stderr = symbols.returncode, symbols.stdout, symbols.stderr
+        except subprocess.TimeoutExpired as error:
+            code = 124
+            stdout = (error.stdout or b"").decode(errors="replace")
+            stderr = (error.stderr or b"").decode(errors="replace") + "\nsymbol scan timeout\n"
+        except OSError as error:
+            code, stdout, stderr = 127, "", str(error) + "\n"
+        (output / "interpose-unwind-symbols.log").write_text(stdout + stderr)
+        exported = sorted({line.split()[-1].split("@", 1)[0]
+                           for line in stdout.splitlines() if line.split()
+                           and line.split()[-1].startswith("_Unwind_")})
+        symbol_ownership = {"returncode": code, "unexpected_public_exports": exported,
+                            "passed": code == 0 and not exported}
+        if not symbol_ownership["passed"]:
+            failures.append("unwind-symbol-ownership")
+        print("interpose unwind exports: " +
+              ("PASS" if symbol_ownership["passed"] else f"FAIL {exported}"), flush=True)
 
     def execute(label, case, expected, extra, executable=binary, oracle_for=None):
         try:
@@ -232,6 +264,9 @@ def main():
         variants = (("publication-", PUBLICATION_CASES, binary, "pthread-native-state", ("0", "1")),)
     if args.dlerror_only:
         variants = (("dlerror-", DLERROR_CASES, binary, "pthread-native-state", ("0", "1")),)
+    if args.unwind_only:
+        variants = (("cpp-", UNWIND_CASES, cpp_binary, "pthread-native-unwind", ("0", "1")),
+                    ("wait-", ("sem-wait",), wait_binary, "pthread-native-wait", ("0", "1")))
     for prefix, cases, executable, output_prefix, backends in variants:
         for case in cases:
             # __pthread_join is a candidate alias, absent from the GNU export
@@ -262,7 +297,8 @@ def main():
     gnu_cases = sum(len(cases) for _, cases, _, _, _ in variants)
     candidate_cases = sum(2 * len(backends) * len(cases) for _, cases, _, _, backends in variants)
     report = {"library": str(library), "library_sha256": sha256(library),
-              "scope": ("dlerror" if args.dlerror_only else
+              "scope": ("unwind" if args.unwind_only else
+                        "dlerror" if args.dlerror_only else
                         "publication" if args.publication_only else
                         "attributes" if args.attributes_only else
                         "condition-peers" if args.condition_peers_only else
@@ -274,6 +310,7 @@ def main():
               "gnu_provider": host, "gnu_cases": gnu_cases,
               "candidate_cases": candidate_cases, "provider_negative_cases": 3,
               "backend_negative_cases": 1, "explicit_skips": explicit_skips,
+              "symbol_ownership": symbol_ownership,
               "failures": failures, "runs": records}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     if failures:
