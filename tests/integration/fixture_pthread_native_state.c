@@ -1315,5 +1315,6 @@ int main(int argc, char **argv) {
     else if (!strcmp(name, "dlerror-exit")) dlerror_lifecycle(1);
     else return 2;
     printf("pthread-native-state:%s:PASS\n", name);
+    if (!strncmp(name, "dlerror-", 8)) CHECK(fflush(stdout) == 0);
     return 0;
 }

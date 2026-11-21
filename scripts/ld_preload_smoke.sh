@@ -241,7 +241,7 @@ cc -O2 "${ROOT}/tests/integration/fixture_stdio_positions.c" -o "${STDIO_POSITIO
 KEY_DTOR_BIN="${BIN_DIR}/fixture_pthread_key_destructors"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -o "${KEY_DTOR_BIN}"
 EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
-cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -o "${EXIT_SEQUENCE_BIN}"
+cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -ldl -o "${EXIT_SEQUENCE_BIN}"
 STRICT_STRING_OVERFLOW_BIN="${BIN_DIR}/fixture_strict_string_overflow"
 cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_strict_string_overflow.c" -o "${STRICT_STRING_OVERFLOW_BIN}"
 HARDENED_UAF_HEAL_BIN="${BIN_DIR}/fixture_hardened_uaf_heal"

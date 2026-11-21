@@ -2233,6 +2233,24 @@ impl NativeStreamRegistry {
     /// Global flush uses this together with the stream registry to acquire a
     /// FILE lock before a concurrent close can retire or reuse its slot.
     pub(crate) fn get_by_handle(&self, handle: *const c_void) -> Option<&NativeFile> {
+        let address = handle as usize;
+        if !self.local_test_instance && address != 0 {
+            // Standard streams can expose a GNU object distinct from the
+            // registry's private NativeFile header. Resolve only published
+            // aliases while holding this lock; do not initialize stdio here.
+            let standard = owned_io_2_1_fd_for_addr(address)
+                .map(|fd| fd as usize)
+                .or_else(|| {
+                    VISIBLE_STDIO_HANDLE_ADDR
+                        .iter()
+                        .position(|slot| slot.load(Ordering::Acquire) == address)
+                });
+            if let Some(index) = standard {
+                // get retains the occupied-state check after fclose/stdout
+                // retirement, rather than recreating a closed standard stream.
+                return self.get(index);
+            }
+        }
         self.handle_slot(handle).and_then(|index| self.get(index))
     }
 
