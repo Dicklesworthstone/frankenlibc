@@ -3176,6 +3176,25 @@ pub unsafe extern "C" fn user_from_uid(uid: libc::uid_t, nouser: c_int) -> *cons
     ptr
 }
 
+/// Keep the creator's account caches borrowed while a native worker is tested.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_identity_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> R {
+    with_pwd_storage(|_| {
+        with_shadow_storage(|_| {
+            with_gshadow_storage(|_| {
+                with_pw_pending(|pending| {
+                    let _passwd = pending.borrow_mut();
+                    with_sp_pending(|pending| {
+                        let _shadow = pending.borrow_mut();
+                        f()
+                    })
+                })
+            })
+        })
+    })
+}
+
 // Unit tests for this module are in tests/pwd_abi_test.rs.
 // This module is compiled with #[cfg(not(test))] in lib.rs, so internal
 // tests here would never run. The integration tests cover the public API.

@@ -348,11 +348,11 @@ jobs:
           for mode in strict hardened; do
             log="artifacts/runtime-startup/identity/$mode.log"
             if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi "${args[@]}" \
-                --test pwd_abi_test identity_native_tls_preserves_records_and_pending_enumeration \
-                -- --exact --nocapture --test-threads=1 2>&1 | tee "$log"; then
+                --test pwd_abi_test identity_native_tls_ \
+                -- --nocapture --test-threads=1 2>&1 | tee "$log"; then
               failed=1
             fi
-            if ! grep -Eq 'test result: ok\. 1 passed; 0 failed;' "$log"; then
+            if ! grep -Eq 'test result: ok\. 3 passed; 0 failed;' "$log"; then
               failed=1
             fi
           done

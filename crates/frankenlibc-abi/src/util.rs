@@ -97,7 +97,6 @@ impl<T> AbiReentrantMutex<T> {
             value: UnsafeCell::new(value),
         }
     }
-
 }
 
 impl<T> AbiReentrantMutex<T, true> {
@@ -233,8 +232,7 @@ impl<T, const KERNEL_TID: bool> AbiReentrantMutex<T, KERNEL_TID> {
         if KERNEL_TID {
             let mut state = self.owner_tid.load(Ordering::Acquire);
             while (state as u64 >> 32) == parent_tid as u64 {
-                let adopted =
-                    ((Self::current_owner_tid() as u64) << 32) | u64::from(state as u32);
+                let adopted = ((Self::current_owner_tid() as u64) << 32) | u64::from(state as u32);
                 match self.owner_tid.compare_exchange_weak(
                     state,
                     adopted as usize,
@@ -352,10 +350,24 @@ impl<T, const KERNEL_TID: bool> AbiReentrantMutex<T, KERNEL_TID> {
     #[inline]
     fn unlock_for_tid(&self, tid: usize) {
         if KERNEL_TID {
+            let mut tid = tid;
             let mut state = self.owner_tid.load(Ordering::Relaxed);
             loop {
                 if (state as u64 >> 32) != tid as u64 {
-                    return;
+                    // An inner guard can adopt this lock after a signal's
+                    // fork while an interrupted outer guard still caches the
+                    // parent's key. Guards are !Send: release that inherited
+                    // level only if the live owner is this kernel thread.
+                    let current_tid = Self::current_owner_tid();
+                    let latest = self.owner_tid.load(Ordering::Relaxed);
+                    if latest != state {
+                        state = latest;
+                        continue;
+                    }
+                    if (state as u64 >> 32) != current_tid as u64 {
+                        return;
+                    }
+                    tid = current_tid;
                 }
                 let released = if state as u32 > 1 { state - 1 } else { 0 };
                 match self.owner_tid.compare_exchange_weak(
@@ -430,12 +442,28 @@ impl<T, const KERNEL_TID: bool> AbiReentrantMutexGuard<'_, T, KERNEL_TID> {
 
     #[inline]
     unsafe fn adopt_for_tid(&mut self, child_tid: usize) {
-        let _ = self.lock.owner_tid.compare_exchange(
-            self.owner_tid,
-            child_tid,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        );
+        if KERNEL_TID {
+            let mut state = self.lock.owner_tid.load(Ordering::Acquire);
+            while (state as u64 >> 32) == self.owner_tid as u64 {
+                let adopted = ((child_tid as u64) << 32) | u64::from(state as u32);
+                match self.lock.owner_tid.compare_exchange_weak(
+                    state,
+                    adopted as usize,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(current) => state = current,
+                }
+            }
+        } else {
+            let _ = self.lock.owner_tid.compare_exchange(
+                self.owner_tid,
+                child_tid,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
+        }
         self.owner_tid = child_tid;
     }
 }
@@ -556,11 +584,40 @@ struct TlsHeapHeader {
     drop_in_place: Option<unsafe fn(*mut u8)>,
 }
 
-type NativeTlsHeapMap = HashMap<(i32, usize), usize>;
+// The owning ThreadHandle and compiler-TLS cell addresses both survive fork.
+// Kernel TIDs do not. Native teardown drains this owner before its handle can
+// be reclaimed or reused; fork-child adoption removes every vanished owner.
+type NativeTlsHeapMap = HashMap<(usize, usize), usize>;
 
 static NATIVE_THREADS_CREATED: AtomicBool = AtomicBool::new(false);
-static NATIVE_TLS_HEAP_MAP: AbiReentrantMutex<Option<NativeTlsHeapMap>> =
-    AbiReentrantMutex::new(None);
+static NATIVE_TLS_HEAP_MAP: AbiReentrantMutex<Option<NativeTlsHeapMap>, true> =
+    AbiReentrantMutex::new_kernel_tid(None);
+static NATIVE_TLS_HEAP_FORK_PENDING: AtomicBool = AtomicBool::new(false);
+static NATIVE_TLS_HEAP_FORK_OWNER: AtomicUsize = AtomicUsize::new(0);
+
+type NativeTlsHeapMapGuard = AbiReentrantMutexGuard<'static, Option<NativeTlsHeapMap>, true>;
+
+fn lock_native_tls_heap_map() -> NativeTlsHeapMapGuard {
+    let guard = NATIVE_TLS_HEAP_MAP.lock();
+    if NATIVE_TLS_HEAP_FORK_PENDING.load(Ordering::Acquire)
+        && guard.lock.owner_tid.load(Ordering::Relaxed) as u32 == 1
+    {
+        let survivor_owner = NATIVE_TLS_HEAP_FORK_OWNER.load(Ordering::Relaxed);
+        // SAFETY: the sole outermost guard excludes both another thread and
+        // an interrupted same-thread borrow of this map.
+        let map_slot = unsafe { &mut *guard.lock.value.get() };
+        if let Some(map) = map_slot.as_mut() {
+            // retain neither allocates nor hashes. Integer keys and values
+            // have no destructors. A hosted forker records zero, which cannot
+            // be a live ThreadHandle address, and therefore retains nothing.
+            // Vanished owners' copied payloads intentionally remain allocated:
+            // their Drop/pre_free callbacks may use orphaned locks or state.
+            map.retain(|&(owner, _), _| owner == survivor_owner);
+        }
+        NATIVE_TLS_HEAP_FORK_PENDING.store(false, Ordering::Release);
+    }
+    guard
+}
 
 std::thread_local! {
     static TLS_HEAP_HEAD: Cell<*mut TlsHeapHeader> = const { Cell::new(core::ptr::null_mut()) };
@@ -726,15 +783,19 @@ fn reclaim_native_thread_post_handle_drop(tid: i32) {
 
 fn reclaim_native_thread_tls_heap_cells(tid: i32) {
     let _errno_guard = TlsErrnoGuard::new();
+    // The hook runs before table_remove, while this native handle is still
+    // registered. Resolve the supplied owner rather than a cached compiler TID.
+    let native_owner =
+        frankenlibc_core::pthread::thread::handle_for_tid(tid).map(|handle| handle as usize);
     loop {
         let mut drained = Vec::new();
         {
-            let guard = NATIVE_TLS_HEAP_MAP.lock();
+            let guard = lock_native_tls_heap_map();
             let map_slot = unsafe { &mut *NATIVE_TLS_HEAP_MAP.value.get() };
             let _ = &guard;
             if let Some(map) = map_slot.as_mut() {
-                map.retain(|&(entry_tid, _), &mut node_addr| {
-                    if entry_tid == tid {
+                map.retain(|&(entry_owner, _), &mut node_addr| {
+                    if Some(entry_owner) == native_owner {
                         drained.push(node_addr as *mut TlsHeapHeader);
                         false
                     } else {
@@ -840,23 +901,50 @@ fn ensure_host_tls_heap_atexit(tid: i32) {
     }
 }
 
+pub(crate) struct NativeTlsHeapForkGuard {
+    guard: NativeTlsHeapMapGuard,
+    survivor_owner: Option<usize>,
+}
+
+impl NativeTlsHeapForkGuard {
+    /// Preserve the forking thread's payload addresses and arrange to discard
+    /// lookup entries for threads that do not exist in the child.
+    ///
+    /// # Safety
+    /// The caller must be the sole surviving thread after fork, with signals
+    /// blocked and this guard held continuously across the clone.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) unsafe fn adopt_in_fork_child(&mut self) {
+        // SAFETY: the caller owns the inherited guard in a single-threaded child.
+        unsafe { self.guard.adopt_in_fork_child() };
+        // A fork from a signal may interrupt a mutable map borrow on this same
+        // thread. Do not touch the map until an outermost acquisition proves
+        // that borrow has ended. Every lookup and teardown takes that path.
+        NATIVE_TLS_HEAP_FORK_OWNER.store(self.survivor_owner.unwrap_or(0), Ordering::Relaxed);
+        NATIVE_TLS_HEAP_FORK_PENDING.store(true, Ordering::Release);
+    }
+}
+
 #[cfg_attr(test, allow(dead_code))]
 #[inline]
-pub(crate) fn lock_native_tls_heap_for_fork()
--> Option<AbiReentrantMutexGuard<'static, Option<NativeTlsHeapMap>>> {
-    NATIVE_THREADS_CREATED
-        .load(Ordering::Acquire)
-        .then(|| NATIVE_TLS_HEAP_MAP.lock())
+pub(crate) fn lock_native_tls_heap_for_fork() -> NativeTlsHeapForkGuard {
+    // Lock even before the first native thread exists. Otherwise a concurrent
+    // first pthread_create could populate the map while fork copies it.
+    let guard = lock_native_tls_heap_map();
+    NativeTlsHeapForkGuard {
+        guard,
+        survivor_owner: current_native_tls_heap_owner(),
+    }
 }
 
 #[inline]
-fn current_thread_uses_native_tls_map() -> Option<i32> {
+fn current_native_tls_heap_owner() -> Option<usize> {
     if !NATIVE_THREADS_CREATED.load(Ordering::Acquire) {
         return None;
     }
     #[cfg(not(test))]
-    if frankenlibc_core::pthread::thread::current_thread_handle().is_some() {
-        return Some(frankenlibc_core::syscall::sys_gettid());
+    if let Some(handle) = frankenlibc_core::pthread::thread::current_thread_handle() {
+        return Some(handle as usize);
     }
     None
 }
@@ -933,8 +1021,8 @@ impl<T: 'static> TlsHeapCell<T> {
         init: Option<fn() -> T>,
         pre_free: Option<unsafe fn()>,
     ) -> Option<*mut T> {
-        if let Some(native_tid) = current_thread_uses_native_tls_map() {
-            return self.get_or_alloc_native_slow(native_tid, zeroed, init, pre_free);
+        if let Some(native_owner) = current_native_tls_heap_owner() {
+            return self.get_or_alloc_native_slow(native_owner, zeroed, init, pre_free);
         }
         let existing = self.ptr.get();
         if !existing.is_null() {
@@ -1015,18 +1103,18 @@ impl<T: 'static> TlsHeapCell<T> {
     #[cold]
     fn get_or_alloc_native_slow(
         &self,
-        native_tid: i32,
+        native_owner: usize,
         zeroed: bool,
         init: Option<fn() -> T>,
         pre_free: Option<unsafe fn()>,
     ) -> Option<*mut T> {
         let cell_key = core::ptr::from_ref(self) as usize;
         {
-            let guard = NATIVE_TLS_HEAP_MAP.lock();
+            let guard = lock_native_tls_heap_map();
             let map_slot = unsafe { &*NATIVE_TLS_HEAP_MAP.value.get() };
             let _ = &guard;
             if let Some(map) = map_slot.as_ref()
-                && let Some(&node_addr) = map.get(&(native_tid, cell_key))
+                && let Some(&node_addr) = map.get(&(native_owner, cell_key))
             {
                 let node = node_addr as *mut TlsHeapHeader;
                 let payload = unsafe { (node.cast::<u8>()).add((*node).payload_offset) };
@@ -1035,11 +1123,11 @@ impl<T: 'static> TlsHeapCell<T> {
         }
         let (node, payload_ptr) =
             self.alloc_node_and_payload(core::ptr::null(), zeroed, init, pre_free)?;
-        let guard = NATIVE_TLS_HEAP_MAP.lock();
+        let guard = lock_native_tls_heap_map();
         let map_slot = unsafe { &mut *NATIVE_TLS_HEAP_MAP.value.get() };
         let _ = &guard;
         let map = map_slot.get_or_insert_with(HashMap::new);
-        if let Some(&existing_addr) = map.get(&(native_tid, cell_key)) {
+        if let Some(&existing_addr) = map.get(&(native_owner, cell_key)) {
             drop(guard);
             unsafe { destroy_tls_heap_node(node) };
             let existing_node = existing_addr as *mut TlsHeapHeader;
@@ -1047,7 +1135,7 @@ impl<T: 'static> TlsHeapCell<T> {
                 unsafe { (existing_node.cast::<u8>()).add((*existing_node).payload_offset) };
             return Some(payload.cast::<T>());
         }
-        map.insert((native_tid, cell_key), node as usize);
+        map.insert((native_owner, cell_key), node as usize);
         Some(payload_ptr)
     }
 }
@@ -1252,6 +1340,71 @@ mod tests {
         );
     }
 
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn kernel_tid_guard_adoption_preserves_and_releases_inherited_recursion() {
+        let lock = AbiReentrantMutex::new_kernel_tid(Cell::new(42usize));
+        let outer = lock.lock();
+        let mut inner = lock.lock();
+        // SAFETY: the child uses only this private copied lock and raw exit;
+        // it never returns to libtest or drops other inherited runtime state.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork");
+        if pid == 0 {
+            // SAFETY: alarm takes only a scalar timeout, on both supported ABIs.
+            unsafe { libc::alarm(5) };
+            // SAFETY: only this fork child survives in its address space.
+            unsafe { inner.adopt_in_fork_child() };
+            let state = lock.owner_tid.load(Ordering::Relaxed);
+            let child_owner = AbiReentrantMutex::<(), true>::current_owner_tid();
+            if state as u32 != 2 || (state as u64 >> 32) != child_owner as u64 {
+                frankenlibc_core::syscall::sys_exit_group(1);
+            }
+            drop(inner);
+            if lock.owner_tid.load(Ordering::Relaxed) as u32 != 1 {
+                frankenlibc_core::syscall::sys_exit_group(2);
+            }
+            // Only the inner fork guard was explicitly adopted. The outer
+            // interrupted guard still carries the parent's cached owner key.
+            drop(outer);
+            if !lock.is_unowned() {
+                frankenlibc_core::syscall::sys_exit_group(3);
+            }
+            let Some(guard) = lock.try_lock() else {
+                frankenlibc_core::syscall::sys_exit_group(4);
+            };
+            if guard.get() != 42 {
+                frankenlibc_core::syscall::sys_exit_group(5);
+            }
+            drop(guard);
+            frankenlibc_core::syscall::sys_exit_group(0);
+        }
+        drop(inner);
+        drop(outer);
+        assert!(
+            lock.is_unowned(),
+            "the parent keeps its own recursion state"
+        );
+        let mut status = 0;
+        let waited = loop {
+            // SAFETY: status is writable and no resource-usage output is used.
+            let result = unsafe {
+                frankenlibc_core::syscall::sys_wait4(pid, &mut status, 0, core::ptr::null_mut())
+            };
+            if result != Err(libc::EINTR) {
+                break result;
+            }
+        };
+        assert_eq!(waited, Ok(pid));
+        assert_eq!(
+            status, 0,
+            "child could not release inherited kernel-TID guards"
+        );
+    }
+
     #[test]
     fn abi_reentrant_mutex_unlock_all_forgotten_clears_recursive_ownership() {
         let lock = Arc::new(AbiReentrantMutex::new(Cell::new(7usize)));
@@ -1350,8 +1503,7 @@ mod tests {
 
         unsafe extern "C" fn probe(argument: usize) -> usize {
             // SAFETY: the parent retains the lock until joining this worker.
-            let lock =
-                unsafe { &*(argument as *const AbiReentrantMutex<Cell<usize>, true>) };
+            let lock = unsafe { &*(argument as *const AbiReentrantMutex<Cell<usize>, true>) };
             let Some(outer) = lock.try_lock() else {
                 return usize::MAX;
             };

@@ -1513,6 +1513,18 @@ pub unsafe extern "C" fn group_from_gid(gid: libc::gid_t, nogroup: c_int) -> *co
     ptr
 }
 
+/// Keep the creator's group caches borrowed while a native worker is tested.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn with_group_cache_borrows_for_tests<R>(f: impl FnOnce() -> R) -> R {
+    with_grp_storage(|_| {
+        with_gr_pending(|pending| {
+            let _pending = pending.borrow_mut();
+            f()
+        })
+    })
+}
+
 // The inline `#[cfg(test)] mod tests` that stood here never compiled: lib.rs
 // declares this module `#[cfg(not(test))]`, so the two cfgs are mutually
 // exclusive and its two tests built in neither configuration (bd-xh08pf).
