@@ -79,17 +79,19 @@
     },
     {
       "id": "sem-libcrypt-des",
-      "surface": "obsolete libcrypt DES helpers",
+      "surface": "legacy libcrypt DES bit-vector helpers",
       "symbols": [
         "encrypt",
-        "encrypt_r"
+        "encrypt_r",
+        "setkey",
+        "setkey_r"
       ],
       "support_matrix_status": "Implemented",
-      "semantic_class": "compat_noop",
+      "semantic_class": "proof_gap",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
-      "source_line": 9500,
-      "evidence": "DES block and key-schedule helpers are no-op compatibility stubs.",
-      "required_followup": "Keep the no-op contract explicit in fixtures or implement DES semantics before counting this family as crypt parity. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7."
+      "source_line": 9881,
+      "evidence": "The four helpers use the native safe-core DES engine with a process-global key or independent caller-owned crypt_data key state. conformance_diff_crypt_r.rs covers known answers, a live libcrypt differential, reverse transforms, parity bits, copied and concurrent contexts, crypt_r output coexistence, errno, and invalid-input non-mutation. This bounded coverage does not qualify every symbol-version, provider, profile, or configuration.",
+      "required_followup": "Retain the named DES regression gates and qualify symbol-version, provider, profile, and configuration coverage before any full crypt-parity claim. The opaque crypt_data key state requires the matching setkey_r/encrypt_r implementation; DES support does not implement the yescrypt password KDF. Keep full semantic status unknown until the named behavior/configuration is actually qualified under bd-reality-202609-lx578q.7."
     },
     {
       "id": "sem-nss-files-plugin",
@@ -211,11 +213,11 @@
     "entries": 10,
     "by_semantic_class": {
       "full_semantics": 0,
-      "compat_noop": 2,
+      "compat_noop": 1,
       "deterministic_fallback": 1,
       "limited_bootstrap": 4,
       "unsupported_platform_contract": 1,
-      "proof_gap": 2
+      "proof_gap": 3
     },
     "blocked_claim": "The current support taxonomy contains 0 explicit Stub rows. The representative semantic inventory still retains no-op, fallback, bootstrap, unsupported, and under-proven surfaces; it is not exhaustive and cannot establish full replacement parity."
   }

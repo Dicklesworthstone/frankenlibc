@@ -43,10 +43,10 @@
   "summary": {
     "by_semantic_class": {
       "abort_only": 1,
-      "compat_noop": 2,
+      "compat_noop": 1,
       "deterministic_fallback": 3,
       "limited_bootstrap": 7,
-      "proof_gap": 5,
+      "proof_gap": 6,
       "unsupported_platform_contract": 1
     },
     "by_taxonomy_status": {
@@ -112,11 +112,11 @@
     },
     {
       "inventory_id": "sem-libcrypt-des",
-      "surface": "obsolete libcrypt DES helpers",
+      "surface": "legacy libcrypt DES bit-vector helpers",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "taxonomy_status": "Implemented",
-      "semantic_class": "compat_noop",
-      "semantic_parity_status": "blocked_compat_noop",
+      "semantic_class": "proof_gap",
+      "semantic_parity_status": "blocked_proof_gap",
       "taxonomy_status_is_semantic_parity": false,
       "symbol_refs": [
         "encrypt",

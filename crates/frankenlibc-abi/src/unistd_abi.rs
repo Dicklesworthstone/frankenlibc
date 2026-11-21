@@ -9859,7 +9859,7 @@ fn crypt_failure_token(salt_bytes: &[u8]) -> *mut c_char {
 }
 
 // ---------------------------------------------------------------------------
-// libcrypt aliases + DES no-op stubs + crypt_preferred_method + crypt_checksalt
+// libcrypt aliases + DES bit-vector APIs + crypt_preferred_method + crypt_checksalt
 // ---------------------------------------------------------------------------
 
 /// libcrypt `fcrypt(key, salt)` — historical alias of `crypt`.
@@ -9874,26 +9874,202 @@ pub unsafe extern "C" fn xcrypt(key: *const c_char, salt: *const c_char) -> *mut
     unsafe { crypt(key, salt) }
 }
 
-/// libcrypt `encrypt(block, edflag)` — DES single-block encrypt /
-/// decrypt. DES is obsolete and unsupported; this is a no-op stub
-/// so binaries that link the symbol but never invoke it still work.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn encrypt(_block: *mut c_char, _edflag: c_int) {}
+// Non-reentrant DES has one process-wide key, including across threads. A
+// single atomic value gives encrypt a coherent snapshot without a lock that
+// could be inherited held across fork. The setkey/encrypt pair is still not
+// a thread-local transaction: callers needing independent keys use the _r API.
+static LEGACY_DES_KEY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// libcrypt `encrypt_r(block, edflag, *data)` — reentrant `encrypt`.
-/// Same DES no-op rationale as [`encrypt`].
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn encrypt_r(_block: *mut c_char, _edflag: c_int, _data: *mut c_void) {}
+// libxcrypt's crypt_data private workspace starts after output[384],
+// setting[384], input[512], reserved[767], and initialized. This offset is
+// also inside the historical glibc crypt_data's private sb0 workspace. Keep
+// our key out of public input/output fields so crypt_r can publish a hash
+// without clobbering it. Both real layouts provide far more than 2064 bytes.
+const LEGACY_DES_WORKSPACE_OFFSET: usize = 2048;
+const LEGACY_DES_STATE_TAG: [u8; 8] = *b"FLDESv1\0";
 
-/// libcrypt `setkey(key)` — DES key schedule. No-op stub (see
-/// [`encrypt`]).
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setkey(_key: *const c_char) {}
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LegacyDesState {
+    tag: [u8; 8],
+    key: [u8; 8],
+}
 
-/// libcrypt `setkey_r(key, *data)` — reentrant DES key schedule.
-/// No-op stub.
+fn legacy_des_state_fits(data: *const c_void) -> bool {
+    !data.is_null()
+        && tracked_region_fits(
+            data as usize,
+            LEGACY_DES_WORKSPACE_OFFSET + core::mem::size_of::<LegacyDesState>(),
+        )
+}
+
+/// Copy the ABI's 64 byte-sized bits before modifying any caller storage.
+unsafe fn legacy_des_read_bits(bits: *const c_char) -> Option<u64> {
+    if bits.is_null() || !tracked_region_fits(bits as usize, 64) {
+        return None;
+    }
+    // SAFETY: the C contract supplies 64 readable bytes; known short tracked
+    // allocations were rejected. The byte array has no alignment requirement.
+    let bytes = unsafe { core::ptr::read_unaligned(bits.cast::<[u8; 64]>()) };
+    let mut packed = 0u64;
+    for byte in bytes {
+        if byte > 1 {
+            return None;
+        }
+        packed = (packed << 1) | u64::from(byte);
+    }
+    Some(packed)
+}
+
+unsafe fn legacy_des_write_bits(block: *mut c_char, packed: u64) {
+    let bits: [u8; 64] = std::array::from_fn(|index| ((packed >> (63 - index)) & 1) as u8);
+    // SAFETY: the caller validated the complete 64-byte block before the
+    // transform. Only that extent is replaced, in the same bit-vector format.
+    unsafe { core::ptr::write_unaligned(block.cast::<[u8; 64]>(), bits) };
+}
+
+/// libcrypt `encrypt(block, edflag)` — transform a 64-byte DES bit vector
+/// in place using the key installed by [`setkey`]. Zero encrypts; every
+/// nonzero direction decrypts, matching the GNU compatibility ABI.
+/// Successful calls preserve errno. Invalid bit vectors return EINVAL without
+/// partially modifying the block.
+///
+/// # Safety
+/// A non-null `block` must provide 64 readable and writable bytes. The values
+/// are checked to be 0 or 1 before output is written; null is rejected.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setkey_r(_key: *const c_char, _data: *mut c_void) {}
+pub unsafe extern "C" fn encrypt(block: *mut c_char, edflag: c_int) {
+    let saved_errno = current_abi_errno();
+    // SAFETY: inherited fixed-size bit-vector contract; the helper rejects
+    // null pointers, known short allocations, and non-bit values.
+    let Some(input) = (unsafe { legacy_des_read_bits(block) }) else {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    };
+    let key = LEGACY_DES_KEY.load(std::sync::atomic::Ordering::Relaxed);
+    let output = frankenlibc_core::crypt::des::des_block_crypt(key, input, edflag != 0);
+    // SAFETY: the whole caller block was validated before writing any output;
+    // errno storage is the calling thread's valid canonical slot.
+    unsafe {
+        legacy_des_write_bits(block, output);
+        set_abi_errno(saved_errno);
+    }
+}
+
+/// Reentrant DES block transform with the key in the caller's crypt_data.
+/// The matching [`setkey_r`] initializes its private workspace. No allocation,
+/// pointer-keyed side table, or process-global key is used. A context can be
+/// copied with its enclosing struct; separate contexts can run concurrently.
+///
+/// # Safety
+/// A non-null `block` must provide 64 readable/writable bytes. A non-null
+/// `data` must point to a genuine, initialized glibc/libxcrypt crypt_data
+/// object whose private workspace is not concurrently modified. A zeroed
+/// object or other state not installed by this implementation's `setkey_r`
+/// is rejected, as are null pointers and non-bit input values.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn encrypt_r(block: *mut c_char, edflag: c_int, data: *mut c_void) {
+    let saved_errno = current_abi_errno();
+    if !legacy_des_state_fits(data) {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    }
+    // SAFETY: real crypt_data layouts include this private workspace. Known
+    // short tracked objects were rejected, and no pointer alignment is assumed.
+    let state = unsafe {
+        core::ptr::read_unaligned(
+            data.cast::<u8>()
+                .add(LEGACY_DES_WORKSPACE_OFFSET)
+                .cast::<LegacyDesState>(),
+        )
+    };
+    if state.tag != LEGACY_DES_STATE_TAG {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    }
+    // SAFETY: inherited fixed-size bit-vector contract; this snapshots input
+    // before touching the output, including if caller storage overlaps.
+    let Some(input) = (unsafe { legacy_des_read_bits(block) }) else {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    };
+    let output = frankenlibc_core::crypt::des::des_block_crypt(
+        u64::from_be_bytes(state.key),
+        input,
+        edflag != 0,
+    );
+    // SAFETY: the complete block was validated; the errno slot is thread-local.
+    unsafe {
+        legacy_des_write_bits(block, output);
+        set_abi_errno(saved_errno);
+    }
+}
+
+/// Install the process-wide DES key from 64 byte-sized bits. Each eighth bit
+/// is a parity bit and does not affect the cipher. Invalid input leaves the
+/// previous key intact and sets EINVAL; successful calls preserve errno.
+///
+/// # Safety
+/// A non-null `key` must provide 64 readable bytes. Non-bit values and null
+/// pointers are rejected before changing the key.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setkey(key: *const c_char) {
+    let saved_errno = current_abi_errno();
+    // SAFETY: inherited 64-byte input contract, checked before publishing.
+    let Some(packed) = (unsafe { legacy_des_read_bits(key) }) else {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    };
+    LEGACY_DES_KEY.store(packed, std::sync::atomic::Ordering::Relaxed);
+    // SAFETY: restore the calling thread's canonical errno slot on success.
+    unsafe { set_abi_errno(saved_errno) };
+}
+
+/// Install an independent DES key in the private workspace of crypt_data.
+/// Reinitialization replaces the prior key only after validating every input
+/// bit. Public output, setting, and input fields remain untouched.
+///
+/// # Safety
+/// A non-null `key` must provide 64 readable bytes. A non-null `data` must
+/// point to a real writable glibc/libxcrypt crypt_data object not concurrently
+/// in use. Null pointers and non-bit input values are rejected.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setkey_r(key: *const c_char, data: *mut c_void) {
+    let saved_errno = current_abi_errno();
+    if !legacy_des_state_fits(data) {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    }
+    // SAFETY: inherited fixed-size key contract; snapshot before writing data
+    // so an aliased input does not cause a partially initialized key.
+    let Some(packed) = (unsafe { legacy_des_read_bits(key) }) else {
+        // SAFETY: errno is the calling thread's canonical writable slot.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
+    };
+    let state = LegacyDesState {
+        tag: LEGACY_DES_STATE_TAG,
+        key: packed.to_be_bytes(),
+    };
+    // SAFETY: both documented crypt_data layouts have private workspace at
+    // this offset, and known short tracked objects were rejected. The byte
+    // fields and unaligned write impose no extra alignment on the C object.
+    unsafe {
+        core::ptr::write_unaligned(
+            data.cast::<u8>()
+                .add(LEGACY_DES_WORKSPACE_OFFSET)
+                .cast::<LegacyDesState>(),
+            state,
+        );
+        set_abi_errno(saved_errno);
+    }
+}
 
 // Fallback for hosts without libxcrypt's preferred-method entry point. Lives
 // in BSS so the pointer remains valid for the process lifetime.
