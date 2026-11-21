@@ -19695,32 +19695,23 @@ pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize
     -1
 }
 
-/// Deliver one contiguous byte span to a cookie write callback. Preserve this
-/// path's existing callback EINTR retry independently of descriptor writes.
-unsafe fn cookie_write_all(id: usize, bytes: &[u8]) -> usize {
-    let mut written = 0usize;
-    while written < bytes.len() {
-        let rc =
-            unsafe { cookie_stream_write(id, bytes[written..].as_ptr(), bytes.len() - written) };
-        let errno_val = if rc < 0 {
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-        } else {
-            0
-        };
-        if rc < 0 && errno_val == errno::EINTR {
-            continue;
-        }
-        match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
-            StreamPolicyAction::Retry => continue,
-            StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
-            StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
-        }
-        if rc <= 0 {
-            break;
-        }
-        written += (rc as usize).min(bytes.len() - written);
+/// Deliver one contiguous byte span to a cookie write callback.
+///
+/// A cookie callback reports one write operation, not a retryable syscall.
+/// Preserve short progress and callback errno so the caller can surface the
+/// error. Even a malformed negative/EINTR result must not spin indefinitely.
+unsafe fn cookie_write_once(id: usize, bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
     }
-    written
+    // SAFETY: the live cookie owns the callback and bytes remains readable
+    // until that synchronous callback returns.
+    let written = unsafe { cookie_stream_write(id, bytes.as_ptr(), bytes.len()) };
+    if written <= 0 {
+        0
+    } else {
+        (written as usize).min(bytes.len())
+    }
 }
 
 /// Buffer a cookie write using the same `StdioStream` policy as fd streams.
@@ -19772,7 +19763,7 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     // into the bounded destination synchronously and invokes no user code, so
     // even a huge callback fwrite needs no full-size intermediate allocation.
     let flush_length = flush_data.len();
-    let flushed = unsafe { cookie_write_all(id, &flush_data) };
+    let flushed = unsafe { cookie_write_once(id, &flush_data) };
     drop(flush_data);
     if flushed == flush_length {
         // StreamBuffer consumed the emitted prefix and retained any suffix
@@ -19788,9 +19779,12 @@ unsafe fn cookie_buffer_write(id: usize, stream: &mut StdioStream, bytes: &[u8])
     }
 
     stream.set_error();
+    // StreamBuffer may have staged a suffix after the emitted line or block.
+    // The failed callback prevented accepting that suffix: discard it so a
+    // later write, fflush, or fclose cannot emit bytes we reported unwritten.
+    stream.mark_flushed();
     let current = flushed.saturating_sub(flushed_from_buffer).min(bytes.len());
     if let Some(memory) = fixed_memory {
-        stream.mark_flushed();
         if let Some(inner) = memory.try_lock_inner() {
             stream.set_offset(inner.cursor.position() as i64);
         }

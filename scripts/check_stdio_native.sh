@@ -152,7 +152,7 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
   if [[ "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
     error_kind=write
     error_mode=write-errors
-    error_cases=51
+    error_cases=60
     error_option=--write-errors
   elif [[ "${POPEN_ONLY}" -eq 1 ]]; then
     error_kind=popen
@@ -216,6 +216,19 @@ if [[ "${READ_ERRORS_ONLY}" -eq 1 || "${WRITE_ERRORS_ONLY}" -eq 1 || "${POPEN_ON
     exit 1
   fi
   grep -q '^FAIL: wrong stdio provider for ' "${OUT_DIR}/${error_kind}-errors.provider-negative.stderr.log"
+  if [[ "${WRITE_ERRORS_ONLY}" -eq 1 ]]; then
+    # A negative write-hook return violates fopencookie's callback contract.
+    # Check bounded failure separately from the valid-program GNU comparison.
+    for mode in strict hardened; do
+      timeout --kill-after=2s 10s env LD_PRELOAD="${LIB}" FRANKENLIBC_MODE="${mode}" \
+        "${error_bin}" cookie-write-invalid "${LIB}" \
+        >"${OUT_DIR}/cookie-write-invalid.${mode}.stdout.log" \
+        2>"${OUT_DIR}/cookie-write-invalid.${mode}.stderr.log"
+      grep -qx 'fixture_stdio cookie-write-invalid: PASS (1 case, 0 failed)' \
+        "${OUT_DIR}/cookie-write-invalid.${mode}.stdout.log"
+    done
+    echo "check_stdio_native --write-errors: PASS (2 malformed-callback bounded-failure cases)"
+  fi
   echo "check_stdio_native ${error_option}: PASS (${error_cases} live GNU cases, $((error_cases * 2)) native cases, 1 provider negative)"
   exit 0
 fi
